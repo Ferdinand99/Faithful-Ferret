@@ -4,7 +4,7 @@ The third milestone makes the vault survivable: an emergency sheet with a recove
 is forgotten, a new recovery key, a changed master password that ends other sessions, an encrypted export and an import
 of other products' files, a backup the server makes by itself with an encrypted copy off the machine, and a restore that
 is safe to cut off. This file lists what is tested automatically, how a person checks the rest by hand on the test
-instance (about an hour and a half), and the checklist to finish before real data goes in. `docs/TESTING-M1.md` and
+instance (about an hour and three quarters), and the checklist to finish before real data goes in. `docs/TESTING-M1.md` and
 `docs/TESTING-M2.md` still describe the end-to-end stack and the earlier milestones' checks, and `docs/OPERATIONS.md`
 describes the commands used below.
 
@@ -17,7 +17,7 @@ All data on the test instance is throwaway test data. Nothing here is done on a 
 | The server's Rust suite, with the matrices for the sensitive operations and the backup, and the sync matrix | Recovery and re-authentication rules, signed requests, the one-time code (including timing and throttling), sets written and checked, the restore killed after every step and run again or undone, the epoch rule, the import window, purged tombstones |
 | The 10 000-item import through the real server (ignored by default, run in release mode) | Ten thousand items inside five minutes |
 | The web vault's unit tests, its model-based sync matrix (5 000 strict runs at the gate) and the stored-format freeze tests | The sheet and PDF writers, recovery, password change, export and import, the tab hand-over, texts; no stored form changes without a migration |
-| The end-to-end gate on a private stack, in Chromium, Firefox and WebKit: scenarios 18 to 26 for this milestone | 18 the sheet and its PDF, 19 a new browser with the sheet text, 20 a password change, 21 recovery with a one-time code, 22 a new recovery key and the backup push, 23 export and import into a wiped server, 24 foreign imports, 25 backup, wipe and restore, 26 two tabs and a restore over purged tombstones. At the end the data, the backup sets and the log are searched for the secrets of the run, with a planted control that must turn it red |
+| The end-to-end gate on a private stack, in Chromium, Firefox and WebKit: scenarios 18 to 26 for this milestone | 18 the sheet and its PDF, 19 a new browser with the sheet text, 20 a password change, 21 recovery with a one-time code, 22 a new recovery key and the backup push, 23 export and import into a wiped server, 24 foreign imports, 25 backup, wipe and restore, 26 two tabs and a restore over purged tombstones. At the end the data, the backup sets and the log are searched for the secrets of the run, with a control (the account's e-mail address, which the server stores in the clear) that must be found, so a search that looks at nothing fails |
 | The rehearsal on the throwaway stack (`scripts/ferret-home.sh drill`) | An account and items, a backup, the encrypted copy to a test target, decryption with a test key, an emptied volume, a restore, a sign-in again |
 
 How the automatic tests are run is in the headers of the scripts under `scripts/` and in the two earlier testing files.
@@ -85,7 +85,7 @@ before it still runs the old scripts.
    last message to the monitor is "Taken" (or "None sent yet" if no monitor is set on the test instance).
 3. On the host: `<compose> run --rm --no-deps <service> backup list`.
    *Expected:* the set is listed under a time-stamped name, and `… backup verify <that set>` says it passes.
-4. Open the Users page of the admin pages and look at the sign-in code feature (used in part 4). Do not make a code yet.
+4. Nothing to prepare for the sign-in code: the Users page cannot make a code for your own account (the kit refuses it: "You can not reset your own sign-in here"), and this server has one account only, so part 4 makes its code with the command on the host.
 
 ### 3. Master password change ends the other sessions (A and B, about 10 minutes)
 
@@ -103,8 +103,9 @@ before it still runs the old scripts.
 
 ### 4. Forgot the master password: a one-time code and a new browser (C, about 20 minutes)
 
-1. Make a code for yourself: on the host `docker compose exec -u 1000:1000 <service> ferret sign-in-code issue --email
-   test@example.org --yes`, or on the Users page of the admin pages.
+1. Make a code with the command on the host (you are the only administrator, and the Users page cannot make a code for your own
+   account): `docker compose exec -u 1000:1000 <service> ferret sign-in-code issue --email
+   test@example.org --yes`.
    *Expected:* a code and the time it is good until (24 hours from now).
 2. In C (a browser that has never seen the account) open the vault. Open the kit's own page for a sign-in code
    (`https://admin-2.example.org/sign-in-code`) once to see where it leads.
@@ -145,19 +146,19 @@ before it still runs the old scripts.
 
 1. Sign in in A with MP4 (from the new sign-in screen). Open Account, "Export".
    *Expected:* it says when your last encrypted export was (never), and an "Encrypted export" form asks for the master password again,
-   although you are signed in, plus the export password twice.
+   although you are signed in, plus the export password twice (and the secret key from page 1, if this browser does not remember it).
 2. Try an export password of 11 characters, then one equal to MP4, then two that differ.
-   *Expected:* each is refused with its own message, and no file is made.
+   *Expected:* each is refused and no file is made: "The export password is too short. It needs at least 12 characters.", "The export password is the same as your master password. Choose a different one.", and a message that the two passwords are not the same.
 3. Use EP twice and MP4. Press "Make the encrypted file".
    *Expected:* the page says it is checking, reading, making the key (some seconds, 256 MiB of memory), sealing and handing over; then
    "The file was made" with the number of items (3), a file named `ferret-export-….ferretexport`, and that the file does not open with your master password.
    Open the file in a text editor: it is not readable text, and none of your item names is in it.
 4. **See the warning for unsent changes:** turn the network off in the browser's developer tools, change an item in A, and open Export before
-   it syncs. *Expected:* a warning that the file may not hold your newest changes ("1 item(s) have changes that the server has not accepted yet"), with "Export anyway" and "Check again". Turn the network on again.
+   it syncs. *Expected:* a warning that the file may not hold your newest changes ("1 item(s) have changes that the server has not accepted yet"), with the confirmation "Export anyway, I know the file may be missing recent changes" and "Check again". Turn the network on again.
 
 ### 7. Import the export into another browser and another account, and the foreign files (C or D, about 20 minutes)
 
-1. Sign in with MP4 in a fresh profile D. Open Account, "Import", choose the `.ferretexport`.
+1. Sign in with MP4 and the secret key from page 1 in a fresh profile D (it has never seen the account). Open Account, "Import", choose the `.ferretexport`.
    *Expected:* a preview that says it is a Ferret export made on today's date and that the number of items is known once the export
    password has opened it, and a notice that your vault already holds 3 items and that Ferret does not remove duplicates.
 2. Type a wrong export password.
@@ -194,13 +195,14 @@ before it still runs the old scripts.
    *Expected:* the vault is back in tab 1 and the form still has **what you typed** (it is not replaced by an empty one). Press save:
    the change is sent once, and tab 2 now shows the standby notice.
 
-### 9. Optional, outside the hour and a half: a restore on the test instance
+### 9. Optional, outside the hour and three quarters: a restore on the test instance
 
 1. Make a set ("Take a backup now"), add one more item in A, and note its name.
 2. On the host: stop the server, `<compose> run --rm --no-deps <service> backup restore --from <set path> --yes`, start the server.
    *Expected:* the command prints the new restore epoch (a large number, about the time in seconds), how many sessions it ended and the folder
-   `pre-restore-…` where the old files went. A second command run while the marker `RESTORE_IN_PROGRESS` is there (cut it off on purpose
-   with a kill, or start the server) refuses; `backup restore --abort --yes` puts the old files back.
+   `pre-restore-…` where the old files went. While the marker `RESTORE_IN_PROGRESS` is there (cut a restore off on purpose
+   with a kill), the server, `restore-epoch bump`, `backup create` and `sign-in-code issue` refuse; the same `backup restore --from` command goes on
+   from the stored step, a restore of another set refuses, and `backup restore --abort --yes` puts the old files back.
 3. In A: signed out. Sign in; the page says that the server was restored from an older backup and offers to accept the older state.
    *Expected:* the extra item is not on the server; accepting the older state uploads it again, as a conflict only where another device wrote
    after the restore. A one-time code made before the restore no longer works.
@@ -225,7 +227,7 @@ The limits are in `docs/design/phase-1-security-design.md` § 8.8 ("Recovery, ex
 - Recovery on a new browser needs **both** pages of the sheet; the secret key cannot be changed. After a new recovery key the old one works only if the server is
   restored from a backup from before the renewal; keep the old sheet until a newer backup exists.
 - No e-mail is sent (no notices), no account can have 2FA, and there is no full rekey. An old export or backup still opens with the old master password.
-- The one-time code lives 24 hours, works once, and every try counts toward five an hour; someone who knows only the e-mail address can keep the real code waiting for an hour.
+- The one-time code lives 24 hours, works once, and every try counts toward five an hour for one e-mail address from one network address (people behind the same public address share the count).
 - The export password is checked for length and against the master password only. There is no recovery sheet encrypted with a passphrase.
 - The PDF and plain files are plaintext on your disk; the browser's copy of the PDF cannot be cleared.
 - Import removes no duplicates and leaves out passkeys, folders, tags, attachments and linked fields; Bitwarden's encrypted JSON, `.zip` exports and AliasVault's encrypted export are refused.

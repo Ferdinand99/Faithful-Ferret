@@ -161,8 +161,11 @@ When the command says the restore is not finished:
 Clients keep a counter, the *restore epoch*, that only a restore raises. A client that sees the epoch go up while the
 vault went back accepts the older state only after the user chooses it. **The new epoch is
 `max(stored + 1, now, at_least)`** for every vault: one more than the epoch in the database you restored, or the
-server's clock in Unix seconds, or the number you give with `--at-least`, whichever is largest. The epoch therefore never
-lands on one that browsers have already stored, even when you restore a set that is older than an earlier restore.
+server's clock in Unix seconds, or the number you give with `--at-least`, whichever is largest. `ferret backup restore` also keeps
+the epoch above the highest epoch of the data it replaces (that epoch plus one), which is why it warns when it cannot read
+it. The epoch therefore does not
+land on one that browsers have already stored, even when you restore a set that is older than an earlier restore, as long as
+the clock is right.
 
 It rests on the server's clock. If the clock has gone backwards (so that `now` is below an epoch that browsers saw), give
 `--at-least` a number above the highest epoch that any earlier restore printed:
@@ -180,7 +183,9 @@ should press "Forget this server" for it: that removes the changes of that devic
 If you restored the files some other way (a snapshot of the volume, for example), the data directory has no bump yet.
 Do it with the server stopped:
 
-1. Remove everything in the data directory first, in particular `ferret.sqlite-wal` and `ferret.sqlite-shm`, then
+1. Remove the database files and the three secret files from the data directory first, in particular `ferret.sqlite-wal` and
+   `ferret.sqlite-shm` (leave the backup sets alone; with the default `FERRET_BACKUP_DIR` they are under `backups/auto` in the
+   data directory, so do not empty the directory as a whole), then
    copy the backup in. If an older `ferret.sqlite` is copied over a newer one while the newer `-wal` and `-shm` stay,
    SQLite replays that log onto the older file and the result is a mixed, probably corrupt database.
 2. Raise the epoch with the same image and data directory:
@@ -198,8 +203,9 @@ Do it with the server stopped:
    after `ferret backup restore` only logs everyone out once more, which is harmless.
 3. Start the server.
 
-A bump needs a database that has every migration of the build you run. A backup that was made before migration `0006`
-(every backup of the first milestone, and of the second one before that migration) is refused with `the database is
+A bump needs a database that has every migration of the build you run. A backup that was made before the migrations of this
+build (for example before `0006`, which added `restore_seq`, or before `0007`; every backup of the first milestone is older than
+both) is refused with `the database is
 missing the migrations …: start the server once to migrate it, stop it, and run this again`. Do that with the ports
 closed to users; open tabs can show the rollback notice until the bump. `ferret backup restore` migrates a set by itself,
 in its staging folder, so this does not apply to it.
@@ -212,7 +218,8 @@ the bump, for rehearsals. They are for those stacks only and are never run by a 
 When the administrator has forgotten the master password, OPAQUE cannot run, so the account is recovered with a
 one-time code, the recovery key and the pages of the emergency sheet (a new browser needs both pages).
 
-* **Make a code** on the Users page of the admin pages for another person, or, while the server runs, on its host:
+* **Make a code** on the Users page of the admin pages for another person (the kit refuses a code for your own account there, so
+  the only administrator uses the command), or, while the server runs, on its host:
 
   ```
   docker compose exec -u 1000:1000 <service> ferret sign-in-code issue --email you@example.org --yes
@@ -229,8 +236,9 @@ one-time code, the recovery key and the pages of the emergency sheet (a new brow
   password (that change then fails with "session ended"). The recovery session it opens lasts 30 minutes.
 * **Every try counts**, a good code too: 5 per hour for one typed e-mail address from one network address, and 10 a minute
   from one network address. A try that was throttled does not count, and the throttled answer (`429`) says nothing about
-  whether the account exists. Someone who knows only the e-mail address can use up the five and keep the real code
-  waiting for an hour; with a single administrator that is accepted. Wait, or restart the server (the counts are in
+  whether the account exists. The count is kept for the typed e-mail address and the network address together, so someone at
+  another address cannot keep the real code from working. People behind the same public address (a shared NAT or proxy), and
+  callers whose address cannot be read, share one count. If you are throttled, wait, or restart the server (the counts are in
   memory).
 
 ## The stack for real data
@@ -314,8 +322,8 @@ writes, so nothing breaks; changes from other devices only arrive more slowly.
 ## An import that outlives its session
 
 An import runs in an *import window* on the server: one per vault, bound to the device that opened it, open for at most 30
-minutes. If the session that opened it ends first (the master password was changed in another browser, or the server
-was restored), the window stays open until it runs out, and another device that tries to import is told that an import is
+minutes. If the session that opened it ends first (the master password was changed or the account was recovered in another browser, the user signed out, or the session
+expired), the window stays open until it runs out, and another device that tries to import is told that an import is
 open although none is running. The page says how long that can take: finish the import on the first device, or wait up to
 30 minutes. Restarting the server clears every window. The same device that signs in again replaces its own window.
 
