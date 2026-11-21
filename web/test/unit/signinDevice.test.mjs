@@ -287,9 +287,10 @@ test("a_device_unlock_after_lock_keeps_its_device_and_posts_no_ke3", async () =>
   assert.equal(unlocked.purpose, "unlock");
   assert.deepEqual([unlocked.accountId, unlocked.vaultId, unlocked.email], [ACCOUNT, VAULT, EMAIL]);
   assert.equal(world.session.current()?.accountId, ACCOUNT);
-  // The token first, then login/start; no login/finish (no KE3), no new device, no new tokens, no sign-out.
-  assert.deepEqual(world.server.calls.map((call) => call.path), [METHODS, LOGIN_START_PATH]);
-  const [methods, start] = world.server.calls;
+  // login/start, then (the password proved on the device) the token; no login/finish (no KE3), no new device, no new
+  // tokens, no sign-out.
+  assert.deepEqual(world.server.calls.map((call) => call.path), [LOGIN_START_PATH, METHODS]);
+  const [start, methods] = world.server.calls;
   assert.equal(methods.headers.Authorization, `DPoP ${tok(1)}`);
   assert.ok(!("Authorization" in start.headers) && !("DPoP" in start.headers));
   assert.equal(start.init.credentials, "omit");
@@ -311,7 +312,7 @@ test("a_device_unlock_after_lock_keeps_its_device_and_posts_no_ke3", async () =>
     [REFRESH]: () => answer(200, { access_token: tok(5), refresh_token: tok(6), token_type: "DPoP", expires_in: 900 }),
   });
   await restarted.session.unlock({ password: PASSWORD });
-  assert.deepEqual(restarted.server.calls.map((call) => call.path), [REFRESH, METHODS, LOGIN_START_PATH]);
+  assert.deepEqual(restarted.server.calls.map((call) => call.path), [LOGIN_START_PATH, REFRESH, METHODS]);
   assert.equal(restarted.server.to(METHODS)[0].headers.Authorization, `DPoP ${tok(5)}`);
   assert.equal((await restarted.record())?.deviceId, before?.deviceId);
 });
@@ -332,8 +333,8 @@ test("a_wrong_master_password_at_unlock_leaves_the_server_state_alone", async ()
   world.server.calls.length = 0;
   wrong = true;
   await assert.rejects(world.session.unlock({ password: "not-the-password" }), { code: "decrypt" });
-  // Nothing but the token read and login/start (whose state the server drops after a minute): no KE3, no device, no sign-out.
-  assert.deepEqual(world.server.calls.map((call) => call.path), [METHODS, LOGIN_START_PATH]);
+  // Nothing but login/start (whose state the server drops after a minute): no token read, no KE3, no device, no sign-out.
+  assert.deepEqual(world.server.calls.map((call) => call.path), [LOGIN_START_PATH]);
   const kept = await world.record();
   assert.deepEqual([kept?.deviceId, kept?.refreshToken], [before?.deviceId, before?.refreshToken]);
   assert.equal(await world.session.deviceState(), "ok");
@@ -344,6 +345,19 @@ test("a_wrong_master_password_at_unlock_leaves_the_server_state_alone", async ()
   await world.session.unlock({ password: PASSWORD });
   assert.equal(world.server.to(LOGIN_FINISH_PATH).length, 0);
   assert.equal((await world.record())?.deviceId, before?.deviceId);
+
+  // The access token expired during the lock (here: a restart, which keeps none): a wrong password still renews nothing.
+  const restarted = await deviceWorld({
+    db: world.db,
+    handlers: { login_finish: () => { throw coded("decrypt"); } },
+    overrides: { [REFRESH]: () => answer(200, { access_token: tok(5), refresh_token: tok(6), token_type: "DPoP", expires_in: 900 }) },
+  });
+  const stored = await restarted.record();
+  await assert.rejects(restarted.session.unlock({ password: "not-the-password" }), { code: "decrypt" });
+  assert.deepEqual(restarted.server.calls.map((call) => call.path), [LOGIN_START_PATH], "no token/refresh, no token read");
+  const still = await restarted.record();
+  assert.deepEqual([still?.deviceId, still?.refreshToken], [stored?.deviceId, stored?.refreshToken]);
+  assert.equal(await restarted.session.deviceState(), "ok");
 });
 
 test("a_revoked_device_unlock_falls_back_to_a_new_sign_in", async () => {
@@ -364,7 +378,7 @@ test("a_revoked_device_unlock_falls_back_to_a_new_sign_in", async () => {
   const unlocked = await world.session.unlock({ password: PASSWORD });
   // The refusal ends the old tokens; the same password signs the extension in as a new device.
   assert.equal(unlocked.purpose, "login");
-  assert.deepEqual(world.server.calls.map((call) => call.path), [METHODS, LOGIN_START_PATH, LOGIN_FINISH_PATH, METHODS]);
+  assert.deepEqual(world.server.calls.map((call) => call.path), [LOGIN_START_PATH, METHODS, LOGIN_START_PATH, LOGIN_FINISH_PATH, METHODS]);
   assert.equal(world.server.to(METHODS)[0].headers.Authorization, `DPoP ${tok(1)}`, "the old device's token");
   assert.equal(world.server.to(METHODS)[1].headers.Authorization, `DPoP ${tok(11)}`, "the new device's first token");
   assert.equal((await world.record())?.deviceId, deviceId(1), "the new device's id");

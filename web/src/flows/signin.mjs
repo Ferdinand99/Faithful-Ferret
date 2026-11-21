@@ -61,11 +61,11 @@
 //     (`revoke`, best effort), which forgets its tokens; there is no cookie
 //     session to end, and nothing is pinned. A device is never offered the
 //     recovery: that runs in the web vault's session.
-//   - An unlock keeps the device (spec Fase 1 § 7.6): the device's token reads
-//     `unlock-methods` first (a device whose tokens have ended signs in again
-//     with the same password), then `login/start` and the client's side of the
-//     OPAQUE finish give the export key that opens the password wrap. KE3 is
-//     not posted, no device is made and no token is issued. The unlock needs
+//   - An unlock keeps the device (spec Fase 1 § 7.6): `login/start` and the
+//     client's side of the OPAQUE finish give the export key, and only then
+//     does the device's token read `unlock-methods` (a device whose tokens have
+//     ended signs in again with the same password); the export key opens the
+//     password wrap. KE3 is not posted, no device is made and no token is issued. The unlock needs
 //     the pinned record of the device's account: there is no first use at an
 //     unlock. A wrong password ends in the core and changes nothing on the
 //     server.
@@ -399,16 +399,6 @@ async function unlockDevice(env, args) {
   // No first use at an unlock: the pin of the device's own account, or a sign-in.
   if (!record || !(record.account_id instanceof Uint8Array) || hex16.encode(record.account_id) !== accountId) return signInAgain(email);
 
-  // The device's token first: a device that was signed out, revoked or replaced signs in again, before any password work.
-  /** @type {Record<string, any>} */
-  let methods;
-  try {
-    methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401 && tokens.state !== "ok") return signInAgain(email);
-    throw error;
-  }
-
   const { skBit, skCode } = await decideSecretKey(env, db, record, args);
   /** @type {Record<string, any>} */
   let start;
@@ -425,6 +415,18 @@ async function unlockDevice(env, args) {
   } catch (error) {
     // Nothing was opened: the job drops the password-derived state it holds.
     await Promise.resolve(client.vault.clear()).catch(() => undefined);
+    throw error;
+  }
+
+  // Only now, with the password proved on this device, the device's token: a wrong password never renews the tokens
+  // or moves the device's last use. A device that was signed out, revoked or replaced signs in again.
+  /** @type {Record<string, any>} */
+  let methods;
+  try {
+    methods = await api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+  } catch (error) {
+    await Promise.resolve(client.vault.clear()).catch(() => undefined);
+    if (error instanceof ApiError && error.status === 401 && tokens.state !== "ok") return signInAgain(email);
     throw error;
   }
 
