@@ -366,10 +366,12 @@ proof of the key (DPoP, RFC 9449). The web vault is not a device: it keeps its c
   site must not be able to send a token request. A browser extension needs permission for the vault address in its own
   manifest instead.
 * **Keep the clocks right (NTP) on the proxy host and on the server host.** A proof is accepted within 60 seconds of the
-  server's clock. A device sets its proofs by the `Date` header of the answers it gets, and a proxy that writes its own
-  `Date` (nginx does) gives it the proxy's time while the server checks against its own. If the two clocks differ by more
-  than a few seconds, devices begin to fail with `dpop_invalid`. The server's clock is the one that counts; fix the proxy
-  host to match.
+  server's clock. A device uses its own clock for its proofs until the server refuses one with `dpop_invalid`; only then
+  does it take the `Date` header of that refusal, and it sends the request once more. A proxy that writes its own `Date`
+  (nginx does) therefore gives the device the proxy's time at that moment. A small gap does no harm, and one resync
+  repairs a device whose own clock is off, but if the proxy's clock and the server's differ by close to a minute (the
+  60 second window), the resynced device is refused again and keeps failing with `dpop_invalid`. The server's clock is
+  the one that counts; fix the proxy host to match.
 * **The event stream** of a device ends when its access token expires (at most 15 minutes) and the device opens a new one,
   so a proxy timeout that is longer than the 25 seconds between its heartbeats is enough.
 
