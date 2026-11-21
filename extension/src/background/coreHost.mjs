@@ -14,8 +14,10 @@
 // and fails on any other importer.
 //
 // Boundary: an op gets the raw client. Production ops therefore live in this
-// file; the only other code that passes ops in is the test build's hooks
-// (the test build only), which a release does not contain.
+// file or in a background module that only the entry (main.mjs) imports and
+// passes in as `ops`: the session's ops (session.mjs), which hold the account
+// session over the same client. The only other code that passes ops in is the
+// test build's hooks (the test build only), which a release does not contain.
 
 /** The reasons a lock can have. */
 export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_out", "restart", "worker_failed"]);
@@ -27,7 +29,7 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * passes their implementations in (`ops`); in a release they are refused like any
  * other name.
  */
-export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open"]);
+export const CORE_OPS = Object.freeze(["ping", "argon2_bench", "measure_open", "server_check", "session_state", "sign_in", "unlock"]);
 
 /**
  * The codes that say the worker which holds the vault is gone or was ended:
@@ -51,9 +53,10 @@ export class CoreError extends Error {
 /**
  * @typedef {"timeout" | "idle" | "manual" | "sign_out" | "restart" | "worker_failed"} LockReason
  * @typedef {{ setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void }} Timers
- * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => void }} OpContext
- *   `setUnlocked` opens the host. It does nothing if a lock ran after the call
- *   started, and the call then fails with `vault_locked`.
+ * @typedef {{ now: () => number, timers: Timers, setUnlocked: () => boolean }} OpContext
+ *   `setUnlocked` opens the host and answers true. It does nothing and answers
+ *   false if a lock ran after the call started, and the call then fails with
+ *   `vault_locked`.
  * @typedef {{
  *   vault: boolean,
  *   worker: "vault" | "job" | "none",
@@ -219,7 +222,7 @@ export function createCoreHost({
         setUnlocked: () => {
           if (epoch !== started) {
             refusedUnlock = true;
-            return;
+            return false;
           }
           current = "unlocked";
           // At once, in the same turn: an open vault never exists without a deadline.
@@ -230,10 +233,23 @@ export function createCoreHost({
               // A listener that fails must not undo the unlock.
             }
           }
+          return true;
         },
       };
+      /** @type {any} */
+      let real = null;
+      // An op that opened the vault after a lock had come (its unlock was refused) leaves the vault in a worker that
+      // started after that lock: that worker is ended too, before the refusal goes out. If another call has opened the
+      // host in the meantime, the host locks as a whole (fail closed).
+      let ended = false;
+      const endRefused = async () => {
+        if (!refusedUnlock || ended) return;
+        ended = true;
+        if (current === "unlocked") await lock("manual").catch(() => {});
+        else await Promise.resolve(real?.lock()).catch(() => {});
+      };
       try {
-        const real = await client();
+        real = await client();
         const view = {
           get vault() {
             usedVault = true;
@@ -245,9 +261,14 @@ export function createCoreHost({
         };
         const value = await def.run(view, args, context);
         // A lock that happened while the call ran wins: nothing is handed out for it.
-        if ((def.vault && current !== "unlocked") || refusedUnlock) throw new CoreError("vault_locked");
+        if (refusedUnlock) {
+          await endRefused();
+          throw new CoreError("vault_locked");
+        }
+        if (def.vault && current !== "unlocked") throw new CoreError("vault_locked");
         return value;
       } catch (error) {
+        await endRefused();
         if (error instanceof CoreError) throw error;
         const code = codeOf(error);
         // The vault worker is gone (it failed, ran out of memory, or was ended):

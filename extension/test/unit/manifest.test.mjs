@@ -274,7 +274,8 @@ test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_ad
     const added = (test.permissions ?? []).filter((/** @type {string} */ p) => !release.permissions.includes(p));
     assert.deepEqual(added.sort(), TEST_PERMISSIONS, `${mv}: what the test variant adds`);
     const optionalOf = (/** @type {Record<string, any>} */ m) => sortedUnion(m.optional_permissions, m.optional_host_permissions);
-    assert.deepEqual(optionalOf(release), [], `${mv}: a release asks for no optional permission yet`);
+    // The sign-in tab asks for the origin of the user's server (and only that) on a click.
+    assert.deepEqual(optionalOf(release), ["https://*/*"], `${mv}: a release may ask for an https origin`);
     assert.deepEqual(optionalOf(test), ["https://*/*"], `${mv}: the test variant may ask for any https origin`);
     assert.equal(test.options_ui.page, "pages/test-only/options.html");
     assert.ok(test.commands["ferret-test-command"]);

@@ -246,12 +246,15 @@ docker "${docker_args[@]}" run --rm -i --init \
 # Step 2: the tests. No network, or only the end-to-end stack's.
 network=none
 e2e_ca=""
+e2e_token=""
 if [ "$mode" = e2e ]; then
   stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
   if [ "$no_up" -eq 0 ]; then
     bash "$stack" e2e-up >&2
   fi
   e2e_ca="$(bash "$stack" e2e-ca)"
+  # The setup token of the stack (made up by e2e-up): the sign-in specs make the stack's first account with it.
+  e2e_token="$(bash "$stack" e2e-token)"
   network=ferret-e2e-net
 fi
 
@@ -281,6 +284,7 @@ make_run() {
     -e FERRET_GREP="$grep_name"
     -e FERRET_HEADLESS="$((1 - headed))"
     -e FERRET_E2E_CA_PEM="$e2e_ca"
+    -e FERRET_E2E_SETUP_TOKEN="$e2e_token"
     -e FERRET_MEASURE_MANIFESTS="$measure_manifests"
     -e FERRET_MEASURE_SCENARIOS="$scenario_list"
     -e FERRET_MEASURE_MINUTES="$window_minutes"

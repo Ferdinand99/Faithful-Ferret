@@ -317,6 +317,20 @@ ${this.log.slice(-4000)}`);
   }
 
   /**
+   * Makes the frame of an iframe element the one scripts run in (content
+   * context), whatever its origin, so a test can see which document it holds.
+   * @param {Element} el
+   */
+  async switchToFrame(el) {
+    await wire("POST", `${this.#s()}/frame`, { id: el });
+  }
+
+  /** Back to the top-level document of the selected tab. */
+  async switchToTopFrame() {
+    await wire("POST", `${this.#s()}/frame`, { id: null });
+  }
+
+  /**
    * Polls `fn` (here, not in the browser) until it returns something truthy.
    * @template T
    * @param {() => T | Promise<T>} fn

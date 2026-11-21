@@ -16,9 +16,10 @@
 /**
  * Message types that need no vault key and so are not checked: they must work
  * while the vault is locked (a user cannot unlock otherwise), and `lock` must
- * never be refused.
+ * never be refused. `server_check` reads the address a user typed on the
+ * sign-in page with a stateless function of the core, before any sign-in.
  */
-export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock"]);
+export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check"]);
 
 export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";

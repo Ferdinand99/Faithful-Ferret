@@ -103,7 +103,7 @@ test("unknown_core_op_is_refused", async () => {
 
 test("core_ops_is_a_frozen_list_and_the_release_has_no_argon2_bench", async () => {
   assert.equal(Object.isFrozen(CORE_OPS), true);
-  assert.deepEqual([...CORE_OPS], ["ping", "argon2_bench", "measure_open"]);
+  assert.deepEqual([...CORE_OPS], ["ping", "argon2_bench", "measure_open", "server_check", "session_state", "sign_in", "unlock"]);
   // Without the test build's implementation the name is in the list but refused.
   const release = createCoreHost({ createClient: () => createFakeClient() });
   await assert.rejects(release.call("argon2_bench", { m_kib: 8, t: 1, p: 1 }), { code: "unknown_core_op" });
@@ -267,10 +267,33 @@ test("a_lock_during_an_unlock_wins", async () => {
   const pending = host.call("slow_unlock");
   await tick();
   await host.lock("idle");
+  const afterLock = client.locks;
   open();
   await assert.rejects(pending, { code: "vault_locked" });
   assert.equal(host.state(), "locked");
   assert.equal(opened, 0, "nothing heard of an unlock that did not happen");
+  // The worker the refused unlock ran on is ended too: nothing it opened after the lock survives.
+  assert.equal(client.locks, afterLock + 1, "the worker of the refused unlock was ended");
+  // The same when the refused op fails after it tried to open.
+  const failing = {
+    failing_unlock: {
+      vault: false,
+      worker: /** @type {"vault"} */ ("vault"),
+      run: async (/** @type {any} */ _client, /** @type {any} */ _args, /** @type {any} */ ctx) => {
+        await tick();
+        if (!ctx.setUnlocked()) throw Object.assign(new Error("refused"), { code: "vault_locked" });
+        return { ok: true };
+      },
+    },
+  };
+  const other = createFakeClient();
+  const host2 = createCoreHost({ createClient: () => other, ops: failing, names: [...CORE_OPS, "failing_unlock"] });
+  const run2 = host2.call("failing_unlock");
+  await host2.lock("idle");
+  const before2 = other.locks;
+  await assert.rejects(run2, { code: "vault_locked" });
+  assert.equal(other.locks, before2 + 1);
+  assert.equal(host2.state(), "locked");
   // A later unlock works.
   const again = createCoreHost({ createClient: () => client, ops: probes, names });
   again.onUnlocked(() => {

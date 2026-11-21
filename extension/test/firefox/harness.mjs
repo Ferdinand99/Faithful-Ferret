@@ -8,6 +8,7 @@
 //   FERRET_MANIFEST     "mv3" (default) or "mv2": the build the default launch installs
 //   FERRET_HEADLESS     "0" runs with a window (under Xvfb); default headless
 //   FERRET_E2E_CA_PEM   the certificate authority of the end-to-end stack, to trust as well
+//   FERRET_E2E_SETUP_TOKEN  the setup token of a fresh end-to-end stack (its first account is made with it)
 //   FERRET_FIXTURE_PORT, FERRET_FIXTURE_ALT_PORT, FERRET_FIXTURE_HTTP_PORT
 //                       the fixture server's https, second https and http ports
 //                       (defaults 443, 8443 and 80, so the test sites have ordinary origins)

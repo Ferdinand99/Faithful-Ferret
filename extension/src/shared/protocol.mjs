@@ -58,11 +58,14 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
 /**
  * What the user types in an extension page: `sign_in` and `unlock` carry it to
  * the background, one way. No reply, content type or push type carries it.
- * A new device gives `sk` or `qr_text`; the sign-in handler checks that.
+ * A new device answers the secret key question with `sk`, `sk_bit: false` or
+ * the sheet's `qr_text`; a device that holds the account's record answers it
+ * from there. An unlock needs `sk` only when this device does not keep the
+ * secret key (the user chose not to remember it).
  */
 export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   sign_in: Object.freeze(["mp", "sk", "qr_text"]),
-  unlock: Object.freeze(["mp"]),
+  unlock: Object.freeze(["mp", "sk"]),
 });
 
 /** The type of the background's refusal. No table may define it. */
@@ -96,6 +99,9 @@ const tabId = integer({ min: 0, max: 2_147_483_647 });
 const frameId = integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 
 const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
+// A host name as the extension shows it (the core's `display_host`): the Unicode form, and the A-label next to it.
+const host = string({ min: 1, max: 300 });
+const email = string({ min: 1, max: 254 });
 const handle = object(
   {
     ref,
@@ -127,9 +133,20 @@ export const UI_TYPES = defineTypes({
       {
         state: string({ max: 16, oneOf: ["signed_out", "locked", "unlocked"] }),
         server: serverUrl,
+        host,
+        host_a_label: host,
+        account: email,
         lock_at: integer({ min: 0, max: 8_640_000_000_000_000 }),
       },
-      { optional: ["server", "lock_at"] },
+      { optional: ["server", "host", "host_a_label", "account", "lock_at"] },
+    ),
+  },
+  // The address a user typed on the sign-in page, checked and shown before anything is sent to it.
+  server_check: {
+    request: object({ server: serverUrl }),
+    reply: object(
+      { ok: boolean(), reason, server: serverUrl, host, host_a_label: host },
+      { optional: ["reason", "server", "host", "host_a_label"] },
     ),
   },
   lock: { request: empty, reply: okReply },
@@ -137,17 +154,26 @@ export const UI_TYPES = defineTypes({
     request: object(
       {
         server: serverUrl,
-        email: string({ min: 1, max: 254 }),
+        email,
         mp: string({ min: 1, max: 1024 }),
         sk: string({ min: 1, max: 128 }),
+        // The answer to "does this account have a secret key?" when no code is typed: only false (it has none)
+        // means anything; "yes" is answered by `sk`, and true without `sk` leaves the question open.
+        sk_bit: boolean(),
+        // Whether this device keeps the secret key (sealed) after the sign-in; left out: it does.
+        remember_sk: boolean(),
         qr_text: string({ min: 1, max: 2048 }),
       },
-      { optional: ["sk", "qr_text"] },
+      { optional: ["sk", "sk_bit", "remember_sk", "qr_text"] },
     ),
-    reply: okReply,
+    // Only the account's e-mail and the server: never anything the user typed.
+    reply: object(
+      { ok: boolean(), reason, account_email: email, server: serverUrl },
+      { optional: ["reason", "account_email", "server"] },
+    ),
   },
   unlock: {
-    request: object({ mp: string({ min: 1, max: 1024 }) }),
+    request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
   candidates: {
