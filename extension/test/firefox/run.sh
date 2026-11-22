@@ -72,7 +72,7 @@ fi
 # The gate's e2e step: the screenshots the specs take (FERRET_SHOTS_DIR) leave the container as a
 # tar archive on stdout, as the measure reports do.
 if [ "$mode" = e2e ] && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
-  FERRET_SHOTS_DIR=/work/test-results/out/u1-shots
+  FERRET_SHOTS_DIR=/work/test-results/out/gate-shots
   export FERRET_SHOTS_DIR
   mkdir -p "$FERRET_SHOTS_DIR"
 fi

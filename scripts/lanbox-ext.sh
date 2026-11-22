@@ -28,13 +28,16 @@
 #                                 --no-up) and leaves it up: run
 #                                 `scripts/lanbox-ferret-test.sh e2e-down` afterwards.
 #                                 --no-up without FERRET_E2E_SUFFIX uses the stack with
-#                                 the default names.
+#                                 the default names (one user at a time). At most two
+#                                 e2e runs at once, counted inside the limit of two
+#                                 Firefox runs. A per-run stack that a killed run left
+#                                 (older than six hours) is removed by the next run.
 #   scripts/lanbox-ext.sh gate [--channel release|esr] [--manifest mv3|mv2]
 #                                 the extension's gate run: the firefox step and then
 #                                 the e2e step (default manifest mv2, the Firefox
 #                                 build), with the screenshots the e2e specs take
-#                                 unpacked into test-results/out/u1-shots/ (or
-#                                 $FERRET_EXT_OUT_DIR/u1-shots/). Fails if either fails.
+#                                 unpacked into test-results/out/gate-shots/ (or
+#                                 $FERRET_EXT_OUT_DIR/gate-shots/). Fails if either fails.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
 #                                 the lifetime measurement of the background page: every
 #                                 scenario in both manifest versions, a window of 17
@@ -311,10 +314,30 @@ free_subnet() {
   done
 }
 
+# A run that was killed hard (no exit trap: SIGKILL, a lost Docker context, a reboot) leaves its
+# per-run stack behind. Before a run starts its own, every per-run stack (label owner=ferret-x<8 hex>)
+# with a container older than STALE_HOURS is removed with e2e-down. No run lasts that long.
+STALE_HOURS=6
+sweep_stale_stacks() {
+  local now owner created suffix stale=()
+  now="$(date +%s)"
+  while read -r owner created; do
+    [[ $owner =~ ^ferret-(x[0-9a-f]{8})$ ]] || continue
+    # CreatedAt reads "2026-11-22 13:05:01 +0100 CET"; the date, time and offset are enough.
+    created="$(date -d "$(cut -d' ' -f1-3 <<< "$created")" +%s 2> /dev/null || echo "$now")"
+    if [ $((now - created)) -gt $((STALE_HOURS * 3600)) ]; then stale+=("${BASH_REMATCH[1]}"); fi
+  done < <(docker "${docker_args[@]}" ps -a --filter label=owner --format '{{.Label "owner"}} {{.CreatedAt}}' 2> /dev/null || true)
+  for suffix in $(printf '%s\n' "${stale[@]+"${stale[@]}"}" | sort -u); do
+    echo "lanbox-ext.sh: removing the stack ferret-$suffix that a killed run left (older than $STALE_HOURS hours)" >&2
+    FERRET_E2E_SUFFIX="$suffix" bash "$stack" e2e-down >&2 || true
+  done
+}
+
 # The end-to-end stack: one of this run's own (FERRET_E2E_SUFFIX unset, no --no-up), so two runs on
 # the build host never remove each other's stack, or the stack the caller names.
 e2e_setup() {
   if [ -z "${FERRET_E2E_SUFFIX:-}" ] && [ "$no_up" -eq 0 ]; then
+    sweep_stale_stacks
     FERRET_E2E_SUFFIX="x$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     FERRET_E2E_SUBNET="$(free_subnet)"
     [ -n "$FERRET_E2E_SUBNET" ] || { echo "lanbox-ext.sh: no free 172.30.200-239 /28 for the stack's network" >&2; exit 1; }
@@ -420,7 +443,7 @@ if [ "$mode" = gate ]; then
     echo "lanbox-ext.sh: gate: the e2e step failed ($rc)" >&2
     status=$rc
   fi
-  echo "lanbox-ext.sh: gate: screenshots are in $out_dir/u1-shots/ (exit status $status)" >&2
+  echo "lanbox-ext.sh: gate: screenshots are in $out_dir/gate-shots/ (exit status $status)" >&2
   exit "$status"
 fi
 

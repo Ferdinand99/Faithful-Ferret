@@ -909,7 +909,11 @@ fetch(entry.resolved, { signal: AbortSignal.timeout(120000) }).then((r) => {
     --label "$e2e_label" "${e2e_dev_labels[@]}" \
     --network bridge \
     --cpus 1 --memory 1g \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --read-only \
     --tmpfs /work:exec,size=256m \
+    --tmpfs /tmp:size=64m \
     -v "$e2e_pwcore_volume:/pw" \
     -w /work \
     -e FETCH="$fetch" \
@@ -922,6 +926,8 @@ fetch(entry.resolved, { signal: AbortSignal.timeout(120000) }).then((r) => {
     --label "$e2e_label" "${e2e_dev_labels[@]}" \
     --network "$e2e_network" \
     --cpus 2 --memory 3g --shm-size 1g \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
     --tmpfs /tmp:exec,size=1g \
     -v "$e2e_pwcore_volume:/pw:ro" \
     -e FERRET_E2E_CA_PEM="$pem" \

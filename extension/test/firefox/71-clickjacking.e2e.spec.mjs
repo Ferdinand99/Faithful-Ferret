@@ -100,6 +100,8 @@ test("every_clickjacking_row_of_the_fixtures_fills_only_the_clear_fields", async
         await view.shot(`71-${site.id}`);
         // A page that already left the entry's origin when the list was read is not offered it at all.
         const offered = (await view.suggestions()).some((s) => s.name === w.named.host);
+        // Only a page that already left the entry's origin may be unoffered; the others are offered and refused.
+        assert.ok(offered || site.id === "blur-navigate", `${where}: the host entry is offered on the entry's own page`);
         toast = offered ? await view.fill(w.named.host) : "(not offered)";
       } finally {
         await view.close();
@@ -109,9 +111,15 @@ test("every_clickjacking_row_of_the_fixtures_fills_only_the_clear_fields", async
       // may still get the user name in its visible field: the engine then anchors on that field, as on the first step of
       // a two-step sign-in.)
       assert.deepEqual(await documentsHolding(w.session, password), [], `${where}: the password is nowhere on the page (${toast})`);
-      if (site.expect.outcome === "origin_changed") {
+      const user = typeof site.expect.user === "string" ? site.expect.user : null;
+      assert.deepEqual(await documentsHolding(w.session, USERNAME), user ? ["top"] : [], `${where}: the user name (${toast})`);
+      if (user) {
+        // The visible user name field is clear, so it is filled; the hostile password field is not.
+        const values = Object.fromEntries((await inputsOf(w.session)).map((i) => [i.id, i.value]));
+        assert.equal(values[user], USERNAME, `${where}: the user name is in #${user}`);
+        assert.equal(toast, POPUP_TEXT["popup.filled"], `${where}: the user name alone is filled (${toast})`);
+      } else {
         assert.notEqual(toast, POPUP_TEXT["popup.filled"], `${where}: refused (${toast})`);
-        assert.deepEqual(await documentsHolding(w.session, USERNAME), [], `${where}: nothing on the foreign page`);
       }
     }
 
@@ -181,7 +189,8 @@ test("navigation_between_pick_and_fill_fills_nothing", async () => {
         await w.session.navigate(w.server.siteUrl("foreign-login"));
         await w.session.waitFor(() => w.session.content(() => document.readyState === "complete"), 15_000, "the foreign page");
         const fill = await w.ui.body("fill", { ref: row.ref, tab_id: tabId });
-        assert.equal(fill.ok, false, `${channel}: the page changed: ${JSON.stringify(fill)}`);
+        // The re-check before the fill sees that the page left the entry's origin.
+        assert.deepEqual(fill, { ok: false, reason: "origin_changed" }, `${channel}: the page changed`);
       } finally {
         await w.ui.close();
       }
@@ -213,7 +222,8 @@ test("navigation_between_pick_and_fill_fills_nothing", async () => {
           }
         }, 15_000, `${where}: the frame moved from ${before}`);
         const fill = await w.ui.body("fill", { ref: row.ref, tab_id: tabId });
-        assert.equal(fill.ok, false, `${where}: ${JSON.stringify(fill)}`);
+        // The re-check before the fill sees that the frame left the entry's origin.
+        assert.deepEqual(fill, { ok: false, reason: "origin_changed" }, `${where}: the frame changed`);
       } finally {
         await w.ui.close();
       }

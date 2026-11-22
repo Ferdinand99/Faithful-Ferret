@@ -154,6 +154,11 @@ for arg in "$@"; do
       if grep -qx network "$DOCKER_STUB_DIR/call-$n"; then echo stubnet; fi
       exit 0
       ;;
+    ps)
+      # The containers the host has: "<owner label> <created at>" lines from DOCKER_STUB_PS (| between lines).
+      [ -z "${DOCKER_STUB_PS:-}" ] || printf '%s\n' "$DOCKER_STUB_PS" | tr '|' '\n'
+      exit 0
+      ;;
   esac
 done
 exit 0
@@ -253,6 +258,14 @@ STUB
   grep -qx "FERRET_E2E_CHROMIUM_WS=ws://ferret-$suffix-chromium:3000/" "$tests" || fail "ext: e2e: the browser server is not passed on"
   grep -qx 'FERRET_E2E_SETUP_TOKEN=TOKEN' "$tests" || fail "ext: e2e: the setup token is not passed on"
   grep -qx 'dev.run=ext-probe-e' "$tests" || fail "ext: e2e: dev.run label is missing"
+  # A stack that a killed run left (a container older than six hours) is removed before the run starts its own;
+  # a younger one (another run that is still going) and the default stack are left alone.
+  now_text="$(date -u '+%Y-%m-%d %H:%M:%S +0000 UTC')"
+  run_ext DOCKER_STUB_PS="ferret-xdeadbeef 2020-01-01 00:00:00 +0000 UTC|ferret-xcafef00d $now_text|ferret-e2e 2020-01-01 00:00:00 +0000 UTC|ferret-test 2020-01-01 00:00:00 +0000 UTC" \
+    scripts/lanbox-ext.sh e2e --channel release || { cat "$ext/out" >&2; fail "ext: e2e run with a stale stack failed"; }
+  [ "$(awk 'NR == 1 { print $1 "/" $2 }' "$ext/stack.log")" = "e2e-down/xdeadbeef" ] || fail "ext: e2e: the stale stack was not removed first ($(stack_words))"
+  ! grep -q 'xcafef00d' "$ext/stack.log" || fail "ext: e2e: a running stack was removed"
+  [ "$(grep -c '^e2e-down' "$ext/stack.log")" -eq 2 ] || fail "ext: e2e: expected the stale stack and the run's own to be removed ($(stack_words))"
   # Two runs get two stacks.
   first="$suffix"
   run_ext scripts/lanbox-ext.sh e2e || { cat "$ext/out" >&2; fail "ext: second e2e run failed"; }
@@ -274,6 +287,8 @@ STUB
   grep -qxE 'ferret-x[0-9a-f]{8}-net' "$ee" || fail "ext: gate: the e2e step is not on the run's stack"
   grep -qx 'FERRET_EXT_SHOTS=1' "$ee" || fail "ext: gate: the e2e step does not hand back its screenshots"
   grep -qx 'FERRET_EXT_SHOTS=0' "$ff" || fail "ext: gate: the firefox step was asked for screenshots"
+  grep -qx 'FERRET_E2E_SETUP_TOKEN=' "$ff" || fail "ext: gate: the firefox step got the stack's setup token"
+  grep -qx 'FERRET_E2E_SETUP_TOKEN=TOKEN' "$ee" || fail "ext: gate: the e2e step has no setup token"
   for f in "$ff" "$ee"; do
     grep -qx 'FERRET_MANIFEST=mv2' "$f" || fail "ext: gate: not the MV2 build"
     grep -qxE 'ferret-ext-probe-g-gate-(firefox|e2e)-[0-9]+' "$f" || fail "ext: gate: container name is wrong"

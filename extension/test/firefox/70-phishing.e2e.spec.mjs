@@ -55,6 +55,20 @@ test("every_phishing_row_of_the_fixtures_matches_its_expectation_in_the_popup", 
       const where = `${channel} ${site.id}`;
       const rows = expectationsOf(site);
       const tabId = await w.visit(w.server.siteUrl(site.id));
+      // The background's own answer for the tab: a list that failed would show the popup with no suggestions, which a
+      // "no offer" row must not take for a pass. The host shown is the core's display form of the page's host.
+      await w.ui.open();
+      let list;
+      try {
+        list = await w.ui.body("candidates", { tab_id: tabId });
+      } finally {
+        await w.ui.close();
+      }
+      assert.ok(Array.isArray(list.handles), `${where}: the list answered (${JSON.stringify(list)})`);
+      if (site.expect.display) assert.deepEqual(list.host, site.expect.display, `${where}: the host shown`);
+      for (const [outcome, key] of rows) {
+        if (outcome === "no_offer") assert.equal(list.handles.some((/** @type {any} */ h) => h.name === w.named[key]), false, `${where}: the ${key} entry is not in the list`);
+      }
       const view = await w.popup(tabId);
       /** @type {{ key: string, outcome: string } | null} */
       let chosen = null;
@@ -84,8 +98,11 @@ test("every_phishing_row_of_the_fixtures_matches_its_expectation_in_the_popup", 
         if (chosen !== null) {
           const toast = await view.fill(w.named[chosen.key]);
           await view.shot(`70-${site.id}-after`);
-          if (chosen.outcome === "no_offer_in_frame") refused += 1;
-          else {
+          if (chosen.outcome === "no_offer_in_frame") {
+            // What the top is offered finds nothing it may fill in the top, and the frame is never tried.
+            assert.notEqual(toast, POPUP_TEXT["popup.filled"], `${where}: the ${chosen.key} entry fills nothing (${toast})`);
+            refused += 1;
+          } else {
             assert.equal(toast, POPUP_TEXT["popup.filled"], `${where}: the ${chosen.key} entry fills`);
             filled += 1;
           }
