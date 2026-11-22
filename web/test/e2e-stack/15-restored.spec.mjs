@@ -136,7 +136,7 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   // The conflict shows both versions.
   await b.page.locator('[data-role="first-conflict"]').click();
   await expect(b.page.locator('[data-role="conflict"]')).toBeVisible();
-  await expect(b.page.locator('[data-role="side"]')).toHaveCount(2);
+  await expect(b.page.locator('[data-role="conflict"] [data-role="side"]')).toHaveCount(2);
   await shot(b.page, "15-restored-conflict-view-b");
   // Settling both with the server's version leaves the two browsers the same.
   for (let left = 2; left > 0; left -= 1) {
