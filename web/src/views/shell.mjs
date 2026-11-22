@@ -419,7 +419,16 @@ export async function enterVault(ctx) {
   const autoLock = autoLockFor(session, sync);
 
   const open = session.current?.() ?? null;
-  const onUnlocked = () => go(path);
+  // After an unlock the same screen comes back, with the filters of its address (the list keeps them there).
+  const onUnlocked = () => {
+    const hash = String(globalThis.location?.hash ?? "");
+    const cut = hash.indexOf("?");
+    try {
+      go(cut < 0 ? path : `${path}${hash.slice(cut)}`);
+    } catch {
+      go(path);
+    }
+  };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
   const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
   if (!open) return { locked: lockedScreen() };

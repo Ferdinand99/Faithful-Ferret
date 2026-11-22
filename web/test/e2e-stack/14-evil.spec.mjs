@@ -4,7 +4,7 @@
 // changes something; a new device is made where the lie must be caught by the checkpoint.
 import {
   createItem, editItem, evil, evilNow, evilSession, expect, feedOf, itemIdOf, newDevice, noViolations, openItem, openList,
-  putCheckpointOnTop, rowsNamed, shot, synced, syncBanner, test, useAccount, warningBanner,
+  putCheckpointOnTop, findRows, shot, synced, syncBanner, test, useAccount, warningBanner,
 } from "./support.mjs";
 
 const SEEN = 20_000;
@@ -53,7 +53,7 @@ test.beforeEach(async () => {
 async function make(name, fields = {}) {
   await createItem(a.page, { name, username: fields.username ?? "evil-user", notes: fields.notes });
   await openList(b.page);
-  await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: SEEN });
   await openList(a.page);
   await synced(a.page);
   return itemIdOf(a.page, name);
@@ -69,7 +69,7 @@ const warned = (page) => page.locator('[data-role="sync-banner"]:not([data-code=
 /** The names on both lists, which must all still be there. @param {string[]} names */
 async function nothingIsGone(...names) {
   await openList(a.page);
-  for (const name of names) await expect(rowsNamed(a.page, name), `${name} is still in the list`).toHaveCount(1);
+  for (const name of names) await expect((await findRows(a.page, name)), `${name} is still in the list`).toHaveCount(1);
 }
 
 /** The banner's way on after the server is honest again. @param {import("@playwright/test").Page} page @param {string} code */
@@ -100,7 +100,7 @@ test("replay_old_gives_rev_lower_than_local_and_a_new_device_sees_an_older_state
   const id = await make(r);
   await editItem(a.page, r, { name: `${r}-2`, username: "second-version" });
   await openList(b.page);
-  await expect(rowsNamed(b.page, `${r}-2`)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, `${r}-2`))).toHaveCount(1, { timeout: SEEN });
   await synced(a.page);
   await evil("replay_old", { id });
   await editItem(b.page, `${r}-2`, { name: `${r}-3`, username: "third-version" });
@@ -143,7 +143,7 @@ test("gone_makes_a_full_reconciliation_and_everything_is_kept", async () => {
   await editItem(b.page, g, { name: `${g}-b`, username: "after-gone" });
   await listing;
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${g}-b`)).toHaveCount(1, { timeout: WARNED });
+  await expect((await findRows(a.page, `${g}-b`))).toHaveCount(1, { timeout: WARNED });
   await shot(a.page, "14-evil-gone");
   await expect(warned(a.page)).toHaveCount(0);
   await synced(a.page);
@@ -179,12 +179,12 @@ test("fork_is_not_detected_in_v1_and_nothing_is_lost", async ({ browser }) => {
   await createItem(a.page, { name: f2 });
   await synced(a.page);
   await openList(b.page);
-  await expect(rowsNamed(b.page, f2)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, f2))).toHaveCount(1, { timeout: SEEN });
   await openList(a.page);
   // A does not see what B did and is not warned: a fork is not detected in the first version.
   await a.page.waitForTimeout(8_000);
-  await expect(rowsNamed(a.page, f1)).toHaveCount(0);
-  await expect(rowsNamed(a.page, e)).toHaveCount(1);
+  await expect((await findRows(a.page, f1))).toHaveCount(0);
+  await expect((await findRows(a.page, e))).toHaveCount(1);
   await expect(warned(a.page)).toHaveCount(0);
   await expect(a.page.locator('[data-role="banner"]')).toHaveCount(0);
   await shot(a.page, "14-evil-fork");
@@ -193,12 +193,12 @@ test("fork_is_not_detected_in_v1_and_nothing_is_lost", async ({ browser }) => {
   // Nothing is lost: everything is on the real server, so a device that is not forked has all of it ...
   await evil("honest");
   await openList(b.page);
-  await expect(rowsNamed(b.page, f1)).toHaveCount(1);
-  await expect(rowsNamed(b.page, f2)).toHaveCount(1);
-  await expect(rowsNamed(b.page, `${e}-b`)).toHaveCount(1);
+  await expect((await findRows(b.page, f1))).toHaveCount(1);
+  await expect((await findRows(b.page, f2))).toHaveCount(1);
+  await expect((await findRows(b.page, `${e}-b`))).toHaveCount(1);
   const fresh = await newDevice(browser);
   try {
-    for (const name of [f1, f2, `${e}-b`]) await expect(rowsNamed(fresh.page, name)).toHaveCount(1, { timeout: SEEN });
+    for (const name of [f1, f2, `${e}-b`]) await expect((await findRows(fresh.page, name))).toHaveCount(1, { timeout: SEEN });
   } finally {
     await fresh.context.close();
   }
@@ -239,7 +239,7 @@ test("rollback_stops_sync_with_no_offer_to_accept_and_nothing_is_lost", async ()
   await evil("honest");
   await tryAgain(a.page, "rollback_suspected");
   if ((await syncBanner(b.page, "rollback_suspected").count()) > 0) await tryAgain(b.page, "rollback_suspected");
-  await expect(rowsNamed(a.page, `${first}-b`)).toHaveCount(1, { timeout: WARNED });
+  await expect((await findRows(a.page, `${first}-b`))).toHaveCount(1, { timeout: WARNED });
 });
 
 test("seq_lie_lower_gives_rollback_suspected_and_nothing_is_lost", async () => {
@@ -254,7 +254,7 @@ test("seq_lie_lower_gives_rollback_suspected_and_nothing_is_lost", async () => {
   await evil("honest");
   await tryAgain(a.page, "rollback_suspected");
   if ((await syncBanner(b.page, "rollback_suspected").count()) > 0) await tryAgain(b.page, "rollback_suspected");
-  await expect(rowsNamed(a.page, `${s}-b`)).toHaveCount(1, { timeout: WARNED });
+  await expect((await findRows(a.page, `${s}-b`))).toHaveCount(1, { timeout: WARNED });
 });
 
 test.describe("on a new device the checkpoint catches the lies", () => {
@@ -268,7 +268,7 @@ test.describe("on a new device the checkpoint catches the lies", () => {
     await make(h);
     await synced(a.page);
     await openList(b.page);
-    await expect(rowsNamed(b.page, `${r}-2`)).toHaveCount(1, { timeout: SEEN });
+    await expect((await findRows(b.page, `${r}-2`))).toHaveCount(1, { timeout: SEEN });
     await putCheckpointOnTop(browser);
     state.r = { name: `${r}-2`, id: await itemIdOf(a.page, `${r}-2`) };
     state.h = { name: h, id: await itemIdOf(a.page, h) };
@@ -295,7 +295,7 @@ test.describe("on a new device the checkpoint catches the lies", () => {
     const device = await newDevice(browser);
     try {
       await expect(syncBanner(device.page, "server_shows_older_state")).toBeVisible({ timeout: WARNED });
-      await expect(rowsNamed(device.page, state.h?.name ?? "")).toHaveCount(0);
+      await expect((await findRows(device.page, state.h?.name ?? ""))).toHaveCount(0);
       await shot(device.page, "14-evil-hide-new-device");
     } finally {
       await device.context.close();
@@ -310,7 +310,7 @@ test.describe("on a new device the checkpoint catches the lies", () => {
       try {
         await expect(syncBanner(device.page, "checkpoint_forged")).toBeVisible({ timeout: WARNED });
         // The rows are the real ones: the lie is in the checkpoint only, and the items show.
-        await expect(rowsNamed(device.page, state.h?.name ?? "")).toHaveCount(1, { timeout: SEEN });
+        await expect((await findRows(device.page, state.h?.name ?? ""))).toHaveCount(1, { timeout: SEEN });
         await expect(device.page.locator('[data-role="sync-status"]')).not.toHaveAttribute("data-state", "halted");
         await shot(device.page, `14-evil-forge-${field}`);
       } finally {
@@ -324,7 +324,7 @@ test.describe("on a new device the checkpoint catches the lies", () => {
     await evil("drop_checkpoint_head");
     const device = await newDevice(browser);
     try {
-      await expect(rowsNamed(device.page, state.h?.name ?? "")).toHaveCount(1, { timeout: SEEN });
+      await expect((await findRows(device.page, state.h?.name ?? ""))).toHaveCount(1, { timeout: SEEN });
       await synced(device.page);
       await device.page.waitForTimeout(3_000);
       await expect(warned(device.page)).toHaveCount(0);
@@ -350,7 +350,7 @@ test("seq_lie_higher_is_the_known_gap_and_nothing_is_lost", async ({ browser }) 
     await editItem(b.page, s, { name: `${s}-b`, username: "after-the-lie" });
     // The change comes through and nothing is said or stopped: a number that is too high is not a sign of a rollback, and
     // the number is not signed (the known gap).
-    await expect(rowsNamed(a.page, `${s}-b`)).toHaveCount(1, { timeout: WARNED });
+    await expect((await findRows(a.page, `${s}-b`))).toHaveCount(1, { timeout: WARNED });
     await expect(warned(a.page)).toHaveCount(0);
     await expect(a.page.locator('[data-role="sync-status"]')).not.toHaveAttribute("data-state", "halted");
     await shot(a.page, "14-evil-seq-lie-higher");

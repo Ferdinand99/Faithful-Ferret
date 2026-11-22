@@ -509,8 +509,19 @@ export async function createItem(page, item) {
   await expect(page.locator('[data-role="item"] h1')).toContainText(item.name, { timeout: 30_000 });
 }
 
-/** The list rows with this name. @param {import("@playwright/test").Page} page @param {string} name */
-export const rowsNamed = (page, name) => page.locator('[data-role="item"]', { hasText: name });
+/**
+ * The list rows with this name. A long list draws only the rows near the screen, so the search of the list is filled with the
+ * name first: a search finds at most 150 rows, all of them drawn, so that "there is one" and "there is none" both mean something.
+ * The search stays filled until the list is opened again (`openList`).
+ * @param {import("@playwright/test").Page} page @param {string} name
+ */
+export async function findRows(page, name) {
+  await page.locator('[data-role="list"]').waitFor({ state: "attached", timeout: 10_000 }).catch(() => {});
+  const search = page.locator('[data-role="search"]');
+  // An empty vault has no search field, and every name is then absent in any case.
+  if (name !== "" && (await search.isVisible())) await search.fill(name);
+  return page.locator('[data-role="item"]', { hasText: name });
+}
 
 /**
  * Opens the list and waits for an item to show.
@@ -519,6 +530,9 @@ export const rowsNamed = (page, name) => page.locator('[data-role="item"]', { ha
 export async function openList(page) {
   await page.locator('[data-role="nav-items"]').click();
   await expect(page.locator('[data-role="list"]')).toBeVisible();
+  // The list may have been on the screen with a search in it: the link to the same address builds nothing new.
+  const search = page.locator('[data-role="search"]');
+  if ((await search.isVisible()) && (await search.inputValue()) !== "") await search.fill("");
 }
 
 // ------------------------------------------------------------- browser store
@@ -734,7 +748,7 @@ export async function synced(page, timeout = 30_000) {
  * @param {import("@playwright/test").Page} page @param {string} name
  */
 export async function itemIdOf(page, name) {
-  const id = await rowsNamed(page, name).first().getAttribute("data-id");
+  const id = await (await findRows(page, name)).first().getAttribute("data-id");
   if (!id) throw new Error(`no list row named ${name}`);
   return id;
 }
@@ -745,7 +759,7 @@ export async function itemIdOf(page, name) {
  */
 export async function openItem(page, name) {
   await openList(page);
-  await rowsNamed(page, name).locator('[data-role="item-link"]').first().click();
+  await (await findRows(page, name)).locator('[data-role="item-link"]').first().click();
   await expect(page.locator('[data-role="item"] h1')).toContainText(name);
 }
 
@@ -836,8 +850,17 @@ export const syncBanner = (page, code) => page.locator(`[data-role="sync-banner"
 /** The one-shot banner of a warning code. @param {import("@playwright/test").Page} page @param {string} code */
 export const warningBanner = (page, code) => page.locator(`[data-role="banner"][data-banner="warning:${code}"]`);
 
-/** The names in the list on the screen. @param {import("@playwright/test").Page} page */
-export const listNames = (page) => page.locator('[data-role="item"] [data-role="item-link"]').allTextContents();
+/**
+ * The names in the list on the screen. A list of more than 150 items draws only a window of its rows, so this refuses to answer for
+ * one (look for the rows of a name with `findRows` instead).
+ * @param {import("@playwright/test").Page} page
+ */
+export async function listNames(page) {
+  const count = (await page.locator('[data-role="count"]').textContent()) ?? "";
+  const total = Number(/(d+)s*items?$/.exec(count.trim())?.[1] ?? 0);
+  if (total > 150) throw new Error(`listNames: the list holds ${total} items and draws only a window of them; use findRows`);
+  return page.locator('[data-role="item"] [data-role="item-link"]').allTextContents();
+}
 
 // ------------------------------------------------------------ the shots
 

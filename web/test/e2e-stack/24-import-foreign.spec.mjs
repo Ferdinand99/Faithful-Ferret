@@ -3,7 +3,7 @@
 // budget, and what an import window does when the account is changed under it.
 import { request } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { addNeedle, bulkJson, freshRedeemWindow, hostStep, redeemCode, signInHere, chooseImportFile, expect, feedOf, leave, listNames, memory, newDevice, noViolations, openImport, openItem, openList, pace, readStores, remember, requireAccount, rowsNamed, runChosenImport, secrets, SLOW, startHeldImport, synced, test, vaultUrl } from "./support.mjs";
+import { addNeedle, bulkJson, freshRedeemWindow, hostStep, redeemCode, signInHere, chooseImportFile, expect, feedOf, leave, listNames, memory, newDevice, noViolations, openImport, openItem, openList, pace, readStores, remember, requireAccount, findRows, runChosenImport, secrets, SLOW, startHeldImport, synced, test, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -131,8 +131,7 @@ test("an_import_of_1000_items_finishes_within_budget", async ({ browser }) => {
   await page.evaluate(() => {
     location.hash = "#/items";
   });
-  await page.locator('[data-role="search"]').fill(`Bulk-${tag}-777`);
-  await expect(rowsNamed(page, `Bulk-${tag}-777`)).toHaveCount(1, { timeout: 30_000 });
+  await expect((await findRows(page, `Bulk-${tag}-777`))).toHaveCount(1, { timeout: 30_000 });
   await device.context.close();
 });
 
@@ -169,9 +168,7 @@ test("a_password_change_while_an_import_window_is_open_leaves_the_dead_session_n
   await changing.page.evaluate(() => {
     location.hash = "#/items";
   });
-  // A long list draws only the rows near the screen: a search finds the one that is wanted.
-  await changing.page.locator('[data-role="search"]').fill(`Bulk-own-${tag}-77`);
-  await expect(rowsNamed(changing.page, `Bulk-own-${tag}-77`)).toHaveCount(1, { timeout: 120_000 });
+  await expect((await findRows(changing.page, `Bulk-own-${tag}-77`))).toHaveCount(1, { timeout: 120_000 });
   await changing.context.close();
 
   // ---- The window of the session that is ended: another browser of the account changes the password while its batches wait.

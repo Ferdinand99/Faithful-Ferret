@@ -99,15 +99,25 @@ test("the_address_has_the_filters_and_the_order_and_never_the_search_text", () =
   assert.equal(formatListQuery({ ...defaultState(), sort: "changed", dir: "desc" }), "sort=changed", "the first direction of a column is not spelled");
   assert.equal(formatListQuery({ ...defaultState(), dir: "desc" }), "dir=desc");
   assert.deepEqual(parseListQuery("dir=desc"), { ...defaultState(), dir: "desc" });
-  // A folder name is escaped, and read only when the list has folders.
-  const withFolders = { ...defaultState(), folders: ["Home, sweet", "Ä/x"] };
-  const query = formatListQuery(withFolders, { folders: true });
-  assert.match(query, /^folder=[A-Za-z0-9_.~%,-]+$/, "plain characters only, so the address passes the router");
-  assert.deepEqual(parseListQuery(query, { folders: true }).folders, ["Home, sweet", "Ä/x"].sort());
-  assert.deepEqual(parseListQuery(query).folders, [], "no folders in the vault: the name is not read");
-  assert.equal(formatListQuery(withFolders), "", "and not written");
+  // A folder name is an encrypted label of the vault: it is never written in the address, which stays in the history of the browser.
+  const withFolders = { ...defaultState(), folders: ["Home, sweet", "Ä/x"], types: ["note"] };
+  assert.equal(formatListQuery(withFolders), "type=note", "the folder filter is not written");
+  assert.ok(!formatListQuery(withFolders).includes("folder"));
+  assert.deepEqual(parseListQuery("folder=Home&type=note").folders, [], "and not read");
+  assert.equal(sameState({ ...defaultState(), folders: ["A"] }, defaultState()), false, "but it is part of the state");
+  assert.equal(sameState({ ...defaultState(), folders: ["B", "A"] }, { ...defaultState(), folders: ["A", "B"] }), true);
   // No field of the state can carry the search text or an item name.
   for (const key of Object.keys(defaultState())) assert.ok(["types", "favorite", "folders", "sort", "dir"].includes(key));
+});
+
+test("the_matcher_forgets_what_it_folded_when_asked", () => {
+  const matcher = createMatcher();
+  const items = [item(1, { name: "Secret bank" }), item(2, { name: "Other" })];
+  matcher.filter(items, "bank");
+  matcher.warm(items, 0, 10);
+  assert.equal(matcher.size(), 2);
+  matcher.clear();
+  assert.equal(matcher.size(), 0, "nothing of a name stays after a lock");
 });
 
 test("an_address_that_is_made_up_reads_as_the_default_list", () => {
@@ -116,7 +126,7 @@ test("an_address_that_is_made_up_reads_as_the_default_list", () => {
     "=1", "&&&", "type=login=note", "folder=%E0%A4%A", "__proto__=1", "type[]=login",
   ];
   for (const query of bad) {
-    const state = parseListQuery(query, { folders: true });
+    const state = parseListQuery(query);
     assert.ok(["asc", "desc"].includes(state.dir), query);
     assert.ok(state.types.length <= 8, query);
     for (const type of state.types) assert.match(type, /^[a-z][a-z0-9_-]{0,23}$/, query);
@@ -126,7 +136,7 @@ test("an_address_that_is_made_up_reads_as_the_default_list", () => {
   assert.deepEqual(parseListQuery("type=LOGIN&fav=yes&sort=password"), defaultState());
   assert.deepEqual(parseListQuery("type=login&type=note").types, ["login"], "the first of a repeated key");
   assert.deepEqual(parseListQuery("type=login,login,note").types, ["login", "note"]);
-  assert.equal(parseListQuery("folder=%E0%A4%A", { folders: true }).folders.length, 0, "a broken escape is left out");
+  assert.equal(parseListQuery("folder=%E0%A4%A").folders.length, 0, "a folder in the address is never read");
   assert.equal(sameState(parseListQuery("type=note,login"), parseListQuery("type=login,note")), true);
   assert.equal(hasFilters(defaultState()), false);
   assert.equal(hasFilters({ ...defaultState(), favorite: true }), true);
@@ -141,7 +151,7 @@ test("the_router_reads_the_query_of_the_address_and_nothing_else", () => {
     assert.equal(parseLocation(/** @type {any} */ (bad)), null, String(bad));
   }
   // What the list writes always passes.
-  const query = formatListQuery({ ...defaultState(), types: ["login", "note"], favorite: true, folders: ["Ä b,c"], sort: "changed", dir: "asc" }, { folders: true });
+  const query = formatListQuery({ ...defaultState(), types: ["login", "note"], favorite: true, folders: ["Ä b,c"], sort: "changed", dir: "asc" });
   assert.notEqual(parseLocation(`#/items?${query}`), null);
 });
 

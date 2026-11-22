@@ -1,6 +1,6 @@
 // Deleting moves an item to the local trash (30 days, on every device that sees the deletion), and restoring brings it
 // back everywhere. A deletion against an edit made offline is a conflict, not a loss.
-import { createItem, editItem, expect, newDevice, noViolations, openItem, openList, rowsNamed, shot, synced, test, useAccount } from "./support.mjs";
+import { createItem, editItem, expect, newDevice, noViolations, openItem, openList, findRows, shot, synced, test, useAccount } from "./support.mjs";
 
 const SEEN = 15_000;
 
@@ -47,11 +47,11 @@ test("delete_moves_to_the_trash_and_restore_brings_it_back_in_both_browsers", as
   const name = `Trash-${Date.now()}`;
   await createItem(a.page, { name, username: "trash-user", notes: "to the trash and back" });
   await openList(b.page);
-  await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: SEEN });
 
   await deleteItem(a.page, name);
-  await expect(rowsNamed(a.page, name)).toHaveCount(0);
-  await expect(rowsNamed(b.page, name)).toHaveCount(0, { timeout: SEEN });
+  await expect((await findRows(a.page, name))).toHaveCount(0);
+  await expect((await findRows(b.page, name))).toHaveCount(0, { timeout: SEEN });
 
   // Both devices keep the deleted item in the trash, by name.
   await openTrash(a.page);
@@ -64,10 +64,10 @@ test("delete_moves_to_the_trash_and_restore_brings_it_back_in_both_browsers", as
   await trashed(a.page, name).locator('[data-role="restore"]').click();
   await expect(trashed(a.page, name)).toHaveCount(0, { timeout: 30_000 });
   await openList(a.page);
-  await expect(rowsNamed(a.page, name)).toHaveCount(1, { timeout: 30_000 });
+  await expect((await findRows(a.page, name))).toHaveCount(1, { timeout: 30_000 });
   await synced(a.page);
   await openList(b.page);
-  await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: SEEN });
   await openItem(b.page, name);
   await expect(b.page.locator('[data-role="item"]')).toContainText("trash-user");
   await openTrash(b.page);
@@ -80,7 +80,7 @@ test("delete_against_an_offline_edit_gives_a_deleted_conflict", async () => {
   const base = `Deleted-conflict-${Date.now()}`;
   await createItem(a.page, { name: base, username: "base-user" });
   await openList(b.page);
-  await expect(rowsNamed(b.page, base)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, base))).toHaveCount(1, { timeout: SEEN });
   await synced(b.page);
 
   // B edits offline; A deletes; B comes back.
@@ -102,7 +102,7 @@ test("delete_against_an_offline_edit_gives_a_deleted_conflict", async () => {
   await b.page.locator('[data-role="dialog-confirm"]').click();
   await expect(b.page.locator('[data-role="item"] h1')).toContainText(`${base}-B`, { timeout: 30_000 });
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${base}-B`)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(a.page, `${base}-B`))).toHaveCount(1, { timeout: SEEN });
   await openItem(a.page, `${base}-B`);
   await expect(a.page.locator('[data-role="item"]')).toContainText("b-user");
 });

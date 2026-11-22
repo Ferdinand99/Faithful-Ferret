@@ -81,6 +81,8 @@ async function mountList(page, options = {}) {
       prefs: createListPrefs(window.localStorage), moveToFolder: opts.moveToFolder ? () => { window.__calls.moves += 1; } : undefined,
     });
     mount(main, view);
+    // Reading the height makes the browser do style and layout now: they are part of the time.
+    void document.body.offsetHeight;
     window.__firstRender = performance.now() - started;
   }, options);
   await expect(page.locator('[data-role="list"]')).toBeAttached();
@@ -297,15 +299,23 @@ test.describe("the list on a desktop", () => {
     await expect(links.nth(2)).toBeFocused();
     await page.keyboard.press("ArrowUp");
     await expect(links.nth(1)).toBeFocused();
-    // The same control of the next row: the box, then the menu button.
+    // The same control of the next row: the box.
     const boxes = page.locator('[data-role="select"]');
     await boxes.nth(1).focus();
     await page.keyboard.press("ArrowDown");
     await expect(boxes.nth(2)).toBeFocused();
+    // On the menu button the arrows open its own menu (and only that), with the focus inside it; Escape gives the focus back.
     const opts = page.locator('[data-role="row-menu"]');
     await opts.nth(2).focus();
-    await page.keyboard.press("ArrowUp");
-    await expect(opts.nth(1)).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(opts.nth(2)).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("menu", { name: "Item 00002" }).getByRole("menuitem", { name: "View" })).toBeFocused();
+    await expect(opts.nth(3)).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Escape");
+    await expect(opts.nth(2)).toBeFocused();
+    await opts.nth(2).press("ArrowUp");
+    await expect(page.getByRole("menu", { name: "Item 00002" }).getByRole("menuitem", { name: "Move to trash" })).toBeFocused();
+    await page.keyboard.press("Escape");
     // The sort buttons and the chips are buttons with names.
     await expect(page.getByRole("button", { name: /^Name/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /^Last changed/ })).toBeVisible();
@@ -376,6 +386,7 @@ test.describe("a long list", () => {
         search.value = text;
         const start = performance.now();
         search.dispatchEvent(new Event("input", { bubbles: true }));
+        void document.body.offsetHeight; // style and layout of the new rows count too
         out.push(performance.now() - start);
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
@@ -389,6 +400,7 @@ test.describe("a long list", () => {
     const chip = await page.evaluate(async () => {
       const start = performance.now();
       document.querySelector('[data-role="favorites-chip"]').click();
+      void document.body.offsetHeight;
       return performance.now() - start;
     });
     info.annotations.push({ type: "chip", description: `${chip.toFixed(1)} ms` });

@@ -1,7 +1,7 @@
 // "Forget this server": the device drops what it keeps for the account (the saved items, the record of what the server
 // showed before, the remembered secret key), the other tabs of the browser lock, and the next sign-in counts as the first
 // one on this device, with the secret key asked for. Nothing on the server is deleted.
-import { createItem, expect, freshContext, readStores, rowsNamed, secrets, shot, signInHere, signInOn, test, unlockWith, useAccount, vaultUrl, noViolations } from "./support.mjs";
+import { createItem, expect, freshContext, readStores, findRows, secrets, shot, signInHere, signInOn, test, unlockWith, useAccount, vaultUrl, noViolations } from "./support.mjs";
 
 noViolations();
 
@@ -63,7 +63,7 @@ test("forget_server_removes_the_local_data_tells_other_tabs_and_the_next_sign_in
     await expect(first.locator('[data-role="sk-remembered"]')).toBeHidden();
     await shot(first, "16-forget-next-sign-in-is-first-use");
     await signInHere(first);
-    await expect(rowsNamed(first, name)).toHaveCount(1, { timeout: 30_000 });
+    await expect((await findRows(first, name))).toHaveCount(1, { timeout: 30_000 });
   } finally {
     await context.close();
   }

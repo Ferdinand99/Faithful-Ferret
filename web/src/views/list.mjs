@@ -62,7 +62,10 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   const matcher = createMatcher();
 
   // ------------------------------------------------------------- state
-  let state = parseListQuery(nav?.query ?? "", { folders: true });
+  /** The query the address has now: the list writes it only when it differs. */
+  let lastQuery = nav?.query ?? "";
+  /** The filters. The folder filter is in memory only: it is not in the address. */
+  let state = parseListQuery(lastQuery);
   let query = "";
   /** @type {any[]} every item but the manifest */
   let source = [];
@@ -190,7 +193,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   const chips = el("div", { class: "list-chips", role: "group", "aria-label": t("list.filters") }, typeChip.node, favChip, folderChip.node, summary);
 
   // ---- the bar for several rows
-  const bulkCount = el("span", { class: "bulk-count", "data-role": "bulk-count" });
+  const bulkCount = el("span", { class: "bulk-count", role: "status", "data-role": "bulk-count" });
   const bulkFavorite = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "bulk-favorite" });
   const bulkTrash = el("button", { type: "button", class: "btn btn-danger btn-sm i-trash", "data-role": "bulk-trash" }, t("list.bulk_trash"));
   const bulkClear = el("button", { type: "button", class: "btn btn-plain btn-sm", "data-role": "bulk-clear" }, t("list.bulk_clear"));
@@ -215,7 +218,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   const headName = el("div", { class: "cell c-name", role: "columnheader", "aria-sort": "ascending" }, sortName.button);
   const headFolders = el("div", { class: "cell c-folders", role: "columnheader" }, t("list.col_folders"));
   const headChanged = el("div", { class: "cell c-changed", role: "columnheader", "aria-sort": "none" }, sortChanged.button);
-  const head = el("div", { class: "list-head", role: "row", "data-role": "list-head" },
+  const head = el("div", { class: "list-head", role: "row", "aria-rowindex": "1", "data-role": "list-head" },
     el("div", { class: "cell c-check", role: "columnheader" }, selectAll),
     headName, headFolders, headChanged,
     el("div", { class: "cell c-opts", role: "columnheader" }, el("span", { class: "visually-hidden" }, t("list.col_options"))));
@@ -261,20 +264,29 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     if (sameState(clean, state)) return;
     state = clean;
     update();
-    nav?.set(formatListQuery(state, { folders: true }));
+    // A change that is only of the folder filter (not in the address) is no new entry of the history.
+    const query = formatListQuery(state);
+    if (query !== lastQuery) {
+      lastQuery = query;
+      nav?.set(query);
+    }
   }
 
+  /** Lets go of the address: the lock ends the screen, and nothing of it may stay reachable through the router. @type {(() => void) | null} */
+  let offWatch = null;
   if (nav) {
     const off = nav.watch((next) => {
       if ((/** @type {any} */ (root)).isConnected === false && drawnOnce) {
         off();
         return;
       }
-      const parsed = parseListQuery(next, { folders: true });
+      lastQuery = next;
+      const parsed = { ...parseListQuery(next), folders: state.folders };
       if (sameState(parsed, state)) return;
       state = parsed;
       update();
     });
+    offWatch = off;
   }
 
   // ------------------------------------------------------------ reading
@@ -428,6 +440,8 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     });
     const detail = [item.username, item.urls?.[0]].filter((x) => typeof x === "string" && x !== "").join(" · ");
     const marks = markBadges(t, item);
+    // A mark that is cut on a phone still has its word, in the title; the first one (the most serious) is not cut.
+    marksOf(item).forEach((mark, i) => marks[i]?.setAttribute("title", t(`vault.mark.${mark}`)));
     const link = el("a", { href: `#/items/${item.id}`, class: "item-link", "data-role": "item-link" },
       item.favorite ? el("span", { class: "star", "aria-label": t("vault.item.favorite"), role: "img" }, "★") : null,
       name);
@@ -571,7 +585,11 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     want.forEach((item, i) => {
       let entry = drawn.get(item.id);
       const sig = signature(item);
+      /** The control that had the focus in a row that is built again. @type {string | null} */
+      let refocus = null;
       if (entry && entry.sig !== sig) {
+        const active = /** @type {any} */ (globalThis.document)?.activeElement;
+        if (active && within(active, entry.node)) refocus = active.getAttribute?.("data-role") ?? null;
         if (entry.own.pop) menus.delete(entry.own.pop);
         entry.node.remove();
         entry = undefined;
@@ -583,6 +601,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
       }
       const here = rows.childNodes[1 + i];
       if (here !== entry.node) rows.insertBefore(entry.node, here ?? spacerBottom);
+      if (refocus !== null) focusNode(refocus === "select" ? entry.check : refocus === "row-menu" ? entry.more : entry.link);
       const rowIndex = String(start + i + 2);
       if (entry.node.getAttribute("aria-rowindex") !== rowIndex) entry.node.setAttribute("aria-rowindex", rowIndex);
     });
@@ -669,7 +688,12 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
    * @param {string | null} returnTo the row whose menu button gets the focus back
    */
   async function act(kind, items, returnTo) {
-    if (busy || wiped || items.length === 0 || !touch()) return;
+    if (wiped || items.length === 0) return;
+    if (busy) {
+      say(t("list.busy"));
+      return;
+    }
+    if (!touch()) return;
     busy = true;
     renderBulk();
     mount(message);
@@ -692,8 +716,12 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
       let first = null;
       /** The rows that are settled: changed, already as asked, or not to be changed. A row that failed stays marked, to be tried again. @type {string[]} */
       const settled = [];
+      let count = 0;
       for (const picked of items) {
         if (wiped) return;
+        // The run is the user's own action: each write counts as activity, so the idle lock does not cut a long run in the middle.
+        if (count > 0 && !touch()) return;
+        count += 1;
         const item = latest.get(picked.id) ?? picked;
         if (!canChange(item)) {
           skipped += 1;
@@ -713,13 +741,14 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
             first ??= error;
           }
         }
-        if (items.length > 1) say(t("list.progress", { done: done + skipped + failed, total: items.length }));
+        // The line is a status that is read out: not for every item of ten thousand.
+        if (items.length > 1 && count % 25 === 0) say(t("list.progress", { done: done + skipped + failed, total: items.length }));
       }
       for (const id of settled) selected.delete(id);
       text = [
         done > 0 ? t(`list.done_${kind}`, { count: done }) : "",
         skipped > 0 ? t("list.done_skipped", { count: skipped }) : "",
-        failed > 0 ? describeError(t, first) : "",
+        failed > 0 ? `${t("list.done_failed", { count: failed })} ${describeError(t, first)}` : "",
       ].filter((part) => part !== "").join(" ");
     } catch (error) {
       text = describeError(t, error);
@@ -727,9 +756,11 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
       busy = false;
       if (!wiped) {
         update(changedAny || dirty);
+        paintSelection();
         dirty = false;
         mount(message, document.createTextNode(text));
         if (returnTo !== null) focusRow(returnTo);
+        else if (selected.size === 0) focusNode(shown.length > 0 ? selectAll : add); // the bar that had the focus has gone
       }
     }
   }
@@ -743,9 +774,10 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
 
   /** The Up and Down keys move between the rows: the same control of the next row (the name, the box or the menu button). */
   rows.addEventListener("keydown", (/** @type {any} */ event) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    // On the menu button the arrows open its menu (they are taken there); the rows are moved between from the name and the box.
+    if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || event.defaultPrevented === true) return;
     const role = event.target?.getAttribute?.("data-role");
-    if (role !== "item-link" && role !== "select" && role !== "row-menu") return;
+    if (role !== "item-link" && role !== "select") return;
     let node = event.target;
     while (node && node.getAttribute?.("data-role") !== "item") node = node.parentNode;
     if (!node) return;
@@ -757,7 +789,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     // The next row may be outside the window that is drawn: it is drawn first.
     if (!drawn.has(shown[to].id)) renderRows({ start: to - OVERSCAN, end: to + OVERSCAN + 1 });
     const next = drawn.get(shown[to].id);
-    if (next) focusNode(role === "select" ? next.check : role === "row-menu" ? next.more : next.link);
+    if (next) focusNode(role === "select" ? next.check : next.link);
   });
 
   // ------------------------------------------------- the menu of columns
@@ -825,11 +857,17 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   scope?.add(() => {
     wiped = true;
     dispose();
+    offWatch?.();
+    offWatch = null;
     selected.clear();
     drawn.clear();
     menus.clear();
     source = [];
     shown = [];
+    ordered = { name: [], changed: [] };
+    folderCounts = new Map();
+    indexes = null;
+    matcher.clear();
     mount(root);
   });
 

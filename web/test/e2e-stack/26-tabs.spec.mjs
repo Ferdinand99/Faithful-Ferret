@@ -2,7 +2,7 @@
 // form comes back whole; locking the tab that holds the vault hands it to the tab that waits, and a tab that is out of view does not
 // take it; a tab that does not answer is warned about, and a waiting tab that nobody sees does not stand in the way. The last
 // scenario puts a copy of the server's data back over a server that has purged the tombstones the copy still holds.
-import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, lockNow, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, lockNow, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, findRows, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
 
 // The scenarios do not depend on each other (each makes its own browsers), so one that fails does not skip the rest.
 noViolations();
@@ -222,7 +222,7 @@ test("a_tab_that_does_not_answer_is_warned_about_and_a_hidden_tab_at_the_head_of
     // The vault is the visible tab's after about three seconds, although a tab stands first in the queue.
     await expect(list(visible)).toBeVisible({ timeout: 60_000 });
     expect(Date.now() - from, "the other tab was given about three seconds").toBeGreaterThanOrEqual(2_500);
-    await expect(rowsNamed(visible, name)).toHaveCount(1);
+    await expect((await findRows(visible, name))).toHaveCount(1);
     await expect(notice(holder)).toBeVisible({ timeout: 30_000 });
     await expect(notice(head)).toBeVisible();
     expect(await locksHeld(visible), "one tab holds the vault").toBe(1);
@@ -266,16 +266,16 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
     .toBe(410);
   await synced(late.page);
   await openList(late.page);
-  await expect(rowsNamed(late.page, keep)).toHaveCount(1);
-  await expect(rowsNamed(late.page, gone)).toHaveCount(0);
+  await expect((await findRows(late.page, keep))).toHaveCount(1);
+  await expect((await findRows(late.page, gone))).toHaveCount(0);
 
   // The copy from before the purge is put back with a higher restore number: the tombstone is on the server again, with the feed floor
   // of the copy.
   const epochSeen = await restoreEpochOf(late.context);
   await hostStep("restore");
   const fresh = await newDevice(browser);
-  await expect(rowsNamed(fresh.page, keep)).toHaveCount(1, { timeout: 90_000 });
-  await expect(rowsNamed(fresh.page, gone), "nothing the backup deleted comes back to life").toHaveCount(0);
+  await expect((await findRows(fresh.page, keep))).toHaveCount(1, { timeout: 90_000 });
+  await expect((await findRows(fresh.page, gone)), "nothing the backup deleted comes back to life").toHaveCount(0);
   await synced(fresh.page, 90_000);
   // No warning about the feed, the checkpoint or a rollback: a new browser on a restored server has nothing to compare with.
   await expect(fresh.page.locator('[data-role="sync-banner"]')).toHaveCount(0);
@@ -295,8 +295,8 @@ test("a_restore_over_purged_tombstones_leaves_no_alarm_and_brings_nothing_back_t
   await expect(late.page.locator('[data-role="banner"][data-banner^="error:"]')).toHaveCount(0);
   await expect(late.page.locator('[data-role="banner"][data-banner^="warning:"]')).toHaveCount(0);
   await openList(late.page);
-  await expect(rowsNamed(late.page, keep)).toHaveCount(1);
-  await expect(rowsNamed(late.page, gone), "the deleted item stays deleted").toHaveCount(0);
+  await expect((await findRows(late.page, keep))).toHaveCount(1);
+  await expect((await findRows(late.page, gone)), "the deleted item stays deleted").toHaveCount(0);
   await late.context.close();
   const feed = await feedOf(fresh.context);
   expect(feed.changes.some((change) => change.deleted), "the restored server holds the tombstone again").toBe(true);

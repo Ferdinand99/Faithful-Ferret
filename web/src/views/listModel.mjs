@@ -60,6 +60,12 @@ export function createMatcher() {
     warm(items, from, to) {
       for (let i = from; i < Math.min(to, items.length); i += 1) haystack(items[i]);
     },
+    /** How many items have their folded text kept. */
+    size: () => cache.size,
+    /** Forgets everything that was folded (the vault locked). */
+    clear() {
+      cache.clear();
+    },
     /** Lets go of what was kept for items that are no longer in the list. @param {readonly { id: string }[]} items */
     prune(items) {
       if (cache.size <= items.length + 64) return;
@@ -109,13 +115,13 @@ export const hasFilters = (state) => state.types.length > 0 || state.favorite ||
 
 /**
  * Reads the filters out of the query of the address. Whatever is not in the expected shape is left out, so a made-up
- * address gives the default list. The search text is never in the address. Folder names are read only when the list
- * has folders (`options.folders`).
+ * address gives the default list. The search text is never in the address, and neither is a folder name (the names are
+ * labels inside the encrypted items, and the address stays in the history of the browser): the folder filter lives in the
+ * memory of the list alone, so it is always empty here.
  * @param {string} query the part after `?`
- * @param {{ folders?: boolean }} [options]
  * @returns {ListState}
  */
-export function parseListQuery(query, { folders = false } = {}) {
+export function parseListQuery(query) {
   const state = defaultState();
   /** @type {Map<string, string>} */
   const pairs = new Map();
@@ -128,20 +134,6 @@ export function parseListQuery(query, { folders = false } = {}) {
   const types = (pairs.get("type") ?? "").split(",").filter((v) => TYPE_VALUE.test(v));
   state.types = [...new Set(types)].slice(0, MAX_VALUES);
   state.favorite = pairs.get("fav") === "1";
-  if (folders) {
-    /** @type {string[]} */
-    const names = [];
-    for (const raw of (pairs.get("folder") ?? "").split(",")) {
-      if (raw === "") continue;
-      try {
-        const name = decodeURIComponent(raw);
-        if (name !== "" && name.length <= 128 && !names.includes(name)) names.push(name);
-      } catch {
-        // A broken escape is left out.
-      }
-    }
-    state.folders = names.slice(0, MAX_VALUES);
-  }
   const sort = pairs.get("sort");
   if (sort === "changed") state.sort = "changed";
   const dir = pairs.get("dir");
@@ -153,16 +145,14 @@ export function parseListQuery(query, { folders = false } = {}) {
  * The query of the address for a state: only what is not the default, in one fixed order, so that a state has one
  * spelling and `parseListQuery(formatListQuery(s))` gives `s` back.
  * @param {ListState} state
- * @param {{ folders?: boolean }} [options]
  * @returns {string}
  */
-export function formatListQuery(state, { folders = false } = {}) {
+export function formatListQuery(state) {
   /** @type {string[]} */
   const out = [];
   const types = [...new Set(state.types.filter((v) => TYPE_VALUE.test(v)))].slice(0, MAX_VALUES);
   if (types.length > 0) out.push(`type=${[...types].sort().join(",")}`);
   if (state.favorite) out.push("fav=1");
-  if (folders && state.folders.length > 0) out.push(`folder=${[...new Set(state.folders)].slice(0, MAX_VALUES).sort().map(encodeURIComponent).join(",")}`);
   if (state.sort !== "name") out.push(`sort=${state.sort}`);
   if (state.dir !== defaultDir(state.sort)) out.push(`dir=${state.dir}`);
   return out.join("&");
@@ -170,7 +160,7 @@ export function formatListQuery(state, { folders = false } = {}) {
 
 /** Two states with the same meaning. @param {ListState} a @param {ListState} b */
 export function sameState(a, b) {
-  return formatListQuery(a, { folders: true }) === formatListQuery(b, { folders: true });
+  return JSON.stringify(normalState(a)) === JSON.stringify(normalState(b));
 }
 
 /**

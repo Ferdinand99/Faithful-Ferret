@@ -114,18 +114,20 @@ export function createRouter({ routes, notFound, onChange, win = globalThis }) {
   /** Screens that follow the query of their own address: only they are told when the query alone changes. @type {Set<(query: string) => void>} */
   const watchers = new Set();
 
-  function handle() {
+  /** @param {boolean} [force] a `go` to the address that is shown builds the screen again, whatever follows its query */
+  function handle(force = false) {
     const parsed = parseLocation(win.location.hash);
     const hit = parsed === null ? null : matchRoute(routes, parsed.path);
     const nextPath = parsed?.path ?? "/";
     const nextQuery = parsed?.query ?? "";
     // The same screen with another query (a filter was changed, or back/forward moved between two): the screen that
     // follows its query is told and is not built again; any other screen is built as it is for a new address.
-    if (started && hit && nextPath === path && watchers.size > 0) {
+    if (!force && started && hit && nextPath === path && watchers.size > 0) {
       const changed = nextQuery !== query;
       query = nextQuery;
       if (changed) for (const fn of [...watchers]) fn(query);
-      return;
+      // A watcher that found its screen gone has let go: then the screen is built (a lock and an unlock leave nothing to follow the query).
+      if (watchers.size > 0) return;
     }
     path = nextPath;
     query = nextQuery;
@@ -148,7 +150,7 @@ export function createRouter({ routes, notFound, onChange, win = globalThis }) {
     go(target) {
       const hash = hashOf(target);
       if (win.location.hash === hash) {
-        if (started) handle();
+        if (started) handle(true);
         return;
       }
       win.location.hash = hash;
@@ -157,7 +159,7 @@ export function createRouter({ routes, notFound, onChange, win = globalThis }) {
     replace(target) {
       const hash = hashOf(target);
       if (win.location.hash === hash) {
-        if (started) handle();
+        if (started) handle(true);
         return;
       }
       if (typeof win.location.replace === "function") win.location.replace(hash);

@@ -3,7 +3,7 @@
 // page 1, the recovery key from page 2) and a new password. The old password is never asked for; the new recovery key is
 // shown alone and has to be typed back before anything is uploaded; the old recovery key opens nothing afterwards.
 import { request } from "@playwright/test";
-import { addNeedle, adminUrl, freshRedeemWindow, redeemCode, expect, freshContext, hostStep, leave, newDevice, noViolations, openList, pace, readStores, remember, requireAccount, rowsNamed, secrets, SLOW, test, vaultUrl, createItem, synced } from "./support.mjs";
+import { addNeedle, adminUrl, freshRedeemWindow, redeemCode, expect, freshContext, hostStep, leave, newDevice, noViolations, openList, pace, readStores, remember, requireAccount, findRows, secrets, SLOW, test, vaultUrl, createItem, synced } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -121,7 +121,7 @@ test("recover_on_a_new_browser_with_a_one_time_code_and_both_pages_of_the_sheet"
   // The vault is open on the new browser and the item from before is there.
   await page.locator('[data-role="open-vault"]').click();
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 60_000 });
-  await expect(rowsNamed(page, name)).toHaveCount(1, { timeout: 60_000 });
+  await expect((await findRows(page, name))).toHaveCount(1, { timeout: 60_000 });
   const stores = await readStores(page);
   expect(stores.pinned.count, "this browser pinned the account").toBe(1);
 
@@ -157,7 +157,7 @@ test("recover_on_a_new_browser_with_a_one_time_code_and_both_pages_of_the_sheet"
 
   // The new password still signs in (nothing was changed by the refused attempt), on a browser that has never seen the account.
   const check = await newDevice(browser);
-  await expect(rowsNamed(check.page, name)).toHaveCount(1, { timeout: 60_000 });
+  await expect((await findRows(check.page, name))).toHaveCount(1, { timeout: 60_000 });
   await check.context.close();
 
   // The old password signs in nowhere: a browser that has never seen the account is refused with the one plain message.

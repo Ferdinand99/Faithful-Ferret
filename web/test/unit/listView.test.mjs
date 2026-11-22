@@ -9,7 +9,7 @@ import { createWipeScope } from "../../src/views/common.mjs";
 import { listView } from "../../src/views/list.mjs";
 import { WINDOW_FROM } from "../../src/views/listModel.mjs";
 import { createFakeClient, Model, settle as settleEngine, syncDevice, until } from "./syncHelpers.mjs";
-import { all, click, coded, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
+import { FakeElement, all, click, coded, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const base = {
   favorite: false, urls: [], username: "", rev: 1, pending: false, damaged: false, quarantined: false,
@@ -375,7 +375,8 @@ test("folders_are_hidden_until_an_item_has_one_and_then_filter_and_show_in_a_col
 
     const items = [item(1, { name: "A", folders: ["Home", "Money"] }), item(2, { name: "B", folders: ["Home"] }), item(3, { name: "C" })];
     const engine = fakeEngine({ items });
-    const root = listView({ engine, router: { go() {} }, t, nav: fakeNav(), prefs: createListPrefs(memoryStorage()) });
+    const nav2 = fakeNav();
+    const root = listView({ engine, router: { go() {} }, t, nav: nav2, prefs: createListPrefs(memoryStorage()) });
     assert.equal(find(root, "chip-folders").hidden, false);
     assert.equal(find(root, "table").getAttribute("data-folders"), "on");
     const first = all(root, "folders")[0];
@@ -384,6 +385,9 @@ test("folders_are_hidden_until_an_item_has_one_and_then_filter_and_show_in_a_col
     assert.deepEqual([...walk(find(root, "folders-menu"))].filter((n) => n.getAttribute?.("data-value")).map((n) => [n.getAttribute("data-value"), textOf(n).trim().split(" ").pop()]), [["Home", "2"], ["Money", "1"]]);
     await click(entryOf(root, "folders-menu", "Money"));
     assert.deepEqual(names(root), ["A"]);
+    assert.deepEqual(nav2.sets, [], "a folder name is never put in the address, and a folder filter is no step of the history");
+    await click(find(root, "folders-remove"));
+    assert.equal(names(root).length, 3);
   });
 });
 
@@ -577,6 +581,8 @@ test("several_rows_go_through_the_engines_outbox_and_the_server_sees_one_write_p
     assert.deepEqual(ids.map((id) => model.items.get(id).rev), [2, 2, 2]);
     assert.deepEqual(names(root), ["Real 0", "Real 1", "Real 2"], "the user name and the rest are as they were");
     assert.ok(all(root, "item").every((row) => textOf(row).includes("★")));
+    assert.deepEqual(all(root, "item").map((row) => /user\d/.exec(textOf(row))?.[0]), ["user0", "user1", "user2"], "the user name is as it was: the edit is a patch of one field");
+    assert.deepEqual((await engine.open(ids[0])).view.fields.map((f) => f.value), ["user0"], "and so is the item itself");
     assert.ok(textOf(find(root, "message")).includes("list.done_favorite"));
     await settleEngine();
 
@@ -601,5 +607,121 @@ test("several_rows_go_through_the_engines_outbox_and_the_server_sees_one_write_p
     } finally {
       engine.stop();
     }
+  });
+});
+
+test("a_lock_lets_go_of_the_address_and_of_what_was_read_for_the_search", async () => {
+  await withDom(async () => {
+    const nav = fakeNav("type=login");
+    const engine = fakeEngine({ items: mixed() });
+    const scope = createWipeScope();
+    const root = listView({ engine, router: { go() {} }, t, nav, prefs: createListPrefs(memoryStorage()), scope });
+    assert.equal(nav.watchers.size, 1, "the list follows the address while it is shown");
+    assert.equal(engine.listeners.changed.size, 1);
+    const search = find(root, "search");
+    search.value = "bank";
+    await fire(search, "input");
+    scope.run();
+    assert.equal(nav.watchers.size, 0, "nothing of the screen stays reachable through the router");
+    assert.equal(engine.listeners.changed.size, 0, "or through the engine");
+    assert.equal(root.childNodes.length, 0);
+    // A change of the address after the lock reaches nothing.
+    await nav.go("type=note");
+    assert.equal(root.childNodes.length, 0);
+  });
+});
+
+test("a_row_that_is_built_again_keeps_the_focus_of_its_control", async () => {
+  const saved = FakeElement.prototype.focus;
+  await withDom(async () => {
+    FakeElement.prototype.focus = function focus() {
+      globalThis.document.activeElement = this;
+    };
+    try {
+      const engine = fakeEngine({ items: mixed() });
+      const root = listView({ engine, router: { go() {} }, t, nav: fakeNav(), prefs: createListPrefs(memoryStorage()) });
+      const rowOf = (name) => all(root, "item").find((row) => textOf(row).includes(name));
+      const control = (row, role) => [...walk(row)].find((n) => n.getAttribute?.("data-role") === role);
+      for (const role of ["item-link", "select", "row-menu"]) {
+        const before = control(rowOf("Wifi"), role);
+        globalThis.document.activeElement = before;
+        // The sync clears a mark or another device edits the item: the row is built again.
+        engine.items = engine.items.map((i) => (i.name === "Wifi" ? { ...i, rev: i.rev + 1, pending: !i.pending } : i));
+        engine.emit("changed", {});
+        await settle();
+        const after = control(rowOf("Wifi"), role);
+        assert.notEqual(after, before, "the row was built again");
+        assert.equal(globalThis.document.activeElement, after, "the focus is on the " + role + " of the new row");
+      }
+      // A row that did not change is left alone, with its focus.
+      const other = control(rowOf("Bank"), "item-link");
+      globalThis.document.activeElement = other;
+      engine.emit("changed", {});
+      await settle();
+      assert.equal(control(rowOf("Bank"), "item-link"), other);
+      assert.equal(globalThis.document.activeElement, other);
+    } finally {
+      FakeElement.prototype.focus = saved;
+    }
+  });
+});
+
+test("a_bulk_run_that_partly_fails_says_how_many_and_keeps_those_rows_selected", async () => {
+  await withDom(async () => {
+    const engine = fakeEngine({ items: mixed() });
+    const original = engine.update;
+    engine.update = async (id, draft, rev) => {
+      if (Number(id) === 4) throw coded("item_changed");
+      return original(id, draft, rev);
+    };
+    const root = listView({ engine, router: { go() {} }, t, nav: fakeNav(), prefs: createListPrefs(memoryStorage()) });
+    const selectAll = find(root, "select-all");
+    selectAll.checked = true;
+    await fire(selectAll, "change");
+    await click(find(root, "bulk-favorite"));
+    await settle();
+    const said = textOf(find(root, "message")).replace(/\s+/g, " ");
+    assert.ok(said.includes("list.done_favorite"), "what was done");
+    assert.ok(said.includes('"count":1') && said.includes("list.done_failed"), "how many failed: " + said);
+    assert.ok(said.includes("vault.error.item_changed"), "and the first reason");
+    assert.ok(textOf(find(root, "bulk-count")).includes("list.bulk_one"), "the one that failed is still selected");
+    assert.equal(all(root, "select").filter((box) => box.checked).length, 1);
+  });
+});
+
+test("every_write_of_a_bulk_run_counts_as_activity_and_a_lock_in_the_middle_stops_the_run", async () => {
+  await withDom(async () => {
+    const engine = fakeEngine({ items: mixed() });
+    let touches = 0;
+    let open = true;
+    const touch = () => {
+      touches += 1;
+      if (touches > 4) open = false; // the idle lock fires while the run goes on
+      return open;
+    };
+    const root = listView({ engine, router: { go() {} }, t, nav: fakeNav(), prefs: createListPrefs(memoryStorage()), touch });
+    const selectAll = find(root, "select-all");
+    selectAll.checked = true;
+    await fire(selectAll, "change"); // touch 1
+    await click(find(root, "bulk-favorite")); // touch 2 (the start), then one for each write after the first
+    await settle();
+    assert.ok(touches >= 3, "a touch for the writes after the first: " + touches);
+    assert.equal(engine.calls.filter(([kind]) => kind === "update").length, 1, "stopped when the touch said the vault is locked");
+  });
+});
+
+test("a_click_while_a_run_is_busy_is_answered", async () => {
+  await withDom(async () => {
+    const engine = fakeEngine({ items: mixed() });
+    const root = listView({ engine, router: { go() {} }, t, nav: fakeNav(), prefs: createListPrefs(memoryStorage()) });
+    const selectAll = find(root, "select-all");
+    selectAll.checked = true;
+    await fire(selectAll, "change");
+    await click(find(root, "bulk-trash")); // the question is open: the run is busy
+    await settle();
+    const button = all(root, "row-menu")[0];
+    await click(button);
+    await click([...walk(all(root, "item")[0])].find((n) => n.getAttribute?.("data-role") === "row-delete"));
+    assert.ok(textOf(find(root, "message")).includes("list.busy"));
   });
 });

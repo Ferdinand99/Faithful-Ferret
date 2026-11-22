@@ -528,6 +528,16 @@
   white-space: nowrap;
 }
 
+/* The first mark is the most serious one: the others give way before it (it gives way only when it must, to stay on the screen). */
+.vault-ui .detail-line .mark:first-child {
+  flex-shrink: 0.1;
+}
+
+/* Shrink factors below 1 in all give up only part of the room that is wanted: a lone mark shrinks as any. */
+.vault-ui .detail-line .mark:first-child:last-child {
+  flex-shrink: 1;
+}
+
 /* The marks keep their words; when two do not fit (a phone) they are cut with an ellipsis, and the item page has them whole. */
 .vault-ui .detail-line .marks {
   flex: 0 1 auto;
@@ -539,6 +549,7 @@
   display: block;
   flex: 0 1 auto;
   min-width: 0;
+  line-height: 22px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

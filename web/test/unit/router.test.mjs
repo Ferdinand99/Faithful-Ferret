@@ -145,3 +145,26 @@ test("go_and_replace_take_a_path_with_a_plain_query_and_refuse_anything_else", (
     assert.throws(() => router.replace(bad), TypeError, bad);
   }
 });
+
+test("a_go_to_the_address_that_is_shown_builds_the_screen_again_even_when_a_screen_follows_its_query", () => {
+  // After a lock and an unlock the same address is asked for: whatever still follows the query, the screen is built.
+  const list = { path: "/items", title: "items.list", load: () => null };
+  const seen = [];
+  const win = fakeWindow("#/items?type=login");
+  const router = createRouter({ routes: [home, list], notFound, win, onChange: (m) => seen.push(m) });
+  router.start();
+  router.watchQuery(() => {});
+  assert.equal(seen.length, 1);
+  router.go("/items?type=login");
+  assert.equal(seen.length, 2, "go to where we are builds the screen");
+  assert.equal(seen[1].query, "type=login");
+  router.watchQuery(() => {});
+  router.replace("/items?type=login");
+  assert.equal(seen.length, 3);
+  // A watcher that has let go (its screen is gone) leaves a change of the query to build the screen.
+  let off = () => {};
+  off = router.watchQuery(() => off());
+  win.location.hash = "#/items?type=note";
+  assert.equal(seen.length, 4, "no screen follows any more, so the screen is built");
+  assert.equal(seen[3].query, "type=note");
+});
