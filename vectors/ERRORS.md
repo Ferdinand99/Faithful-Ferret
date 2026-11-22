@@ -79,6 +79,11 @@ share the single code `decrypt`, with no cause.
 | `pinned_server_key` | The OPAQUE server public key differs from the pinned one, or is missing. |
 | `pinned_auth_key` | The vault's `pk_a` differs from the pinned one within the same `vk_epoch`. |
 | `generation_exhausted` | A wrap or a manifest entry that the server holds is at the largest `kek_generation` (2^32 - 1), so a new wrap has no later generation to take. The value comes from the server; a pinned floor at the largest generation is `malformed_pinned_record`. |
+| `folder_empty` | A folder name of an item that is empty once its surrounding white space is trimmed. |
+| `folder_too_long` | A folder name of an item that is longer than 64 characters once in NFC and trimmed. |
+| `folder_bad_character` | A folder name of an item with a control character, a line or paragraph separator, a bidirectional mark, embedding, override or isolate, a zero width space or a byte order mark. |
+| `folder_too_many` | More than 20 folder names for one item. |
+| `folder_duplicate` | Two folder names of one item that are equal when case is ignored. |
 
 ## Server codes
 

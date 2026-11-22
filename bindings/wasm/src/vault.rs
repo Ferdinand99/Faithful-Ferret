@@ -494,6 +494,14 @@ impl Vault {
     /// public ids (`cred_id`, `rp_id`, `user_handle`), which are what
     /// `excludeCredentials`, `allowCredentials` and the check of
     /// `wrap_prf` are built from.
+    ///
+    /// The view is `{ item_type, name, fields: [{ id, label, kind, value }],
+    /// urls: [{ url, matching }], has_totp, passkey, has_notes, created,
+    /// modified, favorite, device, read_only, folders }`. `folders` is a
+    /// `string[]` of folder names in the order they are stored, in Unicode
+    /// NFC, `[]` for an item in no folder (and for every item written before
+    /// folders existed); sort it for display. A stored value another client
+    /// wrote against the rules is shown without the names that break them.
     pub fn item_view(&self, handle: u32) -> Result<JsValue, JsValue> {
         run(|| {
             let body = &self.inner()?.item(handle)?.body;
@@ -562,6 +570,20 @@ impl Vault {
     /// mention (a private key, PRF seeds, a TOTP secret, hidden fields,
     /// unknown keys) is kept without leaving WASM. `now_ms` is the time of
     /// the write in unix milliseconds.
+    ///
+    /// The draft is `{ item_type?, name?, fields?, urls?, totp?, remove_totp?,
+    /// notes?, remove_notes?, favorite?, device?, passkey?, remove_passkey?,
+    /// folders? }`; any other key is `invalid_input`. `folders?: string[]` is
+    /// the whole list of folder names: **leave it out (or `null`) to keep the
+    /// folders the item has**, pass `[]` to take it out of every folder, or a
+    /// list to replace them. Each name is put in NFC and trimmed, and must
+    /// then have 1 to 64 characters and no control character, line or
+    /// paragraph separator, bidirectional control, zero width space or byte
+    /// order mark (ZWJ and ZWNJ are allowed); an item has at most 20, and no
+    /// two may be equal when case is ignored: `folder_empty`,
+    /// `folder_too_long`, `folder_bad_character`, `folder_too_many` and
+    /// `folder_duplicate`, and nothing is sealed. An entry that is not a
+    /// string is `invalid_input`.
     pub fn encrypt_item(
         &mut self,
         item_id: Vec<u8>,

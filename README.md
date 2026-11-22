@@ -12,16 +12,50 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development.** The cryptographic core, the OPAQUE server library, the server and the web vault work
-> end to end in testing (v0.3.0), now with safe sync between devices and browser tabs: conflicts keep both versions
-> side by side and never overwrite silently. The recovery key, encrypted export and import, and automatic backups are
-> in progress, and the browser extension has started (Firefox first) but is not usable yet. It is not for real
-> passwords yet. There is no external audit, and none is planned.
+> **Status: in development, pre-1.0 (v0.5.0).** The cryptographic core, the OPAQUE server library, the server and the
+> web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0. v0.5.0 adds
+> recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
+> backups with an encrypted copy off the machine (see [What works today](#what-works-today)). Next are devices with
+> bound tokens, then the Firefox extension with autofill, then a password generator and a health check. The browser
+> extension has started but is not usable yet. Ferret is a single-author project and is **not for real passwords
+> yet**. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
 must not be able to read your vault. Everything is encrypted and decrypted on your own devices, and the server,
 its admin panel and its API only ever see ciphertext.
+
+## What works today
+
+These are in v0.5.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+
+- **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
+  between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
+  nothing is overwritten silently.
+- **Emergency sheet and recovery.** Setup produces a printable sheet in two pages: page 1 has the server address,
+  account details, the secret key and a QR code, and page 2 has only the recovery key. If the master password is
+  forgotten, a new browser can recover the account with the recovery key and both pages of the sheet. Recovery makes
+  a new recovery key, and the old one stops working on that server. A new recovery key can also be made at any time.
+- **Master password change.** One write path changes the master password and ends every other session.
+- **One-time sign-in code.** An administrator can issue a code that is good once, for 24 hours. It resets a sign-in
+  only. It never opens a vault, and recovery still needs the recovery key and the sheet.
+- **Encrypted export.** Signing in again is required, and the file is encrypted with a separate export password, so
+  it does not open with the master password.
+- **Import.** From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted `.avux`
+  and CSV). Duplicates are not removed, and passkeys, folders, tags and attachments are not imported.
+- **Tabs.** The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the
+  first tab instead of dropping them.
+- **Backups.** The server writes a checked backup set every 24 hours and after every change to the unlock methods.
+  The admin pages show the state and have "Take a backup now". An optional second container encrypts each set with
+  `age` to a public key you own and copies it to an SFTP target, then reads it back to check it. A set is restored
+  with `ferret backup restore`, which is safe to cut off and run again. A restore ends every session and raises
+  the restore epoch so that devices notice an older state.
+- **Deployment.** The stack for real data publishes its two ports on the loopback address only and trusts exactly one
+  proxy. Server images are built for amd64 and arm64 and signed with cosign, and the deploy script verifies the
+  signature before it runs an image. The admin address is the entry point to the admin pages.
+
+How to run and operate a server is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md), and the hand test for recovery, export and
+backup, which has to pass before real data goes in, is in [`docs/TESTING-M3.md`](docs/TESTING-M3.md).
 
 ## Why
 
@@ -58,9 +92,9 @@ Security is the top priority of the project, and this is how the design handles 
   unlock the vault, and nothing on the server, including administration, can decrypt it.
 - **Master password and an optional secret key.** The master password unlocks the vault on a new device. A
   separate secret key can be added to protect against offline guessing if someone copies the server's database.
-- **Recovery you control.** Recovery uses a recovery key and an encrypted export that you keep. There is **no
-  admin recovery** of vaults: if the master password, the recovery key and every export are lost, nobody can open
-  the vault. Administrators can reset a login, which never opens the vault.
+- **Recovery you control.** Recovery uses a recovery key on an emergency sheet and an encrypted export that you keep.
+  There is **no admin recovery** of vaults: if the master password, the recovery key and every export are lost,
+  nobody can open the vault. Administrators can reset a login with a one-time code, which never opens the vault.
 - **Open design.** The threat model and the cryptographic design are published in
   [`docs/design/phase-1-security-design.md`](docs/design/phase-1-security-design.md).
   [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a guide to the code that implements it.
@@ -80,21 +114,34 @@ Security is the top priority of the project, and this is how the design handles 
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
+- **Recovery has limits in this version.** A new browser needs both pages of the sheet, and the secret key cannot be
+  changed. After a new recovery key, the old one works again only if the server is restored from a backup made before
+  the renewal. An export or backup made before a master password change still opens with the old password. The
+  server sends no e-mail, accounts have no second factor yet, and there is no full rekey.
+- **Backups need care from the operator.** A backup set together with its secret files lets whoever takes the
+  machine guess master passwords, one Argon2id per try (the secret key stops that), so copies off the machine are
+  always encrypted. The server and the copy container can still delete their own sets and copies, so snapshots on the
+  target are for the operator to add. A restore needs the command and a stopped server.
+- **Real data is not ready.** The operations guide lists checks, such as a rehearsed restore and a verified proxy
+  setup, that are to be done on a test instance before real data goes in.
 
 ## Repository layout
 
 The Rust cryptographic core lives at the repository root as a Cargo workspace:
 
 - `crates/ferret-core/`: the cryptographic core (safe Rust, no I/O).
-- `bindings/wasm/`: the WebAssembly binding for the web vault and the browser extension (added later).
+- `crates/ferret-server-auth/`, `crates/ferret-server/`: the OPAQUE server library and the server.
+- `bindings/wasm/`: the WebAssembly binding for the web vault and the browser extension.
+- `web/`: the web vault.
 - `tools/vectorgen/`: generates and checks the test vectors.
 - `vectors/`: the cross-platform test vectors that every client must pass.
 - `ct/`: the small single-file constant-time code (Crockford coding) that the core includes and the constant-time analyzer reads.
-- `docker/`, `scripts/`: the build image and scripts for building and testing on a Docker host.
+- `docker/`, `scripts/`: the images, compose files and scripts for building, testing and running the server.
 - `fuzz/`: the fuzz targets, their seed corpus and the inputs of fixed crashes.
 - `supply-chain/`, `deny.toml`: the dependency audits and policy (`cargo vet`, `cargo deny`).
 - `docs/`: the [review package](docs/REVIEW-PACKAGE.md), the [results of phase 4A](docs/PHASE-4A-REPORT.md), the
-  [wrap formats](docs/WRAP-AAD.md) and [how a release is made](docs/RELEASING.md).
+  [wrap formats](docs/WRAP-AAD.md), [how a release is made](docs/RELEASING.md), [how to operate a server](docs/OPERATIONS.md)
+  and the hand tests ([sync](docs/TESTING-M2.md) and [recovery, export and backup](docs/TESTING-M3.md)).
 - `site/`, `assets/`: the website and brand assets.
 
 This project has had no external security audit, and none is planned.
@@ -106,8 +153,12 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 1. Design, throwaway prototypes and the security design (done).
 2. The server and the shared Rust cryptographic core (first version done).
 3. The web vault (first version done, work continues).
-4. Safe sync, recovery and daily use (safe sync done in v0.3.0; the recovery key, encrypted export and import, automatic backups and an emergency sheet are in progress).
-5. The browser extension and the iOS and Android apps (the extension has started, Firefox first, and is not usable yet; the apps are later).
+4. Safe sync, recovery and daily use. Safe sync is done (v0.3.0). Recovery with the emergency sheet, master password
+   change, encrypted export, import and backups are done (v0.5.0). Coming next: devices and tokens that are bound
+   to a device key.
+5. The browser extension and the iOS and Android apps. The extension has started, Firefox first, and is not usable
+   yet; autofill is the next step there. After that come the password generator and a health check, then the rest of
+   the 1.0 list. The apps are later.
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).
@@ -132,4 +183,4 @@ Hedgerow is built in spare time and is free to use. If you find it useful, you c
 
 The Inter font files in `web/fonts` and `site/fonts` are under the [SIL Open Font License 1.1](web/fonts/Inter-LICENSE.txt).
 
-The licence texts of the Rust crates inside the server binary and the WebAssembly module, and of the font, are in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). The Docker image carries the file as `/usr/share/doc/ferret/THIRD-PARTY-NOTICES` (next to `LICENSE`), and every release archive holds it next to the package. The file is made by `scripts/notices.sh` (cargo-about, pinned) and CI fails when it is out of date or when a dependency has a licence that is not on the allowlist in `about.toml`. After changing a dependency, run `scripts/notices.sh` (on the LANBox, like every cargo build) and commit the result.
+The licence texts of the Rust crates inside the server binary and the WebAssembly module, and of the font, are in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). The Docker image carries the file as `/usr/share/doc/ferret/THIRD-PARTY-NOTICES` (next to `LICENSE`), and every release archive holds it next to the package. The file is made by `scripts/notices.sh` (cargo-about, pinned) and CI fails when it is out of date or when a dependency has a licence that is not on the allowlist in `about.toml`. After changing a dependency, run `scripts/notices.sh` (on a Docker host, like every cargo build) and commit the result.

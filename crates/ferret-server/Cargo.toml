@@ -18,7 +18,7 @@
 name = "ferret-server"
 description = "Faithful Ferret server: OPAQUE login, vault API and web vault on vole-kit"
 # release-please bumps this together with the root version.
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
@@ -78,7 +78,7 @@ time = { version = "0.3.55", default-features = false }
 tokio = { version = "1.53.1", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-url = "2.5.8"
+url = "2.5.9"
 zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "derive"] }
 
 [build-dependencies]

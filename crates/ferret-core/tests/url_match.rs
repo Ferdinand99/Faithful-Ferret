@@ -576,6 +576,47 @@ fn opaque_and_non_http_pages_never_match() {
     assert_eq!(host_of("about:blank", "about:blank"), NoMatch);
 }
 
+/// A `blob:` address is no web page, whatever it wraps: the core refuses it
+/// before it asks the URL parser for an origin, so `blob:https://example.com/x`
+/// is not `https://example.com` here (the core never derives a page origin
+/// from a `blob:` address). `url` before 2.5.9 overflowed the stack in
+/// `Url::origin()` on deeply nested `blob:` addresses (RUSTSEC-2026-0592);
+/// this keeps the page address functions refusing them without recursion.
+#[test]
+fn nested_blob_pages_are_refused_without_a_crash() {
+    let nested = |depth: usize, tail: &str| format!("{}{tail}", "blob:".repeat(depth));
+    let e = entry("https://example.com", UrlMatch::Domain);
+    for page in [
+        // A single blob address that wraps a web address.
+        "blob:https://example.com/x".to_owned(),
+        "blob:http://example.com/x".to_owned(),
+        "blob:file:///etc/passwd".to_owned(),
+        // Deep nesting inside the 8 KiB limit (1 600 prefixes are 8 000 bytes).
+        nested(1_000, "https://example.com/x"),
+        nested(1_500, "https://example.com/x"),
+        nested(1_000, ""),
+        // Nesting beyond the 8 KiB limit.
+        nested(5_000, "https://example.com/x"),
+        nested(100_000, "https://example.com/x"),
+        nested(100_000, ""),
+    ] {
+        let label = &page[..page.len().min(40)];
+        assert_eq!(url_match(&e, &page), NoMatch, "{label}");
+        assert_eq!(page_origin(&page), Err(BAD_ORIGIN), "{label}");
+        assert_eq!(display_host(&page), Err(BAD_ORIGIN), "{label}");
+        assert!(!same_site(&page, &page), "{label}");
+        assert!(!same_site(&page, "https://example.com"), "{label}");
+        // A saved address of this kind never matches either.
+        let saved = entry(&page, UrlMatch::Host);
+        assert_eq!(
+            url_match(&saved, "https://example.com/x"),
+            NoMatch,
+            "{label}"
+        );
+        assert_eq!(url_match(&saved, &page), NoMatch, "{label}");
+    }
+}
+
 #[test]
 fn exact_ignores_only_the_fragment() {
     assert_eq!(
