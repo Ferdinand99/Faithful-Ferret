@@ -667,12 +667,6 @@ max = 1
 reason = "A match on whether a password policy was checked and which one, and whether a secret key is present: public flags. The password bytes are copied into the wiped buffer."
 
 [[allow]]
-function = "^ferret_core::text::unicode::normalize_password$"
-instruction = "br_table"
-max = 1
-reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations."
-
-[[allow]]
 function = "^ferret_core::tlv::Tlv>::label$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3

@@ -1532,6 +1532,9 @@ test("a_draft_without_folders_keeps_them_and_an_empty_list_clears_them", () => {
   assert.deepEqual(step(6, { folders: ["home", "Travel"] }), ["home", "Travel"]);
   assert.deepEqual(step(7, { folders: [] }), []);
   assert.deepEqual(step(8, { name: "Again" }), []);
+  // Names are stored and shown in NFC; ZWJ and ZWNJ are allowed.
+  assert.deepEqual(step(9, { folders: ["Blåbær", "\u{1F469}‍\u{1F4BB}"] }), ["Blåbær", "\u{1F469}‍\u{1F4BB}"]);
+  assert.equal(vault.item_view(h).folders[0], "Blåbær");
   // A new item with an empty list has none.
   const fresh = vault.encrypt_item(fill(16, 0x49), 1, { ...LOGIN_DRAFT, folders: [] }, undefined, NOW);
   assert.deepEqual(vault.item_view(open(vault, fill(16, 0x49), fresh)).folders, []);
@@ -1549,6 +1552,12 @@ test("folder_names_that_break_a_rule_are_refused_with_a_code", () => {
     ["folder_too_many", [...twenty, "F20"]],
     ["folder_duplicate", ["Work", "work"]],
     ["folder_duplicate", ["Ærlig", " ærlig "]],
+    ["folder_duplicate", ["å", "å"]],
+    ["folder_bad_character", ["Wo\nrk"]],
+    ["folder_bad_character", ["‮kcab"]],
+    ["folder_bad_character", ["⁦x⁩"]],
+    ["folder_bad_character", ["​"]],
+    ["folder_bad_character", ["﻿"]],
     ["invalid_input", [1]],
     ["invalid_input", [null]],
     ["invalid_input", "Work"],

@@ -1,6 +1,7 @@
-//! Folder names of an item (Fase 1 § 5.2, the `folders` key): the rules for
-//! a write, the lenient read, unknown keys around the key, bodies from
-//! before folders existed, read-only bodies, and the exports.
+//! Folder names of an item (Fase 1 § 5.2 and Appendix B, the `folders` key):
+//! the rules for a write (NFC and the refused characters included), the
+//! lenient read, unknown keys around the key, bodies from before folders
+//! existed, read-only bodies, and the exports.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -207,7 +208,129 @@ fn a_refused_list_leaves_the_body_as_it_was() {
 }
 
 #[test]
+fn a_name_with_a_refused_character_is_folder_bad_character() {
+    let classes: [(&str, &[char]); 7] = [
+        (
+            "C0 controls",
+            &['\u{0}', '\u{7}', '\n', '\r', '\u{1B}', '\u{7F}'],
+        ),
+        ("C1 controls", &['\u{80}', '\u{85}', '\u{9F}']),
+        ("line and paragraph separators", &['\u{2028}', '\u{2029}']),
+        ("bidi marks", &['\u{061C}', '\u{200E}', '\u{200F}']),
+        (
+            "bidi embeddings and overrides",
+            &['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}'],
+        ),
+        (
+            "bidi isolates",
+            &['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'],
+        ),
+        ("zero width space and BOM", &['\u{200B}', '\u{FEFF}']),
+    ];
+    for (class, chars) in classes {
+        for &c in chars {
+            // Inside a name: always refused.
+            assert_eq!(
+                normalize_folders(&[format!("Wo{c}rk")]),
+                Err(folder_err(FolderError::BadCharacter)),
+                "{class} U+{:04X} inside",
+                u32::from(c)
+            );
+            // As the whole name: refused too, because trimming removes only
+            // white space; a character that is white space (a newline, the
+            // separators) is trimmed away and leaves the name empty.
+            let alone = normalize_folders(&[c.to_string()]);
+            let expected = if c.is_whitespace() {
+                FolderError::Empty
+            } else {
+                FolderError::BadCharacter
+            };
+            assert_eq!(
+                alone,
+                Err(folder_err(expected)),
+                "{class} U+{:04X} alone",
+                u32::from(c)
+            );
+        }
+    }
+    // A tab or newline at the ends is white space and is trimmed.
+    assert_eq!(
+        normalize_folders(&names(&["\tWork\n"])).unwrap(),
+        names(&["Work"])
+    );
+}
+
+#[test]
+fn zero_width_joiners_are_allowed() {
+    // ZWNJ in a Persian word, ZWJ in an emoji sequence.
+    let list = names(&[
+        "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}",
+        "\u{1F469}\u{200D}\u{1F4BB}",
+    ]);
+    assert_eq!(normalize_folders(&list).unwrap(), list);
+}
+
+#[test]
+fn names_are_stored_in_nfc() {
+    // "å" written as a + combining ring (NFD) is stored as U+00E5.
+    let mut body = login();
+    body.set_folders(&names(&["Bla\u{030A}b\u{00E6}r"]))
+        .unwrap();
+    assert_eq!(body.folders(), names(&["Bl\u{00E5}b\u{00E6}r"]));
+    let value = cbor::decode(&body.to_cbor().unwrap()).unwrap();
+    assert_eq!(
+        value.get(FOLDERS_KEY),
+        Some(&Value::Array(vec![Value::text("Bl\u{00E5}b\u{00E6}r")]))
+    );
+    // The 64-character limit counts the NFC form: 64 decomposed "å" (128
+    // scalar values) fit.
+    let decomposed = "a\u{030A}".repeat(MAX_FOLDER_CHARS);
+    assert_eq!(
+        normalize_folders(&[decomposed]).unwrap(),
+        vec!["\u{00E5}".repeat(MAX_FOLDER_CHARS)]
+    );
+}
+
+#[test]
+fn composed_and_decomposed_names_are_folder_duplicate() {
+    for pair in [
+        ["\u{00E5}", "a\u{030A}"],
+        ["Caf\u{00E9}", "cafe\u{0301}"],
+        ["\u{00C5}r", "a\u{030A}R"],
+    ] {
+        assert_eq!(
+            normalize_folders(&names(&pair)),
+            Err(folder_err(FolderError::Duplicate)),
+            "{pair:?}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_name_is_read_in_nfc_and_a_refused_one_is_skipped() {
+    let stored = Value::Array(vec![
+        Value::text("Bla\u{030A}b\u{00E6}r"),
+        Value::text("\u{202E}kcab"),
+        Value::text("\u{200B}"),
+        Value::text("Line\u{2028}break"),
+        Value::text("bl\u{00E5}B\u{00C6}R"),
+        Value::text("Work"),
+    ]);
+    let value = with_key(old_body_value(), FOLDERS_KEY, stored);
+    let bytes = cbor::encode(&value).unwrap();
+    let body = ItemBody::from_cbor(&bytes).unwrap().body;
+    assert_eq!(body.folders(), names(&["Bl\u{00E5}b\u{00E6}r", "Work"]));
+    assert_eq!(body.view().folders, body.folders());
+    // The read changed nothing.
+    assert_eq!(body.to_cbor().unwrap().as_slice(), bytes.as_slice());
+}
+
+#[test]
 fn the_codes_are_stable() {
+    assert_eq!(
+        folder_err(FolderError::BadCharacter).code(),
+        "folder_bad_character"
+    );
     assert_eq!(folder_err(FolderError::Empty).code(), "folder_empty");
     assert_eq!(folder_err(FolderError::TooLong).code(), "folder_too_long");
     assert_eq!(folder_err(FolderError::TooMany).code(), "folder_too_many");

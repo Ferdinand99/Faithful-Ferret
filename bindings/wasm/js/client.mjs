@@ -129,9 +129,13 @@
 // returns them as `folders: string[]` (`[]` for an item in no folder, also
 // every item written before folders existed). In an `encrypt_item` draft,
 // `folders` is the whole list: leave it out to keep the item's folders, pass
-// `[]` to clear them. Each name is trimmed, 1 to 64 characters, at most 20 per
-// item, no two equal when case is ignored (`folder_empty`, `folder_too_long`,
-// `folder_too_many`, `folder_duplicate`).
+// `[]` to clear them. Each name is put in NFC and trimmed, 1 to 64 characters,
+// with no control character, line or paragraph separator, bidirectional
+// control, zero width space or byte order mark, at most 20 per item, no two
+// equal when case is ignored (`folder_empty`, `folder_too_long`,
+// `folder_bad_character`, `folder_too_many`, `folder_duplicate`). Group names
+// across items with the same rule: the view's names are already in NFC, so
+// compare them in lower case, character by character.
 //
 // Copying an item: `vault.copy_item(handle, newItemId, nowMs, device?)` seals a
 // copy of the open item under `newItemId` (16 bytes of `crypto.getRandomValues`,

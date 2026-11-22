@@ -172,10 +172,11 @@ pub(crate) struct PasskeyDraft {
 /// `folders` is the whole list of folder names: missing (or `null`) keeps the
 /// folders the item has, `[]` takes the item out of every folder, and a list
 /// replaces them. The names are checked by the core
-/// (`ferret_core::item::folders`): trimmed, 1 to 64 characters, at most 20,
-/// no two equal when case is ignored; a break is `folder_empty`,
-/// `folder_too_long`, `folder_too_many` or `folder_duplicate`, and nothing is
-/// sealed.
+/// (`ferret_core::item::folders`): in NFC and trimmed, 1 to 64 characters,
+/// none of the refused characters, at most 20, no two equal when case is
+/// ignored; a break is `folder_empty`, `folder_too_long`,
+/// `folder_bad_character`, `folder_too_many` or `folder_duplicate`, and
+/// nothing is sealed.
 #[derive(Default, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DraftDto {

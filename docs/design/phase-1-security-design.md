@@ -463,7 +463,7 @@ body     [24 nonce ‖ ciphertext ‖ 16 tag]
 
 ### 5.2 Body
 - **Format:** the plaintext is CBOR. Deterministic encoding is **not** used for the body: nothing hashes or signs the plaintext, so it is not needed and cannot be enforced across four languages. What is hashed is the ciphertext (§ 8.6).
-- **Content:** `{ schema: 1, type, name, fields[], urls[], totp?, passkey?, notes?, created, modified, favorite, … }`.
+- **Content:** `{ schema: 1, type, name, fields[], urls[], totp?, passkey?, notes?, created, modified, favorite, device?, folders?, … }`.
 - **The decoder rejects:** duplicate keys, indefinite lengths, tags outside an allowlist, depth over 16, arrays or maps with more than 10 000 elements, text or byte strings over 64 KiB. *Clarified 2026-10-30:* the allowlist for tags is empty. Floating-point numbers in known fields are rejected. In unknown fields they are kept and written back unchanged. Unknown keys are written back after the known keys (in schema order), in the order they were read. This applies to both body and manifest.
 - **Unknown fields are preserved.** The client decodes into a typed structure plus `extra: Map`, which is written back unchanged. An item with a `schema` higher than the client knows is opened **read-only** and is never rewritten ("update the app to edit"). Migration between schemas is explicit, one-way, and done only by a client that understands both.
 - **Padding:**
@@ -1179,7 +1179,7 @@ The server stores `Argon2id(LV, salt_s)` with vole-kit's parameters and compares
                 "prf_seed_uv": bytes(32)?, "prf_seed_nouv": bytes(32)? }?,
   "notes":    text?,
   "created":  u64 (unix ms), "modified": u64 (unix ms), "favorite": bool,
-  "device":   text? (name of the device that wrote it)        // used by the conflict view § 8.5
+  "device":   text?, (name of the device that wrote it)       // used by the conflict view § 8.5
   "folders":  [ text ]? (folder names, see below)
 }
 ```
@@ -1187,7 +1187,7 @@ The server stores `Argon2id(LV, salt_s)` with vole-kit's parameters and compares
 - Limits (§ 5.2): ≤ 64 KiB per text/byte string, ≤ 10 000 elements, depth ≤ 16.
 - `fields[].kind` with an unknown value is preserved and treated as `text`.
 - `passkey` and `totp` are fields, not separate types in v1.
-- **Folders** *(clarified 2026-11-22)*: `folders` holds the item's folder names. An item can be in several folders or in none, and a folder exists only as a name that items carry: there is no separate folder list, and the server learns nothing new (the names are inside the encrypted body; sync and the wire are unchanged). A write trims each name, which must then have 1 to 64 characters; at most 20 names per item; no two names equal when case is ignored. A name that breaks a rule is refused (`folder_empty`, `folder_too_long`, `folder_too_many`, `folder_duplicate`), never dropped. An empty list removes the key. A reader skips entries that break the rules without changing the body. The key is kept with the unknown keys, so an older client preserves it, and an edit that does not set folders keeps them. The encrypted export and the JSON export include it.
+- **Folders:** `folders` holds the item's folder names. An item can be in several folders or in none, and a folder exists only as a name that items carry: there is no separate folder list. The names are inside the encrypted body, sync and the wire are unchanged, and the server never sees a name. Within L5: names add to the padded size, and a folder rename or delete rewrites every item that carries the name together, so the timing can show which items share a label. A write puts each name in Unicode NFC and trims it; it must then have 1 to 64 characters and no control character (Cc), line or paragraph separator (U+2028, U+2029), bidirectional mark, embedding, override or isolate (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), zero width space (U+200B) or byte order mark (U+FEFF); the zero width joiner and non-joiner are allowed. At most 20 names per item, and no two names equal when case is ignored (each character of the NFC form in lower case; simple lowercase mapping, not full case folding). A name that breaks a rule is refused (`folder_empty`, `folder_too_long`, `folder_bad_character`, `folder_too_many`, `folder_duplicate`), never dropped, and the NFC form is what is stored. An empty list removes the key. In the WASM draft, `folders` absent or `null` keeps the list, `[]` clears it. A reader returns the names in NFC and skips entries that break the rules, without changing the body; a later write that sets the folders stores only the list it is given. The key is kept with the unknown keys, so an older client preserves it, and an edit that does not set folders keeps them. The encrypted export and the JSON export include it; the CSV export has no folders column. *(Clarified 2026-11-22.)*
 - **Newer schema** (`schema` > 1) is read-only. The body is shown, and on export (encrypted and unencrypted JSON) it is written out exactly as it was read. CSV export rejects such items (`unsupported`), so that no secret fields disappear silently. *(Clarified 2026-10-30.)*
 
 **Manifest (`kind = 2`)**

@@ -34,15 +34,18 @@ pub enum InputError {
     LastMethod,
 }
 
-/// Why a list of folder names was refused (Fase 1 § 5.2, the `folders` key
-/// of an item body).
+/// Why a list of folder names was refused (Fase 1 § 5.2 and Appendix B, the
+/// `folders` key of an item body).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderError {
     /// A name that is empty once its surrounding white space is trimmed.
     Empty,
-    /// A name longer than 64 characters once trimmed.
+    /// A name longer than 64 characters once in NFC and trimmed.
     TooLong,
+    /// A name with a control character, a line or paragraph separator, a
+    /// bidirectional control, a zero width space or a byte order mark.
+    BadCharacter,
     /// More than 20 names for one item.
     TooMany,
     /// Two names that are equal when case is ignored.
@@ -314,6 +317,7 @@ impl Error {
         Error::GenerationExhausted,
         Error::Folder(FolderError::Empty),
         Error::Folder(FolderError::TooLong),
+        Error::Folder(FolderError::BadCharacter),
         Error::Folder(FolderError::TooMany),
         Error::Folder(FolderError::Duplicate),
     ];
@@ -403,6 +407,7 @@ impl Error {
             Error::Folder(kind) => match kind {
                 FolderError::Empty => "folder_empty",
                 FolderError::TooLong => "folder_too_long",
+                FolderError::BadCharacter => "folder_bad_character",
                 FolderError::TooMany => "folder_too_many",
                 FolderError::Duplicate => "folder_duplicate",
             },
