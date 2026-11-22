@@ -95,14 +95,14 @@ test("match_page_reads_no_secret_field", () => {
   }
   vault.close_item(h);
 
-  // The list of the methods that return a secret did not change, and the new
-  // method is not on it.
+  // The list of the methods that return a secret has only the one earlier
+  // password added since, and match_page is not on it.
   const allowlist = readFileSync(join(root, "bindings", "wasm", "reveal-allowlist.txt"), "utf8")
     .split("\n")
     .map((l) => l.replace(/#.*/, "").trim())
     .filter(Boolean);
   assert.deepEqual(allowlist, [
-    "reveal_emergency_sheet", "reveal_item_field", "reveal_item_notes", "reveal_plain_export",
+    "reveal_emergency_sheet", "reveal_item_field", "reveal_item_notes", "reveal_password_history", "reveal_plain_export",
     "reveal_recovery_code", "reveal_secret_key_code", "reveal_totp_secret",
   ]);
 

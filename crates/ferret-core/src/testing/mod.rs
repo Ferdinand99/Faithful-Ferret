@@ -15,6 +15,7 @@
 
 pub mod account;
 pub mod export;
+pub mod generator;
 pub mod integrity;
 pub mod item;
 pub mod keys;

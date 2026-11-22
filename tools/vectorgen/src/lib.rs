@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod account_groups;
+mod generator_groups;
 mod groups;
 mod item_groups;
 mod key_groups;
@@ -87,6 +88,7 @@ const GROUPS: &[Group] = &[
         server_groups::server_secrets,
     ),
     ("internal/url-match.json", url_match_groups::url_match),
+    ("internal/generator.json", generator_groups::generator_file),
 ];
 
 /// Serializes a vector file the way every generated file is written:

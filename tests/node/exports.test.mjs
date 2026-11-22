@@ -44,7 +44,8 @@ test("exports_list_is_exactly_the_documented_one", () => {
   // fails this test until it is listed here on purpose (and, if it returns
   // bytes or starts with `reveal_`, in the lists of the tests below).
   const documented = [
-    "argon2_export_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "import_header",
+    "argon2_export_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "generate_passphrase",
+    "generate_password", "import_header",
     "page_origin", "prf_salt_new", "same_site", "setup_qr_build", "setup_qr_parse", "sync_memory_new", "sync_memory_prune", "totp_parse",
     "UnlockJob.change_password", "UnlockJob.clear", "UnlockJob.create_account", "UnlockJob.login_finish",
     "UnlockJob.login_start", "UnlockJob.pin_unlock", "UnlockJob.reauth_grant", "UnlockJob.recover",
@@ -54,12 +55,12 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.auth_sign", "Vault.check_server_methods", "Vault.clear_setup_secrets", "Vault.close_item",
     "Vault.context", "Vault.copy_item", "Vault.encrypt_item", "Vault.export_abort", "Vault.export_begin",
     "Vault.export_finish", "Vault.import_close", "Vault.import_open", "Vault.import_seal",
-    "Vault.import_view", "Vault.is_locked", "Vault.item_view", "Vault.lock", "Vault.make_checkpoint",
+    "Vault.import_view", "Vault.is_locked", "Vault.item_field_equals", "Vault.item_view", "Vault.items_with_field_value", "Vault.lock", "Vault.make_checkpoint",
     "Vault.make_tombstone", "Vault.manifest_add_method", "Vault.manifest_remove_method", "Vault.match_page",
     "Vault.open_item",
     "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get",
     "Vault.rekey_abort", "Vault.rekey_commit", "Vault.renew_recovery", "Vault.renew_recovery_after_restore", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
-    "Vault.reveal_item_notes", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
+    "Vault.reveal_item_notes", "Vault.reveal_password_history", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
     "Vault.reveal_secret_key_code", "Vault.reveal_totp_secret", "Vault.seed_pinned", "Vault.totp_code",
     "Vault.verify_checkpoint", "Vault.verify_recovery_setup", "Vault.verify_secret_key_entry",
     "Vault.verify_tombstone", "Vault.wrap_pin", "Vault.wrap_prf",
@@ -360,4 +361,51 @@ test("the_plain_export_and_the_passkey_wrap_take_their_new_arguments", () => {
   assert.match(dts, /passkey_create_abort\(pending: number\)/);
   assert.match(dts, /reauth_grant\(vault: Vault, pw_wrap: any, now_ms: number\): Uint8Array/);
   assert.match(dts, /export function ferret_aaguid\(\): Uint8Array/);
+});
+
+test("the_export_list_has_the_new_names", () => {
+  // The generator (two functions that need no vault), the comparison of a
+  // field with a candidate (two methods) and the one new reveal method.
+  for (const name of [
+    "generate_password", "generate_passphrase", "Vault.item_field_equals", "Vault.items_with_field_value",
+    "Vault.reveal_password_history",
+  ]) {
+    assert.ok(exportsOf.has(name), name);
+  }
+  // The comparison answers a boolean or handles, never bytes or text.
+  assert.match(dts, /item_field_equals\(handle: number, field_id: string, candidate: string\): boolean;/);
+  assert.match(dts, /items_with_field_value\(handles: Uint32Array, field_id: string, candidate: string\): Uint32Array;/);
+  assert.match(dts, /reveal_password_history\(handle: number, index: number\): string;/);
+});
+
+test("generate_functions_are_exported_and_typed", () => {
+  assert.match(dts, /export function generate_password\(options: any\): any;/);
+  assert.match(dts, /export function generate_passphrase\(options: any\): any;/);
+  for (const name of ["generate_password", "generate_passphrase"]) {
+    assert.ok(!/Uint8Array/.test(exportsOf.get(name)), name);
+  }
+});
+
+test("reveal_allowlist_has_reveal_password_history_and_nothing_else_new", () => {
+  const allowlist = readFileSync(join(root, "bindings", "wasm", "reveal-allowlist.txt"), "utf8")
+    .split("\n")
+    .map((l) => l.replace(/#.*/, "").trim())
+    .filter(Boolean)
+    .sort();
+  assert.deepEqual(allowlist, [
+    "reveal_emergency_sheet", "reveal_item_field", "reveal_item_notes", "reveal_password_history",
+    "reveal_plain_export", "reveal_recovery_code", "reveal_secret_key_code", "reveal_totp_secret",
+  ]);
+});
+
+// The size of the release module (pkg-web, after wasm-opt) before the password
+// generator, its word list, the field comparison and the password history were
+// added: v0.7.0 with its dependency updates, built with the pinned toolchain.
+const WASM_BYTES_BEFORE_GENERATOR = 1_330_115;
+
+test("wasm_size_grows_by_less_than_100_kib", () => {
+  const raw = statSync(pkg("pkg-web", "ferret_core_wasm_bg.wasm")).size;
+  const growth = raw - WASM_BYTES_BEFORE_GENERATOR;
+  console.log(`# wasm growth over the module before the generator: ${growth} bytes (${(growth / 1024).toFixed(1)} KiB)`);
+  assert.ok(growth < 100 * 1024, `${growth} bytes`);
 });

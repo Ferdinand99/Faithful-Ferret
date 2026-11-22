@@ -41,6 +41,7 @@ pub mod codes;
 pub mod envelope;
 pub mod error;
 pub mod export;
+pub mod generator;
 pub mod ids;
 pub mod integrity;
 pub mod item;
@@ -82,6 +83,9 @@ pub use export::{
     export_encrypt, export_plain_csv, export_plain_json, export_wrap_key, import_decrypt,
     import_decrypt_with_key, import_prepare, parse_export_header,
 };
+pub use generator::{
+    Generated, PassphraseOptions, PasswordOptions, generate_passphrase, generate_password,
+};
 pub use ids::{AccountId, ItemId, MethodId, VaultId};
 pub use integrity::{
     AuthOp, AuthPublicKey, Checkpoint, CheckpointEntry, MutationOp, RecoveryPublicKey, RekeyBundle,
@@ -91,8 +95,8 @@ pub use integrity::{
 };
 pub use item::{
     DecodedItem, DisplayHost, Field, FieldKind, ItemBody, ItemType, Manifest, ManifestEntry,
-    PageOrigin, Passkey, Totp, UrlEntry, UrlMatch, UrlMatchResult, display_host, page_origin,
-    same_site, url_match,
+    PageOrigin, Passkey, PasswordHistoryEntry, Totp, UrlEntry, UrlMatch, UrlMatchResult,
+    display_host, page_origin, same_site, url_match,
 };
 pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
 pub use ksf_profile::KsfProfile;

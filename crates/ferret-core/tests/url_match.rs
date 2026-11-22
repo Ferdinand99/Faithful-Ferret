@@ -1087,3 +1087,41 @@ fn vectors_manifest_lists_the_new_file() {
         assert!(ops.contains(&format!("| `{op}` |")), "{op}");
     }
 }
+
+#[test]
+fn url_match_vectors_pin_caret_and_pipe_in_exact() {
+    // The path percent-encoding of `url`, pinned so that a later version
+    // that changes it fails here and in the vectors: `^` is encoded (so
+    // `a^b` and `a%5Eb` are the same address), `|` is not (so `a|b` and
+    // `a%7Cb` differ).
+    let file = load_ops("url-match.json", |op| op == "url.match");
+    let find = |entry: &str, page: &str| {
+        file.cases
+            .iter()
+            .find(|c| {
+                c.input["entry"] == entry && c.input["page"] == page && c.input["match"] == "exact"
+            })
+            .unwrap_or_else(|| panic!("a vector for {entry} against {page}"))
+            .expect
+            .clone()
+            .unwrap()["result"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let caret = "https://example.com/a^b";
+    let caret_encoded = "https://example.com/a%5Eb";
+    let pipe = "https://example.com/a|b";
+    let pipe_encoded = "https://example.com/a%7Cb";
+    assert_eq!(find(caret, caret_encoded), "exact");
+    assert_eq!(find(caret_encoded, caret), "exact");
+    assert_eq!(find(pipe, pipe_encoded), "none");
+    assert_eq!(find(pipe_encoded, pipe), "none");
+    assert_eq!(find(pipe, pipe), "exact");
+    // And the core agrees, directly.
+    assert_eq!(exact_of(caret, caret_encoded), Exact);
+    assert_eq!(exact_of(caret_encoded, caret), Exact);
+    assert_eq!(exact_of(pipe, pipe_encoded), NoMatch);
+    assert_eq!(exact_of(pipe_encoded, pipe), NoMatch);
+    assert_eq!(exact_of(pipe, pipe), Exact);
+}

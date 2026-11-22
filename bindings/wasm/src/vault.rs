@@ -384,6 +384,19 @@ fn server_rows_of(vault: &UnlockedVault, list: Vec<ServerRowDto>) -> Res<Vec<Ser
     Ok(server_rows)
 }
 
+/// The longest candidate of `item_field_equals` and `items_with_field_value`,
+/// in bytes of UTF-8. A form value longer than that is no password to
+/// compare.
+pub(crate) const MAX_CANDIDATE: usize = 4_096;
+
+/// `too_large` for a candidate over [`MAX_CANDIDATE`] bytes.
+fn check_candidate(candidate: &str) -> Res<()> {
+    if candidate.len() > MAX_CANDIDATE {
+        return Err(Error::TooLarge.into());
+    }
+    Ok(())
+}
+
 /// The value of `stored_credential_ids` that says the vault has no passkey
 /// items. An empty array is refused instead, so that "none" is a decision.
 const NO_STORED_PASSKEYS: &str = "no_stored_passkeys";
@@ -497,11 +510,15 @@ impl Vault {
     ///
     /// The view is `{ item_type, name, fields: [{ id, label, kind, value }],
     /// urls: [{ url, matching }], has_totp, passkey, has_notes, created,
-    /// modified, favorite, device, read_only, folders }`. `folders` is a
-    /// `string[]` of folder names in the order they are stored, in Unicode
-    /// NFC, `[]` for an item in no folder (and for every item written before
-    /// folders existed); sort it for display. A stored value another client
-    /// wrote against the rules is shown without the names that break them.
+    /// modified, favorite, device, read_only, folders, password_history }`.
+    /// `folders` is a `string[]` of folder names in the order they are
+    /// stored, in Unicode NFC, `[]` for an item in no folder (and for every
+    /// item written before folders existed); sort it for display. A stored
+    /// value another client wrote against the rules is shown without the
+    /// names that break them. `password_history` is `[{ until }]`, the
+    /// earlier passwords newest first, each with the time (unix milliseconds)
+    /// it stopped being the password and never its value (that is
+    /// `reveal_password_history`); `[]` for an item without history.
     pub fn item_view(&self, handle: u32) -> Result<JsValue, JsValue> {
         run(|| {
             let body = &self.inner()?.item(handle)?.body;
@@ -544,6 +561,86 @@ impl Vault {
         })
     }
 
+    /// One earlier password of the item (the web vault's "Previous
+    /// passwords"), on an explicit request by the user: `index` 0 is the
+    /// newest, as in `item_view`'s `password_history`. An index with no
+    /// entry is `invalid_input`.
+    pub fn reveal_password_history(&self, handle: u32, index: u32) -> Result<String, JsValue> {
+        run(|| {
+            let index = usize::try_from(index).map_err(|_| Fail::Input)?;
+            let item = self.inner()?.item(handle)?;
+            let history = item.body.password_history();
+            let entry = history.get(index).ok_or(Fail::Input)?;
+            Ok(entry.value.clone())
+        })
+    }
+
+    /// Constant-time comparison of the field with this `field_id` against `candidate` (UTF-8 bytes, no normalisation).
+    /// Takes the candidate as an owned String and wraps it in Zeroizing. Not a reveal.
+    ///
+    /// Returns `true` when the first field of the item with that id holds
+    /// exactly the bytes of `candidate`, `false` otherwise (also when the
+    /// item has no such field). Only that one field is read; the bytes are
+    /// compared with `subtle` in the core (`ItemBody::field_value_equals`),
+    /// and the lengths, which are compared first, are not hidden. The answer
+    /// is one bit about a value the caller already holds (what a page sent),
+    /// never the field itself. A candidate over 4 KiB of UTF-8 is
+    /// `too_large`.
+    ///
+    /// The copy that `wasm-bindgen` makes of the string in WASM memory is
+    /// the `String` this method owns, and it is wiped when the call ends. A
+    /// candidate with characters outside ASCII is copied in two steps by the
+    /// glue (the ASCII start, then the rest after a reallocation), and the
+    /// block the start was first written to may be freed without being
+    /// wiped. The JavaScript string itself cannot be wiped.
+    pub fn item_field_equals(
+        &self,
+        handle: u32,
+        field_id: &str,
+        candidate: String,
+    ) -> Result<bool, JsValue> {
+        let candidate = Zeroizing::new(candidate);
+        run(|| {
+            check_candidate(&candidate)?;
+            let item = self.inner()?.item(handle)?;
+            Ok(item.body.field_value_equals(field_id, candidate.as_bytes()))
+        })
+    }
+
+    /// The handles among `handles` whose field `field_id` equals `candidate` (same rules), in one call.
+    ///
+    /// The answer keeps the order of `handles` (a handle listed twice that
+    /// matches is answered twice). A handle that is not open is
+    /// `invalid_handle` and nothing is returned; more than the open limit of
+    /// handles is `invalid_input`; a candidate over 4 KiB is `too_large`.
+    /// Each item is compared as by `item_field_equals`.
+    pub fn items_with_field_value(
+        &self,
+        handles: Vec<u32>,
+        field_id: &str,
+        candidate: String,
+    ) -> Result<Vec<u32>, JsValue> {
+        let candidate = Zeroizing::new(candidate);
+        run(|| {
+            check_candidate(&candidate)?;
+            let inner = self.inner()?;
+            if handles.len() > MAX_OPEN {
+                return Err(Fail::Input);
+            }
+            let mut found = Vec::new();
+            for handle in handles {
+                if inner
+                    .item(handle)?
+                    .body
+                    .field_value_equals(field_id, candidate.as_bytes())
+                {
+                    found.push(handle);
+                }
+            }
+            Ok(found)
+        })
+    }
+
     /// The current one-time code of the item and the seconds it still holds.
     /// `unix_seconds` comes from the caller's clock: it must be a finite
     /// number from 0 to 2^53, otherwise `invalid_input`.
@@ -573,7 +670,11 @@ impl Vault {
     ///
     /// The draft is `{ item_type?, name?, fields?, urls?, totp?, remove_totp?,
     /// notes?, remove_notes?, favorite?, device?, passkey?, remove_passkey?,
-    /// folders? }`; any other key is `invalid_input`. `folders?: string[]` is
+    /// folders?, keep_password_history? }`; any other key is `invalid_input`.
+    /// `keep_password_history: true` on an edit moves the password the draft
+    /// replaces (the field with the id `password`) into the item's earlier
+    /// passwords inside WASM (at most five, newest first, dated `now_ms`);
+    /// an unchanged password adds nothing. `folders?: string[]` is
     /// the whole list of folder names: **leave it out (or `null`) to keep the
     /// folders the item has**, pass `[]` to take it out of every folder, or a
     /// list to replace them. Each name is put in NFC and trimmed, and must
