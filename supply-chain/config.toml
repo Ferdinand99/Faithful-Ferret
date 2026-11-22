@@ -233,6 +233,11 @@ version = "0.3.0"
 criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
+[[exemptions.form_urlencoded]]
+version = "1.2.3"
+criteria = "safe-to-deploy"
+notes = "Exempted 2026-11-22; review by 2027-05-22. Mozilla's imported audits cover form_urlencoded up to 1.2.2; only the delta 1.2.2 -> 1.2.3 is not audited. The delta was read: Serializer::for_suffix clamps a start position beyond the target length instead of panicking, and the percent-encoding dependency requirement is raised to 2.3.2; no unsafe code and no build script."
+
 [[exemptions.futures-core]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
@@ -624,9 +629,9 @@ criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.url]]
-version = "2.5.8"
+version = "2.5.9"
 criteria = "safe-to-deploy"
-notes = "Exempted 2026-11-08; review by 2027-05-08. Mozilla's imported audits cover url up to 2.5.7; only the delta 2.5.7 -> 2.5.8 is not audited. The delta was read: serde and its derive become an optional feature, one fix to the percent-encoding of a control character in an opaque host, comments; no unsafe code and no build script."
+notes = "Exempted 2026-11-22; review by 2027-05-22. Mozilla's imported audits cover url up to 2.5.7; only the delta 2.5.7 -> 2.5.9 is not audited. The 2.5.8 -> 2.5.9 delta was read: the origin of a blob: URL takes its inner origin only for http, https and file and is opaque otherwise, never recursive (RUSTSEC-2026-0592), the query and path percent-encode sets and the port and file-host handling follow the URL Standard more closely, the removal of the last path slash searches the path only; no new unsafe code and no build script."
 
 [[exemptions.version_check]]
 version = "0.9.5"
