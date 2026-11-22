@@ -2,8 +2,15 @@
 // Builds the Firefox extension: an unpacked folder and a deterministic .xpi.
 //
 //   node scripts/build.mjs --browser firefox --manifest mv3|mv2 --variant release|test
-//                          [--wasm-tar <path>] [--out <dir>]
+//                          [--features <list>] [--wasm-tar <path>] [--out <dir>]
 //   node scripts/build.mjs --check-release <.xpi or folder>...
+//
+// --features names the features that are on, separated by commas ("none" for
+// none); without it a variant has its own default (DEFAULT_FEATURES). The one
+// feature is `save` (saving and updating passwords from the extension): off in
+// a release, on in the test variant. The build writes shared/features.mjs with
+// the result, and the release check refuses a release package with `save` on,
+// or without that file.
 //
 // 1. Reads ../web/wasm.lock.json ({version, url, sha256}), fetches the published
 //    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar), checks its
@@ -27,8 +34,9 @@
 //    carries gecko.update_url (lib/updates.mjs), the test variant none.
 // 4. Merges src/locales/<lang>/<feature>.json and src/styles/<feature>.css. A
 //    feature adds its own files and edits no shared file.
-//    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs)
-//    and background/variant.gen.mjs (what differs between release and test). The content
+//    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs),
+//    background/variant.gen.mjs (what differs between release and test) and
+//    shared/features.mjs (which features are on). The content
 //    script and the modules it imports are joined into content/fill.inject.js (scripts/lib/classic.mjs). Anything
 //    below a folder named test-only is left out of a release.
 // 5. Refuses a relative import or page script whose file is not in the package, inline
@@ -65,6 +73,27 @@ export const TEST_NAME_SUFFIX = " (test)";
  * may set; the test variant carries none.
  */
 export const TEST_ID = "ferret-test@hedgerow.tools";
+
+/**
+ * The features a build turns on or off. `save`: saving and updating passwords from
+ * the extension (the capture script, the offer in Ferret's UI, the generator).
+ * While that work is not done, a release has it off and the test variant has it on.
+ */
+export const FEATURES = Object.freeze(["save"]);
+/** The features each variant has on when --features does not say. */
+export const DEFAULT_FEATURES = Object.freeze({
+  release: Object.freeze(/** @type {string[]} */ ([])),
+  test: Object.freeze(["save"]),
+});
+/** The features a release package may have on. `save` is not one of them yet: the release check refuses it. */
+export const RELEASE_FEATURES = Object.freeze(/** @type {string[]} */ ([]));
+/** The generated module that tells the code of a package which features are on. */
+export const FEATURES_FILE = "shared/features.mjs";
+/**
+ * The package files of the `save` feature. A package with `save` off never holds
+ * one (the build leaves them out), and a release never does (the release check).
+ */
+export const SAVE_FILES = Object.freeze(["content/capture.inject.js"]);
 
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -530,9 +559,9 @@ function manifestProblems(text, allow) {
 
 /**
  * What a release package must not hold: test files, a fixed extension UUID, the
- * test name, an internal host name, anything under test/, and a manifest with a
- * key or permission the release does not have. Returns the problems, empty when
- * clean.
+ * test name, an internal host name, anything under test/, a feature a release may
+ * not have yet (featureProblems), and a manifest with a key or permission the
+ * release does not have. Returns the problems, empty when clean.
  * @param {Map<string, Buffer>} files path -> bytes
  * @param {string[]} internalHosts host names of the fixture server and the end-to-end stack
  * @param {Record<string, string[]>} [permissionAllow] permissions.allow.json (the repository's own by default)
@@ -561,6 +590,7 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
     }
   }
   problems.push(...sharedProblems(files, webRoot));
+  problems.push(...featureProblems(files));
   const raw = files.get("manifest.json");
   if (raw === undefined) problems.push("manifest.json is missing");
   else {
@@ -736,6 +766,85 @@ export function variantModule(variant, dist) {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * The features that are on, from the value of --features: names of FEATURES separated
+ * by commas, or "none".
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function parseFeatures(text) {
+  if (typeof text !== "string" || text.trim() === "") throw new Error('--features needs a list of features or "none"');
+  if (text.trim() === "none") return [];
+  const names = text.split(",").map((name) => name.trim());
+  return checkFeatures(names);
+}
+
+/**
+ * Checks a list of features: every name is one of FEATURES, and none is named twice.
+ * @param {readonly string[]} names
+ * @returns {string[]} the names, sorted
+ */
+function checkFeatures(names) {
+  if (!Array.isArray(names)) throw new Error("features: expected a list of feature names");
+  for (const name of names) {
+    if (!FEATURES.includes(name)) throw new Error(`features: unknown feature ${JSON.stringify(name)} (known: ${FEATURES.join(", ")})`);
+  }
+  if (new Set(names).size !== names.length) throw new Error("features: a feature is named twice");
+  return [...names].sort(compareText);
+}
+
+/**
+ * `shared/features.mjs`: which features are on, decided here and not at run time.
+ * The code of a feature asks `FEATURES.<name>` before it registers a handler, a
+ * script or a control.
+ * @param {readonly string[]} on the features that are on
+ * @param {Map<string, Buffer>} dist
+ * @returns {string}
+ */
+export function featuresModule(on, dist) {
+  if (dist.has(FEATURES_FILE)) {
+    throw new Error(`src/${FEATURES_FILE} is generated by the build and must not exist`);
+  }
+  const flags = Object.fromEntries(FEATURES.map((name) => [name, on.includes(name)]));
+  return [
+    "// Generated by scripts/build.mjs (--features). Do not edit.",
+    `export const FEATURES = Object.freeze(${JSON.stringify(flags)});`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * What a release package must not hold of the features: a features module other
+ * than the one the build writes for a release (a feature on that a release may not
+ * have, or no module at all), and a file of the `save` feature.
+ * @param {Map<string, Buffer>} files path -> bytes
+ * @returns {string[]}
+ */
+export function featureProblems(files) {
+  /** @type {string[]} */
+  const problems = [];
+  const raw = files.get(FEATURES_FILE);
+  if (raw === undefined) {
+    problems.push(`${FEATURES_FILE} is missing (a release names the features that are on)`);
+  } else {
+    const text = raw.toString("utf8");
+    if (text !== featuresModule(RELEASE_FEATURES, new Map())) {
+      for (const name of FEATURES) {
+        if (!RELEASE_FEATURES.includes(name) && new RegExp(String.raw`["']?\b${name}\b["']?\s*:\s*(?!false\b)`).test(text)) {
+          problems.push(`${FEATURES_FILE}: the feature ${name} is on, which a release may not have yet`);
+        }
+      }
+      if (problems.length === 0) problems.push(`${FEATURES_FILE}: not the module the build writes for a release`);
+    }
+  }
+  if (!RELEASE_FEATURES.includes("save")) {
+    for (const path of SAVE_FILES) {
+      if (files.has(path)) problems.push(`${path}: belongs to the save feature, which a release may not have yet`);
+    }
+  }
+  return problems;
+}
+
 /** @param {string} root @returns {Map<string, string>} language -> catalog JSON */
 function generateLocales(root) {
   const base = join(root, "src", "locales");
@@ -787,13 +896,13 @@ function generateCss(root) {
 
 /**
  * @param {{
- *   browser?: string, manifest?: string, variant?: string, root?: string, webRoot?: string,
- *   out?: string, wasmTar?: string, fetchImpl?: typeof fetch,
- * }} [options]
- * @returns {Promise<{ dir: string, xpi: string, sha256: string, bytes: number, files: Map<string, Buffer> }>}
+ *   browser?: string, manifest?: string, variant?: string, features?: readonly string[], root?: string,
+ *   webRoot?: string, out?: string, wasmTar?: string, fetchImpl?: typeof fetch,
+ * }} [options] `features`: the features that are on (the variant's DEFAULT_FEATURES when left out)
+ * @returns {Promise<{ dir: string, xpi: string, sha256: string, bytes: number, files: Map<string, Buffer>, features: string[] }>}
  */
 export async function build({
-  browser = "firefox", manifest = "mv3", variant = "release",
+  browser = "firefox", manifest = "mv3", variant = "release", features,
   root = defaultRoot, webRoot, out, wasmTar, fetchImpl = fetch,
 } = {}) {
   root = resolve(root);
@@ -802,6 +911,7 @@ export async function build({
   const mv = manifest === "mv2" ? "mv2" : "mv3";
   const name = `ferret-${browser}-${mv}-${variant}`;
   const manifestJson = buildManifest({ browser, manifest, variant, root });
+  const on = checkFeatures(features ?? DEFAULT_FEATURES[/** @type {"release" | "test"} */ (variant)]);
 
   // 1. The published WASM package, checked against the lock.
   const lock = readJson(join(webRoot, "wasm.lock.json"));
@@ -842,8 +952,11 @@ export async function build({
   }
   dist.set("background/handlers.gen.mjs", Buffer.from(handlerRegister(dist)));
   dist.set("background/variant.gen.mjs", Buffer.from(variantModule(variant, dist)));
+  dist.set(FEATURES_FILE, Buffer.from(featuresModule(on, dist)));
   // The content script, joined into one classic script (an injected file cannot be a module).
   if (dist.has(CONTENT_ENTRY)) dist.set(CONTENT_BUNDLE, Buffer.from(classicScript(CONTENT_ENTRY, dist)));
+  // A package with `save` off holds no file of that feature.
+  if (!on.includes("save")) for (const path of SAVE_FILES) dist.delete(path);
   for (const [lang, text] of generateLocales(root)) dist.set(`locales.${lang}.json`, Buffer.from(text));
   const css = generateCss(root);
   if (css !== "") dist.set("assets/app.css", Buffer.from(css));
@@ -897,7 +1010,7 @@ export async function build({
     writeFileSync(target, bytes);
   }
   const packed = packXpi(dir, xpi);
-  return { dir, xpi, sha256: packed.sha256, bytes: packed.bytes, files: dist };
+  return { dir, xpi, sha256: packed.sha256, bytes: packed.bytes, files: dist, features: on };
 }
 
 /**
@@ -939,7 +1052,7 @@ async function main(args) {
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!["--browser", "--manifest", "--variant", "--wasm-tar", "--out"].includes(flag)) throw new Error(`unknown option ${flag}`);
+    if (!["--browser", "--manifest", "--variant", "--features", "--wasm-tar", "--out"].includes(flag)) throw new Error(`unknown option ${flag}`);
     if (value === undefined) throw new Error(`${flag} needs a value`);
     values[flag.slice(2)] = value;
   }
@@ -950,10 +1063,11 @@ async function main(args) {
     browser: values.browser,
     manifest: values.manifest,
     variant: values.variant,
+    ...(values.features !== undefined ? { features: parseFeatures(values.features) } : {}),
     wasmTar: values["wasm-tar"],
     out: values.out,
   });
-  console.log(`build: ${result.files.size} files, ${result.xpi} (${result.bytes} bytes, sha256 ${result.sha256})`);
+  console.log(`build: ${result.files.size} files, features: ${result.features.join(", ") || "none"}, ${result.xpi} (${result.bytes} bytes, sha256 ${result.sha256})`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -5,7 +5,7 @@
 // list.
 
 /** The reasons a page has a text for (`popup.error.<reason>`). Every other code becomes `unknown`. */
-export const REASONS = Object.freeze(["not_offered", "no_value", "no_site", "clipboard", "not_found", "vault_locked", "sync_not_running", "busy", "unknown"]);
+export const REASONS = Object.freeze(["not_offered", "no_value", "no_site", "clipboard", "not_cleared", "not_found", "vault_locked", "sync_not_running", "busy", "unknown"]);
 
 /** @param {unknown} code @returns {string} */
 export function reasonOf(code) {

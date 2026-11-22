@@ -24,6 +24,9 @@
 //   that does not exist);
 // - no identifier of the form `__m<number>`, the names the joined script gives
 //   the modules;
+// - no line inside a comment, a string or a template literal that starts with
+//   `import` or `export` (the joiner reads those forms line by line, and such a
+//   line would be edited as if it were code);
 // - a closure of at most the files `allowed` names, and no cycle.
 //
 // Not allowed: `import()`, `import.meta`, default or namespace imports,
@@ -50,6 +53,29 @@ const IMPORT = /^import\s*(?:\{([^}]*)\}\s*from\s*)?(["'])([^"'\n]+)\2[ \t]*;?[ 
 const EXPORT_DECLARATION = /^export\s+(?:async\s+function|function|const|class)\s+([A-Za-z_$][\w$]*)/gm;
 const EXPORT_LIST = /^export\s*\{([^}]*)\}[ \t]*;?[ \t]*$/gm;
 const NAME = /^[A-Za-z_$][\w$]*$/;
+/** Comments, strings and template literals, and the `import` and `export` keywords outside them (as imports.mjs reads them). */
+const TOKEN = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\[\s\S]|[^`\\])*`|\b(import|export)\b/g;
+/** A line that starts with `import` or `export`, up to that word. */
+const LINE_KEYWORD = /^[ \t]*(?=(?:import|export)\b)/gm;
+
+/**
+ * Refuses a line that starts with `import` or `export` inside a comment, a string or a template literal.
+ * @param {string} path @param {string} source
+ */
+function checkKeywordLines(path, source) {
+  /** @type {Set<number>} */
+  const code = new Set();
+  for (const match of source.matchAll(TOKEN)) {
+    if (match[1]) code.add(/** @type {number} */ (match.index));
+  }
+  for (const match of source.matchAll(LINE_KEYWORD)) {
+    const at = /** @type {number} */ (match.index) + match[0].length;
+    if (!code.has(at)) {
+      const line = source.slice(0, at).split("\n").length;
+      throw new Error(`content script: ${path}: line ${line} starts with import or export inside a comment, a string or a template literal`);
+    }
+  }
+}
 
 /** @param {string} list the inside of `{ ... }` @param {string} where @returns {string[]} */
 function names(list, where) {
@@ -84,6 +110,7 @@ export function classicScript(entry, files, allowed = contentMayInclude) {
     if (!bytes) throw new Error(`content script: ${path} is not in the package`);
     const source = bytes.toString("utf8");
     if (/\b__m\d+\b/.test(source)) throw new Error(`content script: ${path} uses a name of the form __m<number>, which the joined script keeps for its modules`);
+    checkKeywordLines(path, source);
     const reader = importsOf(source);
     if (reader.hidden > 0) throw new Error(`content script: ${path} has an import() with no string literal`);
     stack.push(path);
