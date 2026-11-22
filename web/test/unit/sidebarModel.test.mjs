@@ -13,7 +13,7 @@ const ROUTES = [
   { path: "/favorites", title: "t.fav", sidebar: { section: "main", order: 20, icon: "star", role: "nav-favorites", count: "favorites" }, load() {} },
   { path: "/items/new", title: "t.new", sidebar: { section: "primary", order: 1, icon: "plus", role: "nav-new" }, load() {} },
   { path: "/trash", title: "t.trash", sidebar: { section: "manage", order: 20, icon: "trash", role: "nav-trash", title: "t.trash_label" }, load() {} },
-  { path: "/export", title: "t.export", sidebar: { section: "tools", order: 30, icon: "transfer", role: "nav-transfer", activeFor: ["/import"] }, load() {} },
+  { path: "/transfer", title: "t.transfer", sidebar: { section: "tools", order: 30, icon: "transfer", role: "nav-transfer", activeFor: ["/import", "/export"] }, load() {} },
   { path: "/account", title: "t.account", load() {} },
   { path: "/password", title: "t.password", menu: "account", menuOrder: 10, load() {} },
 ];
@@ -25,7 +25,7 @@ test("the_entries_come_from_the_routes_in_sections_and_in_order", () => {
   assert.deepEqual(ids(sections), [
     ["primary", ["/items/new"]],
     ["main", ["/items", "/favorites"]],
-    ["tools", ["generator", "health", "/export"]],
+    ["tools", ["generator", "health", "/transfer"]],
     ["manage", ["/trash"]],
   ]);
   const by = Object.fromEntries(sections.flatMap((s) => s.entries).map((e) => [e.id, e]));
@@ -118,8 +118,9 @@ test("the_entry_the_page_belongs_to_is_the_closest_one_and_only_one", () => {
   assert.equal(at("/items/new"), "/items/new");
   assert.equal(at("/items/abc"), "/items");
   assert.equal(at("/items/abc/edit"), "/items");
-  assert.equal(at("/export"), "/export");
-  assert.equal(at("/import"), "/export");
+  assert.equal(at("/transfer"), "/transfer");
+  assert.equal(at("/export"), "/transfer");
+  assert.equal(at("/import"), "/transfer");
   assert.equal(at("/trash"), "/trash");
   assert.equal(at("/account"), null);
   assert.equal(at("/itemsx"), null, "a longer word is not below the path");

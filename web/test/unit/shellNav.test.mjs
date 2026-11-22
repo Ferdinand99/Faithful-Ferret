@@ -5,13 +5,14 @@ import { createWipeScope } from "../../src/views/common.mjs";
 import { shellView } from "../../src/views/shell.mjs";
 import { createUiPrefs } from "../../src/uiPrefs.mjs";
 import exportRoute from "../../src/routes/export.route.mjs";
+import transferRoute from "../../src/routes/transfer.route.mjs";
 import favoritesRoute from "../../src/routes/favorites.route.mjs";
 import listRoute from "../../src/routes/list.route.mjs";
 import newRoute from "../../src/routes/new.route.mjs";
 import trashRoute from "../../src/routes/trash.route.mjs";
 import { fakeEngine, find, t, withDom } from "./vaultHelpers.mjs";
 
-const ROUTES = [listRoute, newRoute, favoritesRoute, exportRoute, trashRoute];
+const ROUTES = [listRoute, newRoute, favoritesRoute, transferRoute, exportRoute, trashRoute];
 const ROLES = ["nav-items", "nav-favorites", "nav-transfer", "nav-trash"];
 
 function frame(win) {
@@ -60,6 +61,8 @@ test("the_entry_of_the_open_screen_is_marked_and_the_mark_follows_the_address", 
     win.go("#/trash");
     assert.deepEqual(current(), ["nav-trash"]);
     // Import and export are one entry.
+    win.go("#/transfer");
+    assert.deepEqual(current(), ["nav-transfer"]);
     win.go("#/export");
     assert.deepEqual(current(), ["nav-transfer"]);
     win.go("#/import");

@@ -93,7 +93,7 @@ const outside = (page) =>
 const ENTRIES = [
   ["nav-items", "#/items"],
   ["nav-favorites", "#/favorites"],
-  ["nav-transfer", "#/export"],
+  ["nav-transfer", "#/transfer"],
   ["nav-folders", "#/folders"],
   ["nav-trash", "#/trash"],
 ];
