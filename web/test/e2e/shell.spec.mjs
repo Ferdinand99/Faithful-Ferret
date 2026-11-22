@@ -296,6 +296,7 @@ for (const scheme of ["light", "dark"]) {
     await mountShell(page, { admin: true, withFolders: true, pinned: ["home"] });
     await page.locator('[data-role="menu-open"]').click();
     await expect(page.locator('[data-role="side"]')).toBeVisible();
+    await settled(page);
     await page.screenshot({ path: testInfo.outputPath(`shell-drawer-${scheme}.png`) });
   });
 }
