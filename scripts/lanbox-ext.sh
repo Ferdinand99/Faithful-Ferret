@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Check the browser extension (extension/) on the LANBox Docker host (never
-# locally, never Docker Desktop, never Tower).
+# Check the browser extension (extension/) on the Docker build host (never
+# locally, never Docker Desktop).
 #
 #   scripts/lanbox-ext.sh unit    build both manifest versions in both variants,
 #                                 type check, and run extension/test/unit/*.test.mjs
