@@ -4846,7 +4846,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 --- MIT ---
 
 Used by:
-  rand 0.10.3 (https://github.com/rust-random/rand)
+  rand 0.10.4 (https://github.com/rust-random/rand)
   rand 0.8.8 (https://github.com/rust-random/rand)
   rand_chacha 0.3.1 (https://github.com/rust-random/rand)
   rand_core 0.6.4 (https://github.com/rust-random/rand)
