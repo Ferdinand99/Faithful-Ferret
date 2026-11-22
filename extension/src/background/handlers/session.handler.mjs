@@ -20,6 +20,7 @@ export const REASONS = Object.freeze([
   "server_not_https",
   "server_reserved",
   "another_server",
+  "busy",
   "permission_needed",
   "signed_out",
   "network",

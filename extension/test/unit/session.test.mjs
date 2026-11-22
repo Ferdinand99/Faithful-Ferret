@@ -295,11 +295,13 @@ test("the_lock_button_locks_and_the_popup_shows_the_unlock_view", async () => {
 
   const popup = createPopupFlow(world.page("pages/popup.html").request);
   const open = await popup.load();
-  assert.deepEqual(open, { view: "unlocked", host: "vault.example.com", account: EMAIL });
+  // This world has no sync handler: the popup shows a sync that does not run.
+  const idle = { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [] };
+  assert.deepEqual(open, { view: "unlocked", host: "vault.example.com", account: EMAIL, server: SERVER, sync: idle });
 
   const locksBefore = world.client.locks;
   const after = await popup.lock();
-  assert.deepEqual(after, { view: "locked", host: "vault.example.com", account: EMAIL });
+  assert.deepEqual(after, { view: "locked", host: "vault.example.com", account: EMAIL, server: SERVER, sync: null });
   assert.equal(world.coreHost.state(), "locked");
   assert.ok(world.client.locks > locksBefore, "the worker that held the keys was ended");
   assert.equal(sessions.made[0].current(), null, "the session forgot the open account");

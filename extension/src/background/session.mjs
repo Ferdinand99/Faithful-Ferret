@@ -23,14 +23,27 @@
 // The lock is the core host's: `client.lock()` of the shared session goes to
 // the core host (which ends the worker), and every lock of the core host
 // (timeout, the lock button, a failed worker) resets the shared session.
+//
+// The shared session reaches the workers through the core host's live client
+// (`coreHost.liveClient()`), never through the client an op was handed: an op's
+// view ends with the op, and the session (and the sync engine after it) also
+// runs between the ops. Every call of the live client goes through the core
+// host's lock and worker rules.
+//
+// After an op has opened the vault, the listeners of `onOpen` hear it (the sync
+// engine starts there); every lock of the core host stops what they started.
 
 import { loadDeviceKey } from "../shared/auth/deviceKey.mjs";
+import { hex16 } from "../shared/b64.mjs";
 import { createCryptoSession } from "../shared/crypto/session.mjs";
 import { cache } from "../shared/store/cache.mjs";
-import { openStore, serverKey } from "../shared/store/idb.mjs";
+import { forgetServer, pendingWrites, sharedAccount } from "../shared/store/forget.mjs";
+import { openStore, req, run, serverKey } from "../shared/store/idb.mjs";
+import { outbox } from "../shared/store/outbox.mjs";
 import { loadPinned, loadPinnedAccount, pinnedElsewhere, pinnedForSignIn, savePinned } from "../shared/store/pinned.mjs";
-import { deviceId } from "../shared/store/settings.mjs";
-import { loadSyncState } from "../shared/store/syncState.mjs";
+import { deleteSetting, deviceId, getSetting, setSetting } from "../shared/store/settings.mjs";
+import { loadSyncState, saveSyncState } from "../shared/store/syncState.mjs";
+import { trash } from "../shared/store/trash.mjs";
 
 /** Where the address of the signed-in server is kept (`storage.local`; an address is not a secret). */
 export const SERVER_KEY = "server";
@@ -123,8 +136,8 @@ export function checkServer(text, { allowTestHosts = false } = {}) {
 }
 
 /**
- * The local stores the shared session needs, over the extension's IndexedDB
- * (the same stores and layout as the web vault's).
+ * The local stores the shared session and the sync engine need, over the
+ * extension's IndexedDB (the same stores and layout as the web vault's).
  * @param {{ factory?: IDBFactory, keyRange?: typeof IDBKeyRange }} [options]
  */
 export function createLocalStore({ factory, keyRange } = {}) {
@@ -148,8 +161,43 @@ export function createLocalStore({ factory, keyRange } = {}) {
     savePinned,
     deviceId,
     cache,
+    // The sync engine's (as web/src/services/store.service.mjs gives them): the sync state holds no lock; the engine's
+    // memory takes the Web Lock around every read-modify-write.
+    getSetting,
+    setSetting,
+    deleteSetting,
+    outbox,
+    trash,
     loadSyncState,
+    saveSyncState,
+    // "Forget this server".
+    forgetServer,
+    pendingWrites,
+    sharedAccount,
+    accountsOf,
   };
+}
+
+/**
+ * The accounts this device keeps records of under a server: the account ids in the keys of its pinned records, its
+ * sync states and its device secrets (`[server, account]`). Read from this device's own stores, never from the
+ * server, so "forget this server" finds them also after the device's tokens and key record have gone.
+ * @param {import("../shared/store/idb.mjs").Store} db
+ * @param {string} serverUrl
+ * @returns {Promise<string[]>}
+ */
+export async function accountsOf(db, serverUrl) {
+  const server = serverKey(serverUrl);
+  return run(db, ["pinned", "sync_state", "device_secrets"], "readonly", async (tables) => {
+    /** @type {Set<string>} */
+    const found = new Set();
+    for (const table of tables) {
+      for (const key of await req(table.getAllKeys())) {
+        if (Array.isArray(key) && key[0] === server && hex16.is(key[1])) found.add(/** @type {string} */ (key[1]));
+      }
+    }
+    return [...found].sort();
+  });
 }
 
 /**
@@ -157,12 +205,22 @@ export function createLocalStore({ factory, keyRange } = {}) {
  *   signIn(args: Record<string, unknown>): Promise<{ email: string }>,
  *   unlock(args: Record<string, unknown>): Promise<{ email: string }>,
  *   lock(): Promise<void>,
- *   current(): { email: string } | null,
+ *   current(): { email: string, accountId?: string, vaultId?: string, vkEpoch?: number } | null,
  *   deviceState(): Promise<"ok" | "signed_out" | "revoked" | null>,
- * }} AccountSession the part of the shared session (`crypto/session.mjs`) this module uses
+ *   signOut?(): Promise<void>,
+ *   forgetSecretKey?(accountId: string): Promise<void>,
+ *   api?: any,
+ * }} AccountSession the part of the shared session (`crypto/session.mjs`) this module and the sync use
+ *
+ * @typedef {{ server: string, session: AccountSession }} Opened what `onOpen` hears: the server and its session, whose
+ *   `current()` names the account and the vault that were opened
  *
  * @typedef {{
- *   storageLocal: { get(key: string): Promise<Record<string, unknown>>, set(items: Record<string, unknown>): Promise<void> },
+ *   storageLocal: {
+ *     get(key: string): Promise<Record<string, unknown>>,
+ *     set(items: Record<string, unknown>): Promise<void>,
+ *     remove?(key: string): Promise<void>,
+ *   },
  *   permissions: { contains(p: { origins: string[] }): Promise<boolean> },
  *   platformInfo: () => Promise<{ os?: string }>,
  *   store?: any,
@@ -187,8 +245,8 @@ export function createSessionHost({
   now = Date.now,
   createSession = (options) => /** @type {AccountSession} */ (/** @type {unknown} */ (createCryptoSession(/** @type {any} */ (options)))),
 }) {
-  /** The client of the last op: the core host hands each op its view of the one WASM client. @type {any} */
-  let view = null;
+  /** The core host's live client (`attach`): the shared session's only way to the workers. @type {any} */
+  let live = null;
   /** The core host's lock, set by `attach`. @type {((reason: "manual") => Promise<void>) | null} */
   let hostLock = null;
   // True while a lock is passed on between the core host and the session, so it does not come back.
@@ -201,16 +259,18 @@ export function createSessionHost({
   let identity = null;
   /** The e-mail of the account opened last (not a secret), for when the stored record cannot be read. @type {{ server: string, email: string } | null} */
   let lastAccount = null;
+  /** Who hears that an op opened the vault. @type {Set<(opened: Opened) => void>} */
+  const openListeners = new Set();
 
-  // The client the shared session works over: the vault and job workers of the op that runs, and the core host's lock.
+  // The client the shared session works over: the core host's live client, and the core host's lock.
   const client = {
     get vault() {
-      if (view === null) throw new SessionError("vault_locked");
-      return view.vault;
+      if (live === null) throw new SessionError("vault_locked");
+      return live.vault;
     },
     get job() {
-      if (view === null) throw new SessionError("vault_locked");
-      return view.job;
+      if (live === null) throw new SessionError("vault_locked");
+      return live.job;
     },
     async lock() {
       if (passing || hostLock === null) return;
@@ -302,30 +362,62 @@ export function createSessionHost({
     return args.sk_bit === false ? false : undefined;
   }
 
-  /** @param {(client: any, args: any, context: import("./coreHost.mjs").OpContext) => Promise<unknown>} run */
+  // An op does not keep the client it is handed: the session works over the live client (see the top of this file).
+  /** @param {(args: any, context: import("./coreHost.mjs").OpContext) => Promise<unknown>} run */
   const op = (run) => ({
     vault: false,
     worker: /** @type {"vault"} */ ("vault"),
-    /** @param {any} given @param {any} args @param {import("./coreHost.mjs").OpContext} context */
-    run(given, args, context) {
-      view = given;
-      return run(given, args ?? {}, context);
+    /** @param {any} _given @param {any} args @param {import("./coreHost.mjs").OpContext} context */
+    run(_given, args, context) {
+      return run(args ?? {}, context);
     },
   });
 
+  // A sign-in or an unlock and "forget this server" never run at the same time: a forget that came while a sign-in
+  // was on its way would remove the old records while the sign-in saves a new device key and pin for the server
+  // being forgotten. Whichever comes second is refused with `busy` (the page says to try again).
+  /** How many sign-ins and unlocks are running. */
+  let opening = 0;
+  /** A forget is running. */
+  let forgetting = false;
+
+  /** @param {(args: any, context: import("./coreHost.mjs").OpContext) => Promise<unknown>} run */
+  const opener = (run) =>
+    op(async (args, context) => {
+      if (forgetting) throw new SessionError("busy");
+      opening += 1;
+      try {
+        return await run(args, context);
+      } finally {
+        opening -= 1;
+      }
+    });
+
   /**
-   * After the shared session opened the vault: the core host opens too, or (a
-   * lock came in the meantime) the session forgets the account again.
+   * After the shared session opened the vault: the core host opens too, and the
+   * listeners of `onOpen` hear it; or (a lock came in the meantime) the session
+   * forgets the account again.
    * @param {import("./coreHost.mjs").OpContext} context
+   * @param {string} server
+   * @param {AccountSession} session
    */
-  async function open(context) {
-    if (context.setUnlocked()) return;
+  async function open(context, server, session) {
+    if (context.setUnlocked()) {
+      for (const listener of [...openListeners]) {
+        try {
+          listener({ server, session });
+        } catch {
+          // A listener that fails must not undo the unlock.
+        }
+      }
+      return;
+    }
     await resetSession();
     throw new SessionError("vault_locked");
   }
 
   const ops = Object.freeze({
-    server_check: op(async (_client, args) => {
+    server_check: op(async (args) => {
       const checked = checkServer(args.server, { allowTestHosts });
       if (!checked.ok) return { ok: false, reason: checked.reason };
       return { ok: true, server: checked.server, ...(await hostOf(checked.server)) };
@@ -346,7 +438,7 @@ export function createSessionHost({
       };
     }),
 
-    sign_in: op(async (_client, args, context) => {
+    sign_in: opener(async (args, context) => {
       const checked = checkServer(args.server, { allowTestHosts });
       if (!checked.ok) throw new SessionError(checked.reason);
       const server = checked.server;
@@ -365,19 +457,19 @@ export function createSessionHost({
         rememberSk: args.remember_sk !== false,
         qr: typeof args.qr_text === "string" ? args.qr_text : null,
       });
-      await open(context);
+      await open(context, server, session);
       lastAccount = { server, email: unlocked.email };
       await storageLocal.set({ [SERVER_KEY]: server });
       return { ok: true, account_email: unlocked.email, server };
     }),
 
-    unlock: op(async (_client, args, context) => {
+    unlock: opener(async (args, context) => {
       const server = await storedServer();
       if (server === null) throw new SessionError("signed_out");
       const session = await sessionOf(server);
       await resetSession();
       const unlocked = await session.unlock({ password: args.mp, ...(typeof args.sk === "string" ? { skCode: args.sk, skBit: true } : {}) });
-      await open(context);
+      await open(context, server, session);
       lastAccount = { server, email: unlocked.email };
       return { ok: true };
     }),
@@ -387,18 +479,76 @@ export function createSessionHost({
     ops,
 
     /**
-     * Joins the core host: the session locks through it, and every lock of it
-     * resets the session.
-     * @param {{ lock: (reason: "manual") => Promise<void>, onLocked: (listener: (reason: string) => void) => unknown }} coreHost
+     * Joins the core host: the session reaches the workers through its live
+     * client and locks through it, and every lock of it resets the session.
+     * @param {{
+     *   lock: (reason: "manual") => Promise<void>,
+     *   onLocked: (listener: (reason: string) => void) => unknown,
+     *   liveClient: (options?: { open?: boolean }) => any,
+     * }} coreHost
      */
     attach(coreHost) {
+      live = coreHost.liveClient();
       hostLock = (reason) => coreHost.lock(reason);
       coreHost.onLocked(() => {
         resetSession().catch(() => {});
       });
     },
 
-    /** The shared session in use, for the sync of a later step; null before the first op that names a server. */
+    /** The shared session in use; null before the first op that names a server. */
     session: () => active?.session ?? null,
+
+    /** The local stores (the sync engine works over the same ones). */
+    store,
+
+    /**
+     * Calls `listener({ server, session })` after an op has opened the vault,
+     * in the turn the core host opened. Returns the function that stops it.
+     * @param {(opened: Opened) => void} listener
+     * @returns {() => void}
+     */
+    onOpen(listener) {
+      openListeners.add(listener);
+      return () => void openListeners.delete(listener);
+    },
+
+    /** The server this device is signed in at (`storage.local`), or null. */
+    storedServer,
+
+    /** The shared session of `server`, made once (for "forget this server" of a locked device). @param {string} server */
+    sessionFor: sessionOf,
+
+    /** The name this device writes into what it saves ("Ferret for Firefox (Windows)"). */
+    deviceName: async () => (await deviceOf()).deviceName,
+
+    /**
+     * Runs `fn` ("forget this server") while no sign-in or unlock runs, and keeps
+     * them out until it is done; refused with `busy` while one runs.
+     * @template T
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     */
+    async exclusive(fn) {
+      if (opening > 0 || forgetting) throw new SessionError("busy");
+      forgetting = true;
+      try {
+        return await fn();
+      } finally {
+        forgetting = false;
+      }
+    },
+
+    /**
+     * Forgets the server this device was signed in at: its address in
+     * `storage.local`, its session and what this module showed of it. The
+     * caller has locked, revoked the device and removed the local records first.
+     */
+    async forget() {
+      active = null;
+      lastAccount = null;
+      hosts.clear();
+      if (typeof storageLocal.remove === "function") await storageLocal.remove(SERVER_KEY);
+      else await storageLocal.set({ [SERVER_KEY]: null });
+    },
   };
 }

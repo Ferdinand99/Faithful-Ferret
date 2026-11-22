@@ -5,6 +5,7 @@
   "session.error.another_server": "This browser is signed in at another server. Forget that server first, then sign in here.",
   "session.error.attack_warning": "Warning: the server shows something other than what this device has pinned for your account. This can be an attack. Nothing was opened. Do not try again on this network, and tell whoever runs the server.",
   "session.error.bad_response": "The server gave an answer Ferret does not understand. Try again later.",
+  "session.error.busy": "Ferret is forgetting a server right now. Wait until that is done, then try again.",
   "session.error.disconnected": "Ferret's background stopped while it worked, and the vault is locked. Try again.",
   "session.error.email_required": "Enter the e-mail address.",
   "session.error.internal_error": "Something went wrong in Ferret. Try again.",

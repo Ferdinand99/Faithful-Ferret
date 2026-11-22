@@ -247,6 +247,7 @@ docker "${docker_args[@]}" run --rm -i --init \
 network=none
 e2e_ca=""
 e2e_token=""
+e2e_evil_url=""
 if [ "$mode" = e2e ]; then
   stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
   if [ "$no_up" -eq 0 ]; then
@@ -256,6 +257,8 @@ if [ "$mode" = e2e ]; then
   # The setup token of the stack (made up by e2e-up): the sign-in specs make the stack's first account with it.
   e2e_token="$(bash "$stack" e2e-token)"
   network=ferret-e2e-net
+  # The control port of the stack's malicious proxy, on the stack's network (the sync specs switch its modes).
+  e2e_evil_url="http://ferret-e2e-evil:9000"
 fi
 
 tar -cf "$work/in.tar" \
@@ -285,6 +288,7 @@ make_run() {
     -e FERRET_HEADLESS="$((1 - headed))"
     -e FERRET_E2E_CA_PEM="$e2e_ca"
     -e FERRET_E2E_SETUP_TOKEN="$e2e_token"
+    -e FERRET_E2E_EVIL_URL="$e2e_evil_url"
     -e FERRET_MEASURE_MANIFESTS="$measure_manifests"
     -e FERRET_MEASURE_SCENARIOS="$scenario_list"
     -e FERRET_MEASURE_MINUTES="$window_minutes"

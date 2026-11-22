@@ -193,6 +193,24 @@ export const UI_TYPES = defineTypes({
     request: object({ ref, field }),
     reply: okReply,
   },
+  // What the sync shows in the popup: codes only (the state, a stop, the warnings), never an item or a name.
+  sync_state: {
+    request: empty,
+    reply: object(
+      {
+        running: boolean(),
+        status: reason,
+        live: string({ max: 16, oneOf: ["connecting", "live", "fallback", "offline", "unauthorized"] }),
+        halted: reason,
+        warnings: array(reason, { max: 16 }),
+      },
+      { optional: ["status", "halted"] },
+    ),
+  },
+  // "Try again" after a stop of the sync.
+  sync_retry: { request: empty, reply: okReply },
+  // "Forget this server": `server` is the one the page showed; another stored one is not forgotten.
+  forget_server: { request: object({ server: serverUrl }), reply: okReply },
   settings: {
     request: object(
       { lock_minutes: integer({ min: 1, max: 480 }) },

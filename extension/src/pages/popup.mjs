@@ -1,19 +1,23 @@
 // The popup (design document, sections 7.2 and 10.3.1). In this version it
 // shows whether a device is signed in, unlocks it with the master password,
-// and locks it with the button in the header. The views are in popupFlow.mjs;
-// this file builds them with `el()`. The list of the vault comes later and
-// builds on the unlocked view.
+// locks it with the button in the header, and shows what the sync found: its
+// state, a stop with "Try again" and "Forget this server", and the warnings.
+// The views are in popupFlow.mjs; this file builds them with `el()`. The list
+// of the vault comes later and builds on the unlocked view.
 //
 // The first sign-in never happens here: Firefox closes the popup when a
 // permission is asked for, so it is done in the sign-in tab.
 
 import { el, mount } from "../shared/dom.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
-import { createPopupFlow } from "./popupFlow.mjs";
+import { createPopupFlow, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
 /** @typedef {import("./page.mjs").Texts} Texts */
 /** @typedef {import("./popupFlow.mjs").PopupView} PopupView */
+
+/** How often an open popup asks for the sync's state again (a poll of it does not move the lock's deadline). */
+const SYNC_REFRESH_MS = 1500;
 
 /** @param {string} id @returns {HTMLElement} */
 function byId(id) {
@@ -52,21 +56,83 @@ async function main() {
     );
   }
 
-  /** @param {PopupView} view */
-  function show(view) {
+  /** The timer that refreshes the sync's part of the unlocked view. @type {ReturnType<typeof setTimeout> | null} */
+  let refresh = null;
+
+  /**
+   * @param {PopupView} view
+   * @param {string | null} [note] the i18n key of a note under a stop of the sync
+   */
+  function show(view, note = null) {
+    if (refresh !== null) clearTimeout(refresh);
+    refresh = null;
     header(view);
-    if (view.view === "signed_out") return signedOut();
+    if (view.view === "signed_out") return signedOut(view);
     if (view.view === "locked") return locked(view);
-    return unlocked(view);
+    return unlocked(view, note);
   }
 
-  function signedOut() {
+  /**
+   * "Forget this server": a button, then a question with its two answers. Only the server the popup shows is forgotten.
+   * @param {PopupView} view
+   */
+  function forgetPart(view) {
+    const box = el("div", { class: "ff-forget", "data-role": "forget" });
+    const start = el("button", { type: "button", class: "ff-button", "data-role": "sync-action", "data-action": "forget" }, texts.t("sync.action.forget"));
+    start.addEventListener("click", () => ask());
+    mount(box, start);
+    function ask() {
+      const error = errorBox();
+      const confirm = el("button", { type: "button", class: "ff-button ff-danger", "data-role": "forget-confirm" }, texts.t("sync.forget.confirm"));
+      const cancel = el("button", { type: "button", class: "ff-button", "data-role": "forget-cancel" }, texts.t("sync.forget.cancel"));
+      cancel.addEventListener("click", () => mount(box, start));
+      confirm.addEventListener("click", async () => {
+        confirm.setAttribute("disabled", "");
+        cancel.setAttribute("disabled", "");
+        showError(error, texts, null);
+        try {
+          const { result, view: next } = await flow.forget(view.server);
+          if (result.ok) {
+            show(next);
+            return;
+          }
+          showError(error, texts, `sync.error.${result.reason ?? "unknown"}`);
+        } catch {
+          showError(error, texts, "sync.error.unknown");
+        }
+        confirm.removeAttribute("disabled");
+        cancel.removeAttribute("disabled");
+      });
+      mount(
+        box,
+        el("h2", null, texts.t("sync.forget.title")),
+        el("p", { "data-role": "forget-text" }, texts.t("sync.forget.body")),
+        el("div", { class: "ff-actions" }, confirm, cancel),
+        error,
+      );
+      confirm.focus();
+    }
+    return box;
+  }
+
+  /** @param {PopupView} view */
+  function signedOut(view) {
     const open = el("button", { type: "button", class: "ff-button ff-primary", "data-role": "open-signin" }, texts.t("session.popup.signin"));
     open.addEventListener("click", async () => {
       await browser.tabs.create({ url: browser.runtime.getURL("pages/signin.html") });
       window.close();
     });
-    mount(root, el("section", { class: "ff-panel", "data-role": "signed-out-view" }, el("h1", null, texts.t("session.popup.signed_out")), el("p", null, texts.t("session.popup.signed_out_hint")), open));
+    mount(
+      root,
+      el(
+        "section",
+        { class: "ff-panel", "data-role": "signed-out-view" },
+        el("h1", null, texts.t("session.popup.signed_out")),
+        el("p", null, texts.t("session.popup.signed_out_hint")),
+        open,
+        view.server !== "" ? forgetPart(view) : null,
+      ),
+    );
   }
 
   /** @param {PopupView} view */
@@ -103,24 +169,119 @@ async function main() {
     });
     mount(
       root,
-      el("section", { class: "ff-panel", "data-role": "locked-view" }, el("h1", null, texts.t("session.popup.locked")), where(view), form),
+      el(
+        "section",
+        { class: "ff-panel", "data-role": "locked-view" },
+        el("h1", null, texts.t("session.popup.locked")),
+        where(view),
+        form,
+        view.server !== "" ? forgetPart(view) : null,
+      ),
     );
     password.input.focus();
   }
 
-  /** @param {PopupView} view */
-  function unlocked(view) {
+  /**
+   * What the sync shows: its state, a stop with its two ways on, and the warnings. Nothing here names an item.
+   * @param {PopupView} view
+   * @param {string | null} note the i18n key of a note under the stop (an answer to "Try again"), or null
+   */
+  function syncPart(view, note) {
+    const sync = view.sync;
+    const halted = sync?.halted ?? null;
+    const box = el("div", { class: "ff-sync", "data-role": "sync", "data-state": halted !== null ? "halted" : (sync?.status ?? "starting"), "data-live": sync?.live ?? "offline" });
+    if (sync === null || !sync.running) return box;
+    if (halted !== null) {
+      const noteBox = errorBox();
+      const actions = el("div", { class: "ff-actions", "data-role": "sync-actions" });
+      for (const action of sync.actions) {
+        if (action === "try_again") {
+          const button = el("button", { type: "button", class: "ff-button ff-primary", "data-role": "sync-action", "data-action": "try_again" }, texts.t("sync.action.try_again"));
+          button.addEventListener("click", async () => {
+            button.setAttribute("disabled", "");
+            try {
+              const { result, view: next } = await flow.retry();
+              show(next, result.ok ? null : `sync.error.${result.reason ?? "unknown"}`);
+            } catch {
+              show(await flow.load().catch(() => view));
+            }
+          });
+          actions.append(button);
+        } else if (action === "forget") {
+          actions.append(forgetPart(view));
+        }
+      }
+      box.append(
+        el(
+          "div",
+          { class: "ff-sync-stop", role: "alert", "data-role": "sync-stop", "data-code": halted },
+          el("h2", null, texts.t("sync.stop.title")),
+          el("p", null, texts.t(stopKey(halted))),
+          actions,
+          noteBox,
+        ),
+      );
+      showError(noteBox, texts, note);
+    } else {
+      box.append(el("p", { class: "ff-hint", "data-role": "sync-status" }, texts.t(statusKey(sync.status))));
+    }
+    if (sync.warnings.length > 0) {
+      const list = el("ul", { class: "ff-sync-warnings", "data-role": "sync-warnings" });
+      for (const code of sync.warnings) list.append(el("li", { "data-role": "sync-warning", "data-code": code }, texts.t(warningKey(code))));
+      box.append(list);
+    }
+    return box;
+  }
+
+  /**
+   * @param {PopupView} view
+   * @param {string | null} [note] see `syncPart`
+   */
+  function unlocked(view, note = null) {
     mount(
       root,
-      el("section", { class: "ff-panel", "data-role": "unlocked-view" }, el("h1", null, texts.t("session.open.title")), where(view), el("p", { class: "ff-hint" }, texts.t("session.popup.open_hint"))),
+      el(
+        "section",
+        { class: "ff-panel", "data-role": "unlocked-view" },
+        el("h1", null, texts.t("session.open.title")),
+        where(view),
+        syncPart(view, note),
+        el("p", { class: "ff-hint" }, texts.t("session.popup.open_hint")),
+      ),
     );
+    follow(view, note);
+  }
+
+  /**
+   * The sync's part follows the background while the popup is open: it is built again only when what the background
+   * says has changed, and not while the user answers the question of "Forget this server".
+   * @param {PopupView} view what is shown now
+   * @param {string | null} note
+   */
+  function follow(view, note) {
+    const mine = setTimeout(async () => {
+      if (refresh !== mine) return;
+      refresh = null;
+      /** @type {PopupView | null} */
+      let next = null;
+      try {
+        if (root.querySelector('[data-role="forget-confirm"]') === null) next = await flow.load();
+      } catch {
+        // The background is gone for a moment: look again later.
+      }
+      // Something else was shown meanwhile (an action of the user wins).
+      if (refresh !== null || document.body.dataset.view !== "unlocked") return;
+      if (next !== null && JSON.stringify(next) !== JSON.stringify(view)) show(next, note);
+      else follow(view, note);
+    }, SYNC_REFRESH_MS);
+    refresh = mine;
   }
 
   lockButton.addEventListener("click", async () => {
     try {
       show(await flow.lock());
     } catch {
-      show(await flow.load().catch(() => ({ view: /** @type {const} */ ("signed_out"), host: "", account: "" })));
+      show(await flow.load().catch(() => ({ view: /** @type {const} */ ("signed_out"), host: "", account: "", server: "", sync: null })));
     }
   });
 
@@ -132,7 +293,7 @@ async function main() {
   try {
     show(await flow.load());
   } catch {
-    show({ view: "signed_out", host: "", account: "" });
+    show({ view: "signed_out", host: "", account: "", server: "", sync: null });
   }
   document.body.dataset.ready = "1";
 }
