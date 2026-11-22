@@ -302,6 +302,10 @@ test("an_open_vault_without_a_running_sync_refuses_item_actions_without_locking"
   assert.deepEqual(await popup.list.fill(row, TAB), { ok: false, reason: "sync_not_running" });
   assert.equal((await popup.list.item(row.ref)).reason, "sync_not_running");
   await assert.rejects(popup.request("search", { query: "" }));
+  // The page's list still answers, with its host and no row.
+  const page = await popup.request("candidates", { tab_id: TAB });
+  assert.deepEqual(page.handles, []);
+  assert.deepEqual(page.host, { a_label: "login.example.net", unicode: "login.example.net" });
   // None of it is a failed worker: the vault stays open, and nothing was read.
   assert.equal(world.coreHost.state(), "unlocked");
   assert.equal(world.client.locks, 0);

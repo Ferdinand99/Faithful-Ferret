@@ -376,7 +376,9 @@ export function createFillHost({
   async function offer({ session, tab_id: tabId, frame_id: frameId }) {
     const own = sessionOf(session);
     if (source === null) return { handles: [], insecure: false, grant: [] };
-    const byId = new Map(engine().list().map((s) => [s.id, s]));
+    // An open vault whose sync did not start has no items: the page still gets its host and its marks, and no row.
+    const running = syncHost.engine();
+    const byId = new Map((running?.list() ?? []).map((s) => [s.id, s]));
     const found = await source.candidates(tabId, frameId !== undefined ? { frameId } : {});
     const insecure = found?.insecure === true;
     /** @type {any[]} */
@@ -389,7 +391,7 @@ export function createFillHost({
         ...(typeof f.documentId === "string" ? { documentId: f.documentId } : {}),
         origin: f.origin,
       }));
-      if (frames.length === 0 || !ITEM_ID.test(item.itemId)) continue;
+      if (running === null || frames.length === 0 || !ITEM_ID.test(item.itemId)) continue;
       const known = byId.get(item.itemId);
       /** @type {Summary} */
       const summary = known ?? { id: item.itemId, name: item.name, username: item.username ?? "", favorite: false, type: "other", urls: [] };
