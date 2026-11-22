@@ -15,7 +15,8 @@
       "The web vault has no runtime npm packages. It embeds a Latin subset of the Inter font and one",
       "file from another project, the QR code generator of Project Nayuki; both are listed after the",
       "Rust crates. Three parts of its source were written from other projects (the CSV reader and the",
-      "readers of the Bitwarden and AliasVault export formats); they are listed last. The container image is based on",
+      "readers of the Bitwarden and AliasVault export formats); they are listed last, and so are the terms of",
+      "AliasVault's form detector that the browser extension's form detection uses. The container image is based on",
       "Alpine Linux; the packages that Alpine installs keep their own licence information in the image",
       "(/lib/apk/db/installed)."
     ],
