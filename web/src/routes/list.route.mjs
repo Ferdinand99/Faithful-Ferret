@@ -1,3 +1,5 @@
+import { moveHook } from "../views/folderActions.mjs";
+import { folderHref } from "../views/folderLinks.mjs";
 import { listView } from "../views/list.mjs";
 import { enterVault } from "../views/shell.mjs";
 
@@ -15,8 +17,11 @@ export default {
       set: (/** @type {string} */ query) => ctx.go(query === "" ? "/items" : `/items?${query}`),
       watch: (/** @type {(query: string) => void} */ fn) => (typeof ctx.watchQuery === "function" ? ctx.watchQuery(fn) : () => {}),
     };
+    const move = moveHook({ t: ctx.i18n.t, engine: vault.engine, locale: ctx.i18n.lang, touch: vault.touch, scope: vault.scope });
     return vault.page(listView({
       engine: vault.engine, router: { go: ctx.go }, t: ctx.i18n.t, nav, locale: ctx.i18n.lang, touch: vault.touch, scope: vault.scope,
+      moveToFolder: (items, where) => move(items.map((item) => item.id), where),
+      folderLink: folderHref,
     }));
   },
 };

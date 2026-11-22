@@ -2,6 +2,7 @@
 // in which card, the letter and colour of the tile, the folder labels, and the draft that a favourite toggle sends.
 // Values never pass through here: a field is described by its id, label and whether the core showed its value, and the
 // screen asks the worker for a secret only when the user clicks.
+import { checkFolderName, sortFolders } from "../folders.mjs";
 
 /** The item types the tile has a colour for; any other type gets the neutral one. */
 const TYPES = Object.freeze(["login", "note", "card", "identity"]);
@@ -9,11 +10,8 @@ const TYPES = Object.freeze(["login", "note", "card", "identity"]);
 /** The field ids that belong to the sign-in card, in the order they are shown. */
 const LOGIN_FIELDS = Object.freeze(["username", "password"]);
 
-/** More labels than this are not drawn; the item page is not a place for a wall of chips. */
+/** More labels than this are not drawn as chips; the rest are one "+N" chip. */
 export const MAX_FOLDER_CHIPS = 12;
-
-/** A folder label as the screen accepts it: one line of at most 128 characters (the same rule as the menu's pins). */
-const FOLDER_LABEL = /^[^\u0000-\u001f\u007f]{1,128}$/u;
 
 /**
  * The type of an item as the tile's colour knows it.
@@ -63,22 +61,17 @@ export function groupFields(fields) {
 }
 
 /**
- * The folder labels an item carries, for the chips in its header. The view of a core that knows folders lists them in
- * `folders`; one that does not has none, and the chips stay hidden. Anything that is not a plain one-line label is
- * dropped, and so is a repeat.
+ * The folder labels an item carries, for the chips in its header, in display order. The view of a core that knows
+ * folders lists them in `folders` (checked and in NFC already); one that does not has none, and the chips stay hidden.
+ * A name that breaks the rules of a name is dropped here too, and so is a repeat of one (ignoring case).
  * @param {unknown} view
+ * @param {string} [locale]
  * @returns {string[]}
  */
-export function folderLabels(view) {
+export function folderLabels(view, locale) {
   const list = /** @type {any} */ (view)?.folders;
   if (!Array.isArray(list)) return [];
-  /** @type {string[]} */
-  const out = [];
-  for (const label of list) {
-    if (typeof label === "string" && FOLDER_LABEL.test(label) && !out.includes(label)) out.push(label);
-    if (out.length >= MAX_FOLDER_CHIPS) break;
-  }
-  return out;
+  return sortFolders(list.filter((label) => checkFolderName(label) === null), locale);
 }
 
 /**

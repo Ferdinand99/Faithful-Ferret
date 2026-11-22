@@ -22,7 +22,7 @@ const field = (draft, id) => draft.fields?.find((f) => f.id === id);
 const ids = (draft) => (draft.fields ?? []).map((f) => f.id);
 
 /** Words from the fixtures that must not be in what a page gets, or in a draft that was left out. */
-const LEFT_BEHIND = ["PRIVATE-KEY-THAT-MUST-NOT-LEAK", "old-password", "readme.txt", "Work", "important", "mail.example.test.png", "gina"];
+const LEFT_BEHIND = ["PRIVATE-KEY-THAT-MUST-NOT-LEAK", "old-password", "readme.txt", "important", "mail.example.test.png", "gina"];
 
 test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
   const { drafts, report } = manifest();
@@ -99,10 +99,12 @@ test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
     items: 8, login: 6, note: 1, card: 1, identity: 0,
     urls: 4, totp: 2, customFields: 6, matchNull: 4, http: 1, textAddresses: 2, sealed: 0,
   });
-  // Left out, and said so: the passkey, the attachment, the earlier value, the folder, the tag, the item of a kind from the future,
-  // an orphaned custom value and a key that the reader does not know.
+  // Left out, and said so: the passkey, the attachment, the earlier value, the tag, the item of a kind from the future,
+  // an orphaned custom value and a key that the reader does not know. The folder is the item's folder now.
+  assert.deepEqual(drafts.find((d) => d.name === "Left behind")?.folders, ["Work"]);
+  assert.equal(drafts.filter((d) => d.folders !== undefined).length, 1);
   assert.deepEqual(report.skipped, {
-    passkeys: 1, folders: 1, collections: 0, linked: 0, unknownKeys: 1, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+    passkeys: 1, folders: 0, collections: 0, linked: 0, unknownKeys: 1, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
     attachments: 1, fieldHistory: 1, tags: 1,
   });
   assert.deepEqual(warnings(report, "passkey_skipped"), [7]);
@@ -197,8 +199,11 @@ test("aliasvault_csv_maps_logins_aliases_cards_notes_and_codes", () => {
     items: 8, login: 6, note: 1, card: 1, identity: 0,
     urls: 4, totp: 2, customFields: 0, matchNull: 4, http: 1, textAddresses: 2, sealed: 0,
   });
+  // The folder path of a row is its folder, as AliasVault writes it.
+  assert.deepEqual(drafts.find((d) => d.name === "Alias with address")?.folders, ["Work/Sub"]);
+  assert.equal(drafts.filter((d) => d.folders !== undefined).length, 1);
   assert.deepEqual(report.skipped, {
-    passkeys: 0, folders: 1, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+    passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
     attachments: 0, fieldHistory: 0, tags: 0,
   });
   assert.deepEqual(warnings(report, "alias_needs_aliasvault"), [1]);

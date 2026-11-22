@@ -1,0 +1,211 @@
+/* Folders: the picker of the edit form and of "Move to folder", the folder chips as links, the Folders page and the bar
+   above the items of one folder. Colours and sizes come from base.css; icons from shell.css. */
+
+/* ---- the picker */
+.vault-ui .folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.vault-ui .folder-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-ui .folder-picker-chips .folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline-end: 2px;
+}
+
+.vault-ui .folder-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-ui .folder-chip-x {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.vault-ui .folder-chip-x .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.vault-ui .folder-chip-x:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
+.vault-ui .folder-picker-row {
+  display: flex;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.vault-ui .folder-picker-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vault-ui .folder-picker-offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-ui .folder-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 10px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.vault-ui .folder-offer .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.vault-ui .folder-offer:hover {
+  border-color: var(--brand);
+}
+
+/* ---- chips and labels that lead to a folder */
+.vault-ui .folder-chip-link,
+.vault-ui a.folder-label {
+  color: inherit;
+  text-decoration: none;
+}
+
+.vault-ui .folder-chip-link:hover,
+.vault-ui a.folder-label:hover {
+  text-decoration: underline;
+}
+
+.vault-ui .folder-chip-more,
+.vault-ui .folder-more {
+  color: var(--muted);
+}
+
+/* ---- the Folders page */
+.vault-ui .folders-page > * + * {
+  margin-top: var(--sp-3);
+}
+
+.vault-ui .folders-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-ui .folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.vault-ui .folder-row:last-child {
+  border-bottom: 0;
+}
+
+.vault-ui .folder-main {
+  display: flex;
+  flex: 1 1 14rem;
+  align-items: baseline;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.vault-ui .folder-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .folder-name .icon {
+  flex: none;
+}
+
+.vault-ui .folder-main .count {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.vault-ui .folder-actions {
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.vault-ui .folder-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.vault-ui .folder-rename input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.vault-ui .folder-rename .error {
+  flex-basis: 100%;
+}
+
+/* ---- the bar above the items of one folder */
+.vault-ui .folder-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.vault-ui .folder-bar .btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.vault-ui .folder-dialog {
+  max-width: 36rem;
+}

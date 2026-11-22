@@ -5,6 +5,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { ApiError } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
+import { checkFolderList, normalizeFolder } from "../../src/folders.mjs";
 import { readWire } from "../../src/wire.mjs";
 import { cache } from "../../src/store/cache.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
@@ -614,18 +615,32 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
         item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
         has_totp: false, passkey: null, has_notes: false, created: modified, modified, favorite,
         device: open.body.device ?? null, read_only: open.body.read_only === true,
+        // Like the core: the folder names as stored, [] for none.
+        folders: Array.isArray(open.body.folders) ? [...open.body.folders] : [],
       };
     },
     async encrypt_item(id, rev, draft, existing) {
       calls.push(["encrypt_item", hex16.encode(id), rev, existing ?? null]);
+      // Like the core: `folders` left out (or null) keeps the item's, [] takes the key away, a list replaces them; a list
+      // that breaks the rules is refused with the core's code and nothing is sealed.
+      const { folders, ...rest } = draft;
+      if (folders !== undefined && folders !== null) {
+        if (!Array.isArray(folders) || folders.some((name) => typeof name !== "string")) throw new FakeFerretError("invalid_input");
+        const wrong = checkFolderList(folders);
+        if (wrong !== null) throw new FakeFerretError(wrong);
+      }
       let body;
       if (existing === undefined || existing === null) {
-        if (!draft.item_type || !draft.name) throw new FakeFerretError("invalid_input");
-        body = { ...draft };
+        if (!draft.item_type || typeof draft.name !== "string") throw new FakeFerretError("invalid_input");
+        body = { ...rest };
       } else {
         const open = handles.get(existing);
         if (!open || open.id !== hex16.encode(id)) throw new FakeFerretError("invalid_input");
-        body = { ...open.body, ...draft };
+        body = { ...open.body, ...rest };
+      }
+      if (Array.isArray(folders)) {
+        if (folders.length === 0) delete body.folders;
+        else body.folders = folders.map((name) => normalizeFolder(name));
       }
       body.modified = now();
       const sealed = seal(id, rev, body);

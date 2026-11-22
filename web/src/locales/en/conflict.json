@@ -56,6 +56,7 @@
   "conflict.modified": "Last changed",
   "conflict.more_rows": "{count} more fields are not shown. They are the ones that agree.",
   "conflict.next": "Go to the next one",
+  "conflict.no_folders": "In no folder",
   "conflict.no_urls": "None",
   "conflict.not_in_conflict": "This item is not in conflict any more.",
   "conflict.notice": "This item was changed here and somewhere else. Both versions are kept until you choose which one to keep. Until then, the server's version is the one in use.",

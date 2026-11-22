@@ -11,6 +11,7 @@
 // occasions.
 import { hex16 } from "../b64.mjs";
 import { el, mount } from "../dom.mjs";
+import { foldKey, sortFolders } from "../folders.mjs";
 import { askConfirm, describeError, formatMoment } from "./common.mjs";
 
 /** What a hidden value looks like. */
@@ -61,6 +62,13 @@ const rank = (same) => (same === false ? 0 : same === null ? 1 : 2);
 /** The ids of the two rows the view adds itself; no field id of the core starts with a tilde. */
 const URLS = "~urls";
 const TOTP = "~totp";
+const FOLDERS = "~folders";
+
+/** @param {any} view @returns {string[]} the folders of a version, in display order (the same folder once, ignoring case) */
+const foldersOf = (view) => (Array.isArray(view?.folders) ? sortFolders(view.folders) : []);
+
+/** @param {readonly string[]} a @param {readonly string[]} b whether two lists hold the same folders (ignoring case and order) */
+const sameFolders = (a, b) => a.length === b.length && a.every((name) => b.some((other) => foldKey(other) === foldKey(name)));
 
 /** @param {any} view @returns {string[]} the addresses of a version, sorted */
 const urlsOf = (view) => (Array.isArray(view?.urls) ? view.urls.map((/** @type {any} */ u) => String(u?.url ?? "")).sort() : []);
@@ -93,6 +101,10 @@ function rowsOf(data) {
   }
   if (mine?.has_totp === true || theirs?.has_totp === true) {
     rows.push({ key: TOTP, label: "", kind: "totp", same: bothShown && (mine.has_totp === true) === (theirs.has_totp === true) });
+  }
+  // The folders are labels inside the item: a version that is chosen keeps its own list, so a difference is shown.
+  if (foldersOf(mine).length > 0 || foldersOf(theirs).length > 0) {
+    rows.push({ key: FOLDERS, label: "", kind: "folders", same: bothShown && sameFolders(foldersOf(mine), foldersOf(theirs)) });
   }
   const sorted = rows
     .map((row, index) => ({ row, index }))
@@ -307,6 +319,7 @@ export async function conflictView({ engine, client, id, t, router, locale, touc
   function rowView(row, number) {
     const label = row.key === URLS ? t("conflict.urls")
       : row.key === TOTP ? t("conflict.totp")
+      : row.key === FOLDERS ? t("vault.item.folders")
         : row.key === "notes" && row.label === "" ? t("vault.item.notes") : row.label !== "" ? row.label : t("vault.item.field");
     const status = row.same === true ? "same" : row.same === false ? "differs" : "hidden";
     const titleId = `cf-field-${number}`;
@@ -318,6 +331,14 @@ export async function conflictView({ engine, client, id, t, router, locale, touc
           return urls.length === 0
             ? el("span", { class: "cf-absent", "data-role": "none" }, t("conflict.no_urls"))
             : el("ul", { class: "cf-urls", "data-role": "urls" }, ...urls.map((u) => el("li", { class: "value", "data-role": "url" }, u)));
+        });
+      }
+      if (row.key === FOLDERS) {
+        return plainCell(sideName, row.key, () => {
+          const names = foldersOf(/** @type {ConflictData} */ (data)[sideName].view);
+          return names.length === 0
+            ? el("span", { class: "cf-absent", "data-role": "none" }, t("conflict.no_folders"))
+            : el("ul", { class: "cf-urls", "data-role": "folders" }, ...names.map((name) => el("li", { class: "value", "data-role": "folder" }, name)));
         });
       }
       if (row.key === TOTP) {

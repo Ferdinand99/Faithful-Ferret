@@ -70,14 +70,17 @@ test("bitwarden_json_maps_every_type_and_field_kind", () => {
     items: 8, login: 5, note: 1, card: 1, identity: 1,
     urls: 7, totp: 2, customFields: 4, matchNull: 2, http: 1, textAddresses: 2, sealed: 0,
   });
-  assert.deepEqual(report.skipped, { passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 });
+  assert.deepEqual(report.skipped, { passkeys: 1, folders: 0, collections: 0, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 });
+  // The folder of the first item is its folder; the others are in none.
+  assert.deepEqual(login.folders, ["Synthetic folder A"]);
+  assert.deepEqual(drafts.slice(1).map((d) => d.folders), drafts.slice(1).map(() => undefined));
 });
 
-test("passkeys_folders_linked_fields_and_unknown_keys_are_counted_and_skipped", () => {
+test("passkeys_linked_fields_and_unknown_keys_are_counted_and_skipped", () => {
   const { drafts, report } = json("every-type.json");
   assert.equal(report.skipped.passkeys, 1);
-  assert.equal(report.skipped.folders, 2);
-  assert.equal(report.skipped.collections, 1);
+  assert.equal(report.skipped.folders, 0, "folders are imported now");
+  assert.equal(report.skipped.collections, 0, "collections become folders");
   assert.equal(report.skipped.linked, 1);
   assert.equal(report.skipped.unknownKeys, 2); // httpAuthenticationEnabled and archivedDate
   assert.deepEqual(warnings(report, "passkey_skipped"), [0]);
@@ -88,9 +91,9 @@ test("passkeys_folders_linked_fields_and_unknown_keys_are_counted_and_skipped", 
   assert.deepEqual(warnings(report, "type_passport"), [6]);
   assert.equal(report.skipped.trashed, 1);
   assert.deepEqual(warnings(report, "item_trashed"), [7]);
-  // None of it is in a draft: no passkey, no folder, no linked field, nothing of the skipped items.
+  // None of it is in a draft: no passkey, no folder an item is not in, no linked field, nothing of the skipped items.
   const everything = JSON.stringify(drafts);
-  for (const absent of ["synthetic-credential-id", "synthetic-key-value", "Synthetic folder", "Linked field", "synthetic-private-key", "In the trash", "synthetic-password-3", "A passport", "An SSH key", "synthetic-old-password"]) {
+  for (const absent of ["synthetic-credential-id", "synthetic-key-value", "Synthetic folder B", "Synthetic collection", "Linked field", "synthetic-private-key", "In the trash", "synthetic-password-3", "A passport", "An SSH key", "synthetic-old-password"]) {
     assert.ok(!everything.includes(absent), absent);
   }
   assert.ok(drafts.every((d) => !("passkey" in d)));
@@ -266,8 +269,39 @@ test("bitwarden_csv_maps_logins_and_notes", () => {
   assert.equal(report.counts.login, 2);
   assert.equal(report.counts.note, 1);
   assert.equal(report.counts.customFields, 2);
-  assert.equal(report.skipped.folders, 1);
+  assert.equal(report.skipped.folders, 0);
+  assert.deepEqual(login.folders, ["Synthetic folder"], "the folder column is the item's folder");
+  assert.equal(note.folders, undefined);
   assert.equal(report.skipped.unknownKeys, 0);
+});
+
+test("bitwarden_folders_and_collections_become_folders_under_the_core_rules", () => {
+  const file = {
+    encrypted: false,
+    folders: [{ id: "f1", name: "Work/Projects" }, { id: "f2", name: "x".repeat(65) }, { id: "f3", name: "  Bank  " }],
+    collections: [{ id: "c1", name: "Shared" }, { id: "c2", name: "work/projects" }, { id: "c3", name: `bad${String.fromCharCode(0x202e)}name` }],
+    items: [
+      { type: 2, name: "a", folderId: "f1", collectionIds: ["c1", "c2", "missing"] },
+      { type: 2, name: "b", folderId: "f2", collectionIds: ["c3"] },
+      { type: 2, name: "c", folderId: "f3", collectionIds: null },
+      { type: 2, name: "d", folderId: "nope" },
+    ],
+  };
+  const { drafts, report } = fromBitwardenJson(file);
+  // A repeat that differs only in case is taken once; the name is trimmed; an id that the file does not name is left out.
+  assert.deepEqual(drafts.map((d) => d.folders), [["Work/Projects", "Shared"], undefined, ["Bank"], undefined]);
+  // The long name and the one with a direction control are left out, counted, with one warning for the item.
+  assert.equal(report.skipped.folders, 2);
+  assert.deepEqual(warnings(report, "folder_skipped"), [1]);
+  // More than 20 on one item: the first 20 are kept.
+  const many = { encrypted: false, collections: Array.from({ length: 25 }, (_, i) => ({ id: `c${i}`, name: `C${i}` })), items: [{ type: 2, name: "m", collectionIds: Array.from({ length: 25 }, (_, i) => `c${i}`) }] };
+  const big = fromBitwardenJson(many);
+  assert.equal(big.drafts[0].folders.length, 20);
+  assert.equal(big.report.skipped.folders, 5);
+  assert.deepEqual(warnings(big.report, "folder_too_many"), [0]);
+  // The CSV: the folder column and the collections column (a list split at commas).
+  const rows = csv(["folder,collections,type,name", 'Home,"Shared, home",note,n', ""].join(String.fromCharCode(10)));
+  assert.deepEqual(rows.drafts[0].folders, ["Home", "Shared"]);
 });
 
 test("bitwarden_csv_reads_short_names_odd_types_and_refuses_a_bad_shape", () => {

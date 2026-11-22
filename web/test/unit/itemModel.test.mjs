@@ -56,10 +56,15 @@ test("the_folder_labels_of_a_view_without_folders_are_none", () => {
   assert.deepEqual(folderLabels({ folders: "Home" }), []);
 });
 
-test("a_folder_label_is_one_plain_line_and_a_repeat_or_a_long_list_is_cut", () => {
-  assert.deepEqual(folderLabels({ folders: ["Home", "Finance", "Home", "", "two\nlines", 5, null, "x".repeat(129), "ok"] }), ["Home", "Finance", "ok"]);
-  const many = Array.from({ length: 40 }, (_, i) => `Folder ${i}`);
-  assert.equal(folderLabels({ folders: many }).length, MAX_FOLDER_CHIPS);
+test("a_folder_label_follows_the_rules_of_a_name_and_the_labels_are_sorted_once_each", () => {
+  // Display order (ignoring case, numbers in order); a repeat in another case is shown once; what breaks a rule is dropped.
+  assert.deepEqual(folderLabels({ folders: ["Home", "Finance", "home", "", "two\nlines", 5, null, "x".repeat(65), "ok"] }), ["Finance", "Home", "ok"]);
+  const many = Array.from({ length: 20 }, (_, i) => `Folder ${i}`);
+  const labels = folderLabels({ folders: many });
+  assert.equal(labels.length, 20, "every label is handed on; the page draws the first ones and a +N chip");
+  assert.deepEqual(labels.slice(0, 3), ["Folder 0", "Folder 1", "Folder 2"]);
+  assert.equal(labels[19], "Folder 19");
+  assert.ok(MAX_FOLDER_CHIPS < 20);
 });
 
 test("the_favourite_draft_is_a_patch_of_the_one_key_that_switches_it", () => {

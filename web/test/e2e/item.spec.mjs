@@ -205,7 +205,7 @@ test.describe("one item on a desktop", () => {
     await ready(page);
     await scene(page, "item", { folders: ["Home", "Finance"] });
     await expect(page.locator('[data-role="folder-chips"]')).toBeVisible();
-    await expect(page.locator('[data-role="folder-chip"]')).toHaveText(["Home", "Finance"]);
+    await expect(page.locator('[data-role="folder-chip"]')).toHaveText(["Finance", "Home"]); // sorted for display
   });
 
   test("the_edit_form_is_in_cards_and_saves_a_draft", async ({ page }) => {
@@ -214,7 +214,7 @@ test.describe("one item on a desktop", () => {
     await expect(page.locator('[data-role="details-card"]')).toBeVisible();
     await expect(page.locator('[data-role="login-fields"]')).toBeVisible();
     await expect(page.locator('[data-role="notes-slot"]')).toBeVisible();
-    await expect(page.locator('[data-role="folder-slot"]')).toBeHidden();
+    await expect(page.locator('[data-role="folder-slot"] [data-role="folder-picker"]')).toBeVisible();
     // Each input has its label.
     await expect(page.getByLabel("Name", { exact: true })).toHaveValue("GitHub");
     await expect(page.getByLabel("User name", { exact: true })).toHaveValue("ada@example.com");

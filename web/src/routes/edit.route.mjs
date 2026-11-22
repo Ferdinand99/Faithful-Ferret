@@ -20,7 +20,7 @@ export default {
     }
     return vault.page(await editView({
       engine: vault.engine, client: vault.session.client ?? ctx.client, id, t: ctx.i18n.t,
-      go: ctx.go, touch: vault.touch, scope: vault.scope, tracker,
+      go: ctx.go, touch: vault.touch, scope: vault.scope, tracker, locale: ctx.i18n.lang,
     }));
   },
 };

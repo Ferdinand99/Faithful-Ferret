@@ -228,7 +228,7 @@ test("import_worker_reads_an_avux_file_with_the_browsers_own_unzip_and_never_unp
   expect(result.avux.reply.ok).toBe(true);
   expect(result.avux.reply.kind).toBe("aliasvault_avux");
   expect(result.avux.reply.report.counts).toMatchObject({ items: 8, login: 6, note: 1, card: 1, sealed: 8, totp: 2 });
-  expect(result.avux.reply.report.skipped).toMatchObject({ attachments: 1, passkeys: 1, folders: 1, tags: 1, fieldHistory: 1, otherTypes: 1 });
+  expect(result.avux.reply.report.skipped).toMatchObject({ attachments: 1, passkeys: 1, folders: 0, tags: 1, fieldHistory: 1, otherTypes: 1 });
   // The attachment and the logo were not read, and nothing of the file is in what the page got.
   for (const word of ["synthetic-password", "Mail login", "alice@example.test", "PRIVATE-KEY", "A synthetic attachment"]) {
     expect(JSON.stringify(result.avux.reply), word).not.toContain(word);

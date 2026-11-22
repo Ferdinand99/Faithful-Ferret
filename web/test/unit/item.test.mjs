@@ -387,7 +387,16 @@ test("the_folder_labels_are_hidden_until_the_item_has_some", async () => {
 
     const some = await open({ view: { folders: ["Home", "Finance", "bad\nlabel"] } });
     assert.equal(find(some.root, "folder-chips").hidden, false);
-    assert.deepEqual(all(some.root, "folder-chip").map((c) => textOf(c).trim()), ["Home", "Finance"], "a label that is not one plain line is dropped");
+    assert.deepEqual(all(some.root, "folder-chip").map((c) => textOf(c).trim()), ["Finance", "Home"], "sorted, and a label that breaks the rules is dropped");
+    assert.equal(find(some.root, "folder-chip-more"), null, "no +N chip for a short list");
+
+    // Past the first twelve, the rest are one "+N" chip that names them.
+    const many = Array.from({ length: 15 }, (_, i) => `F${String(i).padStart(2, "0")}`);
+    const lots = await open({ view: { folders: many } });
+    assert.equal(all(lots.root, "folder-chip").length, 12);
+    const more = find(lots.root, "folder-chip-more");
+    assert.equal(textOf(more).trim(), "+3");
+    assert.equal(more.getAttribute("title"), "F12, F13, F14");
   });
 });
 

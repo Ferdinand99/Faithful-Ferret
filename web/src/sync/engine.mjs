@@ -121,6 +121,7 @@ export { SyncError };
  * @property {string | null} blockedReason the code of the answer that blocked it (`conflict`, `reupload_refused`, `quota_exceeded`, ...)
  * @property {boolean} conflict the item has a conflict that waits for the user (`conflict(id)` shows both versions, `resolve` ends it)
  * @property {boolean} readOnly
+ * @property {string[]} folders the folder labels of the item, as the core shows them (in the order stored; [] for none)
  *
  * @typedef {import("../store/cache.mjs").Scope} Scope
  * @typedef {import("../store/cache.mjs").CachedRow} CachedRow
@@ -467,6 +468,8 @@ export function createSyncEngine({
       username: usernameOf(view),
       modified: Number.isSafeInteger(view.modified) ? view.modified : 0,
       readOnly: view.read_only === true,
+      // The core has checked the names and put them in NFC; a view without the key (an older core) has none.
+      folders: Array.isArray(view.folders) ? view.folders.filter((/** @type {unknown} */ f) => typeof f === "string").slice(0, 20) : [],
     };
   }
 
@@ -3649,6 +3652,7 @@ export function createSyncEngine({
           blockedReason: blocked.get(id) ?? null,
           conflict: conflictOf(id) !== null,
           readOnly: s.readOnly,
+          folders: [...s.folders],
         });
       }
       return out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || (a.id < b.id ? -1 : 1));

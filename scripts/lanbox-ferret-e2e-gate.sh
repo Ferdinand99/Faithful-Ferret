@@ -22,7 +22,7 @@
 #
 # Steps:
 #  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
-#     items, two browsers, lock, hand-over to the admin origin, transport, no
+#     items, folders, two browsers, lock, hand-over to the admin origin, transport, no
 #     plaintext in the traffic, no policy violation), then the search for the
 #     secrets of the run in the data directory and the server log.
 #  2. On the first browser's stack: restart the container and sign in again; then
@@ -65,7 +65,7 @@ m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 m3_specs=(18-sheet 19-new-device 20-password 21-recover 22-recovery-key 23-export-import 24-import-foreign 25-backup-restore 26-tabs)
 shots_dir=test-results/out/m2-shots
 m5a_specs=(01-setup 27-device)
-main_specs=(01-setup 02-signin 03-vault 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
+main_specs=(01-setup 02-signin 03-vault 03-folders 04-sync 05-lock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
 failures=0
 vault_origin="$e2e_vault_url"
 admin_origin="$e2e_admin_url"

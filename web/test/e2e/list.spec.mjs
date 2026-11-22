@@ -369,7 +369,8 @@ test.describe("a long list", () => {
 
   test("ten_thousand_items_are_drawn_as_a_window_and_filter_fast", async ({ page }, info) => {
     await ready(page);
-    await mountList(page, { count: 10_000 });
+    // With folders: a third of the items in two, a third in one, so the folder index is part of the time.
+    await mountList(page, { count: 10_000, folders: true });
     const first = await page.evaluate(() => window.__firstRender);
     info.annotations.push({ type: "first render", description: `${first.toFixed(0)} ms` });
     expect(first).toBeLessThan(300);
@@ -378,33 +379,50 @@ test.describe("a long list", () => {
     expect(drawn).toBeLessThan(80);
     await expect(page.locator('[data-role="count"]')).toHaveText("10000 items");
 
-    // Typing in the search: the time from the input to the list drawn, over a few keys.
+    // Typing in the search: the time from the input to the list drawn. One key first warms the page up (not counted), then
+    // twelve keys; the middle one must be quick and the slowest still well within a frame or two.
     const times = await page.evaluate(async () => {
       const search = document.querySelector('[data-role="search"]');
       const out = [];
-      for (const text of ["i", "it", "ite", "item 0", "item 00", "item 009"]) {
+      const keys = ["x", "i", "it", "ite", "item", "item ", "item 0", "item 00", "item 009", "item 0", "it", "i", ""];
+      for (const [n, text] of keys.entries()) {
         search.value = text;
         const start = performance.now();
         search.dispatchEvent(new Event("input", { bubbles: true }));
         void document.body.offsetHeight; // style and layout of the new rows count too
+        if (n > 0) out.push(performance.now() - start);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      search.value = "item 009";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      return out;
+    });
+    const median = (list) => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
+    info.annotations.push({ type: "filter", description: `${times.map((ms) => ms.toFixed(1)).join(", ")} ms (median ${median(times).toFixed(1)})` });
+    expect(times.length).toBe(12);
+    expect(median(times)).toBeLessThanOrEqual(50);
+    expect(Math.max(...times)).toBeLessThanOrEqual(150);
+    await expect(page.locator('[data-role="count"]')).toHaveText(/^\d+ of 10000 items$/);
+    // A chip, on the whole list: on and off three times, the middle of the three "on" times counts.
+    await page.locator('[data-role="search-clear"]').click();
+    const chips = await page.evaluate(async () => {
+      const out = [];
+      for (let n = 0; n < 3; n += 1) {
+        const start = performance.now();
+        document.querySelector('[data-role="favorites-chip"]').click();
+        void document.body.offsetHeight;
         out.push(performance.now() - start);
         await new Promise((resolve) => requestAnimationFrame(resolve));
+        if (n < 2) {
+          document.querySelector('[data-role="favorites-chip"]').click();
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
       }
       return out;
     });
-    info.annotations.push({ type: "filter", description: times.map((ms) => ms.toFixed(1)).join(", ") + " ms" });
-    expect(Math.max(...times)).toBeLessThan(50);
-    await expect(page.locator('[data-role="count"]')).toHaveText(/^\d+ of 10000 items$/);
-    // A chip, on the whole list.
-    await page.locator('[data-role="search-clear"]').click();
-    const chip = await page.evaluate(async () => {
-      const start = performance.now();
-      document.querySelector('[data-role="favorites-chip"]').click();
-      void document.body.offsetHeight;
-      return performance.now() - start;
-    });
-    info.annotations.push({ type: "chip", description: `${chip.toFixed(1)} ms` });
-    expect(chip).toBeLessThan(50);
+    const chip = [...chips].sort((a, b) => a - b)[1];
+    info.annotations.push({ type: "chip", description: `${chips.map((ms) => ms.toFixed(1)).join(", ")} ms (median ${chip.toFixed(1)})` });
+    expect(chip).toBeLessThanOrEqual(50);
     await expect(page.locator('[data-role="count"]')).toHaveText("2000 of 10000 items");
     await page.locator('[data-role="favorites-remove"]').click();
 

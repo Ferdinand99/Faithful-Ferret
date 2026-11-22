@@ -10,8 +10,9 @@
 // reading the address column as a list split at commas, and the otpauth address that a code of an item is
 // made into. Changed: the reader is bounded and strict (a value of the wrong type refuses the file), it reads
 // plain values and returns Faithful Ferret's item drafts and a report (see map.mjs) instead of AliasVault's
-// own item rows, and everything that is not text of an item (attachments, logos, passkeys, folders, tags,
-// the earlier values of a field) is counted and left out.
+// own item rows, the folder of an item becomes its folder (map.mjs `addFolders`; a folder inside another is
+// named by its path, `Parent/Child`, as AliasVault's CSV writes it), and everything else that is not text of an
+// item (attachments, logos, passkeys, tags, the earlier values of a field) is counted and left out.
 //
 // Reads an AliasVault export: the manifest of an unencrypted `.avux` file (a ZIP file; the worker unpacks
 // `manifest.json` with zip.mjs and nothing else of it) or the CSV file. It reads; it stores nothing and
@@ -24,7 +25,7 @@
 // (map.mjs), never to `urls`.
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
-import { addAddresses, addCustomFields, addField, addTotp, createReport, resolveLabels, scalar, startDraft, warn } from "./map.mjs";
+import { addAddresses, addCustomFields, addField, addFolders, addTotp, createReport, resolveLabels, scalar, startDraft, warn } from "./map.mjs";
 
 /**
  * @typedef {import("./map.mjs").ImportReport} ImportReport
@@ -269,7 +270,7 @@ export function fromAvuxManifest(data, options = {}) {
   const labels = resolveLabels(options.labels);
   const report = createReport();
   report.skipped.unknownKeys += unknownCount(root, KNOWN_TOP);
-  report.skipped.folders += objects(root, "folders").length;
+  const folderPaths = folderPathsOf(objects(root, "folders"));
   report.skipped.tags += objects(root, "tags").length;
 
   /** The definitions of custom fields by id. `unknown`: a type that this reader does not know (it is kept hidden, with a warning). @type {Map<string, { label: string, kind: string, section: boolean, unknown: boolean }>} */
@@ -352,9 +353,45 @@ export function fromAvuxManifest(data, options = {}) {
     }
     report.skipped.attachments += objects(item, "attachments").length;
     report.skipped.fieldHistory += objects(item, "fieldhistories").length;
-    drafts.push(draftOf(v, { report, index, labels }));
+    const draft = draftOf(v, { report, index, labels });
+    const folderId = item.folderid;
+    if (typeof folderId === "string" && folderPaths.has(folderId)) addFolders(draft, [folderPaths.get(folderId)], { report, index, labels });
+    drafts.push(draft);
   });
   return { drafts, report };
+}
+
+/**
+ * The path of each folder of a manifest by its id: its name, after the names of the folders it is in (`Parent/Child`).
+ * A folder whose parent is not in the file, or that is part of a loop, is named from where the chain stops.
+ * @param {Record<string, unknown>[]} folders
+ * @returns {Map<string, string>}
+ */
+function folderPathsOf(folders) {
+  /** @type {Map<string, { name: string, parent: string | null }>} */
+  const byId = new Map();
+  for (const folder of folders) {
+    const id = folder.id;
+    const name = folder.name;
+    if (typeof id !== "string" || typeof name !== "string") continue;
+    const parent = folder.parentfolderid;
+    byId.set(id, { name: scalar(name), parent: typeof parent === "string" ? parent : null });
+  }
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const [id, folder] of byId) {
+    const parts = [folder.name];
+    const seen = new Set([id]);
+    let parent = folder.parent;
+    while (parent !== null && byId.has(parent) && !seen.has(parent) && parts.length < 16) {
+      seen.add(parent);
+      const up = /** @type {{ name: string, parent: string | null }} */ (byId.get(parent));
+      parts.unshift(up.name);
+      parent = up.parent;
+    }
+    out.set(id, parts.join("/"));
+  }
+  return out;
 }
 
 // -------------------------------------------------------------------------------------------------- CSV
@@ -403,7 +440,6 @@ export function fromAliasVaultCsv(rows, options = {}) {
   const labels = resolveLabels(options.labels);
   const report = createReport();
   report.skipped.unknownKeys += header.filter((h) => h !== "" && !CSV_COLUMNS.has(h)).length;
-  const folders = new Set();
 
   /** @type {ItemDraft[]} */
   const drafts = [];
@@ -418,8 +454,7 @@ export function fromAliasVaultCsv(rows, options = {}) {
       if (name !== "" && row[name] === undefined) row[name] = scalar(cells[c] ?? "");
     });
     const cell = (/** @type {string} */ name) => row[name] ?? "";
-    const folder = cell("folderpath").trim();
-    if (folder !== "") folders.add(folder);
+    const folder = cell("folderpath");
 
     const login = ["username", "currentpassword", "serviceurl", "twofactorsecret", "aliasemail"].some((name) => cell(name).trim() !== "");
     const alias = ["aliasgender", "aliasfirstname", "aliaslastname", "aliasnickname", "aliasbirthdate"].some((name) => cell(name).trim() !== "");
@@ -450,8 +485,9 @@ export function fromAliasVaultCsv(rows, options = {}) {
     v.cvv.push(cell("cardcvv"));
     v.pin.push(cell("cardpin"));
     if (cell("twofactorsecret").trim() !== "") v.totps.push(cell("twofactorsecret"));
-    drafts.push(draftOf(v, { report, index, labels }));
+    const draft = draftOf(v, { report, index, labels });
+    addFolders(draft, [folder], { report, index, labels });
+    drafts.push(draft);
   }
-  report.skipped.folders += folders.size;
   return { drafts, report };
 }
