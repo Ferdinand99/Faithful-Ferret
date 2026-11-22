@@ -817,3 +817,72 @@ test("an_aliasvault_file_is_named_and_the_page_says_to_delete_it_and_which_notes
     assert.match(nb("import.kind.aliasvault_avux"), /AliasVault-eksport \(\.avux\)/);
   });
 });
+
+// ------------------------------------------------------------------ the file picker
+
+test("the_file_picker_is_a_button_for_a_hidden_input_and_shows_the_name_of_the_chosen_file", async () => {
+  await withDom(async () => {
+    const { root, calls } = page();
+    const input = find(root, "file");
+    // The input stays in the page for the keyboard and the screen reader (hidden from the eye only), with the same accepted kinds.
+    assert.equal(input.getAttribute("class"), "visually-hidden");
+    assert.equal(input.getAttribute("type"), "file");
+    assert.match(input.getAttribute("accept"), /^\.ferretexport,\.json,\.csv,\.avux$/);
+    // Two labels name it: the field's and the button.
+    const labels = [...walkAll(root)].filter((n) => n.tagName === "label" && n.getAttribute("for") === "import-file");
+    assert.deepEqual(labels.map((n) => textOf(n).trim()), ["File to import", "Choose file"]);
+    assert.equal(find(root, "file-choose").getAttribute("class"), "btn btn-secondary");
+    assert.match(textOf(find(root, "file-name")), /No file chosen/);
+    // Choosing a file starts the same step as before and names the file.
+    await choose(root, "moved.json");
+    assert.deepEqual(calls.previews, ["moved.json"]);
+    assert.match(textOf(find(root, "file-name")), /moved\.json/);
+    assert.equal(find(root, "preview").hidden, false);
+    // Cancelling the preview forgets the name.
+    await click(find(root, "cancel"));
+    assert.match(textOf(find(root, "file-name")), /No file chosen/);
+    // A file the page refuses is not left named.
+    const bad = page({ previewError: coded("import_bad_csv", { line: 3 }) });
+    await choose(bad.root, "bad.csv");
+    assert.match(textOf(find(bad.root, "file-name")), /No file chosen/);
+    const nb = i18n("nb").t;
+    assert.equal(nb("import.file.choose"), "Velg fil");
+    assert.equal(nb("import.file.none"), "Ingen fil valgt");
+  });
+});
+
+test("a_file_dropped_on_the_zone_starts_the_same_step_and_a_drop_while_busy_is_ignored", async () => {
+  await withDom(async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const { root, calls } = page({ previewGate: gate });
+    const zone = find(root, "file-drop");
+    const over = await fire(zone, "dragover");
+    assert.equal(over.prevented, true, "the browser does not open the file");
+    assert.equal(zone.getAttribute("data-over"), "true");
+    await fire(zone, "dragleave");
+    assert.equal(zone.getAttribute("data-over"), "false");
+    const pending = fire(zone, "drop", { dataTransfer: { files: [{ name: "dropped.json" }, { name: "second.json" }] } });
+    await settle();
+    assert.deepEqual(calls.previews, ["dropped.json"], "the first file only");
+    assert.match(textOf(find(root, "file-name")), /dropped\.json/);
+    assert.equal(find(root, "file").disabled, true, "the file is being read");
+    await fire(zone, "drop", { dataTransfer: { files: [{ name: "again.json" }] } });
+    assert.deepEqual(calls.previews, ["dropped.json"], "a drop while the file is read is ignored");
+    release();
+    await pending;
+    await settle();
+    assert.equal(find(root, "preview").hidden, false);
+    // A drop with no file changes nothing.
+    const none = page();
+    await fire(find(none.root, "file-drop"), "drop", { dataTransfer: { files: [] } });
+    assert.deepEqual(none.calls.previews, []);
+    assert.equal(find(none.root, "preview").hidden, true);
+  });
+});
+
+/** Every node below `root`. */
+function* walkAll(root) {
+  yield root;
+  for (const child of root.childNodes ?? []) yield* walkAll(child);
+}
