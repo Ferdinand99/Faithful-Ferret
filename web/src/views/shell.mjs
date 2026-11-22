@@ -340,6 +340,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   root.addEventListener("pointerdown", (/** @type {any} */ event) => chrome.press(event.target));
 
   function wipe() {
+    // The pins are held in memory only: a lock forgets them (a folder's name is an encrypted label of the vault).
+    prefs.clearPins();
     scope.run();
     shown.clear();
     // A frame that has left the page only needs to be emptied; the one on it gets the unlock screen.

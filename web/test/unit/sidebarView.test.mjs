@@ -36,7 +36,7 @@ function build(options = {}) {
   const calls = { lock: 0, signOut: 0, admin: 0, opened: [] };
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, "Up to date");
   const view = sidebarView({
-    t, routes: ROUTES, counts: { all: 248, favorites: 12 }, prefs: createUiPrefs(memory()), email: "ada.lovelace@example.com",
+    t, routes: ROUTES, counts: { all: 248, favorites: 12 }, prefs: createUiPrefs(memory(), []), email: "ada.lovelace@example.com",
     status, liveStatus: null, onLock: async () => void (calls.lock += 1), onSignOut: async () => void (calls.signOut += 1),
     win: { open: (...args) => calls.opened.push(args) }, ...options,
   });
@@ -121,7 +121,7 @@ test("the_entries_show_their_counts_and_follow_the_items", async () => {
 test("pinned_folders_are_listed_with_their_sub_folders_and_can_be_unpinned_from_their_menu", async () => {
   await withDom(async () => {
     const storage = memory();
-    const prefs = createUiPrefs(storage);
+    const prefs = createUiPrefs(storage, []);
     prefs.pin("Home");
     const { root, view } = build({ prefs, folders: FOLDERS });
     const rows = () => all(root, "nav-folder").map((link) => textOf(link).trim());
@@ -251,7 +251,7 @@ test("a_press_outside_closes_a_menu_and_a_press_inside_does_not", async () => {
 
 test("one_menu_is_open_at_a_time", async () => {
   await withDom(async () => {
-    const prefs = createUiPrefs(memory());
+    const prefs = createUiPrefs(memory(), []);
     prefs.pin("Home");
     prefs.pin("Finance");
     const { root } = build({ prefs, folders: FOLDERS });
@@ -330,7 +330,7 @@ test("an_open_menu_closes_before_the_drawer_when_escape_is_pressed", async () =>
 
 test("every_control_with_no_text_has_a_name_and_every_link_says_where_it_goes", async () => {
   await withDom(async () => {
-    const prefs = createUiPrefs(memory());
+    const prefs = createUiPrefs(memory(), []);
     prefs.pin("Home");
     const { root } = build({ prefs, folders: FOLDERS, admin: adminWay(true) });
     await settle();
@@ -529,5 +529,30 @@ test("a_frame_that_leaves_the_page_lets_go_when_its_scope_runs", async () => {
     scope.run();
     assert.equal(queries.size, 0);
     assert.equal(engine.listeners.changed.size, 0);
+  });
+});
+
+test("a_lock_forgets_the_pins_and_nothing_of_a_folder_is_written_to_the_device", async () => {
+  await withDom(async () => {
+    const writes = [];
+    const storage = { getItem: () => null, setItem: (k, v) => void writes.push([k, v]), removeItem() {} };
+    const pins = [];
+    const prefs = createUiPrefs(storage, pins);
+    prefs.pin("Home");
+    const session = fakeSession();
+    const root = shellView({
+      t, engine: fakeEngine(), session, content: el("p"), lock: async () => {}, touch: () => true,
+      scope: createWipeScope(), onLocked: () => el("div"), routes: ROUTES, prefs, folders: FOLDERS,
+    });
+    assert.deepEqual(all(root, "nav-folder").map((link) => textOf(link).trim()), ["Home", "Network"]);
+    // Pinning and unpinning in the menu writes nothing at all.
+    await click(find(root, "folder-menu-button"));
+    await click(find(root, "unpin"));
+    assert.deepEqual(writes, []);
+    prefs.pin("Finance");
+    assert.deepEqual(pins, ["Finance"]);
+    await session.lock();
+    assert.deepEqual(pins, [], "the lock forgot them");
+    assert.deepEqual(writes, [], "and no folder name was ever written");
   });
 });

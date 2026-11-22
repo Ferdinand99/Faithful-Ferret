@@ -256,6 +256,9 @@ test.describe("the side menu on a desktop", () => {
     await ready(page);
     await mountShell(page, { withFolders: true, pinned: ["Home"] });
     await expect(page.locator('[data-role="nav-folder"]')).toHaveText(["Home", "Network"]);
+    // A folder name is an encrypted label: the pin is in memory only, and nothing of it is at rest on the device.
+    expect(await page.evaluate(() => JSON.stringify({ ...localStorage }))).not.toContain("Home");
+    expect(await page.evaluate(async () => JSON.stringify(await indexedDB.databases?.() ?? []))).not.toContain("Home");
     await page.locator('[data-role="nav-folder"]').first().hover();
     await page.locator('[data-role="folder-menu-button"]').click();
     await page.locator('[data-role="unpin"]').click();

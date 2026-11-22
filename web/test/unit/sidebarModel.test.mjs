@@ -163,13 +163,13 @@ function memory() {
   return { map, getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, String(v)), removeItem: (k) => void map.delete(k) };
 }
 
-test("the_folded_state_and_the_pins_are_remembered_per_device", () => {
+test("the_folded_state_is_remembered_per_device_and_the_pins_are_kept_in_memory", () => {
   const storage = memory();
-  const prefs = createUiPrefs(storage);
+  const prefs = createUiPrefs(storage, []);
   assert.equal(prefs.collapsed(), false);
   assert.deepEqual(prefs.pinned(), []);
   prefs.setCollapsed(true);
-  assert.equal(createUiPrefs(storage).collapsed(), true, "another page of the device reads the same");
+  assert.equal(createUiPrefs(storage, []).collapsed(), true, "another page of the device reads the same");
   assert.equal(prefs.pin("srv"), true);
   assert.equal(prefs.pin("home"), true);
   assert.equal(prefs.pin("srv"), true, "pinning twice is one pin");
@@ -178,21 +178,50 @@ test("the_folded_state_and_the_pins_are_remembered_per_device", () => {
   prefs.unpin("srv");
   assert.deepEqual(prefs.pinned(), ["home"]);
   assert.equal(prefs.collapsed(), true, "unpinning leaves the folded state alone");
+  prefs.clearPins();
+  assert.deepEqual(prefs.pinned(), [], "a lock forgets the pins");
   prefs.setCollapsed(false);
-  prefs.unpin("home");
   assert.equal(storage.map.has(UI_PREFS_KEY), false, "nothing is kept when everything is the default");
 });
 
-test("only_the_folded_flag_and_the_names_of_the_pinned_folders_are_kept", () => {
-  const storage = memory();
-  const prefs = createUiPrefs(storage);
+test("pins_live_in_memory_only_and_no_folder_name_is_ever_written_to_the_device", () => {
+  const writes = [];
+  const storage = { ...memory(), setItem: (k, v) => void writes.push([k, v]) };
+  const pins = [];
+  const prefs = createUiPrefs(storage, pins);
   prefs.setCollapsed(true);
-  prefs.pin("srv");
-  assert.deepEqual(JSON.parse(storage.map.get(UI_PREFS_KEY)), { collapsed: true, pinned: ["srv"] });
+  for (const name of ["Bank", "Sundry secret folder", "Økonomi"]) prefs.pin(name);
+  prefs.unpin("Bank");
+  assert.deepEqual(pins, ["Sundry secret folder", "Økonomi"], "held in the memory that was given");
+  // The only thing written is the folded flag.
+  assert.deepEqual(writes, [[UI_PREFS_KEY, '{"collapsed":true}']]);
+  for (const [, value] of writes) for (const name of ["Bank", "Sundry", "Økonomi"]) assert.ok(!value.includes(name), name);
+  // Nothing else of the device is touched: there is no IndexedDB, no session storage and no cookie in the preferences.
+  const source = readFileSync(join(web, "src", "uiPrefs.mjs"), "utf8");
+  assert.ok(!/indexedDB|sessionStorage|document.cookie/.test(source));
+  // The pins of a page are shared by its frames and are cleared as one.
+  const first = createUiPrefs(null);
+  first.pin("Shared");
+  assert.deepEqual(createUiPrefs(null).pinned(), ["Shared"]);
+  first.clearPins();
+  assert.deepEqual(createUiPrefs(null).pinned(), []);
+});
+
+test("a_value_written_by_an_older_build_with_folder_names_is_rewritten_without_them", () => {
+  const storage = memory();
+  storage.setItem(UI_PREFS_KEY, JSON.stringify({ collapsed: true, pinned: ["Bank", "Home"] }));
+  const prefs = createUiPrefs(storage, []);
+  assert.equal(prefs.collapsed(), true);
+  assert.deepEqual(prefs.pinned(), []);
+  assert.equal(storage.map.get(UI_PREFS_KEY), '{"collapsed":true}');
+  const other = memory();
+  other.setItem(UI_PREFS_KEY, JSON.stringify({ pinned: ["Bank"] }));
+  createUiPrefs(other, []);
+  assert.equal(other.map.has(UI_PREFS_KEY), false);
 });
 
 test("a_pin_that_is_not_a_one_line_name_or_is_one_too_many_is_refused", () => {
-  const prefs = createUiPrefs(memory());
+  const prefs = createUiPrefs(memory(), []);
   for (const bad of ["", "two\nlines", "x".repeat(129), "tab\there", 5, null, undefined]) assert.equal(prefs.pin(bad), false, String(bad));
   assert.equal(prefs.pin("Økonomi og skatt <2026>"), true, "a name is any one line of text");
   prefs.unpin("Økonomi og skatt <2026>");
@@ -203,26 +232,23 @@ test("a_pin_that_is_not_a_one_line_name_or_is_one_too_many_is_refused", () => {
 });
 
 test("a_stored_value_of_the_wrong_shape_reads_as_the_default", () => {
-  for (const text of ["not json", "[]", "null", "5", '{"collapsed":"yes","pinned":"x"}', "x".repeat(9000)]) {
+  for (const text of ["not json", "[]", "null", "5", '{"collapsed":"yes"}', "x".repeat(9000)]) {
     const storage = memory();
     storage.setItem(UI_PREFS_KEY, text);
-    const prefs = createUiPrefs(storage);
+    const prefs = createUiPrefs(storage, []);
     assert.equal(prefs.collapsed(), false, text.slice(0, 20));
     assert.deepEqual(prefs.pinned(), []);
   }
-  const storage = memory();
-  storage.setItem(UI_PREFS_KEY, JSON.stringify({ collapsed: true, pinned: ["ok", 7, "no good", "ok", "bad\nline", "fine_2"] }));
-  assert.deepEqual(createUiPrefs(storage).pinned(), ["ok", "no good", "fine_2"]);
 });
 
 test("a_blocked_store_only_means_the_choice_is_not_remembered", () => {
   const blocked = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
-  const prefs = createUiPrefs(blocked);
+  const prefs = createUiPrefs(blocked, []);
   assert.equal(prefs.collapsed(), false);
   prefs.setCollapsed(true);
   assert.equal(prefs.pin("a"), true);
-  assert.deepEqual(prefs.pinned(), []);
-  const none = createUiPrefs(null);
+  assert.deepEqual(prefs.pinned(), ["a"], "a pin does not need the store");
+  const none = createUiPrefs(null, []);
   none.setCollapsed(true);
   assert.equal(none.collapsed(), false);
 });
