@@ -881,6 +881,21 @@ test("a_file_dropped_on_the_zone_starts_the_same_step_and_a_drop_while_busy_is_i
   });
 });
 
+test("a_drop_with_no_file_leaves_a_preview_that_is_showing_as_it_is", async () => {
+  await withDom(async () => {
+    const { root, calls } = page();
+    await choose(root, "shown.json");
+    assert.equal(find(root, "preview").hidden, false);
+    const zone = find(root, "file-drop");
+    // Dragged text or a link: no files at all, or an empty list.
+    for (const dataTransfer of [undefined, { files: [] }, { files: undefined }]) await fire(zone, "drop", { dataTransfer });
+    assert.equal(find(root, "preview").hidden, false, "the preview stays");
+    assert.match(textOf(find(root, "file-name")), /shown.json/);
+    assert.deepEqual(calls.previews, ["shown.json"]);
+    assert.deepEqual(calls.discards, [], "nothing was discarded");
+  });
+});
+
 /** Every node below `root`. */
 function* walkAll(root) {
   yield root;

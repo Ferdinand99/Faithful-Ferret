@@ -5,8 +5,9 @@
 // afterwards, before the import and again when it has finished.
 //
 // What the page may show of a file is counts and codes: no name, address or value of an item ever reaches it (the import worker
-// and the vault keep those). The file's own name, as the user's device gives it, is shown beside the button that chose it. The typed passwords leave their fields before the slow call starts, and a lock of the vault empties
-// them and drops the preview. An error is shown by its code from a fixed list, never by its message.
+// and the vault keep those). The file's own name, as the user's device gives it, is shown beside the button that chose it.
+// The typed passwords leave their fields before the slow call starts, and a lock of the vault empties them and drops the preview.
+// An error is shown by its code from a fixed list, never by its message.
 //
 // After the items are queued, the sending goes on in the engine. The page follows it with the engine's `import` events, and it
 // shows "Continue import" when the server has closed the import window (`import_window_closed`), or when the page was loaded
@@ -352,7 +353,10 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     event.preventDefault();
     markOver(false);
     if (fileInput.disabled) return Promise.resolve();
-    return onFile(event.dataTransfer?.files?.[0]);
+    // Dragged text or a link has no file: what is on the page stays as it is.
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return Promise.resolve();
+    return onFile(file);
   });
 
   /** @param {Event} event */
