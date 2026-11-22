@@ -60,9 +60,13 @@ const lock = createLock({
   alarms: browser.alarms,
   idle: browser.idle,
   storageSession: browser.storage.session,
+  storageLocal: browser.storage.local,
   now,
   coreHost,
 });
+
+// The deadline is also checked before every use of the vault by the modules that work beside the messages (the sync).
+coreHost.setGuard(() => lock.isDue());
 
 const router = createRouter({
   runtime,

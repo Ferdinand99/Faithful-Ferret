@@ -2,13 +2,13 @@
 // ten seconds (two contexts of one browser, and two different browsers), and
 // signing out in one leaves the other signed in.
 import { chromium, firefox, webkit } from "@playwright/test";
-import { createItem, expect, freshContext, openList, requireAccount, rowsNamed, secrets, signInOn, signOutOn, test, vaultUrl } from "./support.mjs";
+import { createItem, expect, freshContext, openList, requireAccount, findRows, secrets, signInOn, signOutOn, test, vaultUrl } from "./support.mjs";
 
 const SEEN = 10_000;
 
 /** @param {import("@playwright/test").Page} page @param {string} name */
 async function open(page, name) {
-  await rowsNamed(page, name).locator('[data-role="item-link"]').click();
+  await (await findRows(page, name)).locator('[data-role="item-link"]').click();
   await expect(page.locator('[data-role="item"] h1')).toContainText(name);
 }
 
@@ -23,10 +23,10 @@ async function exchange(a, b, label) {
   const second = `Sync-${label}-from-b`;
   await createItem(a, { name: first, username: "a-user" });
   await openList(b);
-  await expect(rowsNamed(b, first)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b, first))).toHaveCount(1, { timeout: SEEN });
   await createItem(b, { name: second, username: "b-user" });
   await openList(a);
-  await expect(rowsNamed(a, second)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(a, second))).toHaveCount(1, { timeout: SEEN });
 
   // A change to an item arrives too.
   await openList(b);
@@ -36,7 +36,7 @@ async function exchange(a, b, label) {
   await b.locator('[data-role="save"]').click();
   await expect(b.locator('[data-role="item"] h1')).toContainText(`${first}-edited`, { timeout: 30_000 });
   await openList(a);
-  await expect(rowsNamed(a, `${first}-edited`)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(a, `${first}-edited`))).toHaveCount(1, { timeout: SEEN });
 
   // So does a deletion.
   await open(a, second);
@@ -44,7 +44,7 @@ async function exchange(a, b, label) {
   await a.locator('[data-role="dialog-confirm"]').click();
   await expect(a.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
   await openList(b);
-  await expect(rowsNamed(b, second)).toHaveCount(0, { timeout: SEEN });
+  await expect((await findRows(b, second))).toHaveCount(0, { timeout: SEEN });
 }
 
 test("two_browsers_see_each_others_changes_within_10_seconds", async ({ browser }) => {
@@ -107,7 +107,7 @@ test("logging_out_in_one_browser_leaves_the_other_signed_in", async ({ browser }
   const three = await freshContext(browser);
   const c = await three.newPage();
   await signInOn(c);
-  await expect(rowsNamed(c, name)).toHaveCount(1, { timeout: 10_000 });
+  await expect((await findRows(c, name))).toHaveCount(1, { timeout: 10_000 });
   await one.close();
   await two.close();
   await three.close();

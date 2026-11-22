@@ -1,0 +1,714 @@
+/* The item list: the search card, the filter chips and menus, the table, the bar for several rows and the empty
+   states. Colours and sizes come from the tokens in base.css, so both themes follow. A row has a fixed height, so that
+   a long list can be drawn as a window of rows (views/list.mjs); on a phone the rows become cards of a fixed height.
+   Nothing is shown by colour alone: a mark has its words, a chosen filter its ticked box and a pressed button. */
+:root {
+  --row-h: 3.5rem;
+  --tint-login: light-dark(#6656e8, #8b7dff);
+  --tint-note: light-dark(#0a7d6a, #5fe0c3);
+  --tint-card: light-dark(#9a5700, #ffb86b);
+  --tint-identity: light-dark(#1a6fa8, #7cc4ff);
+  --tint-other: light-dark(#6e6e73, #a1a1a6);
+}
+
+.icon[data-icon="edit"] { --icon: var(--i-pencil); }
+
+/* The list is wider than the forms: the table has columns. */
+.vault-ui .vault-main:has(> .list-view) {
+  max-width: calc(1240px + 2 * var(--gutter));
+}
+
+.vault-ui .list-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.vault-ui .list-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0;
+  font-size: 1.625rem;
+  letter-spacing: -0.02em;
+}
+
+.vault-ui .list-title .icon {
+  width: 22px;
+  height: 22px;
+  color: var(--brand);
+}
+
+.vault-ui .list-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+/* The search, the buttons and the filters stay in view while the rows scroll. */
+.vault-ui .list-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--card);
+}
+
+.vault-ui .list-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.vault-ui .list-search {
+  position: relative;
+  flex: 0 1 380px;
+  min-width: min(12rem, 100%);
+}
+
+.vault-ui .list-search input {
+  padding-inline-end: 44px;
+}
+
+.vault-ui .list-x,
+.vault-ui .chip-x {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.vault-ui .list-x {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-full);
+  transform: translateY(-50%);
+}
+
+.vault-ui .list-x .icon,
+.vault-ui .chip-x .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.vault-ui .list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+}
+
+.vault-ui .list-pop {
+  position: relative;
+}
+
+.vault-ui .list-x:focus-visible,
+.vault-ui .chip-main:focus-visible,
+.vault-ui .chip-x:focus-visible,
+.vault-ui .sort:focus-visible,
+.vault-ui .row-more:focus-visible,
+.vault-ui .menu-check:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .list-x:hover,
+  .vault-ui .chip-x:hover {
+    color: var(--text);
+  }
+}
+
+/* Chips */
+.vault-ui .list-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.vault-ui .chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  background: var(--card-raised);
+  color: var(--text);
+}
+
+.vault-ui .chip[data-active="true"] {
+  border-color: transparent;
+  background: var(--brand-fill);
+  color: var(--brand-text);
+}
+
+.vault-ui .chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.vault-ui .chip[data-active="true"] .chip-main {
+  font-weight: 600;
+}
+
+.vault-ui .chip-main[aria-pressed="true"] {
+  padding-inline-end: 4px;
+}
+
+.vault-ui .chip-star {
+  width: 14px;
+  height: 14px;
+}
+
+.vault-ui .chip-caret {
+  font-size: 0.75rem;
+}
+
+.vault-ui .chip-x {
+  width: 28px;
+  height: 28px;
+  margin-inline-end: 2px;
+  border-radius: var(--r-full);
+  color: inherit;
+}
+
+.vault-ui .list-count {
+  margin: 0 0 0 auto;
+  padding-inline: 4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .chip:not([data-active="true"]):hover {
+    background: var(--hover);
+  }
+}
+
+@media (pointer: coarse) {
+  .vault-ui .chip,
+  .vault-ui .chip-main {
+    min-height: 44px;
+  }
+
+  .vault-ui .chip-x {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* Menus: the chips, the columns, a row's */
+.vault-ui .list-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: 13rem;
+  max-width: calc(100vw - 2 * var(--sp-4));
+  max-height: min(24rem, 60vh);
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.vault-ui .chip .list-menu {
+  top: calc(100% + 4px);
+  inset-inline-start: 0;
+}
+
+.vault-ui .list-pop .list-menu {
+  top: calc(100% + 4px);
+  inset-inline-end: 0;
+}
+
+/* A row's menu is placed on the screen by the script (it must not be cut off by the table). */
+.vault-ui .row-menu {
+  position: fixed;
+  width: 13rem;
+  min-width: 0;
+}
+
+.vault-ui .menu-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.vault-ui .menu-check:hover,
+.vault-ui .menu-check:focus-visible {
+  background: var(--hover);
+}
+
+.vault-ui .menu-check .box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--field-line);
+  border-radius: 5px;
+  background: var(--field) center / 12px no-repeat;
+}
+
+.vault-ui .menu-check[aria-checked="true"] .box {
+  border-color: var(--brand);
+  background-color: var(--brand);
+  background-image: var(--i-tick);
+}
+
+.vault-ui .menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .menu-count {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* Several rows */
+.vault-ui .list-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--brand-fill);
+}
+
+/* A button on the tinted bar sits on the card colour, so its text keeps its contrast (as in a notice). */
+.vault-ui .list-bulk .btn {
+  --btn-bg: var(--card);
+  --btn-hover: color-mix(in srgb, var(--card) 92%, var(--text));
+}
+
+.vault-ui .bulk-count {
+  margin-inline-end: auto;
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* The table */
+.vault-ui .list-table {
+  min-width: 0;
+}
+
+.vault-ui .list-head,
+.vault-ui .list-rows .row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-inline: var(--sp-4);
+}
+
+.vault-ui .list-head {
+  min-height: 44px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.vault-ui .list-rows .row {
+  position: relative;
+  height: var(--row-h);
+  border-bottom: 1px solid var(--line);
+  transition: background-color 120ms ease;
+}
+
+.vault-ui .list-rows .row:last-child {
+  border-bottom: 0;
+}
+
+.vault-ui .list-rows .row[data-selected="true"] {
+  background: var(--brand-fill);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .list-rows .row:hover {
+    background: var(--hover);
+  }
+
+  .vault-ui .list-rows .row[data-selected="true"]:hover {
+    background: var(--brand-fill);
+  }
+}
+
+.vault-ui .list-spacer {
+  height: 0;
+}
+
+.vault-ui .cell {
+  min-width: 0;
+}
+
+.vault-ui .c-check {
+  display: flex;
+  flex: 0 0 28px;
+  align-items: center;
+}
+
+.vault-ui .c-name {
+  display: flex;
+  flex: 2 1 0;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.vault-ui .c-folders {
+  display: flex;
+  flex: 0 0 11rem;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.vault-ui .c-changed {
+  flex: 0 0 9rem;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .c-opts {
+  display: flex;
+  flex: 0 0 40px;
+  justify-content: flex-end;
+}
+
+.vault-ui .list-table[data-folders="off"] .c-folders,
+.vault-ui .list-table[data-changed="off"] .c-changed {
+  display: none;
+}
+
+.vault-ui .row-check {
+  position: relative;
+  z-index: 1;
+}
+
+.vault-ui input[type="checkbox"].row-check:indeterminate {
+  border-color: var(--brand);
+  background-color: var(--brand);
+  background-image: linear-gradient(#fff, #fff);
+  background-size: 10px 2px;
+}
+
+.vault-ui .sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  margin-inline-start: calc(-1 * var(--sp-2));
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vault-ui .sort-arrow {
+  display: inline-block;
+  min-width: 1ch;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .sort:hover {
+    color: var(--text);
+  }
+}
+
+/* The letter of an item: its type gives the colour. */
+.vault-ui .tile {
+  --tint: var(--tint-other);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--tint);
+  color: var(--on-inverse);
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.vault-ui .tile[data-type="login"] { --tint: var(--tint-login); }
+.vault-ui .tile[data-type="note"] { --tint: var(--tint-note); }
+.vault-ui .tile[data-type="card"] { --tint: var(--tint-card); }
+.vault-ui .tile[data-type="identity"] { --tint: var(--tint-identity); }
+
+.vault-ui .main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* One line for the name and one for the user name: a name that is too long is cut, with the whole of it in the link. */
+.vault-ui .name-line,
+.vault-ui .detail-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.vault-ui .item-link {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The link covers the row, so the whole row opens the item; the box and the menu button stand above it. */
+.vault-ui .item-link::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.vault-ui .item-link:focus-visible {
+  outline: none;
+}
+
+.vault-ui .item-link:focus-visible::before {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.vault-ui .list-view .star {
+  margin-inline-end: 0.25rem;
+  color: var(--brand-text);
+}
+
+.vault-ui .detail-line .detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The first mark is the most serious one: the others give way before it (it gives way only when it must, to stay on the screen). */
+.vault-ui .detail-line .mark:first-child {
+  flex-shrink: 0.1;
+}
+
+/* Shrink factors below 1 in all give up only part of the room that is wanted: a lone mark shrinks as any. */
+.vault-ui .detail-line .mark:first-child:last-child {
+  flex-shrink: 1;
+}
+
+/* The marks keep their words; when two do not fit (a phone) they are cut with an ellipsis, and the item page has them whole. */
+.vault-ui .detail-line .marks {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.vault-ui .detail-line .mark {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  line-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .folder-label {
+  max-width: 100%;
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .none {
+  color: var(--faint);
+}
+
+.vault-ui .row-more {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .row-more:hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  .vault-ui .row-more {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.vault-ui .list-message:empty {
+  display: none;
+}
+
+/* Where the menu has a bar above the screen (a drawer, up to 768px), the bar of the list stands below it. */
+@media (max-width: 767.98px) {
+  .vault-ui .list-bar {
+    top: calc(var(--topbar-h) + var(--safe-top));
+  }
+}
+
+/* A phone: the bar scrolls away (the chips take room), the rows are cards, the bar for several rows is at the foot. */
+@media (max-width: 40rem) {
+  :root {
+    --row-h: 5.25rem;
+  }
+
+  .vault-ui .list-bar {
+    position: static;
+    padding: var(--sp-3);
+  }
+
+  .vault-ui .list-search {
+    flex-basis: 100%;
+  }
+
+  .vault-ui .list-actions {
+    flex: 1 1 100%;
+    margin-inline-start: 0;
+  }
+
+  .vault-ui .list-actions .btn,
+  .vault-ui .list-actions .list-pop {
+    flex: 1 1 auto;
+  }
+
+  .vault-ui .list-actions .list-pop .btn {
+    width: 100%;
+  }
+
+  .vault-ui .list-count {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .vault-ui .list-head,
+  .vault-ui .list-rows .row {
+    padding-inline: var(--sp-3);
+    gap: var(--sp-2);
+  }
+
+  /* The header keeps the box for all rows and the two ways to order them. */
+  .vault-ui .list-head .c-opts,
+  .vault-ui .list-head .c-folders {
+    display: none;
+  }
+
+  .vault-ui .list-head .c-name,
+  .vault-ui .list-head .c-changed {
+    flex: 0 0 auto;
+  }
+
+  .vault-ui .list-rows .row {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) 40px;
+    grid-template-areas:
+      "check name opts"
+      "check changed opts";
+    align-content: center;
+    align-items: center;
+    row-gap: 2px;
+  }
+
+  .vault-ui .row .c-check { grid-area: check; }
+  .vault-ui .row .c-name { grid-area: name; }
+  .vault-ui .row .c-opts { grid-area: opts; }
+
+  .vault-ui .row .c-changed {
+    grid-area: changed;
+    flex: none;
+    font-size: 0.8125rem;
+  }
+
+  .vault-ui .row .c-folders {
+    display: none;
+  }
+
+  .vault-ui .list-bulk {
+    position: fixed;
+    inset-inline: var(--sp-3);
+    bottom: calc(var(--sp-3) + var(--safe-bottom));
+    z-index: 50;
+    border: 1px solid var(--line-strong);
+    background: var(--card-raised);
+    box-shadow: var(--shadow-pop);
+  }
+
+  .vault-ui .list-view:has(.list-bulk:not([hidden])) {
+    padding-bottom: 5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-ui .list-rows .row {
+    transition: none;
+  }
+}

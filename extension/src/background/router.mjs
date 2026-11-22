@@ -47,7 +47,8 @@ import { LOCK_EXEMPT } from "./lock.mjs";
  *   state: () => "locked" | "unlocked",
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   touch?: () => void,
- *   setMinutes?: (n: number) => void,
+ *   setSeconds?: (n: number) => Promise<void>,
+ *   getSeconds?: () => Promise<number>,
  *   session?: string,
  * }} HandlerContext
  *   `session` (UI port only) names the port the message came on: a random id made when the page connected, so what
@@ -106,7 +107,7 @@ function indexHandlers(handlers) {
 /**
  * @param {{
  *   runtime: { id?: string, getURL: (path: string) => string },
- *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setMinutes: (n: number) => void },
+ *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setSeconds: (n: number) => Promise<void>, getSeconds: () => Promise<number> },
  *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, lock: (reason: import("./coreHost.mjs").LockReason) => Promise<void>, state: () => "locked" | "unlocked" },
  *   handlers?: readonly Handler[],
  * }} options
@@ -180,7 +181,8 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       lock: lockHost,
       state,
       touch: () => lock.touch(),
-      setMinutes: (/** @type {number} */ n) => lock.setMinutes(n),
+      setSeconds: (/** @type {number} */ n) => lock.setSeconds(n),
+      getSeconds: () => lock.getSeconds(),
       session,
     });
     /** @type {unknown} */

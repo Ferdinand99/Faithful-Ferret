@@ -379,7 +379,7 @@ test("the_tab_order_is_the_skip_link_the_top_bar_the_menu_and_then_the_screen", 
       .filter((n) => n instanceof FakeElement && n.getAttribute("data-role") !== null)
       .map((n) => n.getAttribute("data-role"));
     const at = (role) => order.indexOf(role);
-    const chain = ["skip", "menu-open", "brand", "collapse", "menu-close", "switch-admin", "nav-new", "nav-items", "nav-favorites", "nav-trash", "account-menu-button", "content"];
+    const chain = ["skip", "menu-open", "brand", "collapse", "menu-close", "switch-admin", "nav-items", "nav-favorites", "nav-trash", "account-menu-button", "content"];
     chain.forEach((role, i) => assert.ok(at(role) >= 0, role));
     assert.deepEqual([...chain].sort((a, b) => at(a) - at(b)), chain);
     // The screen is in the main landmark, which can take the focus from the skip link.
@@ -554,5 +554,103 @@ test("a_lock_forgets_the_pins_and_nothing_of_a_folder_is_written_to_the_device",
     await session.lock();
     assert.deepEqual(pins, [], "the lock forgot them");
     assert.deepEqual(writes, [], "and no folder name was ever written");
+  });
+});
+
+// ------------------------------------------------------------ the theme choice
+
+/** A theme choice over a word in memory, like the real one over localStorage. */
+function themeChoice(initial = "auto") {
+  const state = { now: initial, sets: [] };
+  return { state, current: () => state.now, set: (name) => { state.sets.push(name); state.now = name; } };
+}
+
+const themeRoles = (root) => [...walk(find(root, "account-menu"))].filter((n) => n.getAttribute?.("role") === "menuitemradio");
+
+test("a_menu_without_a_theme_choice_has_none", async () => {
+  await withDom(async () => {
+    const { root } = build();
+    assert.equal(find(root, "theme"), null);
+    assert.deepEqual(themeRoles(root), []);
+  });
+});
+
+test("the_account_menu_offers_light_dark_and_system_as_a_group_of_radio_entries", async () => {
+  await withDom(async () => {
+    const { root } = build({ theme: themeChoice("dark") });
+    const group = find(root, "theme");
+    assert.equal(group.getAttribute("role"), "group");
+    const label = [...walk(group)].find((n) => n.getAttribute?.("class") === "side-menu-label");
+    assert.equal(group.getAttribute("aria-labelledby"), label.getAttribute("id"), "the group is named by its heading");
+    assert.ok(textOf(label).includes("shell.theme.label"));
+    const radios = themeRoles(root);
+    assert.deepEqual(radios.map((n) => n.getAttribute("data-theme-set")), ["light", "dark", "auto"], "Light, Dark, System in that order");
+    assert.deepEqual(radios.map((n) => textOf(n).trim()), ["shell.theme.light", "shell.theme.dark", "shell.theme.system"]);
+    assert.deepEqual(radios.map((n) => n.getAttribute("aria-checked")), ["false", "true", "false"], "the choice in force is the checked one");
+    for (const radio of radios) assert.equal(radio.tagName, "button", "a real button: Enter and Space work");
+  });
+});
+
+test("choosing_a_theme_applies_it_checks_it_and_leaves_the_menu_open", async () => {
+  await withDom(async () => {
+    const theme = themeChoice("auto");
+    const { root } = build({ theme });
+    const button = find(root, "account-menu-button");
+    const menu = find(root, "account-menu");
+    await click(button);
+    const checked = () => themeRoles(root).filter((n) => n.getAttribute("aria-checked") === "true").map((n) => n.getAttribute("data-theme-set"));
+    assert.deepEqual(checked(), ["auto"]);
+    await click(themeRoles(root)[0]);
+    assert.deepEqual(theme.state.sets, ["light"]);
+    assert.deepEqual(checked(), ["light"]);
+    assert.equal(menu.hidden, false, "the menu stays open, so the change can be seen and changed again");
+    await click(themeRoles(root)[1]);
+    assert.deepEqual(theme.state.sets, ["light", "dark"]);
+    assert.deepEqual(checked(), ["dark"]);
+    await click(themeRoles(root)[2]);
+    assert.deepEqual(theme.state.sets, ["light", "dark", "auto"]);
+    assert.deepEqual(checked(), ["auto"]);
+  });
+});
+
+test("the_menu_reads_the_theme_again_when_it_opens_so_another_tabs_choice_shows", async () => {
+  await withDom(async () => {
+    const theme = themeChoice("light");
+    const { root } = build({ theme });
+    const button = find(root, "account-menu-button");
+    await click(button);
+    await click(button); // closed again
+    theme.state.now = "dark"; // another tab chose
+    await click(button);
+    assert.deepEqual(themeRoles(root).map((n) => n.getAttribute("aria-checked")), ["false", "true", "false"]);
+  });
+});
+
+test("the_theme_entries_are_in_the_arrow_key_order_between_help_and_lock", async () => {
+  await withDom(async () => {
+    const { root, focused } = build({ theme: themeChoice() });
+    const menu = find(root, "account-menu");
+    await click(find(root, "account-menu-button"));
+    const radios = themeRoles(root).map((n) => n.getAttribute("data-theme-set"));
+    const order = ["nav-account", "help", ...radios.map((r) => `theme-${r}`), "lock", "sign-out"];
+    const role = (node) => (node.getAttribute("data-role") === "theme-choice" ? `theme-${node.getAttribute("data-theme-set")}` : node.getAttribute("data-role"));
+    const nodes = [...walk(menu)].filter((n) => ["menuitem", "menuitemradio"].includes(n.getAttribute?.("role")));
+    assert.deepEqual(nodes.map(role), order);
+    // The arrow down from Help goes to Light, and from System to Lock.
+    for (const node of nodes) node.focus = () => focused.push(role(node));
+    await fire(menu, "keydown", { key: "ArrowDown", target: find(root, "help") });
+    assert.equal(focused.at(-1), "theme-light");
+    await fire(menu, "keydown", { key: "ArrowDown", target: themeRoles(root)[2] });
+    assert.equal(focused.at(-1), "lock");
+  });
+});
+
+test("lock_and_the_other_entries_still_close_the_menu_when_the_theme_choice_is_there", async () => {
+  await withDom(async () => {
+    const { root, calls } = build({ theme: themeChoice() });
+    await click(find(root, "account-menu-button"));
+    await click(find(root, "lock"));
+    assert.equal(calls.lock, 1);
+    assert.equal(find(root, "account-menu").hidden, true);
   });
 });

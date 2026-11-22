@@ -236,7 +236,7 @@ test("every UI request and reply round-trips with a sample body", () => {
     search: [{ query: "ex" }, { handles: [] }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],
-    settings: [{ lock_minutes: 15 }, { lock_minutes: 15 }],
+    settings: [{ lock_seconds: 900 }, { lock_seconds: 900 }],
     sync_state: [{}, { running: true, status: "idle", live: "live", halted: "server_restored", warnings: ["rev_lower_than_local"] }],
     sync_retry: [{}, { ok: false, reason: "sync_still_halted" }],
     forget_server: [{ server: "https://vault.example" }, { ok: true }],

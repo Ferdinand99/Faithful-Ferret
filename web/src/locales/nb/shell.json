@@ -28,5 +28,9 @@
   "shell.soon": "Kommer snart",
   "shell.switch.admin": "Admin",
   "shell.switch.label": "Hvelv, bytt til Admin",
-  "shell.switch.vault": "Hvelv"
+  "shell.switch.vault": "Hvelv",
+  "shell.theme.dark": "Mørk",
+  "shell.theme.label": "Tema",
+  "shell.theme.light": "Lys",
+  "shell.theme.system": "System"
 }

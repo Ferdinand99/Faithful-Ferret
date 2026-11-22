@@ -55,7 +55,7 @@ async function setup({ unlocked = false, handlers } = {}) {
       await ctx.call("unlock_probe");
       ctx.touch();
     }),
-    record("settings", { lock_minutes: 15 }),
+    record("settings", { lock_seconds: 900 }),
     record("server_check", { ok: true }),
     record("sync_state", { running: false, live: "offline", warnings: [] }),
     record("forget_server", { ok: true }),
@@ -219,7 +219,7 @@ test("a_refusal_carries_a_reason_and_never_text_from_the_handler_or_the_request"
     { types: ["unlock"], channel: "ui", handle: async () => { throw new Error("master password hunter2"); } },
     { types: ["sign_in"], channel: "ui", handle: async () => { throw Object.assign(new Error("hunter2"), { code: "bad_credentials" }); } },
     { types: ["lock"], channel: "ui", handle: async () => { throw Object.assign(new Error("hunter2"), { code: "invalid_input" }); } },
-    { types: ["settings"], channel: "ui", handle: async () => ({ lock_minutes: 9999 }) },
+    { types: ["settings"], channel: "ui", handle: async () => ({ lock_seconds: 9_999_999 }) },
     { types: ["state"], channel: "ui", handle: async () => { throw Object.assign(new Error("x"), { code: "Has Spaces: hunter2" }); } },
   ];
   const { fake, router } = await setup({ handlers });
@@ -241,7 +241,7 @@ test("the_handler_context_has_the_call_and_no_key_or_client", async () => {
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.candidates());
   const { ctx } = log[0];
-  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "lock", "sender", "session", "setMinutes", "state", "touch", "type"]);
+  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "getSeconds", "lock", "sender", "session", "setSeconds", "state", "touch", "type"]);
   // The session names the port (a random id), not the page or anything it sent.
   assert.match(ctx.session, /^[0-9a-f]{32}$/);
   assert.equal(ctx.type, "candidates");
@@ -263,7 +263,8 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
 
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;
-  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_server(), "junk", 5, undefined]) {
+  // The setting and the lock button are for the extension's own pages: a content script can neither change the setting nor lock.
+  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(), "junk", 5, undefined]) {
     assert.equal(await router.onMessage(raw, sender), undefined);
   }
   assert.deepEqual(log, []);
@@ -343,7 +344,7 @@ test("lock_is_never_refused_and_a_throw_during_lock_still_ends_locked", async ()
     });
     const router = createRouter({
       runtime: fake.runtime,
-      lock: { checkOrLock: async () => { throw new Error("storage failed"); }, touch() {}, setMinutes() {} },
+      lock: { checkOrLock: async () => { throw new Error("storage failed"); }, touch() {}, setSeconds: async () => {}, getSeconds: async () => 900 },
       coreHost,
       handlers: [handler("lock", { ok: true }), handler("candidates", { handles: [] })],
     });

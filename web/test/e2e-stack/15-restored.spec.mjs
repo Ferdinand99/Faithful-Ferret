@@ -5,7 +5,7 @@
 // server lost without a conflict, over rows nobody changed since; the second gets a conflict where the first wrote. A write
 // saved by a browser that has not heard of the restore is refused by the server (its session is over), it is kept, and
 // nothing lands in silence.
-import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, rowsNamed, serverRev, settleSignIns, shot, signInHere, synced, syncBanner, test, useAccount, vaultUrl } from "./support.mjs";
+import { createItem, editItem, evilNow, expect, feedOf, hostAvailable, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, findRows, serverRev, settleSignIns, shot, signInHere, synced, syncBanner, test, useAccount, vaultUrl } from "./support.mjs";
 
 const SEEN = 20_000;
 const WARNED = 150_000;
@@ -69,7 +69,7 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   const bonly = `Restore-bonly-${tag}`;
   for (const name of [untouched, quiet, bonly]) await createItem(a.page, { name, username: "before-the-backup" });
   await openList(b.page);
-  for (const name of [untouched, quiet, bonly]) await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: SEEN });
+  for (const name of [untouched, quiet, bonly]) await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: SEEN });
   await synced(a.page);
   await synced(b.page);
 
@@ -83,9 +83,9 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   await editItem(a.page, quiet, { name: `${quiet}-a`, username: "after-the-backup-a" });
   await editItem(b.page, bonly, { name: `${bonly}-b`, username: "after-the-backup-b" });
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${bonly}-b`)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(a.page, `${bonly}-b`))).toHaveCount(1, { timeout: SEEN });
   await openList(b.page);
-  await expect(rowsNamed(b.page, `${quiet}-a`)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, `${quiet}-a`))).toHaveCount(1, { timeout: SEEN });
   await synced(a.page);
   await synced(b.page);
 
@@ -98,8 +98,8 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   await shot(a.page, "15-restored-banner-a");
   await shot(b.page, "15-restored-banner-b");
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${quiet}-a`)).toHaveCount(1);
-  await expect(rowsNamed(a.page, `${bonly}-b`)).toHaveCount(1);
+  await expect((await findRows(a.page, `${quiet}-a`))).toHaveCount(1);
+  await expect((await findRows(a.page, `${bonly}-b`))).toHaveCount(1);
 
   // The first browser accepts. What the server lost goes out again over rows that nobody changed since the restore, and
   // there is no conflict.
@@ -113,8 +113,8 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   await shot(a.page, "15-restored-accepted-a");
   await openList(a.page);
   await expect(a.page.locator('[data-role="conflict-note"]')).toHaveCount(0);
-  await expect(rowsNamed(a.page, `${quiet}-a`)).toHaveCount(1);
-  await expect(rowsNamed(a.page, `${bonly}-b`)).toHaveCount(1);
+  await expect((await findRows(a.page, `${quiet}-a`))).toHaveCount(1);
+  await expect((await findRows(a.page, `${bonly}-b`))).toHaveCount(1);
   await synced(a.page, 90_000);
   const quietId = await itemIdOf(a.page, `${quiet}-a`);
   await expect.poll(async () => serverRev(a.context, quietId), { timeout: 60_000, message: "A's version is on the server again" }).toBeGreaterThan(1);
@@ -131,12 +131,12 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   await openList(b.page);
   await expect(b.page.locator('[data-role="conflict-note"]')).toBeVisible();
   await expect(b.page.locator('[data-role="conflict-note"]')).toContainText("2");
-  await expect(rowsNamed(b.page, untouched)).toHaveCount(1);
+  await expect((await findRows(b.page, untouched))).toHaveCount(1);
   await shot(b.page, "15-restored-conflicts-in-the-list-b");
   // The conflict shows both versions.
   await b.page.locator('[data-role="first-conflict"]').click();
   await expect(b.page.locator('[data-role="conflict"]')).toBeVisible();
-  await expect(b.page.locator('[data-role="side"]')).toHaveCount(2);
+  await expect(b.page.locator('[data-role="conflict"] [data-role="side"]')).toHaveCount(2);
   await shot(b.page, "15-restored-conflict-view-b");
   // Settling both with the server's version leaves the two browsers the same.
   for (let left = 2; left > 0; left -= 1) {
@@ -148,9 +148,9 @@ test("a_restored_server_offers_accept_older_state_in_both_browsers_and_overwrite
   }
   await expect(b.page.locator('[data-role="conflict-note"]')).toHaveCount(0);
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${quiet}-a`)).toHaveCount(1);
-  await expect(rowsNamed(b.page, `${quiet}-a`)).toHaveCount(1);
-  await expect(rowsNamed(b.page, `${bonly}-b`)).toHaveCount(1);
+  await expect((await findRows(a.page, `${quiet}-a`))).toHaveCount(1);
+  await expect((await findRows(b.page, `${quiet}-a`))).toHaveCount(1);
+  await expect((await findRows(b.page, `${bonly}-b`))).toHaveCount(1);
 });
 
 test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async () => {
@@ -160,14 +160,14 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   const lower = `Refused-lower-${tag}`;
   await createItem(a.page, { name: target, username: "before" });
   await openList(b.page);
-  await expect(rowsNamed(b.page, target)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, target))).toHaveCount(1, { timeout: SEEN });
   await synced(a.page);
   await synced(b.page);
   await hostStep("snapshot");
   // Something the restore will take away, which both browsers have seen: the restore will look older than what they know.
   await createItem(a.page, { name: lower });
   await openList(b.page);
-  await expect(rowsNamed(b.page, lower)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, lower))).toHaveCount(1, { timeout: SEEN });
   await synced(b.page);
   const id = await itemIdOf(b.page, target);
   const rev = await serverRev(b.context, id);
@@ -191,7 +191,7 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   await expect(syncBanner(b.page, "server_restored")).toBeVisible({ timeout: WARNED });
   await shot(b.page, "15-restored-write-refused");
   expect(await serverRev(b.context, id), "still not on the server").toBe(rev);
-  await expect(rowsNamed(b.page, `${target}-saved-during-restore`)).toHaveCount(1);
+  await expect((await findRows(b.page, `${target}-saved-during-restore`))).toHaveCount(1);
   // The way out is the stop, which the person can read and act on; the banner that says a write was refused again and again
   // for a restore number the server does not show (the repeated refusal) is not the one that appears here.
   await expect(b.page.locator('[data-role="banner"][data-banner="error:restore_epoch_refused"]')).toHaveCount(0);
