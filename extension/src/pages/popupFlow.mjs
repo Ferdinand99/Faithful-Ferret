@@ -116,6 +116,24 @@ export function viewOf(state, sync = null) {
   };
 }
 
+/**
+ * What the open popup does with the view the background reports now, while it shows the unlocked view `shown`:
+ * "rebuild" when the vault is no longer open there (a lock, a sign-out, another account or server), which ends an
+ * open question of "Forget this server" as well, so the list never stays on screen after a lock; "same" when nothing
+ * changed, nothing was read, or the user is answering that question (the sync's part, where it is asked, stays as it
+ * is); "sync" when only the sync's part changed.
+ * @param {PopupView} shown
+ * @param {PopupView | null} next null when the background could not be read
+ * @param {boolean} asking whether the question of "Forget this server" is open
+ * @returns {"rebuild" | "same" | "sync"}
+ */
+export function followStep(shown, next, asking) {
+  if (next === null) return "same";
+  if (next.view !== "unlocked" || next.account !== shown.account || next.server !== shown.server) return "rebuild";
+  if (asking || JSON.stringify(next) === JSON.stringify(shown)) return "same";
+  return "sync";
+}
+
 /** @param {import("./ui.mjs").Request} request */
 export function createPopupFlow(request) {
   const load = async () => {
