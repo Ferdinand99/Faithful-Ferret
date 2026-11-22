@@ -128,7 +128,8 @@ test("settings_open_in_a_tab", async () => {
         });
         const tab = await session.waitFor(async () => (await session.windowHandles()).find((h) => h !== first), 20_000, `${where}: a tab for the settings`);
         await session.switchTo(tab);
-        assert.equal(await session.waitFor(() => session.currentUrl(), 20_000, "the tab's address"), SETTINGS_URL, `${where}: the settings open in a tab of their own`);
+        // A new tab is about:blank for a moment.
+        await session.waitFor(async () => (await session.currentUrl()) === SETTINGS_URL, 20_000, `${where}: the settings open in a tab of their own`);
 
         // The default, and exactly the ten choices.
         const page = await readSettingsPage(session);
