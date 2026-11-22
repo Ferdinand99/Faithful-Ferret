@@ -30,7 +30,8 @@
 //    data_collection_permissions required: ["authenticationInfo"]: the extension
 //    sends sign-in credentials and proofs to a server outside the browser (the
 //    user's own), which Mozilla's definition of data transmission counts, so
-//    "none" would be wrong. The test variant has its own add-on id.
+//    "none" would be wrong. The test variant has its own add-on id. A release
+//    carries gecko.update_url (lib/updates.mjs), the test variant none.
 // 4. Merges src/locales/<lang>/<feature>.json and src/styles/<feature>.css. A
 //    feature adds its own files and edits no shared file.
 //    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs),
@@ -52,8 +53,9 @@ import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
 import { CONTENT_BUNDLE, CONTENT_ENTRY, classicScript } from "./lib/classic.mjs";
 import { danglingImports, importsOf } from "./lib/imports.mjs";
 import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
+import { RELEASE_ID, UPDATE_URL } from "./lib/updates.mjs";
 
-export { sha256 };
+export { sha256, RELEASE_ID, UPDATE_URL };
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
@@ -63,8 +65,13 @@ export const EXTENSION_CSP = "script-src 'self' 'wasm-unsafe-eval'; object-src '
 /** Added to the name of the test variant, so it cannot be mistaken for a release. */
 export const TEST_NAME_SUFFIX = " (test)";
 
-/** The add-on id of every release, and of the test variant (a separate id, so a test build never shares storage with an installed release). */
-export const RELEASE_ID = "ferret@hedgerow.tools";
+/**
+ * The add-on id of every release is RELEASE_ID (lib/updates.mjs), and the test
+ * variant has an id of its own, so a test build never shares storage with an
+ * installed release. A release also carries the update manifest URL UPDATE_URL
+ * (lib/updates.mjs) as gecko.update_url, which the build sets and no manifest file
+ * may set; the test variant carries none.
+ */
 export const TEST_ID = "ferret-test@hedgerow.tools";
 
 /**
@@ -327,9 +334,15 @@ export function buildManifest({ browser, manifest, variant, root = defaultRoot }
 
   const pkg = readJson(join(root, "package.json"));
   merged.version = pkg.version;
+  // The update URL comes from the build alone: a release gets UPDATE_URL, the test variant none.
+  if (merged.browser_specific_settings?.gecko?.update_url !== undefined) {
+    throw new Error("manifest: update_url is set by the build (a release gets UPDATE_URL), not by a manifest file");
+  }
   if (variant === "test") {
     merged.name = `${merged.name}${TEST_NAME_SUFFIX}`;
     merged.browser_specific_settings.gecko.id = TEST_ID;
+  } else {
+    merged.browser_specific_settings.gecko.update_url = UPDATE_URL;
   }
   return sortKeys(merged);
 }
@@ -488,6 +501,9 @@ function manifestProblems(text, allow) {
   if (typeof manifest.name === "string" && manifest.name.endsWith(TEST_NAME_SUFFIX)) problems.push("manifest.json: the name is the test build's");
   const id = manifest.browser_specific_settings?.gecko?.id;
   if (id !== RELEASE_ID) problems.push(`manifest.json: the add-on id is ${JSON.stringify(id)}, a release has ${RELEASE_ID}`);
+  // Firefox asks this URL for newer versions: exactly the one update manifest of the project, nothing else.
+  const updateUrl = manifest.browser_specific_settings?.gecko?.update_url;
+  if (updateUrl !== UPDATE_URL) problems.push(`manifest.json: the update_url is ${JSON.stringify(updateUrl)}, a release has ${UPDATE_URL}`);
 
   for (const key of FORBIDDEN_KEYS) {
     if (key in manifest) problems.push(`manifest.json: ${key} is not allowed in a release`);

@@ -164,6 +164,8 @@ test("manifest_declares_data_collection_permissions_and_strict_min_version_153",
           id: variant === "test" ? "ferret-test@hedgerow.tools" : "ferret@hedgerow.tools",
           strict_min_version: "153.0",
           data_collection_permissions: { required: ["authenticationInfo"] },
+          // A release updates itself from the project's update manifest; the test variant never does.
+          ...(variant === "test" ? {} : { update_url: "https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-updates/updates.json" }),
         },
       });
       assert.equal(m.version, readJson(join(extensionRoot, "package.json")).version);

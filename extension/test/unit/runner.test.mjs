@@ -11,6 +11,9 @@ import { repoRoot } from "./buildHelpers.mjs";
 
 const read = (/** @type {string} */ path) => readFileSync(join(repoRoot, ...path.split("/")), "utf8");
 
+/** The rule the publish job checks the live update manifest with before it replaces it (jq). */
+const LIVE_RULE = '($live[0].addons["ferret@hedgerow.tools"].updates) as $l | ($new[0].addons["ferret@hedgerow.tools"].updates) as $n | ($l | type) == "array" and ($n | type) == "array" and ($n[:-1] == $l or $n == $l)';
+
 test("the_runner_container_is_named_and_labelled", () => {
   const result = spawnSync("bash", [join(repoRoot, "scripts", "check-lanbox-labels.sh"), "ext"], { encoding: "utf8" });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
@@ -238,7 +241,9 @@ test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_
     assert.equal(code.includes(trigger), false, trigger);
   }
   assert.match(code, /^permissions:\n {2}contents: read\n/m);
-  assert.equal(/contents: write|id-token|packages:/.test(code), false);
+  // The only write access is contents: write, in the publish job (pinned by the next test).
+  assert.equal(/id-token|packages:|pull-requests:|actions:|deployments:|pages:|statuses:|: write-all|permissions: write/.test(code), false);
+  assert.equal([...code.matchAll(/contents: write/g)].length, 1);
   // Every third-party action is pinned by a full commit SHA.
   const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
   assert.ok(uses.length >= 6);
@@ -288,5 +293,158 @@ test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_
   assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-1\/[^"]+"/);
   assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-2\/[^"]+"/);
   assert.match(code, /bash scripts\/check-ext-release\.sh /);
+  // The release carries an update_url, so it is linted as a self-hosted add-on (that only drops AMO's hosting rules).
+  assert.match(code, /web-ext lint --source-dir "\$RUNNER_TEMP\/build-1\/ferret-firefox-mv2-release" --warnings-as-errors --self-hosted\n/);
   assert.equal(/--variant test/.test(code), false, "the test variant is signed by the measure workflow");
+});
+
+/**
+ * The jobs of a workflow (comments removed), by name.
+ * @param {string} code
+ * @returns {Map<string, string>}
+ */
+function jobsOf(code) {
+  const body = code.slice(code.indexOf("\njobs:\n") + "\njobs:\n".length);
+  /** @type {Map<string, string>} */
+  const jobs = new Map();
+  const parts = body.split(/^ {2}([a-z][\w-]*):\n/m);
+  for (let i = 1; i < parts.length; i += 2) jobs.set(parts[i], parts[i + 1]);
+  return jobs;
+}
+
+test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signed_file", () => {
+  const text = read(".github/workflows/extension-sign-release.yml");
+  const code = text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  const jobs = jobsOf(code);
+  assert.deepEqual([...jobs.keys()], ["build", "sign", "manifest", "publish"]);
+  const manifest = /** @type {string} */ (jobs.get("manifest"));
+  const publish = /** @type {string} */ (jobs.get("publish"));
+  const sign = /** @type {string} */ (jobs.get("sign"));
+  // The order: publishing needs the signing (and so its approval) and the written manifest.
+  assert.match(manifest, /^ {4}needs: \[build, sign\]\n/m);
+  assert.match(publish, /^ {4}needs: \[build, sign, manifest\]\n/m);
+  // Only a run started on main, for a commit on main, publishes.
+  const guard = "    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'\n";
+  for (const job of [manifest, publish]) assert.equal(job.split(guard).length, 2, "the main-only guard, once, on the job");
+  assert.equal([...code.matchAll(/^ {4}if:/gm)].length, 2, "no other job-level condition");
+  const build = /** @type {string} */ (jobs.get("build"));
+  assert.match(build, /^ {6}on_main: \$\{\{ steps\.resolve\.outputs\.on_main \}\}\n/m);
+  assert.match(build, /if git merge-base --is-ancestor "\$commit" refs\/remotes\/origin\/main; then\n\s+echo "on_main=true" >> "\$GITHUB_OUTPUT"\n\s+else\n\s+echo "on_main=false" >> "\$GITHUB_OUTPUT"/);
+  assert.equal([...code.matchAll(/on_main=true/g)].length, 1);
+  // The sign job hands over the name and the SHA-256 of the signed file, nothing else.
+  assert.match(sign, /^ {4}outputs:\n {6}name: \$\{\{ steps\.signed\.outputs\.name \}\}\n {6}sha256: \$\{\{ steps\.signed\.outputs\.sha256 \}\}\n {4}steps:/m);
+  // Permissions: only the publish job widens them, to contents: write and nothing else; no environment, no secret.
+  for (const name of ["build", "sign", "manifest"]) {
+    assert.equal(/^ {4}permissions:/m.test(/** @type {string} */ (jobs.get(name))), false, `${name} keeps the read-only default`);
+  }
+  assert.match(publish, /^ {4}permissions:\n {6}contents: write\n {4}steps:/m);
+  for (const job of [manifest, publish]) {
+    assert.equal(job.includes("secrets"), false);
+    assert.equal(/^ {4}environment:/m.test(job), false);
+  }
+  // Actions pinned by commit SHA in both jobs.
+  for (const job of [manifest, publish]) {
+    const uses = [...job.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+    assert.ok(uses.length >= 2);
+    for (const use of uses) assert.match(use, /@[0-9a-f]{40}$/, use);
+  }
+  // The publish job runs no code from the repository: no checkout, no node, no npm, no script of ours.
+  assert.equal(/actions\/checkout|setup-node|\bnode |\bnpm |scripts\//.test(publish), false);
+  // The manifest job checks out only the build scripts of the built commit, without credentials, and has no write token.
+  assert.match(manifest, /ref: \$\{\{ needs\.build\.outputs\.commit \}\}\n\s+persist-credentials: false\n\s+sparse-checkout: \|\n\s+extension\/scripts\/\n/);
+  assert.match(manifest, /node extension\/scripts\/updates-json\.mjs \\\n\s+--xpi "\$RUNNER_TEMP\/signed\/\$NAME" \\\n\s+--sha256 "\$SHA256"/);
+  // A missing release is the first publication only on a 404; any other answer stops the run.
+  assert.match(manifest, /"HTTP\/"\*" 404"\*\)\n[^;]*exists=false/);
+  assert.match(manifest, /\*\)\n\s+echo "::error::Unexpected answer/);
+  // Both jobs check the signed file against the SHA-256 the sign job reported, and its name against the version.
+  for (const job of [manifest, publish]) {
+    assert.match(job, /SHA256: \$\{\{ needs\.sign\.outputs\.sha256 \}\}/);
+    assert.match(job, /if \[ "\$actual" != "\$SHA256" \]; then/);
+    assert.match(job, /if \[ "\$NAME" != "ferret-firefox-mv2-release-\$\{VERSION\}-signed\.xpi" \]; then/);
+  }
+  // The token reaches gh through the environment of the steps that call it, never the writer step.
+  const steps = (/** @type {string} */ job) => job.split(/\n {6}- /);
+  for (const step of [...steps(manifest), ...steps(publish)]) {
+    if (step.includes("github.token")) {
+      assert.match(step, /^ {10}GH_TOKEN: \$\{\{ github\.token \}\}$/m);
+      assert.match(step, /\bgh (?:api|release) /);
+    }
+    if (step.includes("updates-json.mjs")) assert.equal(step.includes("github.token") || step.includes("GH_TOKEN"), false, "no token for the writer");
+  }
+  // Releases: an extension-v<version> tag (never v*), never the latest, an existing release is never replaced.
+  assert.match(publish, /tag="extension-v\$\{VERSION\}"/);
+  assert.equal(/gh release create "?v/.test(publish), false);
+  assert.equal([...publish.matchAll(/gh release create /g)].length, 2);
+  assert.equal([...publish.matchAll(/--latest=false/g)].length, 2);
+  assert.equal(/gh release (?:delete|edit)|git push|git tag|--draft|--prerelease/.test(publish), false);
+  assert.match(publish, /if \[ "\$existing" != "\$SHA256" \]; then/);
+  // Only updates.json is ever replaced (--clobber), never a package.
+  const clobbers = publish.split("\n").filter((line) => line.includes("--clobber"));
+  assert.deepEqual(clobbers.map((line) => line.trim()), ['gh release upload extension-updates "$RUNNER_TEMP/updates/updates.json" --repo "$GITHUB_REPOSITORY" --clobber']);
+  // Right before the replacement the live file is read again and must be the one the new file was written from.
+  const liveAt = publish.indexOf('gh release download extension-updates --repo "$GITHUB_REPOSITORY" --pattern updates.json --dir "$RUNNER_TEMP/live"');
+  const ruleAt = publish.indexOf(`'${LIVE_RULE}'`);
+  const refuseAt = publish.indexOf('echo "::error::The live updates.json is not the one the new file was written from; nothing was replaced."\n              exit 1');
+  const clobberAt = publish.indexOf("--clobber");
+  assert.ok(liveAt > 0 && liveAt < ruleAt && ruleAt < refuseAt && refuseAt < clobberAt, "live file read, compared, refused on a mismatch, and only then replaced");
+  assert.match(publish, /if ! jq -e -n --slurpfile live "\$RUNNER_TEMP\/live\/updates\.json" --slurpfile new "\$RUNNER_TEMP\/updates\/updates\.json" \\\n/);
+  // The newest entry is this version with this hash, and what is served afterwards is compared, over HTTPS only.
+  assert.match(publish, /\.version == \$v and \.update_hash == \$h/);
+  assert.match(publish, /--arg h "sha256:\$SHA256"/);
+  assert.equal([...publish.matchAll(/curl -fsSL --proto '=https' --proto-redir '=https' /g)].length, 2);
+  assert.match(publish, /cmp -s "\$RUNNER_TEMP\/fetched\.json" "\$RUNNER_TEMP\/updates\/updates\.json"/);
+  assert.match(publish, /if \[ "\$fetched" != "\$SHA256" \]; then/);
+  // No input or expression is spliced into a run script of these jobs: values come through env.
+  for (const job of [manifest, publish]) {
+    for (const block of job.matchAll(/run: \|\n((?: {10}.*\n?)+)/g)) {
+      assert.equal(/\$\{\{/.test(block[1]), false, `an expression inside a run script: ${block[1].slice(0, 80)}`);
+    }
+  }
+});
+
+test("the_live_update_manifest_rule_accepts_one_appended_entry_or_the_same_file_only", (t) => {
+  // The rule is the jq program of the publish job (pinned above); it runs here when jq is installed (the CI runners
+  // have it; the test container may not).
+  if (spawnSync("jq", ["--version"], { encoding: "utf8" }).status !== 0) {
+    t.skip("jq is not installed");
+    return;
+  }
+  const id = "ferret@hedgerow.tools";
+  /** @param {unknown} updates */
+  const file = (updates) => JSON.stringify({ addons: { [id]: { updates } } });
+  /** @param {string} version @param {string} hex */
+  const entry = (version, hex) => ({
+    version,
+    update_link: `https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-v${version}/ferret-firefox-mv2-release-${version}-signed.xpi`,
+    update_hash: `sha256:${hex.repeat(64)}`,
+  });
+  const a = entry("0.7.1", "a");
+  const b = entry("0.7.2", "b");
+  const c = entry("0.7.3", "c");
+  const dir = mkdtempSync(join(tmpdir(), "ferret-live-"));
+  try {
+    /** @param {string} live @param {string} next */
+    const passes = (live, next) => {
+      writeFileSync(join(dir, "live.json"), live);
+      writeFileSync(join(dir, "new.json"), next);
+      const result = spawnSync("jq", ["-e", "-n", "--slurpfile", "live", join(dir, "live.json"), "--slurpfile", "new", join(dir, "new.json"), LIVE_RULE], { encoding: "utf8" });
+      return result.status === 0;
+    };
+    // Accepted: one entry appended, or the same file (a re-run).
+    assert.equal(passes(file([a]), file([a, b])), true);
+    assert.equal(passes(file([]), file([a])), true);
+    assert.equal(passes(file([a, b]), file([a, b])), true);
+    // Refused: another publication in between, an entry dropped or changed, two entries at once, a broken live file.
+    assert.equal(passes(file([a, b]), file([a, c])), false, "the live file gained an entry the new one lacks");
+    assert.equal(passes(file([a, b]), file([b, c])), false, "an older entry was dropped");
+    assert.equal(passes(file([a]), file([{ ...a, update_hash: `sha256:${"f".repeat(64)}` }, b])), false, "an older entry was changed");
+    assert.equal(passes(file([a]), file([a, b, c])), false, "two entries at once");
+    assert.equal(passes(file([]), file([a, b])), false);
+    assert.equal(passes(JSON.stringify({ addons: {} }), file([a])), false, "no list in the live file");
+    assert.equal(passes(file({}), file([a])), false);
+    assert.equal(passes("{", file([a])), false, "not JSON");
+    assert.equal(passes(file([a]), JSON.stringify({ addons: { "other@example.com": { updates: [a] } } })), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -1,20 +1,18 @@
 # Signs the RELEASE variant of the Firefox extension (MV2, add-on id
-# ferret@hedgerow.tools) with Mozilla (AMO, unlisted channel) and keeps the signed
-# .xpi as an artifact of the run. The test variant is signed by
-# extension-sign-measure.yml, never by this file.
+# ferret@hedgerow.tools) with Mozilla (AMO, unlisted channel), keeps the signed
+# .xpi as an artifact of the run and publishes it for the automatic updates of the
+# installed builds. The test variant is signed by extension-sign-measure.yml, never
+# by this file.
 #
 # Manual only: `workflow_dispatch`, never on a push, a tag or a pull request. The
 # input `ref` names the code to build: a full 40-character commit SHA that is
-# reachable from `ext` or `main`, or the branch name `ext` or `main` (resolved to
+# reachable from `main`, or the branch name `main` (resolved to
 # its commit, which the run prints). Anything else is refused before anything is
 # built. Start it on `main`, with the commit on `main` as the input:
 #
 #   gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>
 #
-# GitHub lists and dispatches the copy of this file on the branch it is started on,
-# so the copies on `main` and `ext` must be the same file.
-#
-# Two jobs:
+# Four jobs:
 #
 # 1. `build` has no secrets and no environment. It checks out the resolved commit,
 #    installs the locked packages without their install scripts, builds the release
@@ -26,7 +24,7 @@
 #    an artifact.
 # 2. `sign` belongs to the environment `amo-signing`, which has a required reviewer
 #    (every signing waits for an approval click) and allows deployments from the
-#    `ext` and `main` branches only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
+#    `main` branch only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
 #    environment. The job downloads the artifact of job 1, checks its SHA-256
 #    against the one job 1 reported, unpacks it and signs exactly those files. It
 #    runs no code from the repository: it checks out only extension/package.json
@@ -37,10 +35,31 @@
 #    unsigned one, apart from Mozilla's META-INF/ signature files and manifest.json:
 #    Mozilla rewrites manifest.json when it signs (it drops the trailing newline), so
 #    that one file is compared as parsed JSON, and every other file byte for byte.
+#    The job reports the name and the SHA-256 of the signed file.
+# 3. `manifest` has read access only. It checks the signed file against the SHA-256
+#    the sign job reported, fetches the update manifest that is published now (the
+#    asset updates.json of the release `extension-updates`; none at all only before
+#    the first publication) and adds the new version with
+#    extension/scripts/updates-json.mjs of the built commit, which checks the file
+#    again (its hash, its name, Mozilla's signature, the add-on id, the version and
+#    the update_url) and keeps every older entry.
+# 4. `publish` is the one job with write access (`contents: write`, to make
+#    releases), and it runs no code from the repository. It publishes the signed
+#    .xpi as the release `extension-v<version>` (never a `v*` tag, which belong to
+#    the core releases, and never marked as the latest release), then replaces
+#    updates.json in the release `extension-updates`, and then downloads both over
+#    HTTPS as Firefox will and compares them with what was signed and written.
+#    Right before it replaces updates.json it reads the live file again and refuses
+#    unless the new file is the live one plus one entry (or the same file, on a
+#    re-run). Approving the signing therefore also publishes the version to every
+#    installed release build. Jobs 3 and 4 run only when the run was started on
+#    `main` and the commit is on `main`.
+#    See docs/EXTENSION-FIREFOX.md.
 #
 # The input reaches the shell through the environment, never spliced into a command
 # line or into script text. The workflow has read access to the repository and
-# nothing else; third-party actions are pinned by commit SHA.
+# nothing else, apart from `contents: write` in the publish job; no job has a token
+# for anything else, and third-party actions are pinned by commit SHA.
 #
 # The version is the one in extension/package.json of the commit. AMO refuses a
 # version it has seen, and this workflow never changes the version of what it
@@ -52,7 +71,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Commit to build and sign (a full 40-character SHA reachable from ext or main, or the branch name ext or main)
+        description: Commit to build and sign (a full 40-character SHA reachable from main, or the branch name main)
         type: string
         required: true
 
@@ -70,41 +89,48 @@ jobs:
     timeout-minutes: 20
     outputs:
       commit: ${{ steps.resolve.outputs.commit }}
+      on_main: ${{ steps.resolve.outputs.on_main }}
       version: ${{ steps.check.outputs.version }}
       sha256: ${{ steps.reproducible.outputs.sha256 }}
     steps:
       # Full history of every branch, so that the input can be checked against
-      # ext and main before anything of the commit runs.
+      # main before anything of the commit runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve the input to a commit on ext or main
+      - name: Resolve the input to a commit on main
         id: resolve
         env:
           REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          if [ "$REF" = ext ] || [ "$REF" = main ]; then
+          if [ "$REF" = main ]; then
             commit="$(git rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}")"
           elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
             if ! git cat-file -e "${REF}^{commit}" 2>/dev/null; then
               echo "::error::The input is not a commit of this repository."
               exit 1
             fi
-            if ! git merge-base --is-ancestor "$REF" refs/remotes/origin/ext \
-              && ! git merge-base --is-ancestor "$REF" refs/remotes/origin/main; then
-              echo "::error::The commit is not reachable from ext or main."
+            if ! git merge-base --is-ancestor "$REF" refs/remotes/origin/main; then
+              echo "::error::The commit is not reachable from main."
               exit 1
             fi
             commit="$REF"
           else
-            echo "::error::The input must be a full 40-character commit SHA (lower case) or the branch name ext or main."
+            echo "::error::The input must be a full 40-character commit SHA (lower case) or the branch name main."
             exit 1
           fi
           git checkout --quiet --detach "$commit"
           git clean -ffdxq
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          # Only a commit on main is ever published for the automatic updates (the manifest and publish jobs).
+          if git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "The commit is not on main: it is signed but not published for the automatic updates."
+          fi
           echo "Building commit $commit"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -130,7 +156,7 @@ jobs:
           echo "Both builds: sha256 $first"
       - name: Lint the package
         working-directory: extension
-        run: npm exec --no -- web-ext lint --source-dir "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release" --warnings-as-errors
+        run: npm exec --no -- web-ext lint --source-dir "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release" --warnings-as-errors --self-hosted
       - name: Release check (no test hooks, test pages, test hosts, test ids or test-only permissions)
         run: bash scripts/check-ext-release.sh "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release.xpi"
       - name: Check the add-on id, the manifest version, the name and the size
@@ -192,6 +218,9 @@ jobs:
     environment: amo-signing
     # web-ext waits up to 15 minutes for Mozilla's answer; the approval click comes before the job starts.
     timeout-minutes: 30
+    outputs:
+      name: ${{ steps.signed.outputs.name }}
+      sha256: ${{ steps.signed.outputs.sha256 }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -244,6 +273,7 @@ jobs:
             --channel unlisted \
             --approval-timeout 900000
       - name: Check and name the signed file
+        id: signed
         env:
           COMMIT: ${{ needs.build.outputs.commit }}
           VERSION: ${{ needs.build.outputs.version }}
@@ -283,6 +313,8 @@ jobs:
           sha256sum "$name" > SHA256SUMS
           cat SHA256SUMS
           signed="$(cut -d' ' -f1 SHA256SUMS)"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$signed" >> "$GITHUB_OUTPUT"
           {
             echo "### Signed release package (unlisted)"
             echo
@@ -300,3 +332,245 @@ jobs:
             ${{ runner.temp }}/out/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
+
+  # Reads the update manifest that is published now and adds the new version to it.
+  # Read access only; the writer is extension/scripts/updates-json.mjs of the built
+  # commit, which checks the signed file against the SHA-256 the sign job reported.
+  manifest:
+    name: Write the update manifest
+    needs: [build, sign]
+    # Only a run started on main, for a commit on main, publishes.
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      exists: ${{ steps.current.outputs.exists }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ferret-release-mv2-signed
+          path: ${{ runner.temp }}/signed
+      - name: The downloaded package is the one that was signed
+        working-directory: ${{ runner.temp }}/signed
+        env:
+          NAME: ${{ needs.sign.outputs.name }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$NAME" != "ferret-firefox-mv2-release-${VERSION}-signed.xpi" ]; then
+            echo "::error::The sign job named the file $NAME, not the name of version $VERSION."
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS
+          actual="$(sha256sum "$NAME" | cut -d' ' -f1)"
+          if [ "$actual" != "$SHA256" ]; then
+            echo "::error::The artifact has sha256 $actual, the sign job reported $SHA256."
+            exit 1
+          fi
+      # Only the build scripts of the built commit: the writer and the modules it imports.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: |
+            extension/scripts/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # The release extension-updates holds the update manifest. No such release (HTTP 404)
+      # is the first publication; a release without the file, or any other answer, stops
+      # the run, so a passing error never starts a new file that drops the older versions.
+      - name: Fetch the current update manifest
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/current"
+          status="$(gh api -i "repos/$GITHUB_REPOSITORY/releases/tags/extension-updates" 2>/dev/null | head -n 1 || true)"
+          case "$status" in
+            "HTTP/"*" 200"*)
+              gh release download extension-updates --repo "$GITHUB_REPOSITORY" --pattern updates.json --dir "$RUNNER_TEMP/current"
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              ;;
+            "HTTP/"*" 404"*)
+              echo "No release extension-updates yet: this is the first publication."
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Unexpected answer for the release extension-updates: $status"
+              exit 1
+              ;;
+          esac
+      - name: Write the update manifest
+        env:
+          NAME: ${{ needs.sign.outputs.name }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+          EXISTS: ${{ steps.current.outputs.exists }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/updates"
+          previous=()
+          if [ "$EXISTS" = true ]; then
+            previous=(--previous "$RUNNER_TEMP/current/updates.json")
+          fi
+          node extension/scripts/updates-json.mjs \
+            --xpi "$RUNNER_TEMP/signed/$NAME" \
+            --sha256 "$SHA256" \
+            --version "$VERSION" \
+            "${previous[@]}" \
+            --out "$RUNNER_TEMP/updates/updates.json"
+          cat "$RUNNER_TEMP/updates/updates.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ferret-release-updates-json
+          path: ${{ runner.temp }}/updates/updates.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The one job with write access (contents: write, to make releases). It runs no code
+  # from the repository: it only handles the files of the jobs above. It publishes the
+  # signed package as the release extension-v<version> (never a v* tag, which belong to
+  # the core releases, and never marked as the latest release), then the update
+  # manifest as the asset updates.json of the release extension-updates, and then
+  # downloads both the way Firefox will (HTTPS only, redirects too) and compares them.
+  publish:
+    name: Publish the signed package and the update manifest
+    needs: [build, sign, manifest]
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ferret-release-mv2-signed
+          path: ${{ runner.temp }}/signed
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ferret-release-updates-json
+          path: ${{ runner.temp }}/updates
+      - name: The files are the ones that were signed and written
+        id: check
+        env:
+          NAME: ${{ needs.sign.outputs.name }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$NAME" != "ferret-firefox-mv2-release-${VERSION}-signed.xpi" ]; then
+            echo "::error::The sign job named the file $NAME, not the name of version $VERSION."
+            exit 1
+          fi
+          (cd "$RUNNER_TEMP/signed" && sha256sum -c SHA256SUMS)
+          actual="$(sha256sum "$RUNNER_TEMP/signed/$NAME" | cut -d' ' -f1)"
+          if [ "$actual" != "$SHA256" ]; then
+            echo "::error::The artifact has sha256 $actual, the sign job reported $SHA256."
+            exit 1
+          fi
+          # The newest entry of the update manifest is this version, with the hash of this file.
+          # The jq programs are in single quotes on purpose: the shell expands nothing in them.
+          # shellcheck disable=SC2016
+          jq -e --arg v "$VERSION" --arg h "sha256:$SHA256" \
+            '.addons["ferret@hedgerow.tools"].updates[-1] | .version == $v and .update_hash == $h' \
+            "$RUNNER_TEMP/updates/updates.json"
+          link="$(jq -r '.addons["ferret@hedgerow.tools"].updates[-1].update_link' "$RUNNER_TEMP/updates/updates.json")"
+          url="$(unzip -p "$RUNNER_TEMP/signed/$NAME" manifest.json | jq -r '.browser_specific_settings.gecko.update_url')"
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Publish the signed package (release extension-v<version>, not the latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ needs.sign.outputs.name }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+          UNSIGNED_SHA256: ${{ needs.build.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          tag="extension-v${VERSION}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # A re-run: the release may only hold this very file.
+            mkdir -p "$RUNNER_TEMP/existing"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir "$RUNNER_TEMP/existing"
+            existing="$(sha256sum "$RUNNER_TEMP/existing/$NAME" | cut -d' ' -f1)"
+            if [ "$existing" != "$SHA256" ]; then
+              echo "::error::The release $tag already holds another $NAME (sha256 $existing)."
+              exit 1
+            fi
+            echo "The release $tag already holds this file."
+          else
+            notes="$(printf 'Faithful Ferret for Firefox %s, signed by Mozilla (unlisted).\n\n- commit: %s\n- sha256 (signed): %s\n- sha256 (unsigned build): %s\n\nInstalled release builds from 0.7.1 on update to it by themselves. See docs/EXTENSION-FIREFOX.md.\n' \
+              "$VERSION" "$COMMIT" "$SHA256" "$UNSIGNED_SHA256")"
+            gh release create "$tag" "$RUNNER_TEMP/signed/$NAME" "$RUNNER_TEMP/signed/SHA256SUMS" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT" \
+              --title "Faithful Ferret for Firefox $VERSION" \
+              --notes "$notes" \
+              --latest=false
+          fi
+      - name: Publish the update manifest (release extension-updates, not the latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXISTS: ${{ needs.manifest.outputs.exists }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ "$EXISTS" = true ]; then
+            # The file that is live right now must be the one the new file was written from: the
+            # new file is the live one plus one entry at the end, or the same file (a re-run).
+            # Anything else (an entry dropped or changed, another publication in between) stops here.
+            mkdir -p "$RUNNER_TEMP/live"
+            gh release download extension-updates --repo "$GITHUB_REPOSITORY" --pattern updates.json --dir "$RUNNER_TEMP/live"
+            # The jq program is in single quotes on purpose: the shell expands nothing in it.
+            # shellcheck disable=SC2016
+            if ! jq -e -n --slurpfile live "$RUNNER_TEMP/live/updates.json" --slurpfile new "$RUNNER_TEMP/updates/updates.json" \
+              '($live[0].addons["ferret@hedgerow.tools"].updates) as $l | ($new[0].addons["ferret@hedgerow.tools"].updates) as $n | ($l | type) == "array" and ($n | type) == "array" and ($n[:-1] == $l or $n == $l)' > /dev/null; then
+              echo "::error::The live updates.json is not the one the new file was written from; nothing was replaced."
+              exit 1
+            fi
+            gh release upload extension-updates "$RUNNER_TEMP/updates/updates.json" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create extension-updates "$RUNNER_TEMP/updates/updates.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT" \
+              --title "Faithful Ferret for Firefox: update manifest" \
+              --notes "The update manifest (updates.json) that installed release builds of the Firefox extension ask for new versions. Each publication replaces it. Never delete this release or its tag." \
+              --latest=false
+          fi
+      - name: Check what Firefox will download
+        env:
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+          URL: ${{ steps.check.outputs.url }}
+          LINK: ${{ steps.check.outputs.link }}
+        run: |
+          set -euo pipefail
+          # A new asset can take a moment to be served; try for about a minute.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsSL --proto '=https' --proto-redir '=https' -o "$RUNNER_TEMP/fetched.json" "$URL" \
+              && cmp -s "$RUNNER_TEMP/fetched.json" "$RUNNER_TEMP/updates/updates.json"; then
+              break
+            fi
+            if [ "$attempt" -eq 10 ]; then
+              echo "::error::$URL does not serve the update manifest that was written."
+              exit 1
+            fi
+            sleep 6
+          done
+          curl -fsSL --proto '=https' --proto-redir '=https' -o "$RUNNER_TEMP/fetched.xpi" "$LINK"
+          fetched="$(sha256sum "$RUNNER_TEMP/fetched.xpi" | cut -d' ' -f1)"
+          if [ "$fetched" != "$SHA256" ]; then
+            echo "::error::$LINK serves sha256 $fetched, not $SHA256."
+            exit 1
+          fi
+          {
+            echo "### Published"
+            echo
+            echo "- update manifest: $URL"
+            echo "- package: $LINK"
+            echo "- sha256: \`$SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
