@@ -1,0 +1,9 @@
+{
+  "transfer.export": "Export",
+  "transfer.export_help": "Take a copy of your vault with you: an encrypted backup, or a plain file for another service.",
+  "transfer.heading": "Import and export",
+  "transfer.import": "Import",
+  "transfer.import_help": "Bring items into your vault from a file of Ferret's own, or from Bitwarden or AliasVault.",
+  "transfer.intro": "Move items into your vault, or take a copy out.",
+  "transfer.title": "Import and export"
+}

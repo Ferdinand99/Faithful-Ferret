@@ -5,8 +5,9 @@
 // afterwards, before the import and again when it has finished.
 //
 // What the page may show of a file is counts and codes: no name, address or value of an item ever reaches it (the import worker
-// and the vault keep those). The typed passwords leave their fields before the slow call starts, and a lock of the vault empties
-// them and drops the preview. An error is shown by its code from a fixed list, never by its message.
+// and the vault keep those). The file's own name, as the user's device gives it, is shown beside the button that chose it.
+// The typed passwords leave their fields before the slow call starts, and a lock of the vault empties them and drops the preview.
+// An error is shown by its code from a fixed list, never by its message.
 //
 // After the items are queued, the sending goes on in the engine. The page follows it with the engine's `import` events, and it
 // shows "Continue import" when the server has closed the import window (`import_window_closed`), or when the page was loaded
@@ -150,12 +151,20 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
 
   // ------------------------------------------------------------- the file
   const fileInput = /** @type {HTMLInputElement} */ (el("input", {
-    id: "import-file", name: "import-file", type: "file", accept: ".ferretexport,.json,.csv,.avux", "data-role": "file", required: true,
+    id: "import-file", name: "import-file", type: "file", accept: ".ferretexport,.json,.csv,.avux", "data-role": "file", required: true, class: "visually-hidden",
   }));
+  // The input is hidden from the eye only (it keeps the keyboard and the screen reader); the label that names it is drawn as a
+  // button, and the zone around both takes a file that is dropped on it. Only the file's own name is shown, as text.
+  const fileName = el("span", { class: "file-name", "data-role": "file-name" }, t("import.file.none"));
+  const fileDrop = el("div", { class: "file-drop", "data-role": "file-drop", "data-over": "false" },
+    fileInput,
+    el("label", { class: "btn btn-secondary", for: "import-file", "data-role": "file-choose" }, t("import.file.choose")),
+    fileName,
+    el("span", { class: "help file-drop-hint" }, t("import.file.drop")));
   const fileStatus = el("p", { class: "status", role: "status", "data-role": "file-status" });
   const fileError = el("p", { class: "error", role: "alert", "data-role": "file-error" });
   fileError.hidden = true;
-  const fileRow = el("div", { class: "field" }, el("label", { for: "import-file" }, t("import.file.label")), fileInput, el("small", { class: "help" }, t("import.file.help")));
+  const fileRow = el("div", { class: "field" }, el("label", { for: "import-file" }, t("import.file.label")), fileDrop, el("small", { class: "help" }, t("import.file.help")));
   const fileForm = el("div", { class: "stack", "data-role": "file-form" }, fileRow, fileStatus, fileError);
 
   /** @param {string} text */
@@ -271,6 +280,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     mount(previewBox);
     wipeForm();
     fileInput.value = "";
+    setText(fileName, t("import.file.none"));
     fileError.hidden = true;
     setText(fileStatus, "");
   }
@@ -289,15 +299,19 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
 
   cancel.addEventListener("click", () => resetFile());
 
-  fileInput.addEventListener("change", async () => {
-    const file = /** @type {any} */ (fileInput).files?.[0];
+  /** @param {File | undefined | null} file the file the user chose, or dropped on the zone */
+  async function onFile(file) {
     fileError.hidden = true;
     if (preview !== null) {
       discard(preview);
       preview = null;
       previewBox.hidden = true;
     }
-    if (!file) return;
+    if (!file) {
+      setText(fileName, t("import.file.none"));
+      return;
+    }
+    setText(fileName, typeof file.name === "string" && file.name !== "" ? file.name : t("import.file.none"));
     fileInput.disabled = true;
     setText(fileStatus, t("import.file.reading"));
     const controller = new AbortController();
@@ -317,9 +331,32 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
       setText(fileStatus, "");
       showFileError(importErrorText(t, error));
       fileInput.value = "";
+      setText(fileName, t("import.file.none"));
     } finally {
       fileInput.disabled = false;
     }
+  }
+  fileInput.addEventListener("change", () => onFile(/** @type {any} */ (fileInput).files?.[0]));
+
+  // A file dropped on the zone is the same as one chosen with the button (nothing is uploaded: it is read on this device). The
+  // browser's own answer to a drop, opening the file, is stopped; a drop while the page is busy is ignored.
+  /** @param {boolean} over */
+  const markOver = (over) => fileDrop.setAttribute("data-over", over ? "true" : "false");
+  for (const type of ["dragenter", "dragover"]) {
+    fileDrop.addEventListener(type, (/** @type {any} */ event) => {
+      event.preventDefault();
+      markOver(!fileInput.disabled);
+    });
+  }
+  fileDrop.addEventListener("dragleave", () => markOver(false));
+  fileDrop.addEventListener("drop", (/** @type {any} */ event) => {
+    event.preventDefault();
+    markOver(false);
+    if (fileInput.disabled) return Promise.resolve();
+    // Dragged text or a link has no file: what is on the page stays as it is.
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return Promise.resolve();
+    return onFile(file);
   });
 
   /** @param {Event} event */
