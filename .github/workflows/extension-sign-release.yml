@@ -42,7 +42,8 @@
 #
 # The version is the one in extension/package.json of the commit. AMO refuses a
 # version it has seen, and this workflow never changes the version of what it
-# signs: bump it in the source first.
+# signs: bump it in the source first. A run that fails after the upload to AMO has
+# used up its version as well, so the next attempt needs a new one too.
 name: Extension sign release build
 
 on:
@@ -230,10 +231,13 @@ jobs:
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # web-ext writes .amo-upload-uuid into the folder it signs and leaves it there,
+        # so it signs a copy; $RUNNER_TEMP/source stays as it was built, for the check below.
         run: |
+          cp -a "$RUNNER_TEMP/source" "$RUNNER_TEMP/sign-src"
           npm exec --no -- web-ext sign \
             --no-config-discovery \
-            --source-dir "$RUNNER_TEMP/source" \
+            --source-dir "$RUNNER_TEMP/sign-src" \
             --artifacts-dir "$RUNNER_TEMP/signed" \
             --channel unlisted \
             --approval-timeout 900000
