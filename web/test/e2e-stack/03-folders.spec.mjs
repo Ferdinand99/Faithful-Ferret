@@ -11,9 +11,12 @@ import {
 
 const SEEN = 30_000;
 
+/** The tag of the run (in the item title the setup made). */
+const tagOf = () => secrets.itemTitle.split("-")[1] ?? "run";
+
 /** The names of this run's folders: made up for the run, long enough to be searched for. */
 function names() {
-  const tag = secrets.itemTitle.split("-")[1] ?? "run";
+  const tag = tagOf();
   return { first: `Folder-${tag}-alpha`, renamed: `Folder-${tag}-renamed`, second: `Mappe-${tag}-økonomi` };
 }
 
@@ -56,8 +59,9 @@ test("folders_are_made_pinned_renamed_and_deleted_and_a_second_device_follows", 
   await signInOn(a);
 
   // Two items, both put in the first folder from the edit form; the second also in a second folder.
-  const one = `Foldered-${secrets.itemTitle}-1`;
-  const two = `Foldered-${secrets.itemTitle}-2`;
+  // Not named after the item title of the run: the other scenarios search the list for that title and expect one row.
+  const one = `Foldered-${tagOf()}-1`;
+  const two = `Foldered-${tagOf()}-2`;
   await createItem(a, { name: one, username: "folder-user-1" });
   await addFolderInForm(a, first);
   await createItem(a, { name: two, username: "folder-user-2" });
