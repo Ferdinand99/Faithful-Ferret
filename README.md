@@ -87,11 +87,11 @@ These are in v0.8.0 and are tested on a test instance. All of it is pre-1.0, and
     to leave out the look-alike characters `Il1|O0o`. Or a passphrase of 3 to 20 words from the
     [EFF large word list](https://www.eff.org/dice) (7,776 words, CC BY 3.0 US, noted in
     [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)) with `-`, `.`, `_` or a space between them, optional capital first letters
-    and an optional number. Every choice is a uniform draw from the operating system's random source, and the result
+    and an optional digit added to one random word. Every choice is a uniform draw from the operating system's random source, and the result
     comes with an entropy estimate for display.
   - *Field comparison.* The core can tell whether a field of an open item holds exactly a given text, such as the
-    password a page sent. The comparison is made in constant time inside the WebAssembly module and answers only yes or
-    no; the field is not sent back.
+    password a page sent. The values are compared with a constant-time comparison inside the WebAssembly module (the length is not
+    hidden), and the answer is only yes or no; the field is not sent back.
   - *Password history.* An item can keep up to five earlier passwords, newest first with the time each one stopped
     being the password, inside its encrypted body. They are kept only when an edit asks for it. The interface gets the
     dates only, and a value is returned only when the user asks for that one.
