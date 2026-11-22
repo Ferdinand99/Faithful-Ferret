@@ -24,6 +24,12 @@ const sessionPins = [];
  */
 const sessionSaver = { save: null };
 
+/**
+ * The last save of each saver: a change waits for the one before it, so two quick changes are kept in the order they
+ * were made (the record never ends up holding the older list). @type {WeakMap<object, Promise<void>>}
+ */
+const lastSave = new WeakMap();
+
 /** Who is told that the pins changed (the side menu of the frame on the page). @type {Set<() => void>} */
 const pinWatchers = new Set();
 
@@ -89,9 +95,11 @@ export function createUiPrefs(storage = pageStorage(), pins = sessionPins, saver
     if (save === null) return;
     // The list as it is now: a later change (or a lock) does not change what this write keeps.
     const list = [...pins];
-    void Promise.resolve()
+    // After the save before it, whatever became of that one.
+    const next = (lastSave.get(saver) ?? Promise.resolve())
       .then(() => save(list))
       .catch(() => undefined);
+    lastSave.set(saver, next);
   };
   // A value written by an older build may hold folder names: it is rewritten with the flag alone.
   try {

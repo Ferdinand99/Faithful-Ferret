@@ -13,6 +13,7 @@ export default {
     if (vault.locked) return vault.locked;
     return vault.page(foldersPage({
       engine: vault.engine, t: ctx.i18n.t, prefs: createUiPrefs(), folderLink: folderHref, locale: ctx.i18n.lang, touch: vault.touch, scope: vault.scope,
+      accountId: vault.session?.current?.()?.accountId ?? null,
     }));
   },
 };

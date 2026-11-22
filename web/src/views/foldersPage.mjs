@@ -15,6 +15,14 @@ import { focusNode } from "./popMenu.mjs";
 let sequence = 0;
 
 /**
+ * The line of a run whose page was wiped before it could say it (the vault locked, or the page was left, in the middle of
+ * a rename or delete): the next Folders page of the same account shows it once. It holds counts and an error text only,
+ * never a folder name, and lives in memory only; another account's page drops it unread.
+ * @type {{ accountId: string | null, text: string } | null}
+ */
+let heldLine = null;
+
+/**
  * @param {{
  *   engine: any,
  *   t: import("./common.mjs").Translate,
@@ -23,10 +31,11 @@ let sequence = 0;
  *   locale?: string,
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
- * }} options
+ *   accountId?: string | null,
+ * }} options `accountId`: the open account (a held line of another account is not shown)
  * @returns {HTMLElement}
  */
-export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () => true, scope }) {
+export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () => true, scope, accountId = null }) {
   const root = el("section", { class: "folders-page", "data-role": "folders-page" });
   const list = el("ul", { class: "folders-list", "aria-label": t("folders.title"), "data-role": "folders-list" });
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
@@ -186,7 +195,9 @@ export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () =
     } finally {
       busy = false;
       render();
-      say(text);
+      // A page that was wiped meanwhile cannot say it: the next Folders page does.
+      if (wiped) heldLine = { accountId, text };
+      else say(text);
     }
   }
 
@@ -202,6 +213,11 @@ export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () =
     el("p", { class: "help" }, t("folders.intro")),
     body, message, host);
   render();
+  // What a run that the lock cut short did (see `heldLine`).
+  if (heldLine !== null) {
+    if (heldLine.accountId === accountId) say(heldLine.text);
+    heldLine = null;
+  }
   const off = listenWhileShown(root, engine, "changed", () => {
     if (!busy && renaming === null) render();
   });

@@ -9,8 +9,9 @@
 // read them, not even this page.
 //
 // The record is kept under `sync.flags.<account>.pins.<vault>`, among the account's sync flags, so that "Forget this
-// server" removes it with them. A record that does not open (another vault key epoch, a damaged value) means no pins: it
-// is a preference, not data, and it is replaced at the next pin.
+// server" removes it with them. A record that does not open (a damaged value) means no pins: it is a preference, not
+// data, and it is replaced at the next pin. A record of another vault key epoch is removed when it is read: after a
+// rekey the old key may be exposed, so its ciphertext is not kept.
 import { hex16 } from "./b64.mjs";
 import { MAX_FOLDERS } from "./folders.mjs";
 
@@ -69,7 +70,12 @@ export function createPinStore({ vault, settings, accountId, vaultId, vkEpoch, n
       } catch {
         return [];
       }
-      if (!isRecord(record) || record.epoch !== vkEpoch) return [];
+      if (!isRecord(record)) return [];
+      if (record.epoch !== vkEpoch) {
+        // A record of another vault key epoch: after a rekey the old key may be exposed, so its ciphertext does not stay.
+        await Promise.resolve().then(() => settings.remove(key)).catch(() => undefined);
+        return [];
+      }
       /** @type {number | null} */
       let handle = null;
       try {

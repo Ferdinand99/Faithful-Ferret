@@ -11,6 +11,7 @@ import { reauthenticate } from "../flows/reauth.mjs";
 import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
 import { register } from "../flows/register.mjs";
 import { renewRecoveryKey } from "../flows/renewRecovery.mjs";
+import { findRemembered, forgetRememberedAccount, rememberAccount, rememberedAccountId } from "../flows/rememberedAccount.mjs";
 import { accessSheet, showSecretKey } from "../flows/showSecretKey.mjs";
 import { createSessionCore } from "./session.mjs";
 import { AccountError } from "./errors.mjs";
@@ -31,8 +32,52 @@ export function createVaultSession(options) {
     previews.clear();
   });
 
+  const { store } = options;
+  /** Notes the account that was opened, so the next visit without a session is "Unlock" (see `flows/rememberedAccount.mjs`). @param {{ accountId: string }} opened */
+  const remember = async (opened) => {
+    await rememberAccount(store, env.server, opened.accountId);
+    return opened;
+  };
+
   return {
     ...session,
+
+    /** Sign in with the e-mail and the master password; this browser remembers the account. @param {Parameters<typeof session.signIn>[0]} args */
+    async signIn(args) {
+      return remember(await session.signIn(args));
+    },
+
+    /**
+     * Opens the vault again: in the live session, or with a full sign-in when it has ended and `email` is given (the
+     * remembered account's, from the Unlock page). This browser remembers the account.
+     * @param {Parameters<typeof session.unlock>[0]} args
+     */
+    async unlock(args) {
+      return remember(await session.unlock(args));
+    },
+
+    /**
+     * Signs out (see `session.mjs`), and this browser forgets the account it remembered: the next visit is the full
+     * sign-in page. The cached rows of that account go too, also when no session named it (the Unlock page's "Not you?").
+     */
+    async signOut() {
+      const remembered = await rememberedAccountId(store, env.server).catch(() => null);
+      try {
+        await session.signOut();
+      } finally {
+        await forgetRememberedAccount(store, env.server).catch(() => undefined);
+        if (remembered !== null) await store.open().then((/** @type {any} */ db) => store.cache.clearAccount(db, remembered)).catch(() => undefined);
+      }
+    },
+
+    /** What this browser remembers for the Unlock page, or null (see `flows/rememberedAccount.mjs`). */
+    remembered: () => findRemembered(store, env.server),
+
+    /**
+     * Forgets the remembered account (with `accountId`, only when it is that one): the next visit is the full sign-in page.
+     * @param {string} [accountId]
+     */
+    forgetRemembered: (accountId) => forgetRememberedAccount(store, env.server, accountId),
 
     /**
      * Confirms the master password again for the open session (spec Fase 1 § 4.6 (a)). The vault stays open.
@@ -162,6 +207,7 @@ export function createVaultSession(options) {
         async finish() {
           const done = await flow.finish();
           const unlocked = await inner.opened({ ...done, email });
+          await rememberAccount(store, env.server, done.accountId);
           return { ...unlocked, accountId: done.accountId, vaultId: done.vaultId };
         },
       };

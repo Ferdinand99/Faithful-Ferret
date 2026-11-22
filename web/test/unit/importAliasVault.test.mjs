@@ -104,7 +104,7 @@ test("aliasvault_maps_every_field_in_the_synthetic_export", () => {
   assert.deepEqual(drafts.find((d) => d.name === "Left behind")?.folders, ["Work"]);
   assert.equal(drafts.filter((d) => d.folders !== undefined).length, 1);
   assert.deepEqual(report.skipped, {
-    passkeys: 1, folders: 0, collections: 0, linked: 0, unknownKeys: 1, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+    passkeys: 1, folders: 0, linked: 0, unknownKeys: 1, otherTypes: 1, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
     attachments: 1, fieldHistory: 1, tags: 1,
   });
   assert.deepEqual(warnings(report, "passkey_skipped"), [7]);
@@ -203,7 +203,7 @@ test("aliasvault_csv_maps_logins_aliases_cards_notes_and_codes", () => {
   assert.deepEqual(drafts.find((d) => d.name === "Alias with address")?.folders, ["Work/Sub"]);
   assert.equal(drafts.filter((d) => d.folders !== undefined).length, 1);
   assert.deepEqual(report.skipped, {
-    passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+    passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
     attachments: 0, fieldHistory: 0, tags: 0,
   });
   assert.deepEqual(warnings(report, "alias_needs_aliasvault"), [1]);

@@ -428,12 +428,30 @@ export async function signInOn(page, options = {}) {
 
 /**
  * The same, on a sign-in page that is already open (for example the one a
- * hand-over from the admin origin leads to).
+ * hand-over from the admin origin leads to). A browser that signed in before and
+ * was not signed out shows "Unlock" there once its session has ended: the
+ * remembered e-mail and the password, with a full sign-in behind it.
  * @param {import("@playwright/test").Page} page
  * @param {{ remember?: boolean, expectList?: boolean }} [options]
  */
 export async function signInHere(page, { remember = true, expectList = true } = {}) {
-  await expect(page.locator('[data-role="credentials"]')).toBeVisible({ timeout: 20_000 });
+  const credentials = page.locator('[data-role="credentials"]');
+  const unlock = page.locator('[data-role="unlock"][data-mode="remembered"]');
+  await expect(credentials.or(unlock)).toBeVisible({ timeout: 20_000 });
+  if (await unlock.isVisible()) {
+    await expect(unlock.locator('[data-role="remembered-email"]')).toHaveValue(secrets.email);
+    await unlock.locator('[data-role="password"]').fill(secrets.password);
+    await untilStartAccepted(
+      page.context(),
+      async () => {
+        await pace();
+        await unlock.locator('[data-role="unlock-form"] [data-role="submit"]').click();
+      },
+      expectList,
+    );
+    if (expectList) await arriveAtList(page);
+    return;
+  }
   await page.locator('[data-role="email"]').fill(secrets.email);
   await page.locator('[data-role="email"]').blur();
   await page.locator('[data-role="password"]').fill(secrets.password);
@@ -461,6 +479,14 @@ export async function signInHere(page, { remember = true, expectList = true } = 
     expectList,
   );
   if (!expectList) return;
+  await arriveAtList(page);
+}
+
+/**
+ * Waits for the list after a sign-in, or fails with what the page says.
+ * @param {import("@playwright/test").Page} page
+ */
+async function arriveAtList(page) {
   await page.locator('[data-role="list"]').waitFor({ timeout: SLOW }).catch(() => {});
   if (!(await page.locator('[data-role="list"]').isVisible())) {
     // What the page says, so that a refused sign-in is not just a missing list.

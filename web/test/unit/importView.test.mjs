@@ -40,7 +40,7 @@ const EXPORT_PW = "export-pass-for-unit-tests";
 
 const COUNTS = { items: 12, login: 9, note: 2, card: 1, identity: 0, urls: 14, totp: 3, customFields: 4, matchNull: 5, http: 2, textAddresses: 1, sealed: 12 };
 const SKIPPED = {
-  passkeys: 1, folders: 2, collections: 1, linked: 1, unknownKeys: 3, otherTypes: 2, trashed: 1, tooLarge: 1, passwordHistory: 4, reprompt: 2,
+  passkeys: 1, folders: 2, linked: 1, unknownKeys: 3, otherTypes: 2, trashed: 1, tooLarge: 1, passwordHistory: 4, reprompt: 2,
   attachments: 3, fieldHistory: 5, tags: 2,
 };
 /** A preview as the flow gives it for a Bitwarden file. */
