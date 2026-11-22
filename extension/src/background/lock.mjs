@@ -3,15 +3,30 @@
 // `lockAt` is an absolute time in milliseconds. It is kept in `storage.session`
 // (a deadline is not a secret) and checked:
 //   - before every message that is not in LOCK_EXEMPT (`checkOrLock`),
-//   - when the `alarms` alarm for it fires,
-//   - when the browser reports that the screen is locked.
+//   - when the `alarms` alarm for it fires, and when a timer of the page fires
+//     (the alarm may come late, and for the short choices only at the browser's
+//     own granularity),
+//   - when the browser reports the system idle for as long as the setting, or
+//     the screen locked (Firefox does not report the latter, so the former is
+//     what runs), and when it reports the user active again after a sleep.
 // A missing or unreadable `lockAt` while the vault is open means locked. A
 // lock is `coreHost.lock(reason)`: the worker that holds the keys is ended.
 // Nothing here keeps the background page alive.
 //
+// How long the vault stays open without activity in Ferret's own pages is the
+// setting "Lock after": one of the fixed LOCK_CHOICES (seconds), kept in
+// `storage.local`, 15 minutes by default; a stored value that is not one of the
+// choices is read as the default. Activity is only what the user does in
+// Ferret's pages (the router calls `touch` for it); nothing in a web page moves
+// the deadline.
+//
 // The vault never opens without a deadline: the core host tells this module in
 // the turn it opens, and the deadline is set then. Every message, also one in
 // LOCK_EXEMPT, first locks a vault whose deadline has passed.
+
+import { DEFAULT_LOCK_SECONDS, LOCK_CHOICES } from "../shared/protocol.mjs";
+
+export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
 
 /**
  * Message types that need no vault key and so are not checked: they must work
@@ -26,9 +41,8 @@ export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "setting
 
 export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";
-export const MIN_MINUTES = 1;
-export const MAX_MINUTES = 480;
-const MS_PER_MINUTE = 60_000;
+export const SETTING_KEY = "lock_seconds";
+const MS_PER_SECOND = 1000;
 
 /**
  * @typedef {{
@@ -39,18 +53,25 @@ const MS_PER_MINUTE = 60_000;
  * }} Locker
  * @typedef {{
  *   alarms: { create: (name: string, info: { when: number }) => unknown, clear: (name: string) => unknown, onAlarm: { addListener: (fn: (alarm: { name: string }) => unknown) => void } },
- *   idle: { onStateChanged: { addListener: (fn: (state: string) => void) => void } },
+ *   idle: { onStateChanged: { addListener: (fn: (state: string) => void) => void }, setDetectionInterval?: (seconds: number) => unknown },
  *   storageSession: { get: (key: string) => Promise<Record<string, unknown>>, set: (items: Record<string, unknown>) => Promise<void>, remove: (key: string) => Promise<void> },
+ *   storageLocal?: { get: (key: string) => Promise<Record<string, unknown>>, set: (items: Record<string, unknown>) => Promise<void> } | null,
+ *   timers?: { setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: any) => void },
  *   now: () => number,
  *   coreHost: Locker,
- *   minutes?: number,
+ *   seconds?: number,
  * }} LockOptions
  */
 
-/** @param {unknown} n */
-function validMinutes(n) {
-  return typeof n === "number" && Number.isInteger(n) && n >= MIN_MINUTES && n <= MAX_MINUTES;
+/** @param {unknown} n @returns {n is number} */
+function isChoice(n) {
+  return typeof n === "number" && LOCK_CHOICES.includes(n);
 }
+
+const pageTimers = {
+  setTimeout: (/** @type {() => void} */ fn, /** @type {number} */ ms) => globalThis.setTimeout(fn, ms),
+  clearTimeout: (/** @type {any} */ id) => globalThis.clearTimeout(id),
+};
 
 /**
  * Registers its listeners at once, so call it while the background page loads
@@ -58,9 +79,28 @@ function validMinutes(n) {
  *
  * @param {LockOptions} options
  */
-export function createLock({ alarms, idle, storageSession, now, coreHost, minutes = 15 }) {
-  if (!validMinutes(minutes)) throw new RangeError("minutes must be a whole number from 1 to 480");
-  let idleMinutes = minutes;
+export function createLock({ alarms, idle, storageSession, storageLocal = null, timers = pageTimers, now, coreHost, seconds = DEFAULT_LOCK_SECONDS }) {
+  if (!isChoice(seconds)) throw new RangeError("seconds must be one of the lock choices");
+  let lockSeconds = seconds;
+  // The setting is read from `storage.local` once. A missing, unreadable or unlisted value leaves the default.
+  const ready = (async () => {
+    if (storageLocal === null) return;
+    try {
+      const stored = (await storageLocal.get(SETTING_KEY))?.[SETTING_KEY];
+      if (isChoice(stored)) lockSeconds = stored;
+    } catch {
+      // The default stands.
+    }
+  })();
+  const applyIdleInterval = () => {
+    try {
+      const result = /** @type {any} */ (idle.setDetectionInterval?.(lockSeconds));
+      result?.catch?.(() => {});
+    } catch {
+      // The browser keeps its own interval; the deadline still locks.
+    }
+  };
+  ready.then(applyIdleInterval);
   // Writes to the session storage run one after the other, and a check waits
   // for the writes that came before it.
   /** @type {Promise<unknown>} */
@@ -83,17 +123,42 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
     }
   };
 
+  /** The page's own timer for the deadline. @type {unknown} */
+  let timer = null;
+  const clearTimer = () => {
+    if (timer !== null) {
+      try {
+        timers.clearTimeout(timer);
+      } catch {
+        // Nothing to clear.
+      }
+      timer = null;
+    }
+  };
+
   /** @param {number} when */
   const arm = (when) => {
     try {
       const result = /** @type {any} */ (alarms.create(ALARM_NAME, { when }));
       result?.catch?.(() => {});
     } catch {
-      // No alarm: the check on every message still locks.
+      // No alarm: the timer and the check on every message still lock.
+    }
+    clearTimer();
+    try {
+      timer = timers.setTimeout(() => {
+        timer = null;
+        expire().catch(() => coreHost.lock("timeout").catch(() => {}));
+      }, Math.max(0, when - now()));
+      // A node test run must not wait for it; a browser's handle is a number.
+      /** @type {any} */ (timer)?.unref?.();
+    } catch {
+      // No timer: the alarm and the check on every message still lock.
     }
   };
 
   const disarm = () => {
+    clearTimer();
     try {
       const result = /** @type {any} */ (alarms.clear(ALARM_NAME));
       result?.catch?.(() => {});
@@ -124,11 +189,15 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
   });
 
   idle.onStateChanged.addListener((state) => {
-    if (state === "locked") coreHost.lock("idle").catch(() => {});
+    // "idle" is the system idle for as long as the setting (the detection interval); "locked" is the
+    // screen lock, where the browser reports it. Either one locks.
+    if (state === "locked" || state === "idle") coreHost.lock("idle").catch(() => {});
+    // Back from a sleep or an absence: a deadline that passed meanwhile locks now, not at the next message.
+    else if (state === "active") expire().catch(() => {});
   });
 
   const touch = () => {
-    const at = now() + idleMinutes * MS_PER_MINUTE;
+    const at = now() + lockSeconds * MS_PER_SECOND;
     queue(() => storageSession.set({ [LOCK_AT_KEY]: at }));
     arm(at);
   };
@@ -150,6 +219,7 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
      * @returns {Promise<boolean>}
      */
     async checkOrLock(type) {
+      await ready;
       if (LOCK_EXEMPT.includes(type)) {
         // No key is needed, but an open vault whose time has run out is locked
         // first, so a state poll never reports a vault that should be closed.
@@ -175,14 +245,40 @@ export function createLock({ alarms, idle, storageSession, now, coreHost, minute
     },
 
     /**
-     * Sets the idle time before the lock, from 1 to 480 minutes. It applies from
-     * the next touch.
+     * Sets "Lock after" to one of LOCK_CHOICES (seconds) and keeps it in `storage.local`. Anything else is a
+     * RangeError and changes nothing. A shorter time shortens the deadline of an open vault at once; a longer
+     * one applies from the next touch. If the setting cannot be saved the old one stays.
      *
      * @param {number} n
      */
-    setMinutes(n) {
-      if (!validMinutes(n)) throw new RangeError("minutes must be a whole number from 1 to 480");
-      idleMinutes = n;
+    async setSeconds(n) {
+      if (!isChoice(n)) throw new RangeError("seconds must be one of the lock choices");
+      await ready;
+      const before = lockSeconds;
+      lockSeconds = n;
+      if (storageLocal !== null) {
+        try {
+          await storageLocal.set({ [SETTING_KEY]: n });
+        } catch (error) {
+          lockSeconds = before;
+          throw error;
+        }
+      }
+      applyIdleInterval();
+      if (coreHost.state() === "unlocked") {
+        const current = await readLockAt();
+        const shorter = now() + n * MS_PER_SECOND;
+        if (current !== null && shorter < current) {
+          queue(() => storageSession.set({ [LOCK_AT_KEY]: shorter }));
+          arm(shorter);
+        }
+      }
+    },
+
+    /** The setting, in seconds. @returns {Promise<number>} */
+    async getSeconds() {
+      await ready;
+      return lockSeconds;
     },
   };
 }

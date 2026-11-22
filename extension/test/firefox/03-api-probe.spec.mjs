@@ -135,17 +135,21 @@ async function optionsRows(rows, ctx, /** @type {"release" | "esr"} */ channel, 
       await session.quit();
     }
   };
-  await row(rows, ctx, "options_ui.embedded_in_about_addons", () => probe(undefined, false));
-  await row(rows, ctx, "options_ui.open_in_tab_true", async () => {
+  // The real options page is the settings page, opened in a tab. These rows need the test build's page that reports what the
+  // router sees of it, so each one rewrites the manifest of its own copy of the build.
+  /** @param {boolean} openInTab */
+  const withProbePage = (openInTab) => {
     const files = readZip(readFileSync(xpiPath(manifest)));
     const parsed = JSON.parse(/** @type {Buffer} */ (files.get("manifest.json")).toString("utf8"));
-    parsed.options_ui.open_in_tab = true;
+    parsed.options_ui = { page: "pages/test-only/options.html", open_in_tab: openInTab };
     files.set("manifest.json", Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`));
     const dir = mkdtempSync(join(tmpdir(), "ferret-optionstab-"));
-    const file = join(dir, `options-tab-${manifest}.xpi`);
+    const file = join(dir, `options-${openInTab ? "tab" : "embedded"}-${manifest}.xpi`);
     writeFileSync(file, packZip(files));
-    return probe(file, true);
-  });
+    return file;
+  };
+  await row(rows, ctx, "options_ui.embedded_in_about_addons", () => probe(withProbePage(false), false));
+  await row(rows, ctx, "options_ui.open_in_tab_true", () => probe(withProbePage(true), true));
 }
 
 /**

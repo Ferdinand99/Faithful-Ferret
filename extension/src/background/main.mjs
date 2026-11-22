@@ -54,6 +54,7 @@ const lock = createLock({
   alarms: browser.alarms,
   idle: browser.idle,
   storageSession: browser.storage.session,
+  storageLocal: browser.storage.local,
   now,
   coreHost,
 });

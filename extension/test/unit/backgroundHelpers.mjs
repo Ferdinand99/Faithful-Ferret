@@ -31,6 +31,35 @@ export function createSessionStorage() {
   return storage;
 }
 
+/**
+ * `setTimeout` and `clearTimeout` over a fake clock: nothing runs by itself. `runDue()` runs the timers whose time has come
+ * (the clock is moved by the test), in order, and waits for what they started.
+ * @param {{ now: () => number }} clock
+ */
+export function createFakeTimers(clock) {
+  let next = 1;
+  /** @type {Map<number, { at: number, fn: () => unknown }>} */
+  const pending = new Map();
+  return {
+    pending,
+    setTimeout: (/** @type {() => unknown} */ fn, /** @type {number} */ ms) => {
+      const id = next;
+      next += 1;
+      pending.set(id, { at: clock.now() + ms, fn });
+      return id;
+    },
+    clearTimeout: (/** @type {number} */ id) => { pending.delete(id); },
+    async runDue() {
+      const due = [...pending.entries()].filter(([, t]) => t.at <= clock.now()).sort((a, b) => a[1].at - b[1].at);
+      for (const [id, t] of due) {
+        pending.delete(id);
+        await t.fn();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  };
+}
+
 /** `alarms` and `idle` that record what the code does and let a test fire events. */
 export function createAlarmsAndIdle() {
   /** @type {Map<string, { when: number }>} */
@@ -39,14 +68,20 @@ export function createAlarmsAndIdle() {
   const alarmListeners = [];
   /** @type {Array<(state: string) => void>} */
   const idleListeners = [];
+  /** The detection intervals the code asked for, in seconds. @type {number[]} */
+  const idleIntervals = [];
   return {
     alarmList,
+    idleIntervals,
     alarms: {
       create: (/** @type {string} */ name, /** @type {{ when: number }} */ info) => { alarmList.set(name, info); },
       clear: (/** @type {string} */ name) => { alarmList.delete(name); },
       onAlarm: { addListener: (/** @type {any} */ fn) => { alarmListeners.push(fn); } },
     },
-    idle: { onStateChanged: { addListener: (/** @type {any} */ fn) => { idleListeners.push(fn); } } },
+    idle: {
+      onStateChanged: { addListener: (/** @type {any} */ fn) => { idleListeners.push(fn); } },
+      setDetectionInterval: (/** @type {number} */ seconds) => { idleIntervals.push(seconds); },
+    },
     fireAlarm: (/** @type {string} */ name) => Promise.all(alarmListeners.map((fn) => fn({ name }))),
     fireIdle: (/** @type {string} */ state) => { for (const fn of idleListeners) fn(state); },
     listenerCounts: () => ({ alarm: alarmListeners.length, idle: idleListeners.length }),

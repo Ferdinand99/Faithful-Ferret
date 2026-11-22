@@ -106,8 +106,15 @@ const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
  */
 const COMMON_RELEASE_KEYS = [
   "background", "browser_specific_settings", "content_security_policy", "description",
-  "manifest_version", "name", "optional_permissions", "permissions", "version",
+  "manifest_version", "name", "optional_permissions", "options_ui", "permissions", "version",
 ];
+/** The one options page: the settings, opened in a tab. */
+const RELEASE_OPTIONS_PAGE = "pages/settings.html";
+
+/** @param {unknown} value */
+function isReleaseOptionsUi(value) {
+  return isPlainObject(value) && Object.keys(value).length === 2 && value.page === RELEASE_OPTIONS_PAGE && value.open_in_tab === true;
+}
 export const RELEASE_MANIFEST_KEYS = Object.freeze({
   2: Object.freeze([...COMMON_RELEASE_KEYS, "browser_action"].sort()),
   3: Object.freeze([...COMMON_RELEASE_KEYS, "action", "host_permissions", "optional_host_permissions"].sort()),
@@ -440,6 +447,11 @@ function manifestProblems(text, allow) {
   for (const key of Object.keys(manifest)) {
     if (FORBIDDEN_KEYS.includes(key)) continue;
     if (keys !== undefined && !keys.includes(key)) problems.push(`manifest.json: the key ${key} is not in the release key list`);
+  }
+
+  // The settings page opens in a tab of its own, so it is an ordinary top-level page of the extension.
+  if ("options_ui" in manifest && !isReleaseOptionsUi(manifest.options_ui)) {
+    problems.push("manifest.json: options_ui is not the settings page opened in a tab");
   }
 
   // The CSP is one constant, in the shape of the manifest version.

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { after } from "node:test";
 import { build } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
-import { createAlarmsAndIdle, createClock, createFakeClient, createSessionStorage } from "./backgroundHelpers.mjs";
+import { createAlarmsAndIdle, createClock, createFakeClient, createFakeTimers, createSessionStorage } from "./backgroundHelpers.mjs";
 import { contentScriptSender, createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 
 export const SERVER = "https://vault.example.com";
@@ -563,7 +563,7 @@ export function fakeSessions(behaviour = {}) {
  */
 export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {}, sync = null } = {}) {
   const { load } = await pkg();
-  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler] = await Promise.all([
+  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler, lockHandler, settingsHandler] = await Promise.all([
     load("background/session.mjs"),
     load("background/coreHost.mjs"),
     load("background/lock.mjs"),
@@ -572,6 +572,8 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     load("pages/ui.mjs"),
     load("background/sync.mjs"),
     load("background/handlers/sync.handler.mjs"),
+    load("background/handlers/lock.handler.mjs"),
+    load("background/handlers/settings.handler.mjs"),
   ]);
   const fake = createFakeBrowser();
   const clock = createClock();
@@ -628,8 +630,9 @@ export async function sessionWorld({ createSession, client = coreClient(), store
   sessionHost.attach(coreHost);
   syncHost?.attach(coreHost);
   const events = createAlarmsAndIdle();
-  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, now: clock.now, coreHost });
-  const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default, ...(syncHost ? [syncHandler.default] : [])] });
+  const timers = createFakeTimers(clock);
+  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal: local, timers, now: clock.now, coreHost });
+  const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default] : [])] });
   /** Every port a page opened. @type {ReturnType<typeof portPair>[]} */
   const ports = [];
   /** A page of the extension at `path`: its `runtime` for `connectUi`. */
@@ -651,6 +654,7 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     coreHost,
     router,
     events,
+    timers,
     lock,
     sessionHost,
     syncHost,

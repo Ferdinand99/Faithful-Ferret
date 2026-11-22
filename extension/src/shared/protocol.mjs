@@ -38,6 +38,15 @@ export const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 65_536;
 export const UI_PORT = "ferret-ui";
 
+/**
+ * The choices of the setting "Lock after", in seconds: 15 seconds, 30 seconds,
+ * 1 minute, 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 8 hours and
+ * 24 hours. There is no "never". The background keeps the setting and reads
+ * anything else as DEFAULT_LOCK_SECONDS.
+ */
+export const LOCK_CHOICES = Object.freeze([15, 30, 60, 300, 900, 1800, 3600, 14_400, 28_800, 86_400]);
+export const DEFAULT_LOCK_SECONDS = 900;
+
 /** Keys that no schema may carry, except where `SECRET_KEY_EXCEPTIONS` says so. */
 export const FORBIDDEN_KEYS = Object.freeze([
   "password",
@@ -212,11 +221,12 @@ export const UI_TYPES = defineTypes({
   // "Forget this server": `server` is the one the page showed; another stored one is not forgotten.
   forget_server: { request: object({ server: serverUrl }), reply: okReply },
   settings: {
+    // The bounds are those of LOCK_CHOICES; the background accepts only the listed values.
     request: object(
-      { lock_minutes: integer({ min: 1, max: 480 }) },
-      { optional: ["lock_minutes"] },
+      { lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) },
+      { optional: ["lock_seconds"] },
     ),
-    reply: object({ lock_minutes: integer({ min: 1, max: 480 }) }),
+    reply: object({ lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) }),
   },
 });
 

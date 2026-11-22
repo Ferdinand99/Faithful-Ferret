@@ -1,6 +1,6 @@
 // The session's messages from the extension's own pages (the sign-in tab and
 // the popup, over the UI port): the state, the check of a server address, the
-// sign-in, the unlock and the lock button.
+// sign-in and the unlock (the lock button is in lock.handler.mjs).
 //
 // The sign-in and the unlock carry what the user typed (the master password,
 // the secret key) to the core host's session and nowhere else. The answer is
@@ -133,17 +133,13 @@ async function handle(body, ctx) {
     case "unlock":
       if (ctx.state() === "unlocked") await lock("manual");
       return answer(() => call("unlock", body));
-    case "lock":
-      // The lock button: the worker that holds the keys is ended.
-      await lock("manual");
-      return { ok: true };
     default:
       throw Object.assign(new Error("not_available"), { code: "not_available" });
   }
 }
 
 export default {
-  types: ["state", "server_check", "sign_in", "unlock", "lock"],
+  types: ["state", "server_check", "sign_in", "unlock"],
   channel: /** @type {"ui"} */ ("ui"),
   handle,
 };
