@@ -41,7 +41,7 @@ The packed size is checked against a budget of 8 MiB.
   "The frame pages" below);
 - the signed release build of the extension, Firefox 153 or newer. It is signed for unlisted distribution by the manual
   workflow "Extension sign release build" (`.github/workflows/extension-sign-release.yml`, started with
-  `gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>` and approved in its environment). Download the
+  `gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>` and approved in its environment). Download the
   run's artifact `ferret-release-mv2-signed` (the signed `.xpi` and `SHA256SUMS`), run `sha256sum -c SHA256SUMS` in its
   folder, and check that the "unsigned sha256" in the run's summary is the SHA-256 of the release package you build
   yourself from the same commit (`node scripts/build.mjs --browser firefox --manifest mv2 --variant release` in
