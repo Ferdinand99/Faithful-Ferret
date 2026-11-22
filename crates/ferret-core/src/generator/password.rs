@@ -14,7 +14,7 @@
 //! 3. a Fisher–Yates shuffle: for `i` from `length - 1` down to `1`, swap
 //!    position `i` with position `uniform_index(i + 1)`.
 //!
-//! Each choice is one [`super::uniform_index`] (one draw of four bytes, more
+//! Each choice is one `uniform_index` (one draw of four bytes, more
 //! when a draw is refused). The shuffle spreads the guaranteed characters
 //! over every position, so no position is more likely to hold a given class
 //! than another.

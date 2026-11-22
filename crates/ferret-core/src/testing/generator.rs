@@ -5,7 +5,7 @@ use crate::error::Error;
 use crate::generator;
 use crate::rng::SecureRng;
 
-/// [`generator::uniform_index`]: uniform in `0..n` by rejection.
+/// `generator::uniform_index`: uniform in `0..n` by rejection.
 pub fn uniform_index<R: SecureRng>(n: u32, rng: &mut R) -> Result<u32, Error> {
     generator::uniform_index(n, rng)
 }

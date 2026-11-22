@@ -9,7 +9,7 @@
 //! * [`generate_passphrase`]: words from the EFF large word list (see
 //!   [`passphrase`]).
 //!
-//! **Uniform choices.** Every random choice is [`uniform_index`]: a draw of
+//! **Uniform choices.** Every random choice is `uniform_index`: a draw of
 //! four bytes, read as a little-endian `u32`, refused when it is at or above
 //! `n * floor(2^32 / n)` (rejection sampling, so no value of `0..n` is more
 //! likely than another), and reduced modulo `n`. A refused draw is thrown
@@ -31,7 +31,7 @@
 //! `length * log2(alphabet)` for a password and
 //! `words * log2(7776)` (plus `log2(10) + log2(words)` for the number) for a
 //! passphrase. It is computed with a log2 of our own that uses only
-//! multiplications ([`log2_of`]), so the value is the same on every platform
+//! multiplications (`log2_of`), so the value is the same on every platform
 //! and in the test vectors.
 
 pub mod passphrase;

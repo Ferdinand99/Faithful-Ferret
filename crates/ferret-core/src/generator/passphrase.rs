@@ -25,7 +25,7 @@
 //! with arithmetic, not a lookup.
 //!
 //! **Order of the draws** (the test vectors pin it): one
-//! [`super::uniform_index`]`(7776)` per word, in order; then, with `number`,
+//! `uniform_index(7776)` per word, in order; then, with `number`,
 //! a digit (`uniform_index(10)`) and the word it is appended to
 //! (`uniform_index(words)`). `capitalize` puts the first letter of every word
 //! in upper case and draws nothing.
