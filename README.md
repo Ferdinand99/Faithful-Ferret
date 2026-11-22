@@ -12,16 +12,18 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.7.0).** The cryptographic core, the OPAQUE server library, the server and the
+> **Status: in development, pre-1.0 (v0.8.0).** The cryptographic core, the OPAQUE server library, the server and the
 > web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
 > backups with an encrypted copy off the machine. v0.6.0 added devices: clients other than the web vault sign in with
-> tokens that are bound to a key on the device, and there is a device list with revoke in the web vault. v0.7.0 brings
+> tokens that are bound to a key on the device, and there is a device list with revoke in the web vault. v0.7.0 brought
 > the first Firefox extension, a new web vault layout with folders, and unlock with the master password after the
-> session has ended (see [What works today](#what-works-today)). The extension fills logins from its popup but cannot
-> save new passwords yet, and it is not on the Firefox add-ons store. Next come saving passwords and a password
-> generator in the extension, then a health check. Ferret is a single-author project and is **not for real passwords
-> yet**. There is no external audit, and none is planned.
+> session has ended (see [What works today](#what-works-today)). v0.8.0 adds a password generator, a comparison of a
+> stored field with a given value, and password history to the core; no screen of the web vault or the extension uses
+> them yet. The extension fills logins from its popup but cannot save new passwords yet, and it is not on the Firefox
+> add-ons store. Saving passwords and the password generator in the extension are in progress, then a health check.
+> Ferret is a single-author project and is **not for real passwords yet**. There is no external audit, and none is
+> planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -30,7 +32,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.7.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.8.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -77,17 +79,34 @@ These are in v0.7.0 and are tested on a test instance. All of it is pre-1.0, and
   If the account has a secret key that this device does not keep, the full sign-in page is shown. The same checks of
   the server run as at any sign-in.
 - **Firefox extension.** See [below](#firefox-extension).
+- **Generator, field comparison and password history, in the core only.** v0.8.0 adds these to the shared Rust core
+  and its WebAssembly package. They are tested with unit tests and the shared test vectors, but **no screen of the web
+  vault or the extension uses them yet**, so you cannot generate a password or see an earlier one there.
+  - *Generator.* A password of 4 to 128 characters from the lower-case letters, upper-case letters, digits and the
+    symbols `!#$%&*+-.:=?@^_~` that you choose, with 0 to 8 characters required from each chosen class and an option
+    to leave out the look-alike characters `Il1|O0o`. Or a passphrase of 3 to 20 words from the
+    [EFF large word list](https://www.eff.org/dice) (7,776 words, CC BY 3.0 US, noted in
+    [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)) with `-`, `.`, `_` or a space between them, optional capital first letters
+    and an optional number. Every choice is a uniform draw from the operating system's random source, and the result
+    comes with an entropy estimate for display.
+  - *Field comparison.* The core can tell whether a field of an open item holds exactly a given text, such as the
+    password a page sent. The comparison is made in constant time inside the WebAssembly module and answers only yes or
+    no; the field is not sent back.
+  - *Password history.* An item can keep up to five earlier passwords, newest first with the time each one stopped
+    being the password, inside its encrypted body. They are kept only when an edit asks for it. The interface gets the
+    dates only, and a value is returned only when the user asks for that one.
 - **Deployment.** The stack for real data publishes its two ports on the loopback address only and trusts exactly one
   proxy. Server images are built for amd64 and arm64 and signed with cosign, and the deploy script verifies the
   signature before it runs an image. The admin address is the entry point to the admin pages.
 
 ### Firefox extension
 
-The first version of the Firefox extension is in v0.7.0. It needs Firefox 153 or newer and is early: it fills logins
+The first version of the Firefox extension came in v0.7.0. It needs Firefox 153 or newer and is early: it fills logins
 from its popup, but it cannot save new passwords, make passwords or handle passkeys yet. It is **not on the Firefox
 add-ons store**. A build that Mozilla has signed as an unlisted add-on is made by a manually started workflow, and the
-release downloads of v0.7.0 do not include it. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how
-that build is made, and [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the checks.
+release downloads of v0.8.0 do not include it; the signed builds are on their own releases, named `extension-v` and the
+version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how that build is made, and
+[`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the checks.
 
 - **Sign-in and unlock.** You sign in once, in a tab, with the address of your server (https only), your e-mail, the
   master password and, if the account has one, the secret key. Pasting the text of the emergency sheet's QR code lets
@@ -108,6 +127,9 @@ that build is made, and [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the che
   shown on the page. A frame that its page hides or covers is refused, and so is a field that is covered. On a page that
   only looks like a saved site, nothing is suggested or filled; an item found by search there can be copied but never
   filled.
+- **Automatic updates.** A signed release build from version 0.7.1 on carries the address of an update list, and
+  Firefox installs a newer signed version that the list names, without the add-ons store. Builds before 0.7.1 never
+  update themselves; version 0.7.1 is installed by hand once.
 - **Forget this server.** The extension can forget a server: it revokes its device and removes what it keeps locally.
 - **A lying server.** The extension pins the server's identity, your account and the unlock methods. If a server later
   shows something else, the sign-in stops with a warning, as in the web vault. The first sign-in without the sheet's QR
@@ -220,10 +242,11 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 4. Safe sync, recovery and daily use. Safe sync is done (v0.3.0). Recovery with the emergency sheet, master password
    change, encrypted export, import and backups are done (v0.5.0). Devices with tokens bound to a device key, and a
    device list with revoke, are done (v0.6.0). The new web vault layout with folders, and unlock after the session has
-   ended, are done (v0.7.0).
+   ended, are done (v0.7.0). The core has a password generator, a field comparison and password history (v0.8.0); the
+   web vault does not use them yet.
 5. The browser extension and the iOS and Android apps. The first Firefox extension is done (v0.7.0): sign-in, sync,
-   suggestions and fill from the popup, copy, and auto-lock. Next in the extension are saving new and changed
-   passwords and the password generator, then a health check and the rest of the 1.0 list. The apps are later.
+   suggestions and fill from the popup, copy, and auto-lock. Saving new and changed passwords and the password
+   generator in the extension are in progress, then a health check and the rest of the 1.0 list. The apps are later.
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).
