@@ -72,7 +72,7 @@ test("refuses_what_it_cannot_join_instead_of_guessing", () => {
     ["a name that is not exported", { "content/entry.mjs": 'import { missing } from "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /does not export/],
     ["export let", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "export let a = 1;\n" }, /export let/],
     ["an import after code on the same line", { "content/entry.mjs": 'globalThis.x = 1; import "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /not supported/],
-    ["an import form inside a block comment, with the real one missing", { "content/entry.mjs": '/*\nimport "./x.mjs";\n*/\nimport "./y.mjs";\n', "content/x.mjs": "export const a = 1;\n", "content/y.mjs": "export const b = 1;\n" }, /not supported/],
+    ["an import form inside a block comment, with the real one missing", { "content/entry.mjs": '/*\nimport "./x.mjs";\n*/\nimport "./y.mjs";\n', "content/x.mjs": "export const a = 1;\n", "content/y.mjs": "export const b = 1;\n" }, /inside a comment, a string or a template literal/],
     ["an export list with a let", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "let a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
     ["an export list with a var", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "var a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
     ["an export list with a second const of a list", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "const b = 0, a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
@@ -179,4 +179,22 @@ test("an_imported_name_is_read_from_the_module_that_exports_it", () => {
   const context = vm.createContext({});
   vm.runInContext(out, context);
   assert.equal(context.result, 42);
+});
+
+test("joiner_refuses_export_inside_a_multiline_template_literal", () => {
+  /** @type {Array<[string, string]>} */
+  const cases = [
+    ["an export declaration", 'export const page = `\n<p>hi</p>\nexport function leak() {}\n`;\n'],
+    ["an export list", "export const page = `\nexport { page };\n`;\n"],
+    ["an import, indented", 'export const page = `\n  import { a } from "./x.mjs";\n`;\n'],
+    ["a block comment", "/*\nexport const hidden = 1;\n*/\nexport const shown = 1;\n"],
+  ];
+  for (const [label, text] of cases) {
+    assert.throws(() => classicScript("content/entry.mjs", pack({ "content/entry.mjs": text, "content/x.mjs": "export const a = 1;\n" })), /line \d+ starts with import or export inside a comment, a string or a template literal/, label);
+  }
+  // The same words elsewhere on a line, and a template literal without such a line, are fine.
+  const fine = classicScript("content/entry.mjs", pack({ "content/entry.mjs": "export const page = `\n<p>export this</p>\n`;\nglobalThis.page = page;\n" }));
+  const sandbox = /** @type {any} */ ({});
+  vm.runInNewContext(fine, sandbox);
+  assert.equal(sandbox.page, "\n<p>export this</p>\n", "the literal is kept as it was");
 });

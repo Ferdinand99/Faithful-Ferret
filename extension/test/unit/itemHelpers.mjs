@@ -317,7 +317,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   // ------------------------------------------------------------ the clipboard
   /** What was written to the clipboard, in order. @type {string[]} */
   const written = [];
-  const clipboardState = { fails: false };
+  /** `fails`: the clipboard refuses the write; `timerFails`: the fallback timer cannot be made; `timers`: those that were. */
+  const clipboardState = { fails: false, timerFails: false, timers: /** @type {Array<{ fn: () => unknown, ms: number }>} */ ([]) };
   const sessionStorage = createSessionStorage();
   const events = createAlarmsAndIdle();
   const clipboard = createClipboard({
@@ -328,6 +329,10 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     storageSession: sessionStorage,
     alarms: events.alarms,
     now: clock.now,
+    setTimer: (/** @type {() => unknown} */ fn, /** @type {number} */ ms) => {
+      if (clipboardState.timerFails) throw new Error("no timer");
+      clipboardState.timers.push({ fn, ms });
+    },
   });
 
   // ------------------------------------------------------------ the background

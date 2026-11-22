@@ -1,6 +1,7 @@
 {
   "sync.action.forget": "Glem denne serveren",
   "sync.action.try_again": "Prøv igjen",
+  "sync.ended.token_reused": "Logget ut fordi tokenet til denne enheten ble brukt fra et annet sted. Det kan bety at tokenet er kopiert. Logg inn igjen, og se over enhetslisten i webhvelvet.",
   "sync.error.another_server": "Denne enheten er logget inn på en annen server enn den som vises. Lukk popupen og åpne den igjen.",
   "sync.error.busy": "Ferret logger inn eller låser opp akkurat nå. Vent til det er ferdig, og prøv igjen.",
   "sync.error.forget_incomplete": "Ikke alt fra denne serveren kunne fjernes fra enheten. Prøv igjen: det som er fjernet, forblir fjernet.",

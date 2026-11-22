@@ -14,7 +14,7 @@ import { pkg } from "./sessionHelpers.mjs";
 
 // The menu imports the shared DOM helpers, which exist only in a build: it is loaded from the built package.
 /** @type {typeof import("../../src/pages/copyMenu.mjs")} */
-const { ROW_ONE_TIME_CODE, copyEntries, createCopyMenu, isEmailAddress, menuKey } = await (await pkg()).load("pages/copyMenu.mjs");
+const { ROW_ONE_TIME_CODE, copyEntries, copyLabel, createCopyMenu, isEmailAddress, menuKey } = await (await pkg()).load("pages/copyMenu.mjs");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "..", "src");
@@ -171,14 +171,20 @@ function fire(target, type, init = {}) {
 /** A key on the element that has the focus. @param {any} doc @param {string} key */
 const press = (doc, key) => fire(doc.activeElement, "keydown", { key });
 
-/** The menu of a row, with what it asked for. @param {{ username: string }} row @param {{ oneTimeCode?: boolean }} [options] */
+/**
+ * The text of a key in a language, with its `{name}` parts filled in.
+ * @param {string} lang @returns {(key: string, vars?: Record<string, string | number>) => string}
+ */
+const textsOf = (lang) => (key, vars = {}) => (catalog(lang)[key] ?? `?${key}`).replace(/\{(\w+)\}/g, (/** @type {string} */ all, /** @type {string} */ name) => (name in vars ? String(vars[name]) : all));
+
+/** The menu of a row, with what it asked for. @param {{ username: string, name?: string }} row @param {{ oneTimeCode?: boolean }} [options] */
 function menuOf(row, options = {}) {
   const doc = useDocument();
   /** @type {Array<[string, string]>} */
   const copied = [];
   let opened = 0;
   let closed = 0;
-  const t = (/** @type {string} */ key) => catalog("en")[key] ?? `?${key}`;
+  const t = textsOf("en");
   const menu = createCopyMenu({
     row: { ref: "r1", ...row },
     t,
@@ -243,7 +249,8 @@ test("each_entry_asks_the_background_for_its_own_value_and_the_focus_goes_back_t
   // The button names the menu it opens.
   assert.equal(button.getAttribute("aria-haspopup"), "menu");
   assert.equal(button.getAttribute("aria-expanded"), "false");
-  assert.equal(button.getAttribute("aria-label"), "Copy");
+  assert.equal(button.getAttribute("aria-label"), "Copy from (no name)");
+  assert.equal(button.getAttribute("title"), "Copy");
   assert.equal(list.getAttribute("role"), "menu");
   assert.equal(list.hidden, true);
   assert.deepEqual(items().map((i) => [i.getAttribute("role"), i.getAttribute("tabindex"), i.textContent]), [
@@ -392,4 +399,35 @@ test("a_copied_user_name_is_cleared_after_30_seconds_as_a_copied_password_is", a
   assert.deepEqual(world.written, ["ola@example.net", PASSWORD, ""]);
   // The popup never got a value.
   assert.equal(popup.received().join("\n").includes(PASSWORD), false);
+});
+
+test("each_copy_button_names_its_row_for_screen_readers", () => {
+  // The button and its menu are named after the row, so the buttons of the list can be told apart; the tooltip says "Copy".
+  const one = menuOf({ username: "ola", name: "Example Bank" });
+  const two = menuOf({ username: "ola", name: "Mail" });
+  assert.equal(one.button.getAttribute("aria-label"), "Copy from Example Bank");
+  assert.equal(one.list.getAttribute("aria-label"), "Copy from Example Bank");
+  assert.equal(two.button.getAttribute("aria-label"), "Copy from Mail");
+  assert.equal(one.button.getAttribute("title"), "Copy");
+  // A row without a name is named as the list shows it.
+  assert.equal(menuOf({ username: "ola", name: "" }).button.getAttribute("aria-label"), "Copy from (no name)");
+  // In Norwegian too, and a name is put in as it is (a text, never markup).
+  assert.equal(copyLabel({ name: "Banken <b>" }, textsOf("nb")), "Kopier fra Banken <b>");
+  assert.equal(copyLabel({}, textsOf("nb")), "Kopier fra (uten navn)");
+  for (const lang of ["en", "nb"]) assert.match(catalog(lang)["popup.row.copy_from"], /\{name\}/, lang);
+
+  // The list passes each row to its copy button: every copy button in the popup's list names its own row.
+  const list = readFileSync(join(src, "pages", "popupList.mjs"), "utf8");
+  assert.match(list, /createCopyMenu\(\{\s*row,/);
+});
+
+test("the_copy_note_says_the_clipboard_is_cleared_after_30_seconds_even_if_you_copied_something_else", () => {
+  const en = catalog("en");
+  const nb = catalog("nb");
+  const notes = [...new Set([...copyEntries({ username: "a@b.c" }, { oneTimeCode: true }), ...copyEntries({ username: "a" })].map((e) => e.done))];
+  assert.deepEqual(notes.sort(), ["popup.copied.email", "popup.copied.password", "popup.copied.totp", "popup.copied.username"]);
+  for (const key of notes) {
+    assert.match(en[key], /clears the clipboard after 30 seconds, even if you have copied something else in the meantime\.$/, key);
+    assert.match(nb[key], /tømmer utklippstavlen etter 30 sekunder, også om du har kopiert noe annet i mellomtiden\.$/, key);
+  }
 });

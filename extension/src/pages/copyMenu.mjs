@@ -56,6 +56,16 @@ export function copyEntries(row, { oneTimeCode = ROW_ONE_TIME_CODE } = {}) {
 }
 
 /**
+ * The accessible name of a row's copy button: "Copy from <name>", or "(no name)" for a row without one.
+ * @param {{ name?: string }} row
+ * @param {(key: string, vars?: Record<string, string | number>) => string} t
+ */
+export function copyLabel(row, t) {
+  const name = typeof row.name === "string" && row.name !== "" ? row.name : t("popup.item.unnamed");
+  return t("popup.row.copy_from", { name });
+}
+
+/**
  * What a key does to a menu of `count` entries. `at` is the entry that has the focus, -1 for the button.
  * @param {string} key the `key` of the keyboard event
  * @param {{ open: boolean, at: number, count: number }} state
@@ -87,9 +97,10 @@ export function menuKey(key, { open, at, count }) {
 }
 
 /**
- * The copy button of a row and its menu.
+ * The copy button of a row and its menu. The button and the menu are named after the row ("Copy from <name>"), so a
+ * screen reader that lists the buttons of the popup tells one row's from the next; the tooltip stays "Copy".
  * @param {{
- *   row: { ref: string, username: string },
+ *   row: { ref: string, username: string, name?: string },
  *   t: (key: string, vars?: Record<string, string | number>) => string,
  *   copy: (field: string, done: string) => unknown,
  *   onOpen: (close: () => void) => void,
@@ -100,10 +111,10 @@ export function menuKey(key, { open, at, count }) {
  */
 export function createCopyMenu({ row, t, copy, onOpen, onClose, oneTimeCode = ROW_ONE_TIME_CODE }) {
   const entries = copyEntries(row, { oneTimeCode });
-  const label = t("popup.row.copy");
+  const label = copyLabel(row, t);
   const button = el(
     "button",
-    { type: "button", class: "ff-row-icon ff-copy", "data-role": "copy", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": label, title: label },
+    { type: "button", class: "ff-row-icon ff-copy", "data-role": "copy", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": label, title: t("popup.row.copy") },
     el("span", { class: "ff-ico ff-ico-copy", "aria-hidden": "true" }),
     el("span", { class: "ff-ico ff-ico-caret", "aria-hidden": "true" }),
   );

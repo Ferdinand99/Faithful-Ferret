@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { build, buildManifest, EXTENSION_CSP, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems } from "../../scripts/build.mjs";
-import { makeRoot, repoRoot } from "./buildHelpers.mjs";
+import {
+  build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems, UPDATE_URL,
+} from "../../scripts/build.mjs";
+import { extensionRoot, makeRoot, repoRoot } from "./buildHelpers.mjs";
 
 const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
 /** The internal host names of the repository's own test/fixtures/hosts.json. */
 const HOSTS = readInternalHosts();
+
+/** The features module of a release (every feature off), for a package made by hand. @type {[string, Buffer]} */
+const FEATURES_OFF = [FEATURES_FILE, Buffer.from(featuresModule([], new Map()))];
 
 const MEASURE_HTML = '<!doctype html><html><head><script type="module" src="measure.mjs"></script></head></html>\n';
 
@@ -81,14 +86,14 @@ test("release_variant_refuses_a_fixed_extension_uuid_and_the_test_profile_prefer
       env.cleanup();
     }
   }
-  assert.deepEqual(releaseProblems(new Map(), HOSTS), ["manifest.json is missing"]);
+  assert.deepEqual(releaseProblems(new Map([FEATURES_OFF]), HOSTS), ["manifest.json is missing"]);
 });
 
 test("release_package_must_carry_exactly_the_release_add_on_id", () => {
   /** @param {unknown} id */
-  const manifestWith = (id) => new Map([[
+  const manifestWith = (id) => new Map([FEATURES_OFF, [
     "manifest.json",
-    Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id } } })),
+    Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id, update_url: UPDATE_URL } } })),
   ]]);
   assert.deepEqual(releaseProblems(manifestWith("ferret@hedgerow.tools"), HOSTS), []);
   for (const id of ["ferret-test@hedgerow.tools", "other@example.com", "Ferret@hedgerow.tools", "ferret@hedgerow.tools ", undefined]) {
@@ -97,7 +102,38 @@ test("release_package_must_carry_exactly_the_release_add_on_id", () => {
     assert.match(problems[0], /the add-on id is/);
   }
   // No gecko section at all.
-  assert.match(releaseProblems(new Map([["manifest.json", Buffer.from('{ "name": "x" }')]]), HOSTS)[0], /the add-on id is undefined/);
+  assert.match(releaseProblems(new Map([FEATURES_OFF, ["manifest.json", Buffer.from('{ "name": "x" }')]]), HOSTS)[0], /the add-on id is undefined/);
+});
+
+test("release_package_must_carry_exactly_the_update_url", () => {
+  assert.equal(UPDATE_URL, "https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-updates/updates.json");
+  /** @param {unknown} url @param {boolean} [present] */
+  const manifestWith = (url, present = true) => new Map([FEATURES_OFF, [
+    "manifest.json",
+    Buffer.from(JSON.stringify({
+      name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP },
+      browser_specific_settings: { gecko: present ? { id: "ferret@hedgerow.tools", update_url: url } : { id: "ferret@hedgerow.tools" } },
+    })),
+  ]]);
+  assert.deepEqual(releaseProblems(manifestWith(UPDATE_URL), HOSTS), []);
+  for (const url of [
+    UPDATE_URL.replace("https:", "http:"),
+    `${UPDATE_URL}?x=1`,
+    `${UPDATE_URL}/`,
+    UPDATE_URL.toUpperCase(),
+    UPDATE_URL.replace("Ferdinand99/Faithful-Ferret", "someone/Faithful-Ferret"),
+    UPDATE_URL.replace("extension-updates", "v0.7.1"),
+    "https://example.com/updates.json",
+    "",
+    null,
+    42,
+  ]) {
+    const problems = releaseProblems(manifestWith(url), HOSTS);
+    assert.equal(problems.length, 1, String(url));
+    assert.match(problems[0], /the update_url is .*, a release has https:\/\/github\.com\//, String(url));
+  }
+  // A release without an update_url would stop updating: refused too.
+  assert.match(releaseProblems(manifestWith(undefined, false), HOSTS).join("\n"), /the update_url is undefined/);
 });
 
 test("release_build_carries_the_release_id_and_the_test_build_its_own", async () => {
@@ -107,12 +143,39 @@ test("release_build_carries_the_release_id_and_the_test_build_its_own", async ()
     for (const manifest of ["mv3", "mv2"]) {
       const release = await build({ ...options, manifest, variant: "release" });
       const test = await build({ ...options, manifest, variant: "test" });
-      const id = (/** @type {{ files: Map<string, Buffer> }} */ r) => JSON.parse(/** @type {Buffer} */ (r.files.get("manifest.json")).toString("utf8")).browser_specific_settings.gecko.id;
-      assert.equal(id(release), "ferret@hedgerow.tools");
-      assert.equal(id(test), "ferret-test@hedgerow.tools");
+      const gecko = (/** @type {{ files: Map<string, Buffer> }} */ r) => JSON.parse(/** @type {Buffer} */ (r.files.get("manifest.json")).toString("utf8")).browser_specific_settings.gecko;
+      assert.equal(gecko(release).id, "ferret@hedgerow.tools");
+      assert.equal(gecko(test).id, "ferret-test@hedgerow.tools");
+      // The release asks the project's update manifest for new versions; the test variant never updates itself.
+      assert.equal(gecko(release).update_url, UPDATE_URL, manifest);
+      assert.equal("update_url" in gecko(test), false, manifest);
     }
   } finally {
     env.cleanup();
+  }
+});
+
+test("no_manifest_file_may_set_the_update_url", async () => {
+  const base = JSON.parse(readFileSync(join(extensionRoot, "manifest", "base.json"), "utf8"));
+  base.browser_specific_settings.gecko.update_url = UPDATE_URL;
+  const part = { browser_specific_settings: { gecko: { update_url: "https://example.com/updates.json" } } };
+  /** @type {[string, unknown, string[]][]} */
+  const cases = [
+    ["manifest/base.json", base, ["release", "test"]],
+    ["manifest/parts/extra.json", part, ["release", "test"]],
+    // A test part is read for the test variant only.
+    ["manifest/test-parts/extra.json", part, ["test"]],
+  ];
+  for (const [path, json, variants] of cases) {
+    const env = makeRoot({ [path]: `${JSON.stringify(json, null, 2)}\n` });
+    try {
+      const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+      for (const variant of variants) {
+        await assert.rejects(build({ ...options, variant }), /update_url is set by the build/, `${path} ${variant}`);
+      }
+    } finally {
+      env.cleanup();
+    }
   }
 });
 
@@ -225,6 +288,8 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.manifest_version = 4; }, /manifest_version 4 is not 2 or 3/],
         [(m) => { m.name = `${m.name} (test)`; }, /the name is the test build's/],
         [(m) => { m.browser_specific_settings.gecko.id = "ferret-test@hedgerow.tools"; }, /the add-on id is "ferret-test@hedgerow\.tools"/],
+        [(m) => { delete m.browser_specific_settings.gecko.update_url; }, /the update_url is undefined/],
+        [(m) => { m.browser_specific_settings.gecko.update_url = "https://example.com/updates.json"; }, /the update_url is "https:\/\/example\.com\/updates\.json"/],
       ],
       mv2: [
         [(m) => { m.content_scripts = []; }, /content_scripts is not allowed in a release/],
@@ -242,6 +307,8 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.optional_permissions = ["http://*/*"]; }, /optional_permissions holds "http:\/\/\*\/\*"/],
         [(m) => { m.name = `${m.name} (test)`; }, /the name is the test build's/],
         [(m) => { m.browser_specific_settings.gecko.id = "ferret-test@hedgerow.tools"; }, /the add-on id is "ferret-test@hedgerow\.tools"/],
+        [(m) => { delete m.browser_specific_settings.gecko.update_url; }, /the update_url is undefined/],
+        [(m) => { m.browser_specific_settings.gecko.update_url = UPDATE_URL.replace("https:", "http:"); }, /the update_url is "http:\/\//],
       ],
     };
     for (const manifest of ["mv3", "mv2"]) {
@@ -334,6 +401,59 @@ test("release_check_fails_closed_without_the_permission_allow_list", async () =>
   const env = makeRoot({ "manifest/permissions.allow.json": null });
   try {
     await assert.rejects(build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, variant: "release" }), /permissions\.allow\.json/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_release_check_refuses_a_release_build_with_save_on", async () => {
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv2" };
+    // The build refuses a release with the feature on.
+    await assert.rejects(build({ ...options, variant: "release", features: ["save"] }), /release: .*shared\/features\.mjs: the feature save is on/);
+    const release = await build({ ...options, variant: "release" });
+    assert.equal(runCheck(release.dir).status, 0);
+    const file = join(release.dir, ...FEATURES_FILE.split("/"));
+    const xpi = join(env.out, "edited.xpi");
+
+    // The module of a build with the feature on, put into a release (the folder and its .xpi): refused.
+    writeFileSync(file, featuresModule(["save"], new Map()));
+    packXpi(release.dir, xpi);
+    for (const target of [release.dir, xpi]) {
+      const result = runCheck(target);
+      assert.notEqual(result.status, 0, target);
+      assert.match(result.output, /shared\/features\.mjs: the feature save is on, which a release may not have yet/, target);
+    }
+    // Any other spelling of it on, or a module the build did not write, is refused too.
+    for (const text of [
+      "export const FEATURES = Object.freeze({ save: true });\n",
+      "export const FEATURES = Object.freeze({ 'save': 1 });\n",
+      "export const FEATURES = Object.freeze({ save: !0 });\n",
+      "export const FEATURES = globalThis.features;\n",
+      "",
+    ]) {
+      writeFileSync(file, text);
+      const result = runCheck(release.dir);
+      assert.notEqual(result.status, 0, JSON.stringify(text));
+      assert.match(result.output, /shared\/features\.mjs: (?:the feature save is on|not the module the build writes for a release)/, JSON.stringify(text));
+    }
+    // No module at all: refused (a release names the features that are on).
+    rmSync(file);
+    const missing = runCheck(release.dir);
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.output, /shared\/features\.mjs is missing/);
+    // The module put back as the build writes it: clean again.
+    writeFileSync(file, featuresModule([], new Map()));
+    assert.equal(runCheck(release.dir).status, 0);
+
+    // The capture script in a release: refused, whatever the module says.
+    const capture = join(release.dir, "content", "capture.inject.js");
+    mkdirSync(dirname(capture), { recursive: true });
+    writeFileSync(capture, "void 0;\n");
+    const withCapture = runCheck(release.dir);
+    assert.notEqual(withCapture.status, 0);
+    assert.match(withCapture.output, /content\/capture\.inject\.js: belongs to the save feature/);
   } finally {
     env.cleanup();
   }

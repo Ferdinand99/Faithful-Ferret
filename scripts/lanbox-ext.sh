@@ -196,7 +196,7 @@ if [ "$FERRET_EXT_MODE" = unit ]; then
 else
   for mv in mv3 mv2; do
     node scripts/build.mjs --browser firefox --manifest "$mv" --variant release >&2
-    npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors >&2
+    npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors --self-hosted >&2
   done
   cd /work
   bash scripts/check-ext-release.sh >&2
