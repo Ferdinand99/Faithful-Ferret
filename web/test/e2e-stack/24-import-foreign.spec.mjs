@@ -167,8 +167,10 @@ test("a_password_change_while_an_import_window_is_open_leaves_the_dead_session_n
   own.release();
   await expect.poll(async () => (await feedOf(changing.context)).latest_seq - seqBefore, { timeout: 300_000, message: "the import goes on in the session that changed the password" }).toBeGreaterThanOrEqual(120);
   await changing.page.evaluate(() => {
-    location.hash = "#/";
+    location.hash = "#/items";
   });
+  // A long list draws only the rows near the screen: a search finds the one that is wanted.
+  await changing.page.locator('[data-role="search"]').fill(`Bulk-own-${tag}-77`);
   await expect(rowsNamed(changing.page, `Bulk-own-${tag}-77`)).toHaveCount(1, { timeout: 120_000 });
   await changing.context.close();
 
