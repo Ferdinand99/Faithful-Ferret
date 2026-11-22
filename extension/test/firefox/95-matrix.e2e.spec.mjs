@@ -4,7 +4,7 @@
 //
 // - webdriver_key_actions_are_trusted_in_both_channels: the capture phase types with WebDriver, and the extension
 //   counts only trusted input, so the run proves first that WebDriver's key events are trusted in both channels.
-//   If they are not, this fails and the matrix does not run: there is no way round it in the test build.
+//   If they are not, this fails and the matrix test is skipped: there is no way round it in the test build.
 // - matrix_fill_phase_runs_every_case_and_writes_the_baseline: every case, in the phases FERRET_MATRIX_PART names
 //   (fill, capture or all; the capture phase needs the extension's offers and counts as not run until it has them),
 //   over FERRET_MATRIX_SET (corpus or holdout), the cases whose id contains FERRET_MATRIX_GREP. The report is
@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { world } from "./adversary.mjs";
 import { channels, defaultManifest, fixtures, launch, stopFixtures } from "./harness.mjs";
-import { ENTRIES, caseUrl, casesOf, grantUrls, leave, locate, mergePhases, runCapturePhase, runFillPhase } from "./matrix.mjs";
+import { ENTRIES, caseUrl, casesOf, grantUrls, leave, locate, mergePhases, runCapturePhase, runFillPhase, runGeneratorPhase } from "./matrix.mjs";
 import { computeMatrix, writeReport } from "./matrixReport.mjs";
 
 after(() => stopFixtures());
@@ -25,8 +25,11 @@ const SET = process.env.FERRET_MATRIX_SET === "holdout" ? "holdout" : "corpus";
 const PART = /** @type {"fill" | "capture" | "all"} */ (["fill", "capture", "all"].includes(process.env.FERRET_MATRIX_PART ?? "") ? process.env.FERRET_MATRIX_PART : "all");
 const GREP = process.env.FERRET_MATRIX_GREP ?? "";
 const OUT = process.env.FERRET_MATRIX_OUT ?? join(tmpdir(), "ferret-u2-matrix");
+/** Set by the self-test when WebDriver's key events are trusted in every channel; the matrix test needs it. */
+let trustedKeys = false;
 
 test("webdriver_key_actions_are_trusted_in_both_channels", async () => {
+  trustedKeys = false;
   for (const channel of channels()) {
     const session = await launch({ channel });
     try {
@@ -63,16 +66,22 @@ test("webdriver_key_actions_are_trusted_in_both_channels", async () => {
           assert.equal(these.length, 3, `${channel}: ${where}: three ${type} events for three keys (${JSON.stringify(these)})`);
         }
       }
-      assert.ok(events.some((e) => e.type === "click"), `${channel}: the click was seen`);
+      assert.ok(events.some((e) => e.type === "click" && e.where === "btn"), `${channel}: the click on the button was seen`);
       const untrusted = events.filter((e) => !e.trusted);
       assert.deepEqual(untrusted, [], `${channel}: WebDriver events that are not trusted, so the capture phase cannot be measured here (stop and ask)`);
     } finally {
       await session.quit();
     }
   }
+  trustedKeys = true;
 });
 
-test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async () => {
+test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
+  if (!trustedKeys) {
+    // The numbers mean nothing without trusted key events (the extension counts only trusted input).
+    t.skip("WebDriver key events are not shown to be trusted, so the matrix is not run");
+    return;
+  }
   const cases = casesOf(SET, GREP);
   assert.ok(cases.length > 0, `no case in ${SET} matches ${JSON.stringify(GREP)}`);
   const manifest = defaultManifest();
@@ -95,20 +104,26 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async () => {
           await w.ui.close();
         }
       }
+      // The vault check of the capture phase needs the item list of the sync engine: it has the matrix's entries.
+      const vault = await w.vaultState();
+      assert.equal(vault.running, true, `${channel}: the sync engine runs`);
+      assert.ok(vault.rows.length >= Object.keys(ENTRIES).length, `${channel}: the vault lists its items (${vault.rows.length})`);
+      assert.deepEqual(await w.vaultState(), vault, `${channel}: the item list stands still`);
       const log = (/** @type {string} */ line) => console.log(`# ${channel} ${line}`);
       const fill = PART === "capture" ? null : await runFillPhase(w, cases, log);
       const capture = PART === "fill" ? null : await runCapturePhase(w, cases, log);
-      const results = fill && capture ? mergePhases(fill, capture) : /** @type {NonNullable<typeof fill>} */ (fill ?? capture);
+      const generator = PART === "fill" ? null : await runGeneratorPhase(w, cases, log);
+      const results = mergePhases(fill, capture, generator);
       assert.equal(results.length, cases.length, `${channel}: a result for every case`);
       for (const r of results) assert.ok(r.ran.fill || r.ran.capture || typeof r.error === "string", `${channel}: ${r.case.id} either ran or says why not`);
 
-      const matrix = computeMatrix(results, { set: SET, part: PART, manifest });
+      const matrix = computeMatrix(results, { set: SET, part: PART, manifest, grep: GREP });
       writeReport(OUT, channel, matrix);
       assert.ok(existsSync(join(OUT, `${channel}-${manifest}.json`)), `${channel}: the report is written`);
       const text = readFileSync(join(OUT, "matrix.md"), "utf8");
       assert.ok(text.includes(`## ${channel} (${manifest})`), `${channel}: matrix.md has the run`);
       const pct = (/** @type {{ passed: number, total: number }} */ p) => `${p.passed}/${p.total}`;
-      console.log(`# ${channel} ${manifest} ${SET}/${PART}: fill ${pct(matrix.fill)}, capture ${pct(matrix.capture)}, unsafe fills ${matrix.unsafeFills.length}, unsafe offers ${matrix.unsafeOffers.length}, not run ${matrix.notRun.length}, gate ${matrix.gate ? "met" : "not met"}`);
+      console.log(`# ${channel} ${manifest} ${SET}/${PART}: fill ${pct(matrix.fill)}, capture ${pct(matrix.capture)}, generator ${pct(matrix.generated)}, unsafe fills ${matrix.unsafeFills.length}, unsafe offers ${matrix.unsafeOffers.length}, not run ${matrix.notRun.length}, ${matrix.gate ? "GATE MET" : matrix.meta.part === "all" && !GREP ? "GATE NOT MET" : `partial run, no gate (the part is ${matrix.met ? "met" : "not met"})`}`);
     } finally {
       await w.quit();
     }

@@ -12,6 +12,9 @@
 //            the SHA-256 of its password, never the password). Until the extension keeps offers, the bridge
 //            says it has none to show and every case of this phase counts as not run.
 //
+//   generator  for the cases that expect it: asks the extension to generate a password into the page's new-password
+//            fields and checks that the fields hold the same value (a measure of its own, not part of capture).
+//
 // The vault of a run has a few entries (ENTRIES), all with the user name VAULT_USERNAME and a password the
 // run makes up. Nothing of a password goes into a report: a fill is recorded as "this entry's password went
 // into #id" and an offer by the SHA-256 of its password.
@@ -43,6 +46,7 @@ export const ENTRIES = Object.freeze({
 export const RULES = Object.freeze(Object.fromEntries(Object.entries(ENTRIES).map(([key, e]) => [key, { url: e.url, matching: e.matching, ...(e.domain ? { domain: e.domain } : {}) }])));
 
 const NO_OFFERS = "the extension keeps no offers to read yet";
+const NO_GENERATOR = "the extension has no generator yet";
 
 /** @param {string} text */
 export const sha256 = (text) => createHash("sha256").update(text, "utf8").digest("hex");
@@ -125,6 +129,31 @@ export async function locate(session, selector) {
 export const leave = (session) => session.switchToTopFrame();
 
 /**
+ * The value of the field with this id, wherever it is (top document, shadow root, frame), or null.
+ * @param {import("./driver.mjs").Session} session @param {string} selector
+ * @returns {Promise<string | null>}
+ */
+export async function readValue(session, selector) {
+  if (!(await locate(session, selector))) return null;
+  const name = selector.replace(/^#/, "");
+  return session.content((/** @type {string} */ id) => {
+    /** @param {Document | ShadowRoot} root @returns {string | null} */
+    const walk = (root) => {
+      const direct = root.getElementById(id);
+      if (direct) return /** @type {HTMLInputElement} */ (direct).value;
+      for (const el of root.querySelectorAll("*")) {
+        if (el.shadowRoot) {
+          const inner = walk(el.shadowRoot);
+          if (inner !== null) return inner;
+        }
+      }
+      return null;
+    };
+    return walk(document);
+  }, name);
+}
+
+/**
  * The text of a step with the vault's passwords filled in: `{{password:<entry>}}`.
  * @param {string} text @param {Record<string, string>} passwords
  */
@@ -140,7 +169,7 @@ export function expandText(text, passwords) {
  * each field (by id), so an offer can be matched to the field its password came from.
  * @param {import("./driver.mjs").Session} session
  * @param {Array<Record<string, any>>} steps
- * @param {{ passwords: Record<string, string>, typed: Record<string, string>, ferretFill?: () => Promise<void> }} ctx
+ * @param {{ passwords: Record<string, string>, typed: Record<string, string>, ferretFill?: () => Promise<void>, generateFill?: () => Promise<void>, generatedIds?: string[] }} ctx
  */
 export async function runSteps(session, steps, ctx) {
   for (const step of steps) {
@@ -170,6 +199,14 @@ export async function runSteps(session, steps, ctx) {
     } else if (step.ferret_fill === true) {
       if (!ctx.ferretFill) throw new Error("step: this phase cannot ask the extension to fill");
       await ctx.ferretFill();
+    } else if (step.generate_fill === true) {
+      if (!ctx.generateFill) throw new Error("step: this phase cannot ask the extension to generate a password");
+      await ctx.generateFill();
+      // What the fields hold now is the generated value: hash it, so an offer can be matched to the field it came from.
+      for (const id of ctx.generatedIds ?? []) {
+        const value = await readValue(session, id);
+        if (value !== null && value !== "") ctx.typed[id] = sha256(value);
+      }
     } else {
       throw new Error(`step: ${JSON.stringify(Object.keys(step))} is not supported by this runner yet`);
     }
@@ -198,8 +235,7 @@ export async function scanDocs(session) {
         /** @param {Document | ShadowRoot} root */
         const visit = (root) => {
           for (const el of root.querySelectorAll("*")) {
-            // A hidden input is the page's own data, not a field a fill could reach.
-            if ((el instanceof HTMLInputElement && el.type !== "hidden") || el instanceof HTMLTextAreaElement) inputs.push({ id: el.id, type: el.type, value: el.value });
+            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) inputs.push({ id: el.id, type: el.type, value: el.value });
             if (el.shadowRoot) visit(el.shadowRoot);
           }
         };
@@ -219,6 +255,8 @@ export async function scanDocs(session) {
       try {
         await session.switchToFrame(frames[i]);
       } catch {
+        // A frame the driver cannot enter is a document nobody has read: say so, never skip it quietly.
+        out.push({ id: "", type: "unreadable", value: "", docUrl: `unreadable-frame:${depth + 1}` });
         continue;
       }
       try {
@@ -233,6 +271,13 @@ export async function scanDocs(session) {
   return out;
 }
 
+/**
+ * The rows of a scan that stand for a document that could not be read. A case with one cannot say that nothing was
+ * filled there, so it is not run.
+ * @param {Array<{ type: string }>} rows
+ */
+export const unreadableOf = (rows) => rows.filter((r) => r.type === "unreadable");
+
 // ----------------------------------------------------------------------- the fill phase
 
 /**
@@ -244,7 +289,18 @@ export async function scanDocs(session) {
  * @param {World} w @param {Record<string, any>} c
  */
 async function openCase(w, c) {
-  const tabId = await w.visit(caseUrl(c, w.server));
+  // The real shortcut goes to the tab the window shows, and now and then that is still the bridge tab: try again.
+  /** @type {number} */
+  let tabId = 0;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      tabId = await w.visit(caseUrl(c, w.server));
+      break;
+    } catch (error) {
+      if (attempt >= 3 || !/gave no activeTab/.test(String(error))) throw error;
+      await sleep(1000);
+    }
+  }
   // A frame may load after the page does.
   if (c.frame) await sleep(1200);
   await runSteps(w.session, c.prepare ?? [], { passwords: w.passwords, typed: {} });
@@ -311,7 +367,9 @@ export async function fillCase(w, c) {
       // The page may put the state back (a controlled field) or move on; look after a moment.
       await sleep(700);
       const password = w.passwords[key];
-      for (const input of await scanDocs(w.session)) {
+      const rows = await scanDocs(w.session);
+      if (unreadableOf(rows).length > 0) throw new Error("a document of the page could not be read, so a fill into it would go unseen");
+      for (const input of rows) {
         if (input.value === "") continue;
         if (input.value === password) result.observed?.fills?.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
         else if (input.value === VAULT_USERNAME) result.observed?.fills?.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });
@@ -372,7 +430,17 @@ export async function captureCase(w, c) {
     }
     /** @type {Record<string, string>} */
     const typed = {};
-    await runSteps(w.session, c.steps, { passwords: w.passwords, typed, ferretFill: async () => { await fillEntry(w, tabId, "forms"); } });
+    // The vault before and after the case: the runner never clicks a save control here, so any change is a write
+    // nobody asked for, whatever the extension reports about itself.
+    const vaultBefore = JSON.stringify(await w.vaultState());
+    const generated = c.expect.generated;
+    await runSteps(w.session, c.steps, {
+      passwords: w.passwords,
+      typed,
+      ferretFill: async () => { await fillEntry(w, tabId, "forms"); },
+      generateFill: () => generateFillVia(w, tabId),
+      generatedIds: generated ? [generated.new, ...(generated.confirm ? [generated.confirm] : [])] : [],
+    });
     const wantsOffer = c.class !== "negative" && c.expect.capture !== null;
     // An offer follows a submit by up to 15 seconds; a case that expects none is watched as long.
     let peek = first;
@@ -382,8 +450,10 @@ export async function captureCase(w, c) {
       peek = await offersPeek(w, tabId);
       if (wantsOffer && peek.offers.length > 0) break;
     }
+    const vaultChanged = JSON.stringify(await w.vaultState()) !== vaultBefore;
     result.observed = {
       ...result.observed,
+      vault_changed: vaultChanged,
       offers: peek.offers.map((o) => ({
         type: String(o.type),
         origin: String(o.origin),
@@ -426,16 +496,111 @@ export async function runCapturePhase(w, cases, log = () => {}) {
   return results;
 }
 
-/** Merges the results of the two phases of each case. @param {import("./matrixReport.mjs").Result[]} fill @param {import("./matrixReport.mjs").Result[]} capture */
-export function mergePhases(fill, capture) {
-  return fill.map((f) => {
-    const c = capture.find((r) => r.case.id === f.case.id);
-    if (!c) return f;
+// ----------------------------------------------------------------------- the generator pass
+
+/**
+ * Asks the extension to generate a password into the new-password fields of the page in a tab, the way the popup does
+ * (the message names are the generator's: `generate`, then `fill_generated` with the generation's id). An extension
+ * without a generator answers something else, and the case is not run.
+ * @param {World} w @param {number} tabId
+ */
+export async function generateFillVia(w, tabId) {
+  // A message the extension does not know may get no answer at all (the port waits two minutes for one): an
+  // extension with a generator answers at once, so a few seconds of silence mean there is none.
+  /** @param {string} type @param {Record<string, unknown>} body */
+  const ask = (type, body) => /** @type {Promise<{ type: string, body: any }>} */ (Promise.race([
+    w.ui.ask(type, body),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(NO_GENERATOR)), 8000)),
+  ]));
+  await w.ui.open();
+  try {
+    const made = await ask("generate", { tab_id: tabId });
+    if (made.type !== "generate" || typeof made.body?.generation_id !== "string") throw new Error(NO_GENERATOR);
+    const filled = await ask("fill_generated", { generation_id: made.body.generation_id, tab_id: tabId });
+    if (filled.type !== "fill_generated" || filled.body?.ok !== true) throw new Error(`the generated password was not filled (${String(filled.body?.reason ?? filled.type)})`);
+  } finally {
+    await w.ui.close();
+  }
+}
+
+/**
+ * The generator pass of one case: the generator fills the case's new-password fields, which must then hold the same
+ * value, and not one of the vault's.
+ * @param {World} w @param {Record<string, any>} c
+ * @returns {Promise<import("./matrixReport.mjs").Result>}
+ */
+export async function generatorCase(w, c) {
+  /** @type {import("./matrixReport.mjs").Result} */
+  const result = { case: c, ran: { fill: false, capture: false, generated: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
+  try {
+    const tabId = await openCase(w, c);
+    await generateFillVia(w, tabId);
+    await sleep(500);
+    const rows = await scanDocs(w.session);
+    await leave(w.session);
+    if (unreadableOf(rows).length > 0) throw new Error("a document of the page could not be read");
+    const want = c.expect.generated;
+    const own = new Set(Object.values(w.passwords).concat([VAULT_USERNAME]));
+    const valueOf = (/** @type {string} */ id) => rows.find((r) => `#${r.id}` === id)?.value ?? "";
+    const first = valueOf(want.new);
+    const filled = [];
+    if (first !== "" && !own.has(first)) filled.push(want.new);
+    if (want.confirm && first !== "" && valueOf(want.confirm) === first) filled.push(want.confirm);
+    result.observed = { ...result.observed, generated: { filled } };
+    result.ran.generated = true;
+  } catch (error) {
+    result.error = String(error instanceof Error ? error.message : error).slice(0, 300);
+  }
+  return result;
+}
+
+/**
+ * The generator pass over the cases that expect it.
+ * @param {World} w @param {Record<string, any>[]} cases @param {(line: string) => void} [log]
+ */
+export async function runGeneratorPhase(w, cases, log = () => {}) {
+  /** @type {import("./matrixReport.mjs").Result[]} */
+  const results = [];
+  let unavailable = false;
+  for (const c of cases.filter((x) => x.class !== "negative" && x.expect.generated)) {
+    if (unavailable) {
+      results.push({ case: c, ran: { fill: false, capture: false, generated: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null }, error: NO_GENERATOR });
+      continue;
+    }
+    const r = await generatorCase(w, c);
+    // Without a generator the first case says so, and no more pages are opened for the others.
+    if (r.error === NO_GENERATOR) unavailable = true;
+    log(`generator ${c.id}: ${r.ran.generated ? `${r.observed?.generated?.filled.length ?? 0} fields` : `not run (${r.error})`}`);
+    results.push(r);
+  }
+  return results;
+}
+
+/**
+ * Merges the results of the phases of each case (each array may be null: that phase was not asked for).
+ * @param {Array<import("./matrixReport.mjs").Result[] | null>} phases fill, capture, generator
+ * @returns {import("./matrixReport.mjs").Result[]}
+ */
+export function mergePhases(...phases) {
+  const [fill, capture, generator] = phases;
+  const base = fill ?? capture ?? generator ?? [];
+  return base.map((first) => {
+    const id = first.case.id;
+    const f = fill?.find((r) => r.case.id === id);
+    const c = capture?.find((r) => r.case.id === id);
+    const g = generator?.find((r) => r.case.id === id);
+    const errors = [f, c, g].map((r) => r?.error).filter(Boolean);
     return {
-      case: f.case,
-      ran: { fill: f.ran.fill, capture: c.ran.capture },
-      observed: { ...f.observed, offers: c.observed?.offers ?? [], generated: c.observed?.generated ?? null },
-      ...(f.error || c.error ? { error: [f.error, c.error].filter(Boolean).join("; ") } : {}),
+      case: first.case,
+      ran: { fill: f?.ran.fill ?? false, capture: c?.ran.capture ?? false, generated: g?.ran.generated ?? false },
+      observed: {
+        ...(f ? { fills: f.observed?.fills, tried: f.observed?.tried } : {}),
+        entries: RULES,
+        offers: c?.observed?.offers ?? [],
+        ...(c?.observed?.vault_changed !== undefined ? { vault_changed: c.observed.vault_changed } : {}),
+        generated: g?.observed?.generated ?? null,
+      },
+      ...(errors.length > 0 ? { error: [...new Set(errors)].join("; ") } : {}),
     };
   });
 }

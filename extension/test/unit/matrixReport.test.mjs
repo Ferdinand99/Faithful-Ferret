@@ -5,6 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { mergePhases, scanDocs, unreadableOf } from "../firefox/matrix.mjs";
 import { computeMatrix, ruleMatches, unsafeFillsOf, unsafeOffersOf, writeReport } from "../firefox/matrixReport.mjs";
 
 const ENTRIES = {
@@ -71,9 +72,9 @@ test("a_category_below_80_percent_fails_the_gate", () => {
   const weak = run(3);
   assert.ok(weak.fill.rate !== null && weak.fill.rate >= 0.95, `the overall rate is ${weak.fill.rate}`);
   assert.equal(weak.perCategory.change.rate, 0.6);
-  assert.equal(weak.gate, false, "one weak category fails the gate although the overall rate is high");
-  assert.equal(run(4).gate, true, "four of five is 80 %: the floor is met (positive control)");
-  assert.equal(run(5).gate, true);
+  assert.equal(weak.met, false, "one weak category fails the gate although the overall rate is high");
+  assert.equal(run(4).met, true, "four of five is 80 %: the floor is met (positive control)");
+  assert.equal(run(5).met, true);
 });
 
 test("one_unsafe_fill_or_unsafe_offer_fails_the_gate", () => {
@@ -123,7 +124,7 @@ test("a_fill_of_an_item_whose_rule_does_not_match_is_unsafe", () => {
   for (const docUrl of ["https://forms-evil.test/x/", "https://www.forms.example.net/x/", "http://forms.example.net/x/", "about:srcdoc", "about:blank", "not a url"]) {
     const found = unsafeFillsOf(elsewhere(docUrl));
     assert.deepEqual(found.map((x) => x.reason), ["rule_mismatch", "rule_mismatch"], docUrl);
-    assert.equal(computeMatrix([elsewhere(docUrl)], { part: "fill" }).gate, false, `${docUrl}: the gate`);
+    assert.equal(computeMatrix([elsewhere(docUrl)], { part: "fill" }).met, false, `${docUrl}: the gate`);
   }
   // The rules themselves.
   assert.equal(ruleMatches(ENTRIES.forms, "https://forms.example.net/a?b#c"), true);
@@ -153,20 +154,20 @@ test("the_other_unsafe_fills_are_named", () => {
 
 test("a_case_that_did_not_run_counts_as_failed", () => {
   const passing = [ran(filling("login-a"), filled()), ran(filling("login-b"), filled())];
-  assert.equal(computeMatrix(passing, { part: "fill" }).gate, true, "positive control");
+  assert.equal(computeMatrix(passing, { part: "fill" }).met, true, "positive control");
   const notRun = { case: filling("login-c"), ran: { fill: false, capture: false }, error: "the page did not load" };
   const m = computeMatrix([...passing, notRun], { part: "fill" });
   assert.deepEqual(m.notRun, ["login-c"]);
   assert.deepEqual([m.fill.passed, m.fill.total], [2, 3], "the case is in the total and not in the passed");
-  assert.equal(m.gate, false);
+  assert.equal(m.met, false);
   assert.ok(m.misses.some((x) => x.id === "login-c" && x.reason.includes("the page did not load")));
   // A negative case that did not run blocks the gate too, although it has no rate.
   const negative = { case: makeCase({ id: "harmless-a", class: "negative", category: "harmless", expect: { no_offer: true } }), ran: { fill: false, capture: false } };
   const n = computeMatrix([...passing, negative], { part: "fill" });
   assert.deepEqual(n.notRun, ["harmless-a"]);
-  assert.equal(n.gate, false);
+  assert.equal(n.met, false);
   // A part that was not selected is not a failure.
-  assert.equal(computeMatrix([...passing, { case: makeCase({ id: "harmless-b", class: "negative", category: "harmless", expect: { no_offer: true } }), ran: { fill: true, capture: false } }], { part: "fill" }).gate, true);
+  assert.equal(computeMatrix([...passing, { case: makeCase({ id: "harmless-b", class: "negative", category: "harmless", expect: { no_offer: true } }), ran: { fill: true, capture: false } }], { part: "fill" }).met, true);
 });
 
 test("the_capture_check_wants_one_offer_of_the_right_kind_from_the_right_field", () => {
@@ -184,17 +185,99 @@ test("the_capture_check_wants_one_offer_of_the_right_kind_from_the_right_field",
     assert.equal(m.capture.rate, 0, name);
     assert.equal(m.misses.length, 1, name);
   }
-  const gen = makeCase({ id: "signup-a", category: "signup", expect: { generated: { new: "#pw", confirm: "#pw2" }, capture: null } });
-  assert.equal(computeMatrix([ran(gen, { generated: { filled: ["#pw", "#pw2"] } })], { part: "capture" }).capture.rate, 1);
-  assert.equal(computeMatrix([ran(gen, { generated: { filled: ["#pw"] } })], { part: "capture" }).capture.rate, 0);
+});
+
+test("the_generator_is_a_measure_of_its_own_and_not_part_of_the_capture_check", () => {
+  const gen = makeCase({ id: "signup-a", category: "signup", expect: { generated: { new: "#pw", confirm: "#pw2" }, capture: { offer: "save", username: "anna@example.net", password_from: "#pw", origin: ORIGIN } } });
+  // A correct offer passes the capture check without any generator observation.
+  const captured = computeMatrix([ran(gen, { offers: [offer({ password_field: "#pw" })] })], { part: "capture" });
+  assert.equal(captured.capture.rate, 1, "capture does not ask for the generator");
+  assert.equal(captured.generated.total, 1);
+  assert.deepEqual(captured.generated.notRun, ["signup-a"], "the generator did not run: reported, in its own line");
+  assert.equal(captured.met, true, "and not part of the gate yet");
+  // The generator pass has its own result.
+  /** @param {string[]} filled */
+  const withGenerator = (filled) => computeMatrix([{ ...ran(gen, { offers: [offer({ password_field: "#pw" })], generated: { filled } }), ran: { fill: true, capture: true, generated: true } }], { part: "capture" });
+  assert.deepEqual([withGenerator(["#pw", "#pw2"]).generated.passed, withGenerator(["#pw", "#pw2"]).generated.total], [1, 1]);
+  const half = withGenerator(["#pw"]);
+  assert.equal(half.generated.passed, 0);
+  assert.ok(half.misses.some((x) => x.part === "generated" && x.reason.includes("#pw2")), "the miss names the field");
+  assert.equal(half.capture.rate, 1, "a failed generator does not fail the capture");
+  // The fill part does not run the generator.
+  assert.equal(computeMatrix([ran(gen)], { part: "fill" }).generated.selected, false);
+});
+
+test("a_partial_run_has_no_gate_and_says_so", () => {
+  const results = [ran(filling("login-a"), filled()), ran(capturing("login-b"), { offers: [offer()] })];
+  assert.equal(computeMatrix(results, { part: "all" }).gate, true, "a complete run that meets everything");
+  const fillOnly = computeMatrix(results, { part: "fill" });
+  assert.equal(fillOnly.gate, false);
+  assert.equal(fillOnly.met, true);
+  const some = computeMatrix(results, { part: "all", grep: "login-a" });
+  assert.equal(some.gate, false);
+  const dir = mkdtempSync(join(tmpdir(), "ferret-matrix-"));
+  try {
+    writeReport(dir, "release", fillOnly);
+    writeReport(dir, "esr", some);
+    const text = readFileSync(join(dir, "matrix.md"), "utf8");
+    assert.ok(text.includes("PARTIAL RUN (fill part): no gate; the part is met"), text);
+    assert.ok(text.includes("PARTIAL RUN (some cases, cases matching login-a)"), text);
+    assert.equal(text.includes("GATE MET"), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a_change_of_the_vault_during_a_case_is_a_write_without_a_click", () => {
+  const c = capturing("login-a");
+  assert.deepEqual(unsafeOffersOf(ran(c, { offers: [offer()], vault_changed: false })), [], "an unchanged vault (positive control)");
+  const reasons = unsafeOffersOf(ran(c, { offers: [offer()], vault_changed: true })).map((x) => x.reason);
+  assert.deepEqual(reasons, ["write_without_a_click"], "whatever the extension says about itself");
+  assert.equal(computeMatrix([ran(c, { offers: [offer()], vault_changed: true })], { part: "capture" }).gate, false);
+});
+
+test("a_frame_the_scan_cannot_read_is_reported_and_not_skipped", async () => {
+  // A stand-in session: the top document has one frame, and the driver cannot enter it.
+  let content = 0;
+  const session = /** @type {any} */ ({
+    switchToTopFrame: async () => {},
+    switchToParentFrame: async () => {},
+    findAll: async () => [{ id: "frame" }],
+    switchToFrame: async () => {
+      throw new Error("no such frame");
+    },
+    content: async () => {
+      content += 1;
+      return content === 1 ? { url: "https://forms.example.net/x/", inputs: [{ id: "u", type: "text", value: "" }] } : 1;
+    },
+  });
+  const rows = await scanDocs(session);
+  assert.equal(unreadableOf(rows).length, 1, JSON.stringify(rows));
+  assert.deepEqual(rows.filter((r) => r.type !== "unreadable").map((r) => r.id), ["u"]);
+  assert.equal(unreadableOf([{ type: "text" }]).length, 0, "a readable page has none (positive control)");
+});
+
+test("the_phases_of_a_case_are_merged_into_one_result", () => {
+  const c = filling("login-a");
+  const merged = mergePhases(
+    [{ case: c, ran: { fill: true, capture: false }, observed: { fills: [], tried: [{ entry: "forms", ok: true }] } }],
+    [{ case: c, ran: { fill: false, capture: true }, observed: { offers: [offer()], vault_changed: false }, error: "late" }],
+    [{ case: c, ran: { fill: false, capture: false, generated: true }, observed: { generated: { filled: ["#pw"] } } }],
+  );
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].ran, { fill: true, capture: true, generated: true });
+  assert.equal(merged[0].observed?.offers?.length, 1);
+  assert.equal(merged[0].observed?.vault_changed, false);
+  assert.deepEqual(merged[0].observed?.generated, { filled: ["#pw"] });
+  assert.equal(merged[0].error, "late");
 });
 
 test("the_hold_out_set_has_no_category_floor_and_needs_90_percent", () => {
   const results = [];
   for (let i = 0; i < 9; i += 1) results.push(ran(filling(`login-${i}`), filled()));
   results.push(ran(filling("login-9"), { tried: [{ entry: "forms", ok: true }] }));
-  assert.equal(computeMatrix(results, { set: "holdout", part: "fill" }).gate, true, "nine of ten");
-  assert.equal(computeMatrix(results, { set: "corpus", part: "fill" }).gate, false, "the corpus needs 95 %");
+  assert.equal(computeMatrix(results, { set: "holdout", part: "fill" }).met, true, "nine of ten");
+  assert.equal(computeMatrix(results, { set: "corpus", part: "fill" }).met, false, "the corpus needs 95 %");
   assert.equal(computeMatrix(results, { set: "holdout", part: "fill" }).meta.set, "holdout");
 });
 
@@ -218,7 +301,7 @@ test("report_lists_every_miss_with_its_reason", () => {
     assert.ok(text.includes("login-b (login, fill): fill refused: no_fields"));
     assert.ok(text.includes("did not run: the page did not load"));
     assert.ok(text.includes("hidden-a (hidden): must_stay_empty in #trap"), "the unsafe fill with its field");
-    assert.ok(text.includes("GATE NOT MET") && text.includes("GATE MET"), "both channels are in the text");
+    assert.ok(text.includes("## release (mv2), set corpus, part fill: PARTIAL RUN (fill part): no gate; the part is not met") && text.includes("## esr (mv2), set corpus, part fill: PARTIAL RUN (fill part): no gate; the part is met"), "both channels are in the text");
     const json = JSON.parse(readFileSync(join(dir, "release-mv2.json"), "utf8"));
     assert.equal(json.channel, "release");
     assert.equal(json.misses.length, m.misses.length);

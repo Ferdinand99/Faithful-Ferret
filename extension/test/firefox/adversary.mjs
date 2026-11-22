@@ -188,6 +188,13 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     return { core: String(reply.value.core), lockAt: typeof reply.value.lockAt === "number" ? reply.value.lockAt : null };
   };
 
+  /** The ids and revisions of the vault's items, from the sync engine (the test build's measure port): what a write changes. */
+  const vaultState = async () => {
+    const reply = await ask("ferret-test-measure", { id: "1", cmd: "vault" });
+    assert.equal(reply.ok, true, `${channel}: vault: ${reply.code}`);
+    return reply.value;
+  };
+
   // A UI port that stays open across steps: one popup session (a reference is good only on the port that got it).
   const ui = {
     async open() {
@@ -371,7 +378,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** Closes the session; the device is revoked by the next world (or the next run's stack is a new one). */
   const quit = () => session.quit();
 
-  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, ui, visit, popup, named, passwords, keyOf, tag, origins, quit };
+  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, popup, named, passwords, keyOf, tag, origins, quit };
 }
 
 /**

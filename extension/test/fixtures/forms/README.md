@@ -44,7 +44,11 @@ The corpus is **frozen** once it is merged: a change needs the reviewer's yes an
 - `expect.capture`: the offer the submission must lead to (`save`, `update` with its `target` entry, or
   `choose`), its user name (`null` when the form has none), the field the password came from and the
   origin. `reuse` and `info` name the warning or info line the offer must carry.
-- `expect.generated`: the new-password fields the generator must fill.
+- `expect.generated`: the new-password fields the generator must fill. It is a measure of its own (a generator pass:
+  the generator fills the page's new-password fields, which must then hold one value that is not the vault's); it is
+  not part of the capture check, which is about the offer. A step `{ "generate_fill": true }` takes the place of
+  typing the new-password fields (a few sign-up and change cases use it); the runner then hashes what the fields hold,
+  so the offer's password can be matched to its field.
 - Negative cases set `no_offer` (or `max_offers`); an offer in a category with no login a person could
   mean (hidden fields, card and PIN forms, a one-time code in a password field, planted values, frames
   that are not the page's own, plain http) is an unsafe offer.
@@ -56,3 +60,7 @@ The vault of the matrix has the entries `forms` (`https://forms.example.net/`, h
 (`https://login.example.net/`, host), `domain` (`https://app.forms.example.org/`, domain) and two
 host entries of `https://www.forms.example.net/` (`wwwA`, `wwwB`, for the cases where a form has to
 choose). Every entry has the user name `ola` and a password the run makes up.
+
+The case `foreign-frame-blank-fr` tests the `document.open()` variant of a blank frame: the page writes the frame's
+document itself, which gives the frame the page's address. A frame built with the DOM only (it keeps `about:blank`)
+is the other variant.

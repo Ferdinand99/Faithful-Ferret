@@ -12,12 +12,7 @@
       "text": "anna@example.net"
     },
     {
-      "type": "#pw",
-      "text": "Zq7!signupconf-Vm4$"
-    },
-    {
-      "type": "#pw2",
-      "text": "Zq7!signupconf-Vm4$"
+      "generate_fill": true
     },
     {
       "click": "#go"

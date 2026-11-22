@@ -12,12 +12,7 @@
       "text": "{{password:forms}}"
     },
     {
-      "type": "#new",
-      "text": "Zq7!changethre-Vm4$"
-    },
-    {
-      "type": "#new2",
-      "text": "Zq7!changethre-Vm4$"
+      "generate_fill": true
     },
     {
       "click": "#go"

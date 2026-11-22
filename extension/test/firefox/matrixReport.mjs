@@ -217,18 +217,21 @@ export function ruleMatches(rule, docUrl) {
  *   fills: Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>,
  *   tried: Array<{ entry: string, ok: boolean, reason?: string }>,
  *   entries: Record<string, { url: string, matching: "host" | "domain" | "exact", domain?: string }>,
+ *   vault_changed?: boolean,
  *   offers: Array<{ type: string, origin: string, username: string | null, password_field: string | null, reuse?: boolean, info?: string,
  *                   target_entry?: string, target_host?: string, target_match?: string, picked?: boolean, written_without_click?: boolean }>,
  *   generated: { filled: string[] } | null,
  * }} Observed
- * @typedef {{ case: Record<string, any>, ran: { fill: boolean, capture: boolean }, observed?: Partial<Observed>, error?: string }} Result
+ * @typedef {{ case: Record<string, any>, ran: { fill: boolean, capture: boolean, generated?: boolean }, observed?: Partial<Observed>, error?: string }} Result
  * @typedef {{ id: string, category: string, kind: "fill" | "offer", reason: string, field?: string }} Miss
  */
 
 /** @param {Record<string, any>} c */
 const expectsFill = (c) => c.class !== "negative" && c.expect.fill !== null;
 /** @param {Record<string, any>} c */
-const expectsCapture = (c) => c.class !== "negative" && (c.expect.capture !== null || (c.expect.generated ?? null) !== null);
+const expectsCapture = (c) => c.class !== "negative" && c.expect.capture !== null;
+/** The generator's check is a measure of its own (see computeMatrix), not part of the capture check. @param {Record<string, any>} c */
+const expectsGenerated = (c) => c.class !== "negative" && (c.expect.generated ?? null) !== null;
 
 /**
  * The fills of a result that are unsafe, each with its reason.
@@ -290,7 +293,22 @@ export function unsafeOffersOf(r) {
     }
     if (o.written_without_click === true) miss("write_without_a_click");
   }
+  // The runner never clicks a save control in the capture phase, so any change of the vault during a case is a write
+  // nobody asked for, whatever the extension says about itself.
+  if (r.observed?.vault_changed === true) out.push({ id: c.id, category: c.category, kind: "offer", reason: "write_without_a_click" });
   return out;
+}
+
+/**
+ * The generator check of a case: the new-password field (and the confirm field) hold the same generated value.
+ * @param {Result} r
+ * @returns {{ status: "pass" | "fail", reason?: string }}
+ */
+function generatedCheck(r) {
+  const want = r.case.expect.generated;
+  const filled = r.observed?.generated?.filled ?? [];
+  for (const id of [want.new, want.confirm].filter(Boolean)) if (!filled.includes(id)) return { status: "fail", reason: `the generated password did not go into ${id}` };
+  return { status: "pass" };
 }
 
 /**
@@ -321,11 +339,6 @@ function fillCheck(r) {
 function captureCheck(r) {
   const c = r.case;
   const offers = r.observed?.offers ?? [];
-  const generated = c.expect.generated;
-  if (generated) {
-    const filled = r.observed?.generated?.filled ?? [];
-    for (const id of [generated.new, generated.confirm].filter(Boolean)) if (!filled.includes(id)) return { status: "fail", reason: `the generated password did not go into ${id}` };
-  }
   const want = c.expect.capture;
   if (want === null) return { status: "pass" };
   if (offers.length === 0) return { status: "fail", reason: "no offer" };
@@ -360,13 +373,16 @@ const rateOf = (passed, total) => (total === 0 ? null : passed / total);
  * - `perCategory`: for every positive and special category, the share of its cases whose checks all passed.
  * - `unsafeFills` and `unsafeOffers`: every one found in any case of any class.
  * - `falseOffers`: offers in harmless negative cases (the ones with no `never` mark) that expect none.
+ * - `generated`: the generator's own measure, over the cases with `expect.generated` (a generator pass in the capture
+ *   phase). It is reported and not part of the gate yet: the gate takes it in when the extension has a generator.
  * - `notRun`: the cases a selected part did not run for.
- * - `gate`: both rates at the set's level, no positive or special category under the floor, nothing unsafe, nothing
+ * - `met`: both rates at the set's level, no positive or special category under the floor, nothing unsafe, nothing
  *   unrun. A part that was not selected does not count. The hold-out set has no category floor.
+ * - `gate`: `met` for a complete run (every part, no case filter); a partial run has no gate.
  * @param {Result[]} results
- * @param {{ set?: "corpus" | "holdout", part?: "fill" | "capture" | "all", manifest?: string }} [options]
+ * @param {{ set?: "corpus" | "holdout", part?: "fill" | "capture" | "all", manifest?: string, grep?: string }} [options]
  */
-export function computeMatrix(results, { set = "corpus", part = "all", manifest = "mv2" } = {}) {
+export function computeMatrix(results, { set = "corpus", part = "all", manifest = "mv2", grep = "" } = {}) {
   const level = thresholds(set);
   const useFill = part === "fill" || part === "all";
   const useCapture = part === "capture" || part === "all";
@@ -380,13 +396,16 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
   const unsafeFills = [];
   /** @type {Miss[]} */
   const unsafeOffers = [];
-  /** @type {Array<{ id: string, category: string, part: "fill" | "capture", reason: string }>} */
+  /** @type {Array<{ id: string, category: string, part: "fill" | "capture" | "generated", reason: string }>} */
   const misses = [];
   /** @type {string[]} */
   const notRun = [];
   /** @type {string[]} */
   const falseCases = [];
   let negativeRan = 0;
+  const generatedCount = { passed: 0, total: 0 };
+  /** @type {string[]} */
+  const generatedNotRun = [];
   /** @type {Array<{ id: string, category: string, class: string, fill: string, capture: string }>} */
   const cases = [];
 
@@ -447,6 +466,14 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
         if (all) entry.passed += 1;
       }
     }
+    if (useCapture && expectsGenerated(c)) {
+      generatedCount.total += 1;
+      if (!r.ran.generated) {
+        generatedNotRun.push(c.id);
+        misses.push({ id: c.id, category: c.category, part: "generated", reason: r.error ? `did not run: ${r.error}` : "did not run" });
+      } else if (generatedCheck(r).status === "pass") generatedCount.passed += 1;
+      else misses.push({ id: c.id, category: c.category, part: "generated", reason: generatedCheck(r).reason ?? "failed" });
+    }
     cases.push({ id: c.id, category: c.category, class: c.class, fill: status.fill, capture: status.capture });
   }
 
@@ -459,13 +486,16 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
 
   const partOk = (/** @type {{ selected: boolean, rate: number | null }} */ p) => !p.selected || (p.rate !== null && p.rate >= level.overall);
   const floorsOk = Object.values(perCategory).every((v) => v.rate !== null && v.rate >= level.floor);
-  const gate = partOk(fill) && partOk(capture) && floorsOk && unsafeFills.length === 0 && unsafeOffers.length === 0 && notRun.length === 0;
+  const met = partOk(fill) && partOk(capture) && floorsOk && unsafeFills.length === 0 && unsafeOffers.length === 0 && notRun.length === 0;
+  const complete = part === "all" && grep === "";
+  const generated = { ...generatedCount, rate: rateOf(generatedCount.passed, generatedCount.total), selected: useCapture, notRun: generatedNotRun };
   const falseOffers = { rate: rateOf(falseCases.length, negativeRan), cases: falseCases };
 
   return {
-    meta: { set, part, manifest },
+    meta: { set, part, manifest, grep },
     fill,
     capture,
+    generated,
     perCategory,
     negative,
     unsafeFills,
@@ -474,7 +504,8 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
     notRun,
     misses,
     cases,
-    gate,
+    met,
+    gate: met && complete,
   };
 }
 
@@ -491,12 +522,15 @@ const percent = (rate) => (rate === null ? "n/a" : `${(rate * 100).toFixed(1)} %
  */
 function markdownOf(channel, m) {
   const lines = [];
-  lines.push(`## ${channel} (${m.meta.manifest}), set ${m.meta.set}, part ${m.meta.part}: ${m.gate ? "GATE MET" : "GATE NOT MET"}`, "");
+  // A run of one part or of some cases has no gate: it says whether the part it measured is met.
+  const verdict = m.gate ? "GATE MET" : m.meta.part === "all" && !m.meta.grep ? "GATE NOT MET" : `PARTIAL RUN (${m.meta.part === "all" ? "some cases" : `${m.meta.part} part`}${m.meta.grep ? `, cases matching ${m.meta.grep}` : ""}): no gate; the part is ${m.met ? "met" : "not met"}`;
+  lines.push(`## ${channel} (${m.meta.manifest}), set ${m.meta.set}, part ${m.meta.part}: ${verdict}`, "");
   lines.push("| Measure | Passed | Total | Rate |", "|---|---|---|---|");
   for (const which of /** @type {const} */ (["fill", "capture"])) {
     const p = m[which];
     lines.push(`| ${which} (positive cases) | ${p.passed} | ${p.total} | ${p.selected ? percent(p.rate) : "not selected"} |`);
   }
+  if (m.generated) lines.push(`| generator (not gated yet) | ${m.generated.passed} | ${m.generated.total} | ${m.generated.selected ? percent(m.generated.rate) : "not selected"} |`);
   lines.push(`| unsafe fills | | ${m.unsafeFills.length} | |`, `| unsafe offers | | ${m.unsafeOffers.length} | |`);
   lines.push(`| false offers (harmless negatives) | | ${m.falseOffers.cases.length} | ${percent(m.falseOffers.rate)} |`);
   lines.push(`| cases that did not run | | ${m.notRun.length} | |`, "");
@@ -507,7 +541,10 @@ function markdownOf(channel, m) {
     lines.push(`### ${title} (${items.length})`, "");
     lines.push(...(items.length === 0 ? ["none"] : items.map((i) => `- ${i}`)), "");
   };
-  list("Unsafe fills", m.unsafeFills.map((x) => `${x.id} (${x.category}): ${x.reason}${x.field ? ` in ${x.field}` : ""}`));
+  // Security reasons first; `unexpected_field` (a value in a field the case did not expect) is a matter of precision.
+  const fillLine = (/** @type {Miss} */ x) => `${x.id} (${x.category}): ${x.reason}${x.field ? ` in ${x.field}` : ""}`;
+  list("Unsafe fills, security", m.unsafeFills.filter((x) => x.reason !== "unexpected_field").map(fillLine));
+  list("Unsafe fills, precision", m.unsafeFills.filter((x) => x.reason === "unexpected_field").map(fillLine));
   list("Unsafe offers", m.unsafeOffers.map((x) => `${x.id} (${x.category}): ${x.reason}${x.field ? ` from ${x.field}` : ""}`));
   list("Cases that did not run", m.notRun);
   list("Misses", m.misses.map((x) => `${x.id} (${x.category}, ${x.part}): ${x.reason}`));
