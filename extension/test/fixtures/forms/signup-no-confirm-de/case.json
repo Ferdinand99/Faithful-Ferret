@@ -1,0 +1,45 @@
+{
+  "id": "signup-no-confirm-de",
+  "class": "positive",
+  "category": "signup",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/signup-no-confirm-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#user",
+      "text": "anna_de"
+    },
+    {
+      "type": "#pw",
+      "text": "Zq7!signupnoco-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#user"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna_de",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw"
+  ],
+  "fields": {
+    "#pw": "new_password"
+  },
+  "source": "own"
+}

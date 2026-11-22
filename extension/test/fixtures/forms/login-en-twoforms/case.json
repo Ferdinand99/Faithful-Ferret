@@ -1,0 +1,45 @@
+{
+  "id": "login-en-twoforms",
+  "class": "positive",
+  "category": "login",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/login-en-twoforms/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!loginentwo-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#q"
+  ],
+  "fields": {
+    "#q": "search"
+  },
+  "source": "own"
+}

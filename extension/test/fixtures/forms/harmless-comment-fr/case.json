@@ -1,0 +1,31 @@
+{
+  "id": "harmless-comment-fr",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/harmless-comment-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#author",
+      "text": "Anna"
+    },
+    {
+      "type": "#text",
+      "text": "Merci"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,41 @@
+{
+  "id": "controlled-change-de",
+  "class": "positive",
+  "category": "controlled",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/controlled-change-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!controlled-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

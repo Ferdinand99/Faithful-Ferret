@@ -127,8 +127,8 @@ export async function documentsHolding(session, value) {
 
 /**
  * A Firefox signed in to the stack, with the entries made (names tagged with the channel and the time).
- * `grant`: ids of test sites whose waiting frames get their host permission in the grant tab, as a person gives it
- * (a frame of another origin on the same site waits for it).
+ * `grant`: ids of test sites (or page addresses, `https://...`) whose waiting frames get their host permission in the
+ * grant tab, as a person gives it (a frame of another origin on the same site waits for it).
  * @param {"release" | "esr"} channel
  * @param {{ grant?: string[], entries?: Partial<typeof ENTRIES> }} [options]
  */
@@ -186,6 +186,13 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     const reply = await ask("ferret-test-measure", { id: "1", cmd: "state" });
     assert.equal(reply.ok, true, `${channel}: state: ${reply.code}`);
     return { core: String(reply.value.core), lockAt: typeof reply.value.lockAt === "number" ? reply.value.lockAt : null };
+  };
+
+  /** The ids and revisions of the vault's items, from the sync engine (the test build's measure port): what a write changes. */
+  const vaultState = async () => {
+    const reply = await ask("ferret-test-measure", { id: "1", cmd: "vault" });
+    assert.equal(reply.ok, true, `${channel}: vault: ${reply.code}`);
+    return reply.value;
   };
 
   // A UI port that stays open across steps: one popup session (a reference is good only on the port that got it).
@@ -294,7 +301,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** @type {string[]} */
   const origins = [];
   for (const siteId of grant) {
-    const tabId = await visit(server.siteUrl(siteId));
+    const tabId = await visit(siteId.startsWith("https://") ? siteId : server.siteUrl(siteId));
     await ui.open();
     const waiting = await ui.body("candidates", { tab_id: tabId });
     await ui.close();
@@ -371,7 +378,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** Closes the session; the device is revoked by the next world (or the next run's stack is a new one). */
   const quit = () => session.quit();
 
-  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, ui, visit, popup, named, passwords, keyOf, tag, origins, quit };
+  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, popup, named, passwords, keyOf, tag, origins, quit };
 }
 
 /**

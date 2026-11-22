@@ -1,0 +1,44 @@
+{
+  "id": "signup-email-only-en",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/signup-email-only-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#email"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw"
+  ],
+  "fields": {
+    "#pw": "new_password"
+  },
+  "source": "own"
+}

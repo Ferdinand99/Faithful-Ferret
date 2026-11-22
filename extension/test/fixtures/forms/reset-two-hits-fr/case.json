@@ -1,0 +1,44 @@
+{
+  "id": "reset-two-hits-fr",
+  "class": "positive",
+  "category": "reset",
+  "lang": "fr",
+  "host": "www.forms.example.net",
+  "path": "/reset-two-hits-fr/?token=7c1d9e52b0a4",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#new",
+      "text": "Zq7!resettwohi-Vm4$"
+    },
+    {
+      "type": "#new2",
+      "text": "Zq7!resettwohi-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#new",
+      "confirm": "#new2"
+    },
+    "capture": {
+      "offer": "choose",
+      "username": null,
+      "password_from": "#new",
+      "origin": "https://www.forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#new",
+    "#new2"
+  ],
+  "fields": {
+    "#new": "new_password",
+    "#new2": "confirm_password"
+  },
+  "source": "own"
+}

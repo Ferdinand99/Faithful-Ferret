@@ -1,0 +1,35 @@
+{
+  "id": "card-cvc-nb",
+  "class": "negative",
+  "category": "card",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/card-cvc-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#holder",
+      "text": "Anna Hansen"
+    },
+    {
+      "type": "#cvc",
+      "text": "456"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#cvc"
+  ],
+  "fields": {
+    "#cvc": "card_cvc"
+  },
+  "source": "own"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "otp-single-de",
+  "class": "positive",
+  "category": "otp",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/otp-single-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#code",
+      "text": "493817"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#code": "totp"
+      }
+    },
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#code": "otp"
+  },
+  "source": "own"
+}

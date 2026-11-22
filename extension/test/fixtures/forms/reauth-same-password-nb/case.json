@@ -1,0 +1,35 @@
+{
+  "id": "reauth-same-password-nb",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/reauth-same-password-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "{{password:forms}}"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

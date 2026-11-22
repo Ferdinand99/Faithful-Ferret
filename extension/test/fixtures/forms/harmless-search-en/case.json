@@ -1,0 +1,31 @@
+{
+  "id": "harmless-search-en",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/harmless-search-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#q",
+      "text": "garden chairs"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#q"
+  ],
+  "fields": {
+    "#q": "search"
+  },
+  "source": "own"
+}

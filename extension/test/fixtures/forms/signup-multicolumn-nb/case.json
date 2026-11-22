@@ -1,0 +1,51 @@
+{
+  "id": "signup-multicolumn-nb",
+  "class": "positive",
+  "category": "signup",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/signup-multicolumn-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#epost",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#pw",
+      "text": "Zq7!signupmult-Vm4$"
+    },
+    {
+      "type": "#pw2",
+      "text": "Zq7!signupmult-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#epost"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": "#pw2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw",
+    "#pw2"
+  ],
+  "fields": {
+    "#pw": "new_password",
+    "#pw2": "confirm_password"
+  },
+  "source": "own"
+}

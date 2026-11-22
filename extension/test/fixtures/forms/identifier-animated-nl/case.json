@@ -1,0 +1,45 @@
+{
+  "id": "identifier-animated-nl",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/identifier-animated-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!identifier-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

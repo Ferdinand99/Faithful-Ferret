@@ -1,0 +1,46 @@
+{
+  "id": "spa-late-fr",
+  "class": "positive",
+  "category": "spa",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/spa-late-fr/",
+  "frame": null,
+  "prepare": [
+    {
+      "wait": 1600
+    }
+  ],
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!spalatefr-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}
