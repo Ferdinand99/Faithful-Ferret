@@ -74,9 +74,19 @@ export function helpers(session) {
     text: (css) => session.content((/** @type {string} */ selector) => (document.querySelector(selector)?.textContent ?? "").trim(), css),
     /** @param {string} css */
     click: async (css) => {
-      const [el] = await session.findAll(css);
-      assert.ok(el, css);
-      await session.click(el);
+      // A page that builds itself again between the find and the click (the web vault re-renders an item when the
+      // sync brings a change) leaves a stale element: find it again, a few times.
+      for (let attempt = 1; ; attempt += 1) {
+        const [el] = await session.findAll(css);
+        assert.ok(el, css);
+        try {
+          await session.click(el);
+          return;
+        } catch (error) {
+          if (attempt >= 3 || !/stale element/.test(String(error))) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
     },
     /** @param {string} css @param {string} value */
     type: async (css, value) => {
