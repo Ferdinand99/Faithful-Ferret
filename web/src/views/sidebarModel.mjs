@@ -36,9 +36,10 @@ export const ICONS = Object.freeze([
  * @property {string | null} href `#/path`, or null for an entry that is not a link
  * @property {string} role
  * @property {number | null} count
+ * @property {"all" | "favorites" | null} countKey which number it shows, so that it can change in place
  * @property {number} depth how far a folder stands below a pinned one (0 for everything else)
  * @property {readonly string[]} paths what makes it the current entry
- * @property {string | null} folder the id of a folder entry
+ * @property {string | null} folder the name of a pinned folder (what unpinning needs), else null
  *
  * @typedef {object} SidebarSection
  * @property {string} id
@@ -85,7 +86,7 @@ export function countItems(items, manifestId = "") {
  * A folder that is pinned and also below another pinned one stands once, below it.
  * Folders that point at each other cannot loop: every folder is visited once.
  * @param {readonly { id: string, name: string, parentId?: string | null }[]} folders
- * @param {readonly string[]} pinned
+ * @param {readonly string[]} pinned the names of the pinned folders (a name pins every folder that has it)
  * @returns {{ id: string, name: string, depth: number, pinned: boolean }[]}
  */
 export function pinnedTree(folders, pinned) {
@@ -97,7 +98,7 @@ export function pinnedTree(folders, pinned) {
     if (parent === null || !byId.has(parent)) continue;
     children.set(parent, [...(children.get(parent) ?? []), folder.id]);
   }
-  const roots = pinned.filter((id) => byId.has(id));
+  const roots = pinned.flatMap((name) => folders.filter((f) => f.name === name).map((f) => f.id));
   /** @type {{ id: string, name: string, depth: number, pinned: boolean }[]} */
   const out = [];
   const seen = new Set();
@@ -106,7 +107,7 @@ export function pinnedTree(folders, pinned) {
     if (seen.has(id)) return;
     seen.add(id);
     const folder = /** @type {{ id: string, name: string }} */ (byId.get(id));
-    out.push({ id, name: folder.name, depth, pinned: pinned.includes(id) });
+    out.push({ id, name: folder.name, depth, pinned: pinned.includes(folder.name) });
     const named = [...(children.get(id) ?? [])].sort((a, b) => {
       const x = /** @type {{ name: string }} */ (byId.get(a)).name;
       const y = /** @type {{ name: string }} */ (byId.get(b)).name;
@@ -137,7 +138,7 @@ export function pinnedTree(folders, pinned) {
  *   folders?: readonly { id: string, name: string, parentId?: string | null }[],
  *   pinned?: readonly string[],
  *   folderHref?: (id: string) => string,
- * }} options `folderHref` is where a folder entry leads
+ * }} options `pinned` holds the names of the pinned folders; `folderHref` is where a folder entry leads
  * @returns {SidebarSection[]}
  */
 export function sidebarModel({ routes, counts = { all: 0, favorites: 0 }, folders = [], pinned = [], folderHref = (id) => `#/folders/${id}` }) {
@@ -152,21 +153,21 @@ export function sidebarModel({ routes, counts = { all: 0, favorites: 0 }, folder
       order: meta.order ?? 100,
       entry: {
         id: route.path, kind: "link", label: title, icon: meta.icon, href: `#${route.path}`, role: meta.role,
-        count: meta.count ? counts[meta.count] : null, depth: 0, paths: [route.path, ...(meta.activeFor ?? [])], folder: null,
+        count: meta.count ? counts[meta.count] : null, countKey: meta.count ?? null, depth: 0, paths: [route.path, ...(meta.activeFor ?? [])], folder: null,
       },
     });
   }
   for (const soon of SOON) {
     bySection[soon.section].push({
       order: soon.order,
-      entry: { id: soon.id, kind: "soon", label: soon.label, icon: soon.icon, href: null, role: soon.role, count: null, depth: 0, paths: [], folder: null },
+      entry: { id: soon.id, kind: "soon", label: soon.label, icon: soon.icon, href: null, role: soon.role, count: null, countKey: null, depth: 0, paths: [], folder: null },
     });
   }
   bySection.pinned = pinnedTree(folders, pinned).map((folder, index) => ({
     order: index,
     entry: {
       id: `folder:${folder.id}`, kind: /** @type {const} */ ("folder"), label: folder.name, icon: "folder", href: folderHref(folder.id),
-      role: "nav-folder", count: null, depth: folder.depth, paths: [folderHref(folder.id).slice(1)], folder: folder.pinned ? folder.id : null,
+      role: "nav-folder", count: null, countKey: null, depth: folder.depth, paths: [folderHref(folder.id).slice(1)], folder: folder.pinned ? folder.name : null,
     },
   }));
   return SECTIONS

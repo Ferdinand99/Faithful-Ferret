@@ -4,7 +4,7 @@
 //
 // Nothing here holds a secret. The e-mail address is on the page only as text
 // and as two letters; folder names are text nodes; the only things kept on the
-// device are the folded flag and folder ids (uiPrefs.mjs).
+// device are the folded flag and the names of the pinned folders (uiPrefs.mjs).
 //
 // The pieces the frame needs from outside (the sync and live pills, what Lock and
 // Sign out do) are handed in; the frame owns the rest of the page.
@@ -18,6 +18,7 @@ export const HELP_URL = "https://github.com/Ferdinand99/Faithful-Ferret/tree/mai
 export const PHONE_QUERY = "(max-width: 767.98px)";
 
 let sequence = 0;
+let folderMenus = 0;
 
 /** @param {any} node */
 const focusNode = (node) => {
@@ -120,6 +121,8 @@ export function sidebarView({
   const accountMenuId = `account-menu-${sequence}`;
   let currentCounts = counts;
   let currentFolders = folders;
+  /** The number beside each entry that has one, so that a new count changes the text and nothing else. @type {Map<string, { node: HTMLElement, key: string }>} */
+  const countNodes = new Map();
   let path = "";
   let drawerOpen = false;
 
@@ -132,7 +135,7 @@ export function sidebarView({
     el("a", { class: "brand", href: "#/items" }, t("shell.brand")));
 
   // ---- the head of the menu: the mark, the name, fold and close
-  const collapseButton = el("button", { type: "button", class: "side-btn side-collapse", "data-role": "collapse" },
+  const collapseButton = el("button", { type: "button", class: "side-btn side-collapse", "aria-controls": sideId, "data-role": "collapse" },
     el("span", { class: "icon", "data-icon": "panel", "aria-hidden": "true" }));
   const closeButton = el("button", { type: "button", class: "side-btn side-close", "aria-label": t("shell.menu.close"), "data-role": "menu-close" },
     el("span", { class: "icon", "data-icon": "close", "aria-hidden": "true" }));
@@ -164,7 +167,7 @@ export function sidebarView({
     type: "button", class: "side-account-btn", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": accountMenuId,
     "aria-label": t("shell.account.menu", { email: email ?? t("security.nav.account") }), "data-role": "account-menu-button",
   }, avatar,
-  el("span", { class: "side-email" }, email ?? t("security.nav.account")),
+  el("span", { class: "side-email", ...(email === null ? {} : { title: email }) }, email ?? t("security.nav.account")),
   el("span", { class: "icon side-caret", "data-icon": "switch", "aria-hidden": "true" }));
 
   /** A menu entry: a button, or a link when it goes to a page of this app. @param {string} role @param {string} icon @param {string} text @param {string | null} href */
@@ -173,8 +176,17 @@ export function sidebarView({
     const inner = [el("span", { class: "icon", "data-icon": icon, "aria-hidden": "true" }), text];
     return href === null ? el("button", { type: "button", ...attrs }, ...inner) : el("a", { ...attrs, href }, ...inner);
   };
+  /** Help is a link to a page outside the vault: it opens in a window of its own that has no way back to this one. */
+  const helpLink = () => {
+    const link = menuItem("help", "help", t("shell.account.help"), "#/help");
+    // `el` takes only addresses of this page; this one is a constant of this file.
+    link.setAttribute("href", helpUrl);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    return link;
+  };
   const settingsItem = menuItem("nav-account", "account", t("shell.account.settings"), "#/account");
-  const helpItem = menuItem("help", "help", t("shell.account.help"), null);
+  const helpItem = helpLink();
   const lockItem = menuItem("lock", "lock", t("shell.account.lock"), null);
   const signOutItem = menuItem("sign-out", "signout", t("shell.account.signout"), null);
   const accountItems = [settingsItem, helpItem, lockItem, ...(onSignOut ? [signOutItem] : [])];
@@ -199,10 +211,6 @@ export function sidebarView({
   accountItems.forEach((item) => item.addEventListener("click", () => account.close(false)));
 
   settingsItem.addEventListener("click", () => closeDrawer(false));
-  helpItem.addEventListener("click", () => {
-    const opener = win?.open ?? globalThis.window?.open;
-    if (typeof opener === "function") opener.call(win ?? globalThis.window, helpUrl, "_blank", "noopener,noreferrer");
-  });
   lockItem.addEventListener("click", () => void onLock());
   signOutItem.addEventListener("click", () => void onSignOut?.());
 
@@ -238,9 +246,7 @@ export function sidebarView({
   const matcher = (win ?? globalThis.window)?.matchMedia?.(PHONE_QUERY);
   /** @param {any} event */
   const onResize = (event) => {
-    // A menu that has left the page stops listening.
-    if (/** @type {any} */ (side).isConnected === false) matcher.removeEventListener("change", onResize);
-    else if (event.matches !== true) closeDrawer(false);
+    if (event.matches !== true) closeDrawer(false);
   };
   matcher?.addEventListener?.("change", onResize);
 
@@ -268,9 +274,10 @@ export function sidebarView({
       return el("span", { class: "side-link side-soon", role: "link", "aria-disabled": "true", "data-role": entry.role, title: t("shell.soon") },
         icon, el("span", { class: "side-label" }, label), el("span", { class: "side-tag" }, t("shell.soon")));
     }
+    const count = entry.count === null ? null : el("span", { class: "side-count" }, String(entry.count));
+    if (count !== null && entry.countKey !== null) countNodes.set(entry.id, { node: count, key: entry.countKey });
     const link = el("a", { class: "side-link", href: /** @type {string} */ (entry.href), "data-role": entry.role, "data-entry": entry.id, title: label },
-      icon, el("span", { class: "side-label" }, label),
-      ...(entry.count === null ? [] : [el("span", { class: "side-count" }, String(entry.count))]));
+      icon, el("span", { class: "side-label" }, label), ...(count === null ? [] : [count]));
     link.addEventListener("click", () => closeDrawer(false));
     return link;
   }
@@ -280,18 +287,19 @@ export function sidebarView({
     const link = linkOf(entry);
     const li = el("li", { class: "side-item side-folder", "data-depth": String(entry.depth), "data-folder": entry.folder ?? "" }, link);
     if (entry.folder !== null) {
-      const id = entry.folder;
+      const name = entry.folder;
+      const menuId = `${sideId}-folder-menu-${(folderMenus += 1)}`;
       const more = el("button", {
         type: "button", class: "side-btn side-more", "aria-haspopup": "menu", "aria-expanded": "false", "data-role": "folder-menu-button",
-        "aria-label": t("shell.pinned.options", { name: entry.label }),
+        "aria-label": t("shell.pinned.options", { name: entry.label }), "aria-controls": menuId,
       }, el("span", { class: "icon", "data-icon": "more", "aria-hidden": "true" }));
       const unpin = el("button", { type: "button", role: "menuitem", tabindex: "-1", class: "side-menuitem", "data-role": "unpin" },
         el("span", { class: "icon", "data-icon": "pin", "aria-hidden": "true" }), t("shell.pinned.unpin"));
-      const menu = el("div", { class: "side-menu side-folder-menu", role: "menu", "aria-label": entry.label, "data-role": "folder-menu" }, unpin);
+      const menu = el("div", { class: "side-menu side-folder-menu", id: menuId, role: "menu", "aria-label": entry.label, "data-role": "folder-menu" }, unpin);
       const pop = popMenu({ trigger: more, menu, items: () => [unpin], onOpen: () => closeMenus(pop) });
       menus.push(pop);
       unpin.addEventListener("click", () => {
-        prefs.unpin(id);
+        prefs.unpin(name);
         render();
       });
       li.appendChild(more);
@@ -303,6 +311,7 @@ export function sidebarView({
   function render() {
     // The folder menus built before are gone with their entries; the account menu stays.
     for (let i = menus.length - 1; i >= 1; i -= 1) menus.splice(i, 1);
+    countNodes.clear();
     const sections = sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: prefs.pinned() });
     mount(lists, ...sections.map((section) => {
       const heading = section.heading === null ? null : el("h2", { class: "side-heading", id: `${sideId}-${section.id}` }, t(section.heading));
@@ -343,7 +352,14 @@ export function sidebarView({
     setCounts(next) {
       if (next.all === currentCounts.all && next.favorites === currentCounts.favorites) return;
       currentCounts = next;
-      render();
+      // Only the numbers change, in place: the menu is not built again, so the focus stays where it is and a screen
+      // reader is not told about new entries.
+      for (const { node, key } of countNodes.values()) {
+        const value = String(/** @type {Record<string, number>} */ (next)[key]);
+        const text = /** @type {any} */ (node.firstChild);
+        if (text === null) node.appendChild(document.createTextNode(value));
+        else if (text.data !== value) text.data = value;
+      }
     },
     /** @param {readonly { id: string, name: string, parentId?: string | null }[]} next */
     setFolders(next) {
@@ -370,11 +386,37 @@ export function sidebarView({
       }
       return false;
     },
+    /**
+     * Tab in the open drawer goes round inside it: past the last control to the first, back from the first to the last
+     * (the rest of the page is inert, so the focus would otherwise leave the page).
+     * @param {any} event
+     */
+    trap(event) {
+      if (!drawerOpen || event.key !== "Tab" || typeof side.querySelectorAll !== "function") return;
+      const list = [...side.querySelectorAll("a[href], button:not([disabled])")].filter((node) => node.getAttribute("tabindex") !== "-1" && node.getClientRects().length > 0);
+      if (list.length === 0) return;
+      // From an item of an open menu the next stop is counted from the menu's own button.
+      const owner = menus.find((menu) => within(event.target, menu.menu));
+      const current = owner ? owner.trigger : event.target;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (event.shiftKey === true ? current === first : current === last) {
+        event.preventDefault?.();
+        focusNode(event.shiftKey === true ? last : first);
+      }
+    },
     /** A press anywhere: an open menu closes when the press is outside it. @param {any} target */
     press(target) {
       for (const menu of menus) if (menu.isOpen() && !within(target, menu.menu) && !within(target, menu.trigger)) menu.close(false);
     },
     closeMenus: () => closeMenus(),
     closeDrawer: () => closeDrawer(false),
+    /** Lets go of everything outside the menu that points into it: the window's media query and the parts of the page it holds. */
+    dispose() {
+      matcher?.removeEventListener?.("change", onResize);
+      behind = [];
+      countNodes.clear();
+      menus.length = 0;
+    },
   };
 }

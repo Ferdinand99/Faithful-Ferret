@@ -7,6 +7,7 @@
 :root {
   --side-w: 264px;
   --side-w-rail: 64px;
+  --scrim: light-dark(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.55));
 
   /* Icons of the side menu, painted by mask like the ones in base.css. */
   --i-items: url(data:image/svg+xml,%3Csvg%20xmlns=%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%271.5%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Crect%20x=%273.5%27%20y=%274.5%27%20width=%2717%27%20height=%2715%27%20rx=%273%27/%3E%3Cpath%20d=%27M7.5%209.5h9M7.5%2012.5h9M7.5%2015.5h5%27/%3E%3C/svg%3E);
@@ -70,6 +71,13 @@
   flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
+}
+
+/* The menu has no bar above the screen on a wide window, so the screen needs no room kept above an anchor. */
+@media (min-width: 768px) {
+  html:has(.vault-shell) {
+    scroll-padding-top: 0;
+  }
 }
 
 /* The way past the menu for a keyboard: out of sight until it has the focus. */
@@ -289,26 +297,6 @@
   font-size: 0.6875rem;
   font-weight: 600;
   line-height: 1.5;
-}
-
-/* The way to make an item stands out: the one filled entry. */
-.vault-ui .side-section[data-section="primary"] a.side-link {
-  margin-bottom: var(--sp-2);
-  background: var(--brand);
-  color: var(--on-inverse);
-  font-weight: 700;
-}
-
-.vault-ui .side-section[data-section="primary"] a.side-link .icon,
-.vault-ui .side-section[data-section="primary"] a.side-link[aria-current="page"] .icon {
-  color: inherit;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .vault-ui .side-section[data-section="primary"] a.side-link:hover {
-    background: var(--brand);
-    filter: brightness(1.08);
-  }
 }
 
 /* The switch between the vault and the admin pages */
@@ -580,7 +568,7 @@
     inset: 0;
     z-index: 55;
     display: block;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--scrim);
   }
 
   .vault-ui .side-collapse {

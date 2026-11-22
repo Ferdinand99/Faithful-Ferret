@@ -31,6 +31,11 @@ async function mountShell(page, options = {}) {
     const items = Array.from({ length: 248 }, (_, i) => ({ id: (i + 1).toString(16).padStart(32, "0"), name: `Item ${i}`, favorite: i % 20 === 0, urls: [] }));
     const handlers = new Map();
     const engine = { list: () => items, on: (event, fn) => { handlers.set(event, fn); return () => {}; } };
+    // The items change from the test: more of them, and the engine says so.
+    window.__changeItems = (count) => {
+      while (items.length < count) items.push({ id: (items.length + 1).toString(16).padStart(32, "0"), name: `Item ${items.length}`, favorite: false, urls: [] });
+      handlers.get("changed")?.({});
+    };
     window.__calls = { lock: 0, signOut: 0, admin: 0 };
     const frame = shellView({
       t: i18n.t, engine, session: { onLock() {} },
@@ -116,9 +121,23 @@ test.describe("the side menu on a desktop", () => {
     }
     // The account menu leads to the account page.
     await page.locator('[data-role="account-menu-button"]').click();
+    // Help is a link to a page outside the vault, in a window of its own with no way back.
+    await expect(page.locator('[data-role="help"]')).toHaveAttribute("target", "_blank");
+    await expect(page.locator('[data-role="help"]')).toHaveAttribute("rel", /noopener/);
     await page.locator('[data-role="nav-account"]').click();
     await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/account");
     await expect(page.locator('[data-role="nav-account"]')).toHaveAttribute("aria-current", "page");
+  });
+
+  test("a_new_count_changes_the_number_and_keeps_the_focus_on_the_entry", async ({ page }) => {
+    await ready(page);
+    await mountShell(page);
+    const link = page.locator('[data-role="nav-items"]');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.evaluate(() => window.__changeItems(260));
+    await expect(page.locator('[data-role="nav-items"] .side-count')).toHaveText("260");
+    await expect(link).toBeFocused();
   });
 
   test("lock_now_locks_and_sign_out_signs_out", async ({ page }) => {
@@ -182,7 +201,7 @@ test.describe("the side menu on a desktop", () => {
 
   test("every_control_without_text_has_a_name", async ({ page }) => {
     await ready(page);
-    await mountShell(page, { withFolders: true, pinned: ["home"], admin: true });
+    await mountShell(page, { withFolders: true, pinned: ["Home"], admin: true });
     const unnamed = await page.evaluate(() =>
       [...document.querySelectorAll("#shell-test button, #shell-test a[href], #shell-test [role=menuitem]")]
         .filter((node) => (node.getAttribute("aria-label") ?? node.textContent ?? "").trim() === "")
@@ -235,7 +254,7 @@ test.describe("the side menu on a desktop", () => {
 
   test("a_pinned_folder_is_in_the_menu_with_its_sub_folders_and_can_be_unpinned_from_its_menu", async ({ page }) => {
     await ready(page);
-    await mountShell(page, { withFolders: true, pinned: ["home"] });
+    await mountShell(page, { withFolders: true, pinned: ["Home"] });
     await expect(page.locator('[data-role="nav-folder"]')).toHaveText(["Home", "Network"]);
     await page.locator('[data-role="nav-folder"]').first().hover();
     await page.locator('[data-role="folder-menu-button"]').click();
@@ -250,7 +269,7 @@ for (const scheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width: 1280, height: 800 });
     await ready(page);
-    await mountShell(page, { admin: true, withFolders: true, pinned: ["home"] });
+    await mountShell(page, { admin: true, withFolders: true, pinned: ["Home"] });
     await page.locator('[data-role="nav-items"]').click();
     await expect(page.locator('[data-role="nav-items"]')).toHaveAttribute("aria-current", "page");
     await settled(page); // the tint fades in
@@ -262,9 +281,9 @@ for (const scheme of ["light", "dark"]) {
         text: css('[data-role="nav-trash"]', "color"),
         current: css('[data-role="nav-items"]', "backgroundColor"),
         mark: css(".vault-side .brand", "backgroundImage", "::before"),
-        newFill: css('[data-role="nav-new"]', "backgroundColor"),
-        newText: css('[data-role="nav-new"]', "color"),
         avatar: css(".vault-side .avatar", "backgroundColor"),
+        avatarText: css(".vault-side .avatar", "color"),
+        newItem: css('[data-role="nav-new"]', "backgroundColor"),
       };
     });
     const lightness = (rgb) => {
@@ -278,11 +297,12 @@ for (const scheme of ["light", "dark"]) {
       expect(lightness(look.side)).toBeGreaterThan(0.9);
       expect(lightness(look.text)).toBeLessThan(0.3);
     }
-    // The current entry is tinted, the mark is the page's own picture, and the filled entry and the round mark are in the brand colour.
+    // The current entry is tinted, the mark is the page's own picture, the round mark has readable letters in the brand
+    // colour, and "New item" is an ordinary entry (the list page has the filled button).
     expect(look.current).not.toBe("rgba(0, 0, 0, 0)");
     expect(look.mark).toContain("data:image/svg+xml");
-    expect(look.newFill).toBe(look.avatar);
-    expect(Math.abs(lightness(look.newFill) - lightness(look.newText))).toBeGreaterThan(0.4);
+    expect(Math.abs(lightness(look.avatar) - lightness(look.avatarText))).toBeGreaterThan(0.4);
+    expect(look.newItem).toBe("rgba(0, 0, 0, 0)");
     await page.screenshot({ path: testInfo.outputPath(`shell-desktop-${scheme}.png`) });
     // Folded to a rail as well.
     await page.locator('[data-role="collapse"]').click();
@@ -293,7 +313,7 @@ for (const scheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width: 375, height: 760 });
     await ready(page);
-    await mountShell(page, { admin: true, withFolders: true, pinned: ["home"] });
+    await mountShell(page, { admin: true, withFolders: true, pinned: ["Home"] });
     await page.locator('[data-role="menu-open"]').click();
     await expect(page.locator('[data-role="side"]')).toBeVisible();
     await settled(page);
@@ -340,6 +360,29 @@ test.describe("the drawer of a phone", () => {
     await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/trash");
   });
 
+  test("the_focus_stays_inside_the_open_drawer_whichever_way_tab_goes", async ({ page }) => {
+    await ready(page);
+    await mountShell(page, { admin: true, withFolders: true, pinned: ["Home"] });
+    await page.locator('[data-role="menu-open"]').click();
+    await expect(page.locator('[data-role="menu-close"]')).toBeFocused();
+    const inside = () => page.evaluate(() => document.activeElement?.closest('[data-role="side"]') !== null && document.activeElement?.closest('[data-role="side"]') !== undefined);
+    // Forward past the last control and on round: never the skip link, the page footer or the screen behind.
+    for (let i = 0; i < 30; i += 1) {
+      await page.keyboard.press("Tab");
+      expect(await inside(), `Tab ${i + 1}`).toBe(true);
+    }
+    for (let i = 0; i < 30; i += 1) {
+      await page.keyboard.press("Shift+Tab");
+      expect(await inside(), `Shift+Tab ${i + 1}`).toBe(true);
+    }
+    // The parts outside the drawer are out of reach, the page's own footer too.
+    expect(await page.evaluate(() => document.getElementById("foot").inert)).toBe(true);
+    expect(await page.evaluate(() => document.querySelector('[data-role="skip"]').inert)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-role="side"]')).toBeHidden();
+    expect(await page.evaluate(() => document.getElementById("foot").inert)).toBe(false);
+  });
+
   test("the_account_menu_opens_inside_the_drawer_and_escape_closes_the_menu_before_the_drawer", async ({ page }) => {
     await ready(page);
     await mountShell(page);
@@ -384,7 +427,7 @@ for (const width of [320, 375]) {
   test(`nothing_sticks_out_and_there_is_no_sideways_scroll_at_${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 700 });
     await ready(page);
-    await mountShell(page, { admin: true, email: LONG_EMAIL, withFolders: true, pinned: ["home", "long"] });
+    await mountShell(page, { admin: true, email: LONG_EMAIL, withFolders: true, pinned: ["Home", LONG_FOLDER] });
     expect(await noSidewaysScroll(page), "menu closed").toBe(true);
     expect(await outside(page)).toEqual([]);
     await page.locator('[data-role="menu-open"]').click();

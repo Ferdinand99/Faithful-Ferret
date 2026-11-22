@@ -17,6 +17,8 @@ export default {
       list: () => engine.list().filter((/** @type {{ favorite?: boolean }} */ item) => item.favorite === true),
       on: (/** @type {string} */ event, /** @type {(payload: any) => void} */ fn) => engine.on(event, fn),
     };
-    return vault.page(listView({ engine: favourites, router: { go: ctx.go }, t: ctx.i18n.t }));
+    // The list says "no items yet" when it has none; here that would be wrong, so that one text is its own.
+    const t = /** @type {typeof ctx.i18n.t} */ ((key, vars) => ctx.i18n.t(key === "vault.list.empty" ? "shell.favorites.empty" : key, vars));
+    return vault.page(listView({ engine: favourites, router: { go: ctx.go }, t }));
   },
 };

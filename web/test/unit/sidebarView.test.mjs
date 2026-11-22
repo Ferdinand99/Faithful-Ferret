@@ -12,7 +12,7 @@ import favoritesRoute from "../../src/routes/favorites.route.mjs";
 import listRoute from "../../src/routes/list.route.mjs";
 import newRoute from "../../src/routes/new.route.mjs";
 import trashRoute from "../../src/routes/trash.route.mjs";
-import { FakeElement, all, click, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
+import { FakeElement, all, click, fakeEngine, fakeSession, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const ROUTES = [listRoute, newRoute, favoritesRoute, trashRoute];
 const FOLDERS = [{ id: "home", name: "Home", parentId: null }, { id: "net", name: "Network", parentId: "home" }, { id: "fin", name: "Finance", parentId: null }];
@@ -122,7 +122,7 @@ test("pinned_folders_are_listed_with_their_sub_folders_and_can_be_unpinned_from_
   await withDom(async () => {
     const storage = memory();
     const prefs = createUiPrefs(storage);
-    prefs.pin("home");
+    prefs.pin("Home");
     const { root, view } = build({ prefs, folders: FOLDERS });
     const rows = () => all(root, "nav-folder").map((link) => textOf(link).trim());
     assert.deepEqual(rows(), ["Home", "Network"]);
@@ -153,6 +153,7 @@ test("the_account_menu_opens_from_the_foot_and_names_the_account", async () => {
     assert.equal(button.getAttribute("aria-expanded"), "false");
     assert.equal(button.getAttribute("aria-controls"), menu.getAttribute("id"));
     assert.equal(button.getAttribute("aria-label"), 'shell.account.menu {"email":"ada.lovelace@example.com"}');
+    assert.equal(find(root, "account-menu-button").childNodes.find((c) => c.getAttribute?.("class") === "side-email").getAttribute("title"), "ada.lovelace@example.com", "a cut-off address can be read in full");
     assert.equal(menu.hidden, true);
     assert.ok(textOf(button).includes("AL"), "the round mark has the initials");
 
@@ -170,15 +171,17 @@ test("the_account_menu_opens_from_the_foot_and_names_the_account", async () => {
     assert.equal(menu.hidden, true);
     assert.equal(button.getAttribute("aria-expanded"), "false");
 
-    // Sign out does what it was given; Help opens the documentation in a window of its own that has no link back.
+    // Sign out does what it was given.
     await click(button);
     await click(find(root, "sign-out"));
     assert.equal(calls.signOut, 1);
-    await click(find(root, "help"));
-    assert.equal(calls.opened.length, 1);
-    assert.match(calls.opened[0][0], /^https:\/\//);
-    assert.equal(calls.opened[0][1], "_blank");
-    assert.match(calls.opened[0][2], /noopener/);
+    // Help is a link to the documentation, in a window of its own that has no way back to the vault.
+    const help = find(root, "help");
+    assert.equal(help.tagName, "a");
+    assert.match(help.getAttribute("href"), /^https:\/\//);
+    assert.equal(help.getAttribute("target"), "_blank");
+    assert.match(help.getAttribute("rel"), /noopener/);
+    assert.match(help.getAttribute("rel"), /noreferrer/);
   });
 });
 
@@ -249,8 +252,8 @@ test("a_press_outside_closes_a_menu_and_a_press_inside_does_not", async () => {
 test("one_menu_is_open_at_a_time", async () => {
   await withDom(async () => {
     const prefs = createUiPrefs(memory());
-    prefs.pin("home");
-    prefs.pin("fin");
+    prefs.pin("Home");
+    prefs.pin("Finance");
     const { root } = build({ prefs, folders: FOLDERS });
     const [home, fin] = all(root, "folder-menu-button");
     const account = find(root, "account-menu-button");
@@ -328,7 +331,7 @@ test("an_open_menu_closes_before_the_drawer_when_escape_is_pressed", async () =>
 test("every_control_with_no_text_has_a_name_and_every_link_says_where_it_goes", async () => {
   await withDom(async () => {
     const prefs = createUiPrefs(memory());
-    prefs.pin("home");
+    prefs.pin("Home");
     const { root } = build({ prefs, folders: FOLDERS, admin: adminWay(true) });
     await settle();
     const nodes = [...walk(root)].filter((n) => n instanceof FakeElement);
@@ -437,5 +440,94 @@ test("the_frame_follows_the_items_in_its_counts", async () => {
     engine.items = [...engine.items, { id: "c".repeat(32), favorite: true }];
     engine.emit("changed", {});
     assert.deepEqual([count("nav-items"), count("nav-favorites")], ["3", "2"]);
+  });
+});
+
+test("a_new_count_changes_the_number_in_place_and_leaves_the_entries_and_the_focus_alone", async () => {
+  await withDom(async () => {
+    const { view, root, focused } = build();
+    const link = find(root, "nav-items");
+    const favourites = find(root, "nav-favorites");
+    const lists = find(root, "side-sections");
+    const before = [...lists.childNodes];
+    const countNode = link.childNodes.find((c) => c.getAttribute?.("class") === "side-count");
+    view.setCounts({ all: 249, favorites: 12 });
+    // The same nodes: nothing was built again, so the keyboard focus on a link stays where it is.
+    assert.equal(find(root, "nav-items"), link);
+    assert.equal(find(root, "nav-favorites"), favourites);
+    assert.deepEqual([...lists.childNodes], before);
+    assert.equal(link.childNodes.find((c) => c.getAttribute?.("class") === "side-count"), countNode);
+    assert.equal(textOf(countNode).trim(), "249");
+    assert.equal(textOf(favourites.childNodes.find((c) => c.getAttribute?.("class") === "side-count")).trim(), "12");
+    assert.deepEqual(focused, []);
+    // The same count again does nothing at all.
+    view.setCounts({ all: 249, favorites: 12 });
+    assert.equal(find(root, "nav-items"), link);
+  });
+});
+
+test("the_menu_lets_go_of_the_window_and_the_page_when_it_is_disposed", async () => {
+  await withDom(async () => {
+    const queries = new Set();
+    const win = {
+      matchMedia: () => ({ addEventListener: (_type, fn) => queries.add(fn), removeEventListener: (_type, fn) => queries.delete(fn) }),
+    };
+    const { view, behind } = build({ win });
+    assert.equal(queries.size, 1);
+    view.dispose();
+    assert.equal(queries.size, 0);
+    // It no longer holds the parts of the page it made inert: opening the drawer leaves them alone.
+    view.openDrawer();
+    assert.deepEqual(behind.map((node) => node.inert), [undefined, undefined]);
+  });
+});
+
+test("after_a_lock_nothing_of_the_old_frame_is_left_listening_and_it_holds_no_screen", async () => {
+  await withDom(async () => {
+    const queries = new Set();
+    const hash = new Set();
+    const win = {
+      location: { hash: "#/items" },
+      addEventListener: (type, fn) => type === "hashchange" && hash.add(fn),
+      removeEventListener: (type, fn) => type === "hashchange" && hash.delete(fn),
+      matchMedia: () => ({ addEventListener: (_type, fn) => queries.add(fn), removeEventListener: (_type, fn) => queries.delete(fn) }),
+    };
+    const engine = fakeEngine();
+    const session = fakeSession();
+    const scope = createWipeScope();
+    const content = el("p", { "data-role": "secret-screen" }, "Bank");
+    const root = shellView({
+      t, engine, session, content, lock: async () => {}, touch: () => true, scope, onLocked: () => el("div", { "data-role": "unlock" }),
+      routes: ROUTES, prefs: createUiPrefs(null), win,
+    });
+    assert.equal(queries.size, 1);
+    assert.equal(hash.size, 1);
+    assert.ok(engine.listeners.changed.size + engine.listeners.state.size + engine.listeners.error.size + engine.listeners.copied.size >= 4);
+    assert.ok(find(root, "secret-screen"));
+
+    await session.lock();
+    // The listeners that point into the frame are gone, on the window, on the media query and on the engine.
+    assert.equal(queries.size, 0);
+    assert.equal(hash.size, 0);
+    for (const [event, set] of Object.entries(engine.listeners)) assert.equal(set.size, 0, event);
+    // The frame holds only the unlock screen: not the menu, not the screen, not the e-mail.
+    assert.equal(find(root, "secret-screen"), null);
+    assert.equal(find(root, "side"), null);
+    assert.equal(root.childNodes.length, 1);
+    assert.ok(find(root, "unlock"));
+  });
+});
+
+test("a_frame_that_leaves_the_page_lets_go_when_its_scope_runs", async () => {
+  await withDom(async () => {
+    const queries = new Set();
+    const win = { matchMedia: () => ({ addEventListener: (_t, fn) => queries.add(fn), removeEventListener: (_t, fn) => queries.delete(fn) }), addEventListener() {}, removeEventListener() {}, location: { hash: "" } };
+    const engine = fakeEngine();
+    const scope = createWipeScope();
+    shellView({ t, engine, session: { onLock() {} }, content: el("p"), lock: async () => {}, touch: () => true, scope, onLocked: () => el("div"), routes: ROUTES, prefs: createUiPrefs(null), win });
+    assert.equal(queries.size, 1);
+    scope.run();
+    assert.equal(queries.size, 0);
+    assert.equal(engine.listeners.changed.size, 0);
   });
 });

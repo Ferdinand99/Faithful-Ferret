@@ -45,7 +45,7 @@ import { createUiPrefs } from "../uiPrefs.mjs";
  * @property {readonly any[]} [routes] the routes of the page; the side menu lists those that say `sidebar`
  * @property {string | null} [email] the signed-in account, for the foot of the side menu
  * @property {{ check(): Promise<boolean>, go(): void | Promise<void> }} [admin] the way to the admin pages; the switch shows only when `check` answers true
- * @property {() => Promise<void> | void} [signOut] what "Sign out" does; without it the menu has no such item
+ * @property {() => Promise<void> | void} [signOut] what "Sign out" does (it leaves for the sign-in page itself, and rejects when the server could not be asked); without it the menu has no such item
  * @property {ReturnType<typeof createUiPrefs>} [prefs] what this device remembers about the menu
  * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders of the vault, for the pinned ones (the vault has none yet)
  *
@@ -139,7 +139,19 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     onLock: async () => {
       await lock();
     },
-    onSignOut: signOut, win,
+    onSignOut: signOut
+      ? async () => {
+        try {
+          await signOut();
+        } catch {
+          // The device is signed out, but the server could not be asked to end its session: say so, in place of the page.
+          mount(root, el("section", { class: "auth-card vault-ui", role: "alert", "data-role": "signout-incomplete" },
+            el("p", null, t("account.error.signout_incomplete")),
+            el("p", null, el("a", { href: "#/login" }, t("shell.signout.login")))));
+        }
+      }
+      : undefined,
+    win,
   });
   const main = el("main", { class: "vault-main", id: "vault-content", tabindex: "-1", "data-role": "content" }, content);
   // What the engine has found out about the server (warnings and stops) has its own banner, which follows the engine's
@@ -151,7 +163,11 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   skip.addEventListener("click", () => {
     if (typeof main.focus === "function") main.focus();
   });
-  chrome.setBehind([body]);
+  // Out of reach while the drawer is open: the screen, the skip link, and the page's own footer (outside the frame).
+  const pageFoot = globalThis.document?.getElementById?.("foot") ?? null;
+  chrome.setBehind([skip, body, ...(pageFoot === null ? [] : [pageFoot])]);
+  // What the frame hands to the page (the window's media query, the parts it holds) is let go when the frame leaves the page or the vault locks.
+  scope.add(() => chrome.dispose());
   mount(root, skip, chrome.top, el("div", { class: "vault-layout" }, chrome.side, chrome.backdrop, body));
 
   /** @type {Map<string, HTMLElement>} */
@@ -248,9 +264,10 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       else chrome.markCurrent(pathNow());
     };
     win.addEventListener("hashchange", onHash);
+    scope.add(() => win.removeEventListener?.("hashchange", onHash));
   }
   // The numbers beside "All items" and "Favourites" follow the items.
-  listenWhileShown(root, engine, "changed", () => chrome.setCounts(countItems(items(), MANIFEST_ID)));
+  scope.add(listenWhileShown(root, engine, "changed", () => chrome.setCounts(countItems(items(), MANIFEST_ID))));
 
   /** @param {unknown} state */
   function onLive(state) {
@@ -307,8 +324,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   // said now: the announcement is made once, and a screen that missed it would show "Syncing" for good.
   const stood = typeof engine.status === "function" ? engine.status() : "";
   if (stood === "unauthorized" || stood === "offline" || stood === "failed") onState({ kind: stood });
-  listenWhileShown(root, engine, "state", onState);
-  listenWhileShown(root, engine, "error", onError);
+  scope.add(listenWhileShown(root, engine, "state", onState));
+  scope.add(listenWhileShown(root, engine, "error", onError));
 
   // Activity: a click or a key press moves the idle time on. When the lock time
   // has passed, `touch` locks instead and the event is dropped.
@@ -317,6 +334,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   root.addEventListener("keydown", activity);
   // Escape closes the open menu or the drawer and puts the focus back on what opened it; a press elsewhere closes a menu.
   root.addEventListener("keydown", (/** @type {any} */ event) => {
+    chrome.trap(event);
     if (event.key === "Escape" && chrome.escape()) event.preventDefault?.();
   });
   root.addEventListener("pointerdown", (/** @type {any} */ event) => chrome.press(event.target));
@@ -333,7 +351,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   // Another tab took the vault: this one stops showing it. The engine has stopped already (the items and the open handles are gone);
   // what is on the screen goes too, and the notice takes the whole frame.
   if (standby) {
-    listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
+    scope.add(listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
       if (on !== true) return;
       // A form with edits that are not saved stays on screen, read-only, under the notice (with "Take back"); the lock wipes it.
       // Anything else on the screen goes, as before.
@@ -349,18 +367,18 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       const card = standby.card();
       mount(root, card.root);
       card.focus();
-    });
+    }));
   }
 
   // An item that was restored over one the server had purged is a copy under a new id now (the engine's `copied`): the screen of
   // the old one moves to the copy, and the user is told once. An edit screen follows by itself (it keeps what was typed).
-  listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
+  scope.add(listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
     const from = payload?.from;
     const to = payload?.to;
     if (typeof from !== "string" || typeof to !== "string") return;
     if (String(win?.location?.hash ?? "").replace(/^#/, "") === `/items/${from}`) router.go(`/items/${to}`);
     banner(`copied:${to}`, "info", t("vault.banner.copied"));
-  });
+  }));
 
   return root;
 }
@@ -489,19 +507,22 @@ function adminWay(session, accountId) {
 }
 
 /**
- * Sign out, then the sign-in page, whether or not the server answered: the device is wiped either way (the sign-in
- * page is where a failed sign-out is found out about, as before).
+ * Sign out, then the sign-in page. The device is wiped whatever happens. When the server could not be asked to end its
+ * session (`signout_incomplete`) this rejects instead of leaving, so that the frame can say so; any other failure
+ * still leaves for the sign-in page, as the sign-in page's own button does.
  * @param {any} session
  * @param {(path: string) => void} go
  */
 async function signOutAndLeave(session, go) {
+  /** @type {unknown} */
+  let failure = null;
   try {
     await session.signOut();
-  } catch {
-    // The session wiped this device; a server that did not answer is told on the sign-in page by the missing session.
-  } finally {
-    go("/login");
+  } catch (error) {
+    failure = error;
   }
+  if (/** @type {any} */ (failure)?.code === "signout_incomplete") throw failure;
+  go("/login");
 }
 
 /**

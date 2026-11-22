@@ -82,25 +82,28 @@ const FOLDERS = [
 ];
 
 test("a_pinned_folder_is_listed_with_the_folders_below_it_and_nothing_else", () => {
-  assert.deepEqual(pinnedTree(FOLDERS, ["home"]).map((f) => [f.id, f.depth]), [["home", 0], ["net", 1], ["srv", 1], ["rack", 2]]);
-  assert.deepEqual(pinnedTree(FOLDERS, ["fin", "home"]).map((f) => f.id), ["fin", "home", "net", "srv", "rack"], "in the order they were pinned");
+  assert.deepEqual(pinnedTree(FOLDERS, ["Home"]).map((f) => [f.id, f.depth]), [["home", 0], ["net", 1], ["srv", 1], ["rack", 2]]);
+  assert.deepEqual(pinnedTree(FOLDERS, ["Finance", "Home"]).map((f) => f.id), ["fin", "home", "net", "srv", "rack"], "in the order they were pinned");
+  // A pin is a name: every folder with that name is pinned, and a folder made again under the name is pinned again.
+  const twins = [...FOLDERS, { id: "home2", name: "Home", parentId: null }];
+  assert.deepEqual(pinnedTree(twins, ["Home"]).filter((f) => f.pinned).map((f) => f.id), ["home", "home2"]);
   assert.deepEqual(pinnedTree(FOLDERS, []), []);
   // A pin that points at a folder that is gone shows nothing.
-  assert.deepEqual(pinnedTree(FOLDERS, ["gone"]), []);
+  assert.deepEqual(pinnedTree(FOLDERS, ["Gone"]), []);
   // A folder pinned below another pinned one stands once, below it.
-  assert.deepEqual(pinnedTree(FOLDERS, ["srv", "home"]).map((f) => [f.id, f.depth]), [["home", 0], ["net", 1], ["srv", 1], ["rack", 2]]);
+  assert.deepEqual(pinnedTree(FOLDERS, ["Servers", "Home"]).map((f) => [f.id, f.depth]), [["home", 0], ["net", 1], ["srv", 1], ["rack", 2]]);
   // Folders that are each other's parent do not loop.
   const loop = [{ id: "x", name: "X", parentId: "y" }, { id: "y", name: "Y", parentId: "x" }];
-  assert.deepEqual(pinnedTree(loop, ["x"]).map((f) => f.id), ["x", "y"]);
+  assert.deepEqual(pinnedTree(loop, ["X"]).map((f) => f.id), ["x", "y"]);
 });
 
 test("the_pinned_section_shows_only_when_a_folder_is_pinned_and_each_row_says_whether_it_can_be_unpinned", () => {
   const none = sidebarModel({ routes: ROUTES, folders: FOLDERS, pinned: [] });
   assert.ok(!none.some((s) => s.id === "pinned"), "no heading over nothing");
-  const some = sidebarModel({ routes: ROUTES, folders: FOLDERS, pinned: ["srv"] });
+  const some = sidebarModel({ routes: ROUTES, folders: FOLDERS, pinned: ["Servers"] });
   const pinned = some.find((s) => s.id === "pinned");
   assert.equal(pinned.heading, "shell.section.pinned");
-  assert.deepEqual(pinned.entries.map((e) => [e.label, e.depth, e.folder]), [["Servers", 0, "srv"], ["Rack", 1, null]]);
+  assert.deepEqual(pinned.entries.map((e) => [e.label, e.depth, e.folder]), [["Servers", 0, "Servers"], ["Rack", 1, null]]);
   assert.equal(pinned.entries[0].href, "#/folders/srv");
   // The section stands between the items and the tools.
   assert.deepEqual(some.map((s) => s.id), ["primary", "main", "pinned", "tools", "manage"]);
@@ -180,7 +183,7 @@ test("the_folded_state_and_the_pins_are_remembered_per_device", () => {
   assert.equal(storage.map.has(UI_PREFS_KEY), false, "nothing is kept when everything is the default");
 });
 
-test("only_the_folded_flag_and_folder_ids_are_kept_never_a_name", () => {
+test("only_the_folded_flag_and_the_names_of_the_pinned_folders_are_kept", () => {
   const storage = memory();
   const prefs = createUiPrefs(storage);
   prefs.setCollapsed(true);
@@ -188,9 +191,11 @@ test("only_the_folded_flag_and_folder_ids_are_kept_never_a_name", () => {
   assert.deepEqual(JSON.parse(storage.map.get(UI_PREFS_KEY)), { collapsed: true, pinned: ["srv"] });
 });
 
-test("a_pin_that_is_not_a_plain_id_or_is_one_too_many_is_refused", () => {
+test("a_pin_that_is_not_a_one_line_name_or_is_one_too_many_is_refused", () => {
   const prefs = createUiPrefs(memory());
-  for (const bad of ["", "a b", "<b>", "x".repeat(65), "../x", 5, null, undefined]) assert.equal(prefs.pin(bad), false, String(bad));
+  for (const bad of ["", "two\nlines", "x".repeat(129), "tab\there", 5, null, undefined]) assert.equal(prefs.pin(bad), false, String(bad));
+  assert.equal(prefs.pin("Økonomi og skatt <2026>"), true, "a name is any one line of text");
+  prefs.unpin("Økonomi og skatt <2026>");
   assert.deepEqual(prefs.pinned(), []);
   for (let i = 0; i < MAX_PINNED; i += 1) assert.equal(prefs.pin(`f${i}`), true);
   assert.equal(prefs.pin("one-more"), false);
@@ -206,8 +211,8 @@ test("a_stored_value_of_the_wrong_shape_reads_as_the_default", () => {
     assert.deepEqual(prefs.pinned(), []);
   }
   const storage = memory();
-  storage.setItem(UI_PREFS_KEY, JSON.stringify({ collapsed: true, pinned: ["ok", 7, "no good", "ok", "<x>", "fine_2"] }));
-  assert.deepEqual(createUiPrefs(storage).pinned(), ["ok", "fine_2"]);
+  storage.setItem(UI_PREFS_KEY, JSON.stringify({ collapsed: true, pinned: ["ok", 7, "no good", "ok", "bad\nline", "fine_2"] }));
+  assert.deepEqual(createUiPrefs(storage).pinned(), ["ok", "no good", "fine_2"]);
 });
 
 test("a_blocked_store_only_means_the_choice_is_not_remembered", () => {
@@ -234,6 +239,6 @@ test("the_menu_texts_exist_in_both_languages_with_the_same_placeholders", () => 
     assert.equal(holders(value), holders(nb[key]), key);
   }
   // Every label the model can name has a text.
-  const labels = sidebarModel({ routes: [], folders: FOLDERS, pinned: ["home"] }).flatMap((s) => [s.heading, ...s.entries.map((e) => (e.kind === "folder" ? null : e.label))]).filter((x) => x !== null);
+  const labels = sidebarModel({ routes: [], folders: FOLDERS, pinned: ["Home"] }).flatMap((s) => [s.heading, ...s.entries.map((e) => (e.kind === "folder" ? null : e.label))]).filter((x) => x !== null);
   for (const key of labels) assert.ok(key in en, key);
 });
