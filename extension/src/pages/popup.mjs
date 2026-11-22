@@ -169,6 +169,7 @@ async function main() {
         "section",
         { class: "ff-panel", "data-role": "signed-out-view" },
         el("h1", null, texts.t("session.popup.signed_out")),
+        view.ended !== undefined ? el("p", { class: "ff-notice", "data-role": "signed-out-reason" }, texts.t(`sync.ended.${view.ended}`)) : null,
         el("p", null, texts.t("session.popup.signed_out_hint")),
         open,
         view.server !== "" ? forgetPart(view) : null,

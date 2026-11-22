@@ -13,7 +13,8 @@
 //
 //   sync_state     what the popup shows: whether the engine runs, its state,
 //                  the stop and the warnings, as codes (never an item, a name
-//                  or a value)
+//                  or a value), and why the device's tokens ended when the
+//                  server said it (`ended`)
 //   sync_retry     "Try again" after a stop
 //   forget_server  "Forget this server": the device is revoked at the server,
 //                  its key record deleted, and everything this device keeps of
@@ -29,7 +30,12 @@
 // A device whose tokens have ended (revoked in the web vault, `token_reused`,
 // expired) stops syncing at once: the engine is stopped and the vault locks, and
 // the popup shows "signed out". The device keeps its local data (section 7.6);
-// a sign-in with the master password brings it back.
+// a sign-in with the master password brings it back. When the server ended them
+// because the refresh token came with another key's proof (`token_reused`: it
+// was used from somewhere else), `sync_state` says so (`ended`), so the popup
+// can tell the user why. Only this background's own requests (the engine's and
+// the live channel's) are watched for it, and only a code is kept, in memory,
+// until the next unlock or "Forget this server".
 
 import { deleteDeviceKey, loadDeviceKey } from "../shared/auth/deviceKey.mjs";
 import { hex16 } from "../shared/b64.mjs";
@@ -50,6 +56,36 @@ const isCode = (code) => typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.te
 
 /** The engine's `error` events that the popup shows as warnings (the engine clears them with `warning_cleared`). */
 const ERROR_WARNINGS = Object.freeze(["checkpoint_upload_failed"]);
+
+/** The refusal that ends a device's tokens because they were used from somewhere else (design document, section 7.6). */
+export const TOKEN_REUSED = "token_reused";
+
+/**
+ * The session's API client as the engine and the live channel use it: the same calls, the same answers and errors,
+ * and one thing more: a call the server refuses with `token_reused` is noted (`onReused`).
+ * @param {any} api
+ * @param {() => void} onReused
+ * @returns {any}
+ */
+export function watchedApi(api, onReused) {
+  /** @param {unknown} result */
+  const watch = (result) => {
+    if (result !== null && typeof result === "object" && typeof (/** @type {any} */ (result).then) === "function") {
+      // A branch of its own: the caller still gets the call's own promise, and this one never rejects.
+      /** @type {Promise<unknown>} */ (result).then(undefined, (/** @type {any} */ error) => {
+        if (error?.code === TOKEN_REUSED) onReused();
+      });
+    }
+    return result;
+  };
+  return new Proxy(api, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (typeof value !== "function") return value;
+      return (/** @type {unknown[]} */ ...args) => watch(Reflect.apply(value, target, args));
+    },
+  });
+}
 
 /** The states of the live channel (`sync/events.mjs`). */
 const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
@@ -84,6 +120,8 @@ export class SyncHostError extends Error {
  *   live: string,
  *   seen: Set<string>,
  *   ended: boolean,
+ *   api: any,
+ *   watch: { reused: boolean },
  * }} Running
  */
 
@@ -121,6 +159,8 @@ export function createSyncHost({
   let running = null;
   /** The core host, set by `attach`. @type {any} */
   let host = null;
+  /** Why the server ended this device's tokens, when that is known (`token_reused`), until the next unlock. @type {string | null} */
+  let endedBy = null;
 
   /** Stops the engine and its channel, if one runs. */
   function stop() {
@@ -146,7 +186,7 @@ export function createSyncHost({
     if (run.ended || run.channel !== null || run.engine.health().halted !== null) return;
     /** @type {Channel} */
     const channel = createChannel({
-      api: run.session.api,
+      api: run.api,
       win,
       fallbackRetryMs: FALLBACK_POLL_MS,
       onHint: () => (run.ended ? undefined : run.engine.syncNow()),
@@ -181,6 +221,7 @@ export function createSyncHost({
     if (run.ended) return;
     const state = await run.session.deviceState().catch(() => null);
     if (state === "ok" || run.ended || running !== run) return;
+    endedBy = state === "revoked" && run.watch.reused ? TOKEN_REUSED : null;
     stop();
     await host?.lock("sign_out").catch(() => {});
   }
@@ -218,6 +259,7 @@ export function createSyncHost({
    */
   function start({ server, session }) {
     stop();
+    endedBy = null;
     const unlocked = session.current();
     if (host === null || unlocked === null || !hex16.is(unlocked.accountId) || !hex16.is(unlocked.vaultId)) return;
     const scope = { accountId: unlocked.accountId, vaultId: unlocked.vaultId, vkEpoch: unlocked.vkEpoch };
@@ -237,8 +279,13 @@ export function createSyncHost({
       if (!(error instanceof SyncError)) return;
       memory = unavailableMemory(error);
     }
+    // The engine and the live channel share one client, the session's, watched for `token_reused`.
+    const watch = { reused: false };
+    const api = watchedApi(session.api, () => {
+      watch.reused = true;
+    });
     const engine = createEngine({
-      api: session.api,
+      api,
       client,
       store,
       scope,
@@ -248,7 +295,7 @@ export function createSyncHost({
       win,
     });
     /** @type {Running} */
-    const run = { engine, server, session, channel: null, live: "offline", seen: new Set(), ended: false };
+    const run = { engine, api, server, session, channel: null, live: "offline", seen: new Set(), ended: false, watch };
     running = run;
     engine.on("state", (payload) => onEngineState(run, payload));
     engine.on("error", (payload) => onEngineError(run, payload));
@@ -263,7 +310,7 @@ export function createSyncHost({
   /** What the popup shows (see `sync_state`). */
   function snapshot() {
     const run = running;
-    if (run === null) return { running: false, live: "offline", warnings: [] };
+    if (run === null) return { running: false, live: "offline", warnings: [], ...(endedBy !== null ? { ended: endedBy } : {}) };
     const health = run.engine.health();
     const warnings = [...new Set([...health.warnings, ...run.seen])].filter(isCode).slice(-MAX_WARNINGS);
     const status = run.engine.status();
@@ -359,6 +406,7 @@ export function createSyncHost({
         throw new SyncHostError("forget_incomplete");
       }
       await sessionHost.forget();
+      endedBy = null;
       try {
         await permissions.remove?.({ origins: [permissionOf(server)] });
       } catch {

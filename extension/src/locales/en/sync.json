@@ -1,6 +1,7 @@
 {
   "sync.action.forget": "Forget this server",
   "sync.action.try_again": "Try again",
+  "sync.ended.token_reused": "Signed out because this device's sign-in token was used from somewhere else. That can mean the token was copied. Sign in again, and check the device list in the web vault.",
   "sync.error.another_server": "This device is signed in at another server than the one shown. Close the popup and open it again.",
   "sync.error.busy": "Ferret is signing in or unlocking right now. Wait until that is done, then try again.",
   "sync.error.forget_incomplete": "Not everything of this server could be removed from this device. Try again: what was removed stays removed.",

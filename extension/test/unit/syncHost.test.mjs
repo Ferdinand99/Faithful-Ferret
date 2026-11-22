@@ -148,7 +148,10 @@ test("engine_starts_on_unlock_and_stops_on_lock", async () => {
   const [first] = engines.made;
   assert.equal(first.started, true);
   assert.deepEqual(first.options.scope, { accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 });
-  assert.equal(first.options.api, world.sessionHost.session().api, "the session's client, which carries the device's tokens");
+  // The session's client, which carries the device's tokens (watched for `token_reused`, otherwise the same).
+  const sessionApi = world.sessionHost.session().api;
+  assert.notEqual(first.options.api, undefined);
+  assert.deepEqual(Object.keys(first.options.api).sort(), Object.keys(sessionApi).sort());
   assert.equal(first.options.store, world.sessionHost.store);
   assert.equal(first.options.pollMs, 5 * 60 * 1000, "the feed is read every 5 minutes when no hint comes");
   assert.equal(await first.options.deviceName(), "Ferret for Firefox (Windows)");
@@ -402,6 +405,7 @@ test("a_revoked_device_stops_syncing_and_shows_signed_out", async () => {
   const view = await popup.load();
   assert.equal(view.view, "signed_out");
   assert.equal(view.server, SERVER, "the server is still named, so it can be forgotten or signed in at again");
+  assert.equal(view.ended, undefined, "a revocation is not a reused token: no reason is shown");
   // Nothing more is sent for the sync.
   const sent = server.calls.length;
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -622,4 +626,54 @@ test("accounts_of_reads_the_account_ids_of_one_server_from_its_own_records", asy
   assert.deepEqual(await accountsOf(db, `${SERVER}/`), [A, B]);
   assert.deepEqual(await accountsOf(db, OTHER), [C]);
   assert.deepEqual(await accountsOf(db, "https://none.example.net"), []);
+});
+
+test("signed_out_after_token_reused_says_the_token_was_used_elsewhere", async () => {
+  // The access token ran out, and the server refuses the renewal: the refresh token came with another key's proof.
+  let changes = 0;
+  let refuse = true;
+  const server = deviceServer({
+    "/api/sync/changes": () => {
+      if (!refuse) return undefined;
+      changes += 1;
+      return answer(401, { error: "token_expired" });
+    },
+    "/api/auth/token/refresh": () => (refuse ? answer(401, { error: "token_reused" }) : undefined),
+  });
+  const engines = fakeEngines({
+    start: async (engine) => {
+      await engine.options.api.get("/api/sync/changes?since=0&limit=500").catch(() => {});
+      engine.emit("state", { kind: "unauthorized" });
+    },
+  });
+  const { world, db, popup, signIn } = await syncWorld({ server, engines });
+  await signIn();
+  await until(() => world.coreHost.state() === "locked", "the vault locks");
+  assert.equal(changes, 1);
+  assert.equal(server.to("/api/auth/token/refresh").length, 1);
+  assert.deepEqual(deviceKeys(db), [], "the tokens are gone");
+  assert.equal(engines.made[0].stopped, true);
+
+  // The popup shows "signed out" and says why: a code from the background, and its text in both languages.
+  assert.deepEqual(await world.page().request("sync_state", {}), { running: false, live: "offline", warnings: [], ended: "token_reused" });
+  const view = await popup.load();
+  assert.equal(view.view, "signed_out");
+  assert.equal(view.ended, "token_reused");
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { dir } = await pkg();
+  const en = JSON.parse(await readFile(join(dir, "locales.en.json"), "utf8"));
+  const nb = JSON.parse(await readFile(join(dir, "locales.nb.json"), "utf8"));
+  assert.match(en["sync.ended.token_reused"], /^Signed out because this device's sign-in token was used from somewhere else\./);
+  assert.match(nb["sync.ended.token_reused"], /^Logget ut fordi tokenet til denne enheten ble brukt fra et annet sted\./);
+  const popupCode = await readFile(join(dir, "pages", "popup.mjs"), "utf8");
+  assert.match(popupCode, /sync\.ended\.\$\{view\.ended\}/, "the signed-out view shows the text of the reason");
+
+  // A new sign-in starts afresh: the reason is gone.
+  refuse = false;
+  await signIn();
+  assert.equal((await popup.load()).ended, undefined);
+  assert.equal((await world.page().request("sync_state", {})).ended, undefined);
+  await world.coreHost.lock("manual");
+  assert.equal((await world.page().request("sync_state", {})).ended, undefined, "a lock is not a sign-out");
 });

@@ -15,6 +15,13 @@
 // nothing. The listener is registered while the background page loads, so the
 // alarm that wakes an unloaded page reaches it; nothing here needs the vault,
 // so a locked vault is cleared up after just the same.
+//
+// When the alarm cannot be made (`alarms.create` throws or rejects), a timer of
+// the background page clears the clipboard instead, with the same check of the
+// mark. The Firefox background page is persistent, so the timer runs unless the
+// browser closes first. When neither can be made, the copy is still on the
+// clipboard and nothing will clear it: `copy` then fails with `not_cleared`, so
+// the popup can tell the user to clear it.
 
 /** How long a copied value stays on the clipboard. */
 export const CLEAR_AFTER_MS = 30_000;
@@ -42,12 +49,13 @@ export class ClipboardError extends Error {
  *   alarms: { create: (name: string, info: { when: number }) => unknown, clear: (name: string) => unknown, onAlarm: { addListener: (fn: (alarm: { name: string }) => unknown) => void } },
  *   now: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
- * }} options
+ *   setTimer?: (fn: () => void, ms: number) => unknown,
+ * }} options `setTimer` is the timer of the fallback (`setTimeout`; the tests pass their own)
  */
 export function createClipboard({ writeText, storageSession, alarms, now, random = (bytes) => {
     globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
     return bytes;
-  } }) {
+  }, setTimer = (fn, ms) => globalThis.setTimeout(fn, ms) }) {
   // Copies and clears run one after the other, so a clear never runs between a copy's write and its mark.
   /** @type {Promise<unknown>} */
   let queue = Promise.resolve();
@@ -96,6 +104,20 @@ export function createClipboard({ writeText, storageSession, alarms, now, random
       return true;
     });
 
+  /**
+   * Makes the alarm of a mark.
+   * @param {string} mark
+   * @returns {Promise<boolean>} whether the browser made it (false when `alarms.create` throws or rejects)
+   */
+  const armAlarm = async (mark) => {
+    try {
+      await alarms.create(`${ALARM_PREFIX}${mark}`, { when: now() + CLEAR_AFTER_MS });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   alarms.onAlarm.addListener((alarm) => {
     const name = alarm?.name;
     if (typeof name !== "string" || !name.startsWith(ALARM_PREFIX)) return undefined;
@@ -124,11 +146,13 @@ export function createClipboard({ writeText, storageSession, alarms, now, random
         // The mark moves first: from now on only this copy's alarm clears.
         await storageSession.set({ [MARK_KEY]: mark });
         if (before !== null) quiet(`${ALARM_PREFIX}${before}`);
+        if (await armAlarm(mark)) return;
+        // No alarm: a timer of the background page clears instead, with the same check of the mark.
         try {
-          const result = /** @type {any} */ (alarms.create(`${ALARM_PREFIX}${mark}`, { when: now() + CLEAR_AFTER_MS }));
-          result?.catch?.(() => {});
+          setTimer(() => expire(mark).catch(() => false), CLEAR_AFTER_MS);
         } catch {
-          // Without an alarm the value stays until the next copy; there is nothing else that could clear it.
+          // Nothing will clear the clipboard: the value stays until the user copies something else, and the popup says so.
+          throw new ClipboardError("not_cleared");
         }
       });
     },

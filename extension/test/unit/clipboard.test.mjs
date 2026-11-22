@@ -3,8 +3,10 @@
 // background page was unloaded in between and also while the vault is locked,
 // and only while the copy is still Ferret's last.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { ALARM_PREFIX, CLEAR_AFTER_MS, MARK_KEY, createClipboard } from "../../src/background/clipboard.mjs";
+import { actionErrorKey } from "../../src/pages/popupFlow.mjs";
 import { createAlarmsAndIdle, createClock, createSessionStorage } from "./backgroundHelpers.mjs";
 import { PASSWORD, TOTP_CODE, itemWorld } from "./itemHelpers.mjs";
 
@@ -149,4 +151,107 @@ test("the_totp_code_is_made_in_the_core_from_the_device_clock", async () => {
   const view = await popup.list.item(row.ref);
   assert.deepEqual(view.copyable, ["username", "password", "totp"]);
   assert.equal(JSON.stringify(view).includes(TOTP_CODE), false);
+});
+
+/**
+ * A clipboard whose alarm cannot be made (`alarms.create` throws, or rejects), with a timer the test runs itself.
+ * @param {"throws" | "rejects"} how @param {{ timerFails?: boolean }} [options]
+ */
+function withoutAlarms(how, { timerFails = false } = {}) {
+  const storage = createSessionStorage();
+  const events = createAlarmsAndIdle();
+  const clock = createClock();
+  const written = /** @type {string[]} */ ([]);
+  /** @type {Array<{ fn: () => unknown, ms: number }>} */
+  const timers = [];
+  const clipboard = createClipboard({
+    writeText: async (text) => {
+      written.push(text);
+    },
+    storageSession: storage,
+    alarms: {
+      ...events.alarms,
+      create: how === "throws"
+        ? () => {
+            throw new Error("alarms are not available");
+          }
+        : async () => {
+            throw new Error("alarms are not available");
+          },
+    },
+    now: clock.now,
+    setTimer: (fn, ms) => {
+      if (timerFails) throw new Error("no timer");
+      timers.push({ fn, ms });
+    },
+  });
+  return { clipboard, storage, events, written, timers };
+}
+
+/** The world's clipboard alarms cannot be made (the lock's alarms still can). @param {any} world */
+function noClipboardAlarm(world) {
+  const create = world.events.alarms.create;
+  world.events.alarms.create = (/** @type {string} */ name, /** @type {{ when: number }} */ info) => {
+    if (name.startsWith(ALARM_PREFIX)) throw new Error("alarms are not available");
+    return create(name, info);
+  };
+}
+
+test("clipboard_falls_back_to_a_timer_when_the_alarm_cannot_be_made", async () => {
+  for (const how of /** @type {const} */ (["throws", "rejects"])) {
+    const { clipboard, storage, written, timers } = withoutAlarms(how);
+    await clipboard.copy("hunter2-value");
+    // No alarm, so a timer of the background page clears it 30 seconds later.
+    assert.equal(timers.length, 1, how);
+    assert.equal(timers[0].ms, CLEAR_AFTER_MS, how);
+    await timers[0].fn();
+    assert.deepEqual(written, ["hunter2-value", ""], how);
+    assert.equal(storage.data.has(MARK_KEY), false, how);
+
+    // The timer keeps the alarm's rule: a later copy of Ferret's moves the mark, and the earlier timer leaves it alone.
+    await clipboard.copy("first");
+    await clipboard.copy("second");
+    assert.equal(timers.length, 3, how);
+    await timers[1].fn();
+    assert.deepEqual(written, ["hunter2-value", "", "first", "second"], how);
+    await timers[2].fn();
+    assert.deepEqual(written, ["hunter2-value", "", "first", "second", ""], how);
+  }
+
+  // In the background: the copy works as before, and the popup hears nothing but that it worked.
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const [row] = (await popup.list.search({ query: "Example" })).rows;
+  noClipboardAlarm(world);
+  assert.deepEqual(await popup.list.copy(row.ref, "password"), { ok: true });
+  assert.equal(world.clipboardState.timers.length, 1);
+  assert.equal(world.clipboardState.timers[0].ms, CLEAR_AFTER_MS);
+  await world.clipboardState.timers[0].fn();
+  assert.deepEqual(world.written, [PASSWORD, ""]);
+});
+
+test("clipboard_says_so_when_neither_alarm_nor_timer_works", async () => {
+  const { clipboard, storage, written } = withoutAlarms("throws", { timerFails: true });
+  // The value is on the clipboard (the copy itself worked), and nothing will clear it: the copy says so.
+  await assert.rejects(clipboard.copy("hunter2-value"), { code: "not_cleared" });
+  assert.deepEqual(written, ["hunter2-value"]);
+  assert.match(String(storage.data.get(MARK_KEY)), /^[0-9a-f]{32}$/);
+
+  // In the background the popup gets the reason, and a text for it in both languages.
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const [row] = (await popup.list.search({ query: "Example" })).rows;
+  noClipboardAlarm(world);
+  world.clipboardState.timerFails = true;
+  assert.deepEqual(await popup.list.copy(row.ref, "password"), { ok: false, reason: "not_cleared" });
+  assert.deepEqual(world.written, [PASSWORD]);
+  assert.equal(popup.received().join("\n").includes(PASSWORD), false, "the popup never got the value");
+  assert.equal(actionErrorKey("not_cleared"), "popup.error.not_cleared");
+  for (const lang of ["en", "nb"]) {
+    const texts = JSON.parse(readFileSync(new URL(`../../src/locales/${lang}/popup.json`, import.meta.url), "utf8"));
+    assert.ok(typeof texts["popup.error.not_cleared"] === "string" && texts["popup.error.not_cleared"] !== "", lang);
+  }
+  assert.match(JSON.parse(readFileSync(new URL("../../src/locales/en/popup.json", import.meta.url), "utf8"))["popup.error.not_cleared"], /could not set the timer that clears the clipboard/);
 });
