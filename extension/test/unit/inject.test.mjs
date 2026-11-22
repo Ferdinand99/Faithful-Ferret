@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { build } from "../../scripts/build.mjs";
-import { frameChainShown, frameShownIn, injectFill } from "../../src/background/inject.mjs";
+import { fieldPointsIn, frameChainShown, frameShownIn, injectFill } from "../../src/background/inject.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 
 /** A `scripting` that records its calls and answers with `results` for the function call. */
@@ -78,12 +78,13 @@ test("an_engine_that_did_not_begin_is_an_error", async () => {
 });
 
 /**
- * A `scripting` for the frame checks: each document answers the question about a frame of it from `verdicts`
- * (`"<documentId>:<frameId>"` → verdict), as its fill script would; every call is recorded.
+ * A `scripting` for the frame checks. The frame's document answers `where` with `field`; each document above it
+ * answers the question about a frame of it from `verdicts` (`"<documentId>:<frameId>"` → verdict), moving the points by
+ * 100 each way when it says "shown", as its fill script would; every call is recorded.
  * @param {Record<string, unknown>} verdicts
- * @param {{ fail?: string[] }} [options] documents into which nothing can be injected
+ * @param {{ fail?: string[], field?: unknown }} [options] `fail`: documents into which nothing can be injected
  */
-function frameScripting(verdicts, { fail = [] } = {}) {
+function frameScripting(verdicts, { fail = [], field = { points: [[10, 20]] } } = {}) {
   /** @type {any[]} */
   const calls = [];
   return {
@@ -95,70 +96,106 @@ function frameScripting(verdicts, { fail = [] } = {}) {
       if (!("func" in injection)) return [{ frameId: 0, result: null }];
       // The serialised function, run against the engine of that document.
       const run = new Function("globalThis", "args", `return (${String(injection.func)})(...args);`);
-      const engine = { frameShown: (/** @type {number} */ id) => verdicts[`${doc}:${id}`] ?? "gone" };
+      const engine = {
+        where: () => field,
+        frameShown: (/** @type {number} */ id, /** @type {Array<[number, number]>} */ points) => {
+          const verdict = verdicts[`${doc}:${id}`] ?? "gone";
+          return verdict === "shown" ? { verdict, points: points.map(([x, y]) => [x + 100, y + 100]) } : { verdict };
+        },
+      };
       return [{ frameId: 0, result: run({ __ferretFill: engine }, injection.args) }];
     },
   };
 }
 
-const NESTED = { frameId: 9, ancestors: [{ frameId: 5, documentId: "doc-5" }, { frameId: 0, documentId: "doc-0" }] };
+const NESTED = { frameId: 9, documentId: "doc-9", ancestors: [{ frameId: 5, documentId: "doc-5" }, { frameId: 0, documentId: "doc-0" }] };
+const ASK = { requestId: "req-1", kind: "password" };
 
-test("the_frame_check_asks_every_document_above_the_frame_up_to_the_top", async () => {
-  // A frame inside a frame inside the top: the frame's holder is checked in its parent, the parent's in the top.
+test("the_frame_check_moves_the_fields_points_up_through_every_document_above_the_frame", async () => {
+  // A frame inside a frame inside the top: the frame says where its field is; the parent checks those points and
+  // moves them into its own coordinates; the top checks the moved points.
   const shown = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" });
-  assert.equal(await frameChainShown({ scripting: shown, tabId: 7, frame: NESTED }), null);
+  assert.equal(await frameChainShown({ scripting: shown, tabId: 7, frame: NESTED, ...ASK }), null);
   assert.deepEqual(shown.calls.map((c) => [c.target, c.files ?? c.args]), [
+    [{ tabId: 7, documentIds: ["doc-9"] }, ["req-1", "password"]],
     [{ tabId: 7, documentIds: ["doc-5"] }, ["/content/fill.inject.js"]],
-    [{ tabId: 7, documentIds: ["doc-5"] }, [9]],
+    [{ tabId: 7, documentIds: ["doc-5"] }, [9, [[10, 20]]]],
     [{ tabId: 7, documentIds: ["doc-0"] }, ["/content/fill.inject.js"]],
-    [{ tabId: 7, documentIds: ["doc-0"] }, [5]],
+    [{ tabId: 7, documentIds: ["doc-0"] }, [5, [[110, 120]]]],
   ]);
-  // The function is serialised by the browser: it names nothing outside itself.
-  const text = String(shown.calls[1].func);
-  assert.match(text, /__ferretFill/);
-  const run = new Function("globalThis", `return (${text})(9);`);
-  assert.equal(run({}), "unchecked", "no engine, no answer");
+  // The functions are serialised by the browser: they name nothing outside themselves.
+  for (const call of [shown.calls[0], shown.calls[2]]) {
+    const text = String(call.func);
+    assert.match(text, /__ferretFill/);
+    assert.equal(new Function("globalThis", `return (${text})(9, []);`)({}), null, "no engine, no answer");
+  }
 
   // The top has nothing above it: nothing is asked.
   const top = frameScripting({});
-  assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: { frameId: 0, ancestors: [] } }), null);
+  assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: { frameId: 0, ancestors: [] }, ...ASK }), null);
   assert.deepEqual(top.calls, []);
 
-  // Without a document id the frame is the target.
+  // Without document ids the frames are the targets.
   const byFrame = frameScripting({ "frame-0:3": "shown" });
-  assert.equal(await frameChainShown({ scripting: byFrame, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), null);
-  assert.deepEqual(byFrame.calls[1].target, { tabId: 7, frameIds: [0] });
+  assert.equal(await frameChainShown({ scripting: byFrame, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] }, ...ASK }), null);
+  assert.deepEqual(byFrame.calls.map((c) => c.target), [{ tabId: 7, frameIds: [3] }, { tabId: 7, frameIds: [0] }, { tabId: 7, frameIds: [0] }]);
 });
 
-test("a_frame_hidden_or_covered_in_any_document_above_it_is_refused_with_frame_hidden", async () => {
+test("a_field_hidden_or_covered_in_any_document_above_its_frame_is_refused_with_frame_hidden", async () => {
   for (const verdict of ["hidden", "covered", "gone", "unchecked", "", "shown ", 1, null, true]) {
     // In the parent.
     const parent = frameScripting({ "doc-5:9": verdict, "doc-0:5": "shown" });
-    assert.equal(await frameChainShown({ scripting: parent, tabId: 7, frame: NESTED }), "frame_hidden", `parent ${String(verdict)}`);
+    assert.equal(await frameChainShown({ scripting: parent, tabId: 7, frame: NESTED, ...ASK }), "frame_hidden", `parent ${String(verdict)}`);
     // In the top, above a parent that shows it: the walk does not stop at the parent.
     const top = frameScripting({ "doc-5:9": "shown", "doc-0:5": verdict });
-    assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: NESTED }), "frame_hidden", `top ${String(verdict)}`);
-    assert.equal(top.calls.length, 4);
+    assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: NESTED, ...ASK }), "frame_hidden", `top ${String(verdict)}`);
+    assert.equal(top.calls.length, 5);
   }
+  // The frame's own problem with its field is the answer, and nothing above it is asked.
+  for (const problem of ["hidden", "covered", "gone", "wrong_kind"]) {
+    const own = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" }, { field: { problem } });
+    assert.equal(await frameChainShown({ scripting: own, tabId: 7, frame: NESTED, ...ASK }), problem);
+    assert.equal(own.calls.length, 1);
+  }
+  // A frame that gives no points, or points of another shape, is gone.
+  for (const field of [null, {}, { points: [] }, { points: [[1, 2, 3]] }, { points: [[Number.NaN, 1]] }, { points: Array.from({ length: 6 }, () => [1, 1]) }, { problem: "nonsense" }]) {
+    const odd = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" }, { field });
+    assert.equal(await frameChainShown({ scripting: odd, tabId: 7, frame: NESTED, ...ASK }), "gone", JSON.stringify(field));
+  }
+  // A parent that says "shown" but gives back other points (or none) is no answer.
+  const lying = {
+    executeScript: async (/** @type {any} */ i) => {
+      if (!("func" in i)) return [{ frameId: 0 }];
+      return String(i.func).includes("where") ? [{ frameId: 0, result: { points: [[1, 1], [2, 2]] } }] : [{ frameId: 0, result: { verdict: "shown", points: [[1, 1]] } }];
+    },
+  };
+  assert.equal(await frameChainShown({ scripting: lying, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] }, ...ASK }), "frame_hidden");
   // A document that cannot be asked (no host permission, gone, the script did not load) refuses.
   const blocked = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" }, { fail: ["doc-0"] });
-  assert.equal(await frameChainShown({ scripting: blocked, tabId: 7, frame: NESTED }), "frame_hidden");
-  const notLoaded = { executeScript: async (/** @type {any} */ i) => ("func" in i ? [{ frameId: 0, result: "shown" }] : [{ frameId: 0, error: "Unable to load script" }]) };
-  assert.equal(await frameChainShown({ scripting: notLoaded, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
-  const thrown = { executeScript: async (/** @type {any} */ i) => ("func" in i ? [{ frameId: 0, error: "page threw" }] : [{ frameId: 0 }]) };
-  assert.equal(await frameChainShown({ scripting: thrown, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
-  const two = { executeScript: async () => [{ frameId: 0, result: "shown" }, { frameId: 1, result: "shown" }] };
-  assert.equal(await frameChainShown({ scripting: /** @type {any} */ (two), tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
+  assert.equal(await frameChainShown({ scripting: blocked, tabId: 7, frame: NESTED, ...ASK }), "frame_hidden");
+  const notLoaded = { executeScript: async (/** @type {any} */ i) => ("files" in i ? [{ frameId: 0, error: "Unable to load script" }] : [{ frameId: 0, result: String(i.func).includes("where") ? { points: [[1, 1]] } : { verdict: "shown", points: [[1, 1]] } }]) };
+  assert.equal(await frameChainShown({ scripting: notLoaded, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] }, ...ASK }), "frame_hidden");
+  const two = { executeScript: async () => [{ frameId: 0, result: { verdict: "shown", points: [[1, 1]] } }, { frameId: 1, result: null }] };
+  assert.equal(await frameChainShown({ scripting: /** @type {any} */ (two), tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] }, ...ASK }), "gone");
   // A chain that does not reach the top, or is missing, refuses before asking anything.
   for (const frame of [{ frameId: 9, ancestors: [{ frameId: 5, documentId: "doc-5" }] }, { frameId: 9, ancestors: [] }, { frameId: 9 }, { frameId: -1, ancestors: [{ frameId: 0 }] }, null]) {
     const none = frameScripting({ "doc-5:9": "shown" });
-    assert.equal(await frameChainShown({ scripting: none, tabId: 7, frame: /** @type {any} */ (frame) }), "frame_hidden", JSON.stringify(frame));
+    assert.equal(await frameChainShown({ scripting: none, tabId: 7, frame: /** @type {any} */ (frame), ...ASK }), "frame_hidden", JSON.stringify(frame));
     assert.deepEqual(none.calls, []);
   }
   // A bad question is never sent.
   const bad = frameScripting({});
-  for (const request of [{ tabId: -1, parent: { frameId: 0 }, childFrameId: 3 }, { tabId: 7, parent: { frameId: 3 }, childFrameId: 3 }, { tabId: 7, parent: null, childFrameId: 3 }, { tabId: 7, parent: { frameId: 0 }, childFrameId: "3" }]) {
-    assert.equal(await frameShownIn({ scripting: bad, .../** @type {any} */ (request) }), "unchecked");
+  for (const request of [
+    { tabId: -1, parent: { frameId: 0 }, childFrameId: 3, points: [[1, 1]] },
+    { tabId: 7, parent: { frameId: 3 }, childFrameId: 3, points: [[1, 1]] },
+    { tabId: 7, parent: null, childFrameId: 3, points: [[1, 1]] },
+    { tabId: 7, parent: { frameId: 0 }, childFrameId: "3", points: [[1, 1]] },
+    { tabId: 7, parent: { frameId: 0 }, childFrameId: 3, points: [] },
+  ]) {
+    assert.deepEqual(await frameShownIn({ scripting: bad, .../** @type {any} */ (request) }), { verdict: "unchecked" });
+  }
+  for (const request of [{ tabId: 7, frame: { frameId: 3 }, requestId: "bad id", kind: "password" }, { tabId: 7, frame: { frameId: 3 }, requestId: "r", kind: 5 }]) {
+    assert.deepEqual(await fieldPointsIn({ scripting: bad, .../** @type {any} */ (request) }), { problem: "gone" });
   }
   assert.deepEqual(bad.calls, []);
 });

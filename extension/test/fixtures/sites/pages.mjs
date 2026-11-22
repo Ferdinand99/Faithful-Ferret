@@ -403,6 +403,29 @@ framedTrick("framed-covered", {
   wrap: (iframe) => `<div class="over">${iframe}<div class="cover" id="cover"></div></div>`,
 });
 
+add({
+  id: "corner-login", origin: "login", path: "/t/corner-login.html",
+  summary: "The entry's own sign-in page with the form in its top left corner and nothing else (framed-covered-form frames it). Top-level it is a plain page and is filled.",
+  expect: { outcome: "fill", domain_entry: "fill", framedBy: "framed-covered-form" },
+  render: () => page({
+    id: "corner-login",
+    css: "body { margin: 0; } form { position: absolute; left: 16px; top: 16px; margin: 0; }",
+    body: loginForm(),
+  }),
+});
+
+add({
+  id: "framed-covered-form", origin: "www", path: "/t/framed-covered-form.html",
+  summary: "A same-site page with corner-login in a large frame (600 x 400) and a transparent element over the form's corner only: the frame's centre and quarter points stay clear, but a click on the form lands on the cover.",
+  expect: { outcome: "frame_hidden", reason: "covered", frame: "login-frame", frameOrigin: "login" },
+  render: ({ url }) => page({
+    id: "framed-covered-form",
+    css: ".over { position: relative; width: 602px; } .over iframe { margin: 0; width: 600px; height: 400px; } .cover { position: absolute; left: 8px; top: 8px; width: 264px; height: 84px; z-index: 10; background: transparent; }",
+    body: `<h1>Welcome</h1>
+<div class="over"><iframe id="login-frame" title="Sign in" src="${esc(url("login", "/t/corner-login.html"))}"></iframe><div class="cover" id="cover"></div></div>`,
+  }),
+});
+
 framedTrick("framed-visible", {
   summary: "The control of the frame tricks: the same page and frame, shown and not covered: the frame is filled.",
   reason: "none",

@@ -87,7 +87,7 @@ test("the_site_table_covers_every_case_and_is_well_formed", () => {
     "lookalike-dash", "lookalike-suffix", "lookalike-tld", "lookalike-homograph", "lookalike-confusable", "lookalike-digit",
     "github-a", "github-b", "frames-opaque", "frames-special", "nested-login", "framed-nested",
     "framed-hidden-opacity", "framed-hidden-visibility", "framed-hidden-offscreen", "framed-covered", "framed-visible",
-    "framed-late-hide", "late-hide-login",
+    "framed-late-hide", "late-hide-login", "framed-covered-form", "corner-login",
     "overlay", "overlay-popover", "overlay-dialog", "opacity-html", "offscreen", "below-fold", "hidden-fields", "tiny-fields",
     "css-shadow", "css-visibility", "css-visibility-collapse",
     "blur-opacity", "blur-overlay", "blur-swap", "blur-navigate", "forged-events", "navigate-frame", "ferret-lookalike",
@@ -230,7 +230,7 @@ test("the_pages_that_change_after_the_choice_turn_hostile_on_request_and_on_blur
 
 test("the_frame_tricks_frame_the_entrys_page_on_the_same_site_and_differ_only_in_the_trick", () => {
   const tricks = SITES.filter((s) => s.expect.outcome === "frame_hidden");
-  assert.deepEqual(tricks.map((s) => s.id), ["framed-hidden-opacity", "framed-hidden-visibility", "framed-hidden-offscreen", "framed-covered"]);
+  assert.deepEqual(tricks.map((s) => s.id), ["framed-hidden-opacity", "framed-hidden-visibility", "framed-hidden-offscreen", "framed-covered", "framed-covered-form"]);
   const control = siteById("framed-visible");
   assert.equal(control.expect.outcome, "fill_in_frame");
   for (const site of [...tricks, control]) {
@@ -238,7 +238,15 @@ test("the_frame_tricks_frame_the_entrys_page_on_the_same_site_and_differ_only_in
     assert.equal(site.expect.frame, "login-frame");
     assert.equal(site.expect.frameOrigin, "login");
     const html = site.render(context);
-    assert.ok(html.includes('<iframe id="login-frame" title="Sign in" src="https://login.example.net/"'), `${site.id}: the entry's page in the frame`);
+    const page = site.id === "framed-covered-form" ? "https://login.example.net/t/corner-login.html" : "https://login.example.net/";
+    assert.ok(html.includes(`<iframe id="login-frame" title="Sign in" src="${page}"`), `${site.id}: the entry's page in the frame`);
+  }
+  // The form-only cover leaves the frame's own centre and quarter points clear (600 x 400, with a 1 px border): it lies
+  // inside the frame's top left corner, over the form there.
+  const form = siteById("framed-covered-form").render(context);
+  assert.match(form, /\.cover \{ position: absolute; left: 8px; top: 8px; width: 264px; height: 84px;/);
+  for (const [x, y] of [[301, 201], [150.5, 201], [451.5, 201], [301, 100.5], [301, 301.5]]) {
+    assert.ok(!(x >= 8 && x < 8 + 264 && y >= 8 && y < 8 + 84), `the frame's point (${x}, ${y}) is not under the cover`);
   }
   // Each trick has the one thing that hides or covers the frame; the control has none of them.
   const marks = { "framed-hidden-opacity": /style="opacity: 0"/, "framed-hidden-visibility": /visibility: hidden/, "framed-hidden-offscreen": /left: -10000px/, "framed-covered": /id="cover"/ };

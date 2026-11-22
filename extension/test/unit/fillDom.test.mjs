@@ -844,10 +844,14 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.notDeepEqual(plant('import "lodash";'), [], "a package");
 });
 
-// ------------------------------------------------------------ the element that holds a frame
+// ------------------------------------------------------------ a field of a frame, seen from the documents above
+
+/** The points of the login form's password field (100, 160, 240 × 32) in the frame's own viewport. */
+const PASS_POINTS = /** @type {Array<[number, number]>} */ ([[220, 176], [160, 176], [280, 176], [220, 168], [220, 184]]);
 
 /**
- * A parent page with its own form and an iframe that holds frame `FRAME` (as `runtime.getFrameId` says), beside the form.
+ * A parent page with its own form and an iframe at (400, 100), 400 × 300, that holds frame `FRAME` (as
+ * `runtime.getFrameId` says), beside the form.
  * @param {(page: ReturnType<typeof createPage> & { iframe: any }) => void} [arrange] changes the page before the question
  */
 function framePage(arrange = () => {}) {
@@ -873,16 +877,36 @@ function framePage(arrange = () => {}) {
     },
   });
   arrange({ ...page, iframe });
-  return { ...page, iframe, holds, asked, engine, FRAME, shown: () => engine.frameShown(FRAME) };
+  return {
+    ...page, iframe, holds, asked, engine, FRAME,
+    /** The verdict for the password field's points (or `points`). @param {any} [points] */
+    shown: (points = PASS_POINTS) => /** @type {any} */ (engine.frameShown(FRAME, points)).verdict,
+  };
 }
 
-test("a_frame_is_shown_only_when_its_holder_passes_the_field_checks_in_the_parent", () => {
-  // A plain iframe beside the form: shown. Only elements that can hold a frame are asked about.
-  const plain = framePage();
-  assert.equal(plain.shown(), "shown");
-  assert.deepEqual(plain.asked, [plain.iframe]);
+/** Adds a cover to a page. @param {any} document @param {{ left: number, top: number, width: number, height: number }} rect */
+function cover(document, rect) {
+  const element = document.body.append(document.createElement("div", { id: "cover" }));
+  element.rect = rect;
+  element.z = 10;
+  return element;
+}
 
-  // The ancestor rules, on the iframe itself and on a parent of it.
+test("a_field_of_a_frame_is_shown_only_when_the_holder_passes_the_chain_and_the_fields_points_reach_it", () => {
+  // A plain iframe beside the form: shown, and the points come back moved by the holder's content box.
+  const plain = framePage();
+  assert.deepEqual(plain.engine.frameShown(plain.FRAME, PASS_POINTS), { verdict: "shown", points: PASS_POINTS.map(([x, y]) => [x + 400, y + 100]) });
+  assert.deepEqual(plain.asked, [plain.iframe], "only elements that can hold a frame are asked about");
+  // Border and padding move the frame's viewport inside the holder.
+  const boxed = framePage((p) => {
+    p.iframe.clientLeft = 2;
+    p.iframe.clientTop = 3;
+    p.iframe.style["padding-left"] = "5px";
+    p.iframe.style["padding-top"] = "7px";
+  });
+  assert.deepEqual(/** @type {any} */ (boxed.engine.frameShown(boxed.FRAME, [[10, 10]])).points, [[417, 120]]);
+
+  // The ancestor rules, on the iframe itself and on a parent of it; zoom only for a holder.
   const cases = /** @type {Array<[string, (p: any) => void, string]>} */ ([
     ["opacity 0 on the iframe", (p) => { p.iframe.style.opacity = "0"; }, "hidden"],
     ["opacity 0.99 on the iframe", (p) => { p.iframe.style.opacity = "0.99"; }, "hidden"],
@@ -893,28 +917,33 @@ test("a_frame_is_shown_only_when_its_holder_passes_the_field_checks_in_the_paren
     ["a clip path on the iframe", (p) => { p.iframe.style["clip-path"] = "inset(100%)"; }, "hidden"],
     ["a mask on the html element", (p) => { p.document.documentElement.style["mask-image"] = "linear-gradient(transparent, transparent)"; }, "hidden"],
     ["mix-blend-mode on the iframe", (p) => { p.iframe.style["mix-blend-mode"] = "screen"; }, "hidden"],
+    ["zoom on the iframe", (p) => { p.iframe.style.zoom = "0.5"; }, "hidden"],
+    ["zoom on the body", (p) => { p.document.body.style.zoom = "2"; }, "hidden"],
     ["aria-hidden on the body", (p) => { p.document.body.setAttribute("aria-hidden", "true"); }, "hidden"],
     ["an inert iframe", (p) => { p.iframe.inert = true; }, "hidden"],
     ["a 4 px iframe", (p) => { p.iframe.rect = { left: 400, top: 100, width: 4, height: 4 }; }, "hidden"],
     ["far to the left", (p) => { p.iframe.rect = { left: -10_000, top: 100, width: 400, height: 300 }; }, "hidden"],
     ["below the fold", (p) => { p.iframe.rect = { left: 400, top: 3000, width: 400, height: 300 }; }, "hidden"],
+    ["the field's row below the fold", (p) => { p.iframe.rect = { left: 400, top: 700, width: 400, height: 300 }; }, "hidden"],
+    ["a cover over the whole iframe", (p) => { cover(p.document, { left: 400, top: 100, width: 400, height: 300 }); }, "covered"],
+    // Only the form's area inside the frame is covered: the iframe's own centre and quarter points stay clear.
+    ["a cover over the field only", (p) => { cover(p.document, { left: 490, top: 255, width: 260, height: 40 }); }, "covered"],
+    ["a cover over one of the field's points", (p) => { cover(p.document, { left: 555, top: 271, width: 10, height: 10 }); }, "covered"],
   ]);
   for (const [label, arrange, verdict] of cases) assert.equal(framePage(arrange).shown(), verdict, label);
+  // A zoom of 1 on the holder is no zoom.
+  assert.equal(framePage((p) => { p.iframe.style.zoom = "1"; }).shown(), "shown");
+  // A cover beside the field (over the iframe's centre, not over the field) is not the field's business.
+  assert.equal(framePage((p) => { cover(p.document, { left: 590, top: 240, width: 20, height: 20 }); }).shown(), "shown");
 
-  // A cover over the iframe in the parent (the frame cannot see it from inside).
-  const covered = framePage((p) => {
-    const cover = p.document.body.append(p.document.createElement("div", { id: "cover" }));
-    cover.rect = { left: 400, top: 100, width: 400, height: 300 };
-    cover.z = 10;
-  });
-  assert.equal(covered.shown(), "covered");
-  // A small cover over one of the sample points only (a quarter across, half down) is enough.
-  const corner = framePage((p) => {
-    const cover = p.document.body.append(p.document.createElement("div", { id: "cover" }));
-    cover.rect = { left: 480, top: 230, width: 40, height: 40 };
-    cover.z = 10;
-  });
-  assert.equal(corner.shown(), "covered");
+  // A frame far taller than the viewport is shown when its field is in view (no share of the holder is asked for).
+  const tall = framePage((p) => { p.iframe.rect = { left: 400, top: -2000, width: 400, height: 6000 }; });
+  assert.equal(tall.shown([[220, 2176]]), "shown");
+  assert.equal(tall.shown([[220, 5000]]), "hidden", "the same frame, its field out of view");
+  // No points, or points of another shape, are no answer.
+  for (const bad of [undefined, [], [[1]], [[1, Number.NaN]], [["1", 2]], Array.from({ length: 6 }, () => [1, 1]), [[1e9, 1]]]) {
+    assert.deepEqual(plain.engine.frameShown(plain.FRAME, bad), { verdict: "hidden" }, String(JSON.stringify(bad)));
+  }
 });
 
 test("a_frame_is_found_by_the_browsers_frame_id_and_nothing_else", () => {
@@ -929,7 +958,7 @@ test("a_frame_is_found_by_the_browsers_frame_id_and_nothing_else", () => {
   // Another frame id, the top, and ids that are not frame ids name nothing.
   const page = framePage();
   for (const id of [page.FRAME + 1, 0, -1, 1.5, "17179869185", null, undefined, Number.MAX_SAFE_INTEGER + 2]) {
-    assert.equal(page.engine.frameShown(/** @type {any} */ (id)), "gone", String(id));
+    assert.equal(/** @type {any} */ (page.engine.frameShown(/** @type {any} */ (id), PASS_POINTS)).verdict, "gone", String(id));
   }
   // An element whose frame id the browser cannot give (an object showing an image) is passed over.
   const object = framePage((p) => {
@@ -937,28 +966,60 @@ test("a_frame_is_found_by_the_browsers_frame_id_and_nothing_else", () => {
     img.rect = { left: 0, top: 500, width: 100, height: 100 };
   });
   assert.equal(object.shown(), "shown");
-  // A holder inside a shadow root (closed too) is found, and an overlay above its host covers it.
+  // A holder inside a shadow root (closed too) is found, and a transparent host hides it.
   for (const mode of /** @type {const} */ (["open", "closed"])) {
-    const shadow = framePage((p) => {
+    const inShadow = (/** @type {string} */ opacity) => framePage((p) => {
       p.document.body.remove(p.iframe);
       const host = p.document.body.append(p.document.createElement("div", { id: "host" }));
       host.rect = { left: 400, top: 100, width: 400, height: 300 };
+      host.style.opacity = opacity;
       host.attachShadow({ mode }).append(p.iframe);
     });
-    assert.equal(shadow.shown(), "shown", mode);
-    const over = framePage((p) => {
-      p.document.body.remove(p.iframe);
-      const host = p.document.body.append(p.document.createElement("div", { id: "host" }));
-      host.rect = { left: 400, top: 100, width: 400, height: 300 };
-      host.attachShadow({ mode }).append(p.iframe);
-      host.style.opacity = "0";
-    });
-    assert.equal(over.shown(), "hidden", `${mode}: the host is transparent`);
+    assert.equal(inShadow("1").shown(), "shown", mode);
+    assert.equal(inShadow("0").shown(), "hidden", `${mode}: the host is transparent`);
   }
   // Without the browser's frame ids (the default), no element holds a frame, and the question sends nothing.
   const quiet = framePage();
   const sent = /** @type {string[]} */ ([]);
   const engine = createFillEngine({ window: quiet.window, document: quiet.document, send: (raw) => { sent.push(raw); }, runtimeId: RUNTIME_ID, extensionBase: EXTENSION_BASE });
-  assert.equal(engine.frameShown(quiet.FRAME), "gone", "without the browser's frame ids nothing holds a frame");
+  assert.equal(/** @type {any} */ (engine.frameShown(quiet.FRAME, PASS_POINTS)).verdict, "gone");
   assert.deepEqual(sent, []);
+});
+
+test("the_frame_gives_the_points_of_the_field_it_would_fill_and_two_levels_move_them_up", () => {
+  // The frame: the pending request's password field, after the field checks.
+  const frame = setup({ url: "https://login.example.net/" });
+  const [field] = frame.begin("req-7").filter((f) => f.kind === "password");
+  assert.ok(field);
+  assert.deepEqual(frame.engine.where("req-7", "password"), { points: PASS_POINTS });
+  assert.deepEqual(frame.engine.where("req-8", "password"), { problem: "gone" }, "another request");
+  assert.deepEqual(frame.engine.where("req-7", "totp"), { problem: "wrong_kind" });
+  // A field that fails its own checks gives its own reason, not points.
+  frame.pass.style.opacity = "0";
+  assert.deepEqual(frame.engine.where("req-7", "password"), { problem: "hidden" });
+  frame.pass.style.opacity = "1";
+  const over = frame.document.body.append(frame.document.createElement("div"));
+  over.rect = { left: 100, top: 160, width: 240, height: 32 };
+  over.z = 5;
+  assert.deepEqual(frame.engine.where("req-7", "password"), { problem: "covered" });
+  // Only the points inside the frame's viewport are given.
+  over.rect = null;
+  frame.pass.rect = { left: 1180, top: 160, width: 240, height: 32 };
+  assert.deepEqual(frame.engine.where("req-7", "password"), { problem: "hidden" }, "mostly outside the viewport");
+  frame.pass.rect = { left: 1100, top: 160, width: 240, height: 32 };
+  assert.deepEqual(frame.engine.where("req-7", "password"), { points: [[1220, 176], [1160, 176], [1220, 168], [1220, 184]] });
+
+  // Two levels: the middle page holds the login frame at (50, 40), the top holds the middle frame at (400, 100).
+  const middle = framePage((p) => { p.iframe.rect = { left: 50, top: 40, width: 600, height: 500 }; });
+  const fromMiddle = /** @type {any} */ (middle.engine.frameShown(middle.FRAME, PASS_POINTS));
+  assert.equal(fromMiddle.verdict, "shown");
+  const top = framePage((p) => { p.iframe.rect = { left: 400, top: 100, width: 700, height: 600 }; });
+  const fromTop = /** @type {any} */ (top.engine.frameShown(top.FRAME, fromMiddle.points));
+  assert.deepEqual(fromTop, { verdict: "shown", points: PASS_POINTS.map(([x, y]) => [x + 450, y + 140]) });
+  // The top covers only where the field ends up: refused at the top, although the middle frame is mostly clear.
+  const coveredTop = framePage((p) => {
+    p.iframe.rect = { left: 400, top: 100, width: 700, height: 600 };
+    cover(p.document, { left: 595, top: 300, width: 260, height: 40 });
+  });
+  assert.equal(/** @type {any} */ (coveredTop.engine.frameShown(coveredTop.FRAME, fromMiddle.points)).verdict, "covered");
 });

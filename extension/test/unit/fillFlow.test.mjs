@@ -467,6 +467,92 @@ test("a_frame_hidden_or_covered_in_a_document_above_it_gets_no_value_and_the_ans
   assert.deepEqual(both.frameShown.asked, []);
 });
 
+test("of_two_tied_frames_with_fields_the_first_shown_one_is_filled_and_a_named_hidden_frame_is_refused", async () => {
+  const OTHER_URL = "https://login.example.net/frame/other";
+  const two = () => [
+    { frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [] },
+    { frameId: 3, documentId: "doc-3", url: FRAME_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] },
+    { frameId: 4, documentId: "doc-4", url: OTHER_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] },
+  ];
+  /** @param {(frameId: number) => string} verdict */
+  const setUp = async (verdict) => {
+    const world = await itemWorld({ frames: two() });
+    await world.open();
+    world.page.fields = [];
+    const first = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+    const second = world.addFrame({ url: OTHER_URL, frameId: 4, documentId: "doc-4", selfOrigin: LOGIN_ORIGIN });
+    world.frameShown.verdict = verdict;
+    const popup = world.popup();
+    const [row] = await suggestions(popup);
+    return { world, first, second, popup, row };
+  };
+
+  // The first frame (in the list's order) is hidden in the top, the second is shown: the second is filled.
+  const a = await setUp((frameId) => (frameId === 3 ? "hidden" : "shown"));
+  assert.deepEqual(await a.popup.list.fill(a.row, TAB), { ok: true });
+  assert.deepEqual(a.first.filled, {});
+  assert.deepEqual(a.second.filled, { username: "ola@example.net", password: PASSWORD });
+  assert.deepEqual(a.world.pushed.map((p) => p.options.documentId), ["doc-4", "doc-4"]);
+
+  // Both hidden: refused, nothing anywhere.
+  const b = await setUp(() => "covered");
+  assert.deepEqual(await b.popup.list.fill(b.row, TAB), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(b.world.pushed, []);
+
+  // The menu names the hidden frame: refused, and the shown frame is not tried instead.
+  const c = await setUp((frameId) => (frameId === 3 ? "hidden" : "shown"));
+  assert.deepEqual(await c.popup.request("fill", { ref: c.row.ref, tab_id: TAB, frame_id: 3 }), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(c.second.filled, {});
+  assert.deepEqual(c.world.pushed, []);
+  assert.deepEqual(c.world.begins().map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-3"] }]);
+});
+
+test("a_page_that_never_answers_the_frame_check_or_the_fill_script_does_not_keep_the_fill_flow_busy", async () => {
+  // The top never answers the question about the frame: refused after the time limit, and the next fill runs.
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.page.fields = [];
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  world.frameShown.hang = true;
+  const popup = world.popup();
+  const [row] = await suggestions(popup);
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(frame.filled, {});
+  world.frameShown.hang = false;
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: true }, "not busy");
+  assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
+
+  // A page whose fill script never starts: no report, and the next fill runs.
+  const stuck = await itemWorld();
+  await stuck.open();
+  stuck.frameShown.hangBegin = true;
+  const p2 = stuck.popup();
+  const [r2] = await suggestions(p2);
+  assert.deepEqual(await p2.list.fill(r2, TAB), { ok: false, reason: "no_report" });
+  stuck.frameShown.hangBegin = false;
+  assert.deepEqual(await p2.list.fill(r2, TAB), { ok: true }, "not busy");
+});
+
+test("the_frame_check_asks_about_the_field_that_is_filled_next", async () => {
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.page.fields = [];
+  world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill((await suggestions(popup))[0], TAB), { ok: true });
+  // At the choice the first kind the frame reported; then each value's own field.
+  assert.deepEqual(world.frameShown.kinds, ["username", "username", "password"]);
+  // The frame's own problem with a field is the answer (the handler words "hidden" as "covered").
+  const own = await itemWorld({ frames: tied() });
+  await own.open();
+  own.page.fields = [];
+  own.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  own.frameShown.where = () => ({ problem: "hidden" });
+  const p2 = own.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: false, reason: "covered" });
+  assert.deepEqual(own.pushed, []);
+});
+
 test("a_frame_inside_a_frame_is_checked_in_every_document_up_to_the_top", async () => {
   const NESTED_URL = "https://login.example.net/nested/login";
   const nested = () => [

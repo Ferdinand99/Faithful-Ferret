@@ -31,6 +31,8 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Whether an injection asks a document whether a frame of it is shown (inject.mjs `frameShownIn`). @param {any} injection */
 export const isFrameCheck = (injection) => typeof injection?.func === "function" && String(injection.func).includes("frameShown");
+/** Whether an injection asks a frame where its field is (inject.mjs `fieldPointsIn`). @param {any} injection */
+export const isFieldQuestion = (injection) => typeof injection?.func === "function" && String(injection.func).includes("api.where");
 
 /**
  * A port between a page and the background whose background end also has
@@ -240,8 +242,15 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
    */
   const frameShown = {
     verdict: (/** @type {number} */ _frameId, /** @type {string} */ _parentDocumentId) => "shown",
+    /** What a frame says of its field (content/fill.mjs `where`). */
+    where: (/** @type {string} */ _kind) => /** @type {any} */ ({ points: [[20, 20]] }),
     /** @type {Array<{ frameId: number, documentId: string }>} */
     asked: /** @type {Array<{ frameId: number, documentId: string }>} */ ([]),
+    /** Kinds a frame was asked about, in order. @type {string[]} */
+    kinds: /** @type {string[]} */ ([]),
+    /** A page that never answers: the frame questions (or the fill script's start) hang. */
+    hang: false,
+    hangBegin: false,
   };
 
   /** A content script's message from a frame (the top's by default). @param {string} type @param {any} body @param {ReturnType<typeof frameSim>} [from] */
@@ -257,11 +266,18 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       const sim = simOf(injection.target);
       if (sim === null) return [{ error: "no frame" }];
       if (injection.files) return [{ frameId: sim.sender.frameId }];
-      if (isFrameCheck(injection)) {
-        const [frameId] = injection.args;
-        frameShown.asked.push({ frameId, documentId: sim.sender.documentId });
-        return [{ frameId: sim.sender.frameId, result: frameShown.verdict(frameId, sim.sender.documentId) }];
+      if (isFieldQuestion(injection)) {
+        if (frameShown.hang) return new Promise(() => {});
+        frameShown.kinds.push(injection.args[1]);
+        return [{ frameId: sim.sender.frameId, result: frameShown.where(injection.args[1]) }];
       }
+      if (isFrameCheck(injection)) {
+        const [frameId, points] = injection.args;
+        frameShown.asked.push({ frameId, documentId: sim.sender.documentId });
+        const verdict = frameShown.verdict(frameId, sim.sender.documentId);
+        return [{ frameId: sim.sender.frameId, result: verdict === "shown" ? { verdict, points } : { verdict } }];
+      }
+      if (frameShown.hangBegin) return new Promise(() => {});
       const [requestId] = injection.args;
       if (sim.reports) {
         setTimeout(() => {
@@ -438,7 +454,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     },
     injections,
     /** The injections that began a fill request (not the questions about a frame). */
-    begins: () => injections.filter((i) => i.func && !isFrameCheck(i)),
+    begins: () => injections.filter((i) => i.func && !isFrameCheck(i) && !isFieldQuestion(i)),
     frameShown,
     pushed,
     opened,

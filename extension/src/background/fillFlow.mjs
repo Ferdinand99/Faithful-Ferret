@@ -34,12 +34,16 @@
 // through the popup: the popup's answer is `{ ok }` or a reason.
 //
 // "Shown on the page": the fill script checks a field only inside its own
-// frame. For a frame below the top, the element that holds it must also pass
-// the same checks in its parent document, and so on up to the top
-// (inject.mjs `frameChainShown`; the chain of documents comes from the browser).
-// A frame that fails is not filled (`frame_hidden`). The check runs when the
-// frame is chosen and again right before each value is sent, so a frame that
-// is hidden or covered after its report gets nothing more.
+// frame. For a frame below the top, the field must also be shown in every
+// document above it: the frame's script gives the field's points, and in the
+// parent the element that holds the frame must pass the ancestor chain and
+// each point, moved into the parent, must be in its viewport and reach that
+// element; and so on up to the top (inject.mjs `frameChainShown`; the chain of
+// documents comes from the browser). A frame that fails is not filled
+// (`frame_hidden`). The check runs when the frame is chosen and again right
+// before each value is sent, so a frame that is hidden or covered after its
+// report gets nothing more. Each step has a time limit: a page that never
+// answers cannot keep the fill flow busy.
 //
 // A report or a fill result that names no pending request, or comes from
 // another frame or document, does nothing.
@@ -523,20 +527,30 @@ export function createFillHost({
    * @returns {Promise<{ kinds: Set<string>, url: string }>}
    */
   async function reportOf(request) {
-    await injectFill({ scripting, tabId: request.tabId, frameId: request.frameId, documentId: request.documentId, requestId: request.requestId }).catch(() => {
+    const injected = injectFill({ scripting, tabId: request.tabId, frameId: request.frameId, documentId: request.documentId, requestId: request.requestId }).catch(() => {
       throw new FillError("frame_gone");
     });
+    // A page that never lets the script in (a blocked main thread) is a frame that did not report.
+    await within(injected, reportTimeoutMs, "no_report");
     return within(request.report.promise, reportTimeoutMs, "no_report");
   }
 
   /**
-   * Whether the frame of `request` is shown in every document above it: null, or the refusal. The top has nothing
-   * above it.
-   * @param {Pending} request
-   * @returns {Promise<null | "frame_hidden">}
+   * Whether the field of `kind` in the frame of `request` is shown in every document above the frame: null, or the
+   * refusal (`frame_hidden`, or the frame's own problem with the field). The top has nothing above it. A check that
+   * does not end in time refuses.
+   * @param {Pending} request @param {string} kind
+   * @returns {Promise<null | string>}
    */
-  function shownOnPage(request) {
-    return frameChainShown({ scripting, tabId: request.tabId, frame: { frameId: request.frameId, ancestors: request.ancestors } });
+  function shownOnPage(request, kind) {
+    const frame = {
+      frameId: request.frameId,
+      ...(request.documentId !== undefined ? { documentId: request.documentId } : {}),
+      ancestors: request.ancestors,
+    };
+    return within(frameChainShown({ scripting, tabId: request.tabId, frame, requestId: request.requestId, kind }), reportTimeoutMs, "frame_hidden").catch(
+      () => "frame_hidden",
+    );
   }
 
   /** @param {{ session: string, ref: string, tab_id: number, frame_id?: number }} args */
@@ -589,15 +603,18 @@ export function createFillHost({
       // The first frame, the top first, whose report has sign-in fields and which is shown in every document above it;
       // a frame that narrowed to nothing is dropped.
       let chosen = -1;
-      let hidden = false;
+      /** Why a frame with sign-in fields was passed over, the first such reason. @type {string | null} */
+      let passed = null;
       for (let i = 0; i < reports.length && chosen < 0; i += 1) {
         const r = reports[i];
-        if (r.status !== "fulfilled" || !FILL_ORDER.some((kind) => r.value.kinds.has(kind))) continue;
-        if ((await shownOnPage(requests[i])) === null) chosen = i;
-        else hidden = true;
+        const first = r.status === "fulfilled" ? FILL_ORDER.find((kind) => r.value.kinds.has(kind)) : undefined;
+        if (first === undefined) continue;
+        const problem = await shownOnPage(requests[i], first);
+        if (problem === null) chosen = i;
+        else if (passed === null || problem === "frame_hidden") passed = problem;
       }
       if (chosen < 0) {
-        if (hidden) return { ok: false, reason: "frame_hidden" };
+        if (passed !== null) return { ok: false, reason: passed };
         if (reports.some((r) => r.status === "fulfilled")) return { ok: false, reason: "no_fields" };
         const first = /** @type {PromiseRejectedResult} */ (reports[0]);
         const code = /** @type {any} */ (first.reason)?.code;
@@ -615,7 +632,7 @@ export function createFillHost({
           const value = await valueOf(core.vault, opened, kind);
           if (value === null) continue;
           // Right before the value goes: the frame must still be shown in every document above it.
-          const hiddenNow = await shownOnPage(request);
+          const hiddenNow = await shownOnPage(request, kind);
           if (hiddenNow !== null) return { ok: false, reason: hiddenNow };
           if (pending.get(request.requestId) !== request) throw new FillError("vault_locked");
           const result = await push(request, kind, value, report.url);

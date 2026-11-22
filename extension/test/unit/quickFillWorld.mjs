@@ -148,7 +148,7 @@ export async function createWorld({ frames = [{ frameId: 0, url: PAGE }], items 
     const setField = (/** @type {string} */ field) => {
       lastField = field;
     };
-    return { spec, page, parts, engine, offered: Object.freeze({ begin: engine.begin, aim: engine.aim, frameShown: engine.frameShown }), facts, setField };
+    return { spec, page, parts, engine, offered: Object.freeze({ begin: engine.begin, aim: engine.aim, where: engine.where, frameShown: engine.frameShown }), facts, setField };
   });
   // Each frame below the top has an iframe in its parent's page, shown beside the parent's own form.
   sims.forEach((sim, i) => {
