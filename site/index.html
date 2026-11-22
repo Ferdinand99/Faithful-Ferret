@@ -258,7 +258,7 @@
             <li class="card feature reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#plug"></use></svg></span>
               <h3>Devices and bound tokens</h3>
-              <p>A client that is not the web vault signs in as a device: it makes its own key, signs in with the master password, and gets tokens that only that key can use. Every request carries a proof of the key (DPoP, RFC 9449). An access token lives 15 minutes, a refresh token is used once, and using an old one revokes the device. The web vault is not a device and keeps its cookie session, and no released client signs in as a device yet.</p>
+              <p>A client that is not the web vault signs in as a device: it makes its own key, signs in with the master password, and gets tokens that only that key can use. Every request carries a proof of the key (DPoP, RFC 9449). An access token lives 15 minutes, a refresh token is used once, and using an old one after a short grace period revokes the device. The web vault is not a device and keeps its cookie session, and no released client signs in as a device yet.</p>
             </li>
             <li class="card feature reveal d1">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#logout"></use></svg></span>
@@ -522,9 +522,9 @@
             <li class="milestone is-now reveal">
               <span class="ms-marker" aria-hidden="true"><span class="dot is-live"></span></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Done in v0.6.0</span></p>
+                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Done in v0.6.0, folders in the web vault next</span></p>
                 <h3>Safe sync, recovery and daily use</h3>
-                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, and recovery from an older server state with checks. Recovery is done (v0.6.0): an emergency sheet with a QR code, recovery on a new browser with the recovery key, a new recovery key, a master password change through one write path, a one-time sign-in code, encrypted export, import from Ferret, Bitwarden and AliasVault files, tab hand-over that keeps unsaved edits, and automatic backups with an encrypted off-machine copy and a safe restore. Devices are done (v0.6.0): sign-in with tokens bound to a device key, and a device list with revoke in the web vault. Folder labels are in the core; the folder interface comes with the new web vault layout, which is in progress.</p>
+                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, and recovery from an older server state with checks. Recovery is done (v0.5.0): an emergency sheet with a QR code, recovery on a new browser with the recovery key, a new recovery key, a master password change through one write path, a one-time sign-in code, encrypted export, import from Ferret, Bitwarden and AliasVault files, tab hand-over that keeps unsaved edits, and automatic backups with an encrypted off-machine copy and a safe restore. Devices are done (v0.6.0): sign-in with tokens bound to a device key, and a device list with revoke in the web vault. Folder labels are in the core; the folder interface comes with the new web vault layout, which is in progress.</p>
               </div>
             </li>
             <li class="milestone is-now reveal">

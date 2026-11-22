@@ -55,8 +55,8 @@ These are in v0.6.0 and are tested on a test instance. All of it is pre-1.0, and
 - **Devices and bound tokens.** A client that is not the web vault, such as the browser extension will be, signs in
   as a device: it makes its own key, signs in with the master password, and gets an access token and a refresh token
   that only that key can use. Every request carries a proof of that key (DPoP, RFC 9449, ES256). An access token
-  lives 15 minutes, a refresh token is used once and replaced at every renewal, and using an old one revokes the
-  device. An account can have 20 devices with tokens. The web vault is not a device and keeps its cookie session.
+  lives 15 minutes, a refresh token is used once and replaced at every renewal, and using an old one after a short grace
+  period revokes the device. An account can have 20 devices with tokens. The web vault is not a device and keeps its cookie session.
   No released client uses device sign-in yet; the Firefox extension will be the first.
 - **Device list and revoke.** The Devices page of the web vault lists the devices with tokens and the browsers that
   are signed in, with name, platform and last seen. You can revoke one device, revoke every device and every other
