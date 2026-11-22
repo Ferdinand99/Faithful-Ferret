@@ -179,7 +179,7 @@ test("every_text_of_the_list_is_there_in_both_languages", () => {
   for (const reason of [...FILL_REASONS, ...COPY_REASONS]) assert.ok(ACTION_ERRORS.includes(reason) || reason === "unknown", reason);
   for (const type of [...FILTER_TYPES, "all", "other"]) assert.ok(Object.hasOwn(en, `popup.type.${type}`), type);
   // Every literal key of the list and the popup is in the catalog.
-  for (const file of ["popupList.mjs", "popup.mjs"]) {
+  for (const file of ["popupList.mjs", "popup.mjs", "copyMenu.mjs"]) {
     const code = readFileSync(join(src, "pages", file), "utf8");
     for (const [, key] of code.matchAll(/t\("(popup\.[a-z_.]+)"/g)) assert.ok(Object.hasOwn(en, key), `${file}: ${key}`);
   }

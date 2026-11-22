@@ -14,7 +14,11 @@
 // - A copied password leaves the clipboard after 30 seconds, also when the
 //   vault is locked right after the copy, and a later copy is not cleared by
 //   the alarm of an earlier one (the system clipboard, read in the chrome
-//   context).
+//   context). A user name copied from a row's copy menu, opened and moved
+//   through with real keys, leaves the clipboard after 30 seconds too.
+// - The real popup (the toolbar's panel, opened by the fill shortcut on a page
+//   with two matches) and a popped-out window keep their header and their foot
+//   inside the window, with a list too long for it: only the list scrolls.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -22,7 +26,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { DEVICE_NAME, POPUP_URL, SLOW, VAULT_URL, helpers, pace } from "./e2e.mjs";
-import { ENTRIES, POPUP_TEXT, clipboardText, shotPath, world } from "./adversary.mjs";
+import { ENTRIES, POPUP_TEXT, USERNAME, clipboardText, shotPath, world } from "./adversary.mjs";
 import { TEST_ADDON_ID, channels, stopFixtures } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -32,6 +36,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const WARNED = 90_000;
 /** The clipboard is cleared 30 s after a copy; the browser's alarm may fire a little late. */
 const CLEARED_WITHIN_MS = 40_000;
+/** The shortcut of the fill command (manifest/parts/commands.json). */
+const FILL_SHORTCUT = "Alt+Shift+L";
+/** The tallest popup Firefox shows (ExtensionPopups.sys.mjs asks the page for its size up to 600 pixels). */
+const POPUP_MAX_HEIGHT = 600;
+/** WebDriver's keys. */
+const KEY = Object.freeze({ enter: String.fromCharCode(0xe007), space: String.fromCharCode(0xe00d), escape: String.fromCharCode(0xe00c), down: String.fromCharCode(0xe015), up: String.fromCharCode(0xe013) });
 
 /** @param {number} ms */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -376,6 +386,8 @@ test("a_copied_password_leaves_the_clipboard_after_30_seconds", async () => {
           return true;
         }, w.named[key]), 30_000, `the row of ${key}`);
         assert.equal(marked, true);
+        await w.page.click('[data-e2e-copy] [data-role="copy"]');
+        await w.page.waitVisible('[data-e2e-copy] [data-role="copy-menu"]', 5_000);
         await w.page.click('[data-e2e-copy] [data-role="copy-password"]');
         await w.page.waitVisible('[data-role="toast"]', 20_000);
         assert.equal(await w.page.text('[data-role="toast"]'), POPUP_TEXT["popup.copied.password"], `${channel}: copied`);
@@ -412,6 +424,182 @@ test("a_copied_password_leaves_the_clipboard_after_30_seconds", async () => {
       took = await clearedAfter(at);
       assert.ok(took <= CLEARED_WITHIN_MS, `${channel}: cleared ${took} ms after the copy, while locked`);
       await w.session.screenshot(shotPath(channel, "80-clipboard-cleared-while-locked"));
+    } finally {
+      await w.quit();
+    }
+  }
+});
+
+test("a_copied_user_name_leaves_the_clipboard_after_30_seconds_and_the_copy_menu_works_with_the_keyboard", async () => {
+  for (const channel of channels()) {
+    const w = await world(channel, { entries: { host: ENTRIES.host } });
+    try {
+      await popupTab(w);
+      await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
+      await w.page.type('[data-role="search"]', w.named.host);
+      const marked = await w.session.waitFor(() => w.session.content((/** @type {string} */ wanted) => {
+        const row = [...document.querySelectorAll('[data-role="results"] [data-role="item-row"]')].find((r) => r.querySelector('[data-role="row-name"]')?.textContent?.trim() === wanted);
+        if (!row) return false;
+        row.setAttribute("data-e2e-copy", "1");
+        return true;
+      }, w.named.host), 30_000, "the row of the entry");
+      assert.equal(marked, true);
+      /** The row's copy menu as the page shows it, and which control of the row has the focus. */
+      const menu = () => w.session.content(() => {
+        const row = /** @type {HTMLElement} */ (document.querySelector("[data-e2e-copy]"));
+        const list = /** @type {HTMLElement} */ (row.querySelector('[data-role="copy-menu"]'));
+        return {
+          open: !list.hidden && list.getClientRects().length > 0,
+          expanded: row.querySelector('[data-role="copy"]')?.getAttribute("aria-expanded") ?? null,
+          entries: [...list.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent?.trim() ?? ""),
+          focus: row.contains(document.activeElement) ? document.activeElement?.getAttribute("data-role") ?? null : null,
+        };
+      });
+      /** Real keys on a control of the row. @param {string} role @param {string} keys */
+      const press = async (role, keys) => {
+        const [control] = await w.session.findAll(`[data-e2e-copy] [data-role="${role}"]`);
+        assert.ok(control, role);
+        await w.session.type(control, keys);
+      };
+      /** Waits for the menu to be open (or closed) with the focus on `focus`. @param {boolean} open @param {string} focus */
+      const expect = (open, focus) => w.session.waitFor(async () => {
+        const now = await menu();
+        return now.open === open && now.focus === focus ? now : null;
+      }, 5_000, `${channel}: the copy menu ${open ? "open" : "closed"} with the focus on ${focus}`);
+
+      // Enter on the button opens the menu at its first entry: the user name, then the password.
+      await press("copy", KEY.enter);
+      const opened = await expect(true, "copy-username");
+      assert.deepEqual(opened.entries, [POPUP_TEXT["popup.row.copy_username"], POPUP_TEXT["popup.row.copy_password"]], channel);
+      assert.equal(opened.expanded, "true");
+      // The arrows move, Escape closes it and the focus is back on the button.
+      await press("copy-username", KEY.down);
+      await expect(true, "copy-password");
+      await press("copy-password", KEY.up);
+      await expect(true, "copy-username");
+      await press("copy-username", KEY.escape);
+      assert.equal((await expect(false, "copy")).expanded, "false");
+      assert.equal(await clipboardText(w.session), "", `${channel}: nothing was copied`);
+      // Space opens it again, and Enter on "Copy user name" copies the user name.
+      await press("copy", KEY.space);
+      await expect(true, "copy-username");
+      await press("copy-username", KEY.enter);
+      await expect(false, "copy");
+      await w.page.waitVisible('[data-role="toast"]', 20_000);
+      assert.equal(await w.page.text('[data-role="toast"]'), POPUP_TEXT["popup.copied.username"], `${channel}: copied`);
+      const at = Date.now();
+      assert.equal(await clipboardText(w.session), USERNAME, `${channel}: the clipboard has the user name`);
+      await w.session.waitFor(async () => (await clipboardText(w.session)) === "", CLEARED_WITHIN_MS + 5_000, `${channel}: the clipboard is cleared`);
+      const took = Date.now() - at;
+      console.log(`# ${channel}: the user name left the clipboard ${took} ms after the copy`);
+      assert.ok(took >= 25_000 && took <= CLEARED_WITHIN_MS, `${channel}: cleared after ${took} ms (30 s wanted)`);
+    } finally {
+      await w.quit();
+    }
+  }
+});
+
+test("the_real_popup_keeps_its_header_and_foot_inside_the_window_and_scrolls_only_its_list", async () => {
+  for (const channel of channels()) {
+    const w = await world(channel, { entries: { host: ENTRIES.host, domain: ENTRIES.domain } });
+    try {
+      // Two entries match the sign-in page, so the fill shortcut opens the toolbar's popup instead of filling.
+      const tabId = await w.visit(w.server.siteUrl("login"));
+      await w.session.pressShortcut(FILL_SHORTCUT);
+
+      /**
+       * The layout of the popup's page: the toolbar's panel, or the popped-out window about the page's tab. With
+       * `stretch`, the page first gets a list far longer than the window, and an account and a server name far wider
+       * than it. Null until the page shows its list.
+       * @param {"panel" | "window"} where @param {boolean} stretch
+       */
+      const layout = (where, stretch) => w.fromBridge(() => w.session.content((/** @type {string} */ kind, /** @type {boolean} */ longer) => {
+        const views = kind === "panel"
+          ? browser.extension.getViews({ type: "popup" })
+          : browser.extension.getViews({ type: "tab" }).filter((v) => v.location.pathname.endsWith("/pages/popup.html") && v.location.search.startsWith("?tab="));
+        const view = /** @type {Window | undefined} */ (views[0]);
+        if (!view) return null;
+        const d = view.document;
+        const list = d.querySelector('[data-role="list"]');
+        const rows = d.querySelector('[data-role="all-rows"]');
+        const first = rows?.querySelector('[data-role="item-row"]');
+        if (d.body.dataset.ready !== "1" || !d.querySelector('[data-role="unlocked-view"]') || !list || !rows || !first) return null;
+        if (longer && !d.body.hasAttribute("data-e2e-stretched")) {
+          for (let i = 0; i < 40; i += 1) rows.append(first.cloneNode(true));
+          const account = /** @type {HTMLElement} */ (d.querySelector('[data-role="account"]'));
+          const host = /** @type {HTMLElement} */ (d.querySelector('[data-role="server-host"]'));
+          account.textContent = `${"a-very-long-account-name.".repeat(8)}@example.net`;
+          host.textContent = `${"a-long-server-label.".repeat(8)}example.net`;
+          d.body.setAttribute("data-e2e-stretched", "1");
+        }
+        /** @param {string} css */
+        const box = (css) => {
+          const r = /** @type {Element} */ (d.querySelector(css)).getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+        };
+        return {
+          views: views.length,
+          width: view.innerWidth,
+          height: view.innerHeight,
+          pageHeight: d.documentElement.scrollHeight,
+          windowed: d.body.classList.contains("ff-windowed"),
+          header: box(".ff-bar"),
+          foot: box(".ff-foot"),
+          account: box('[data-role="account"]'),
+          host: box('[data-role="server-host"]'),
+          list: { ...box('[data-role="list"]'), client: list.clientHeight, scroll: list.scrollHeight },
+        };
+      }, where, stretch));
+      /** The layout once Firefox has sized the popup (the same twice in a row). @param {"panel" | "window"} where @param {boolean} stretch */
+      const settled = async (where, stretch) => {
+        /** @type {any} */
+        let last = null;
+        return w.session.waitFor(async () => {
+          const now = await layout(where, stretch);
+          const same = now !== null && last !== null && JSON.stringify(now) === JSON.stringify(last);
+          last = now;
+          return same ? now : null;
+        }, SLOW, `${channel}: the ${where}'s layout`);
+      };
+      /** @param {any} l @param {string} what */
+      const whole = (l, what) => {
+        const detail = `${channel}, ${what}: ${JSON.stringify(l)}`;
+        assert.ok(l.height >= 300, detail);
+        assert.ok(l.header.top >= -0.5, `the header starts inside the window: ${detail}`);
+        assert.ok(l.foot.bottom <= l.height + 0.5, `the foot ends inside the window: ${detail}`);
+        assert.ok(l.foot.top >= l.list.bottom - 0.5, `the foot is below the list: ${detail}`);
+        assert.ok(l.pageHeight <= l.height + 0.5, `the page itself does not scroll: ${detail}`);
+        for (const part of [l.account, l.host]) assert.ok(part.left >= -0.5 && part.right <= l.width + 0.5, `the foot's text stays inside the window: ${detail}`);
+        assert.ok(l.account.right <= l.host.left + 0.5, `the account and the server do not overlap: ${detail}`);
+      };
+
+      // The toolbar's panel: as tall as Firefox lets a popup be, with the header and the foot whole.
+      const panel = await settled("panel", false);
+      assert.equal(panel.views, 1, `${channel}: one popup`);
+      assert.equal(panel.windowed, false, channel);
+      assert.ok(panel.height <= POPUP_MAX_HEIGHT, `${channel}: the panel is ${panel.height} pixels tall`);
+      whole(panel, "the panel");
+      // A list far longer than the panel, and names far wider: the list scrolls, the rest stays where it was.
+      const full = await settled("panel", true);
+      whole(full, "the panel with a long list");
+      assert.ok(full.list.scroll > full.list.client, `${channel}: the list scrolls (${full.list.scroll} > ${full.list.client})`);
+      assert.equal(full.height, panel.height, `${channel}: the panel keeps its height`);
+      assert.equal(full.foot.bottom, panel.foot.bottom, `${channel}: the foot stays where it was`);
+      console.log(`# ${channel}: panel ${full.width}x${full.height}, foot ${full.foot.top}-${full.foot.bottom}`);
+
+      // The popped-out window (the pop-out button's own size) takes the window's height.
+      const opened = await w.fromBridge(() => w.session.content(async (/** @type {number} */ id) => {
+        const made = await browser.windows.create({ url: browser.runtime.getURL(`pages/popup.html?tab=${id}`), type: "popup", width: 380, height: 620 });
+        return made.id;
+      }, tabId));
+      try {
+        const windowed = await settled("window", true);
+        assert.equal(windowed.windowed, true, channel);
+        whole(windowed, "the popped-out window");
+        assert.ok(windowed.list.scroll > windowed.list.client, `${channel}: the window's list scrolls`);
+      } finally {
+        await w.fromBridge(() => w.session.content((/** @type {number} */ id) => browser.windows.remove(id).then(() => true), opened));
+      }
     } finally {
       await w.quit();
     }

@@ -35,21 +35,30 @@ function byId(id) {
 }
 
 /**
- * The tab whose page the popup is about, or null.
- * @returns {Promise<number | null>}
+ * The tab whose page the popup is about (or null), and whether the popup runs in a tab or a window of its own (popped
+ * out, or opened as a page) rather than in the toolbar's panel.
+ * @returns {Promise<{ tabId: number | null, windowed: boolean }>}
  */
-async function pageTab() {
+async function placeOf() {
   const named = new URLSearchParams(location.search).get("tab");
-  if (named !== null) return /^[0-9]{1,10}$/.test(named) ? Number(named) : null;
+  /** @type {any} */
+  let own;
   try {
-    const own = await browser.tabs.getCurrent();
-    const [active] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (typeof active?.id !== "number") return null;
-    // The popup page in a tab of its own is not about a page.
-    if (own !== undefined && own?.id === active.id) return null;
-    return active.id;
+    // The toolbar's panel is no tab: `getCurrent()` gives nothing there.
+    own = await browser.tabs.getCurrent();
   } catch {
-    return null;
+    own = undefined;
+  }
+  const windowed = named !== null || own !== undefined;
+  if (named !== null) return { tabId: /^[0-9]{1,10}$/.test(named) ? Number(named) : null, windowed };
+  try {
+    const [active] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (typeof active?.id !== "number") return { tabId: null, windowed };
+    // The popup page in a tab of its own is not about a page.
+    if (own !== undefined && own?.id === active.id) return { tabId: null, windowed };
+    return { tabId: active.id, windowed };
+  } catch {
+    return { tabId: null, windowed };
   }
 }
 
@@ -63,8 +72,10 @@ async function main() {
   const ui = connectUi(browser.runtime);
   const flow = createPopupFlow(ui.request);
   const listFlow = createListFlow(ui.request);
-  const tabId = await pageTab();
+  const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
+  // The panel is as tall as Firefox lets a popup be; a tab or a window gives the popup its own height (popup.css).
+  document.body.classList.toggle("ff-windowed", windowed);
 
   /** @param {PopupView} view */
   function header(view) {
@@ -81,8 +92,8 @@ async function main() {
     return el(
       "div",
       { class: "ff-where", "data-role": "account-line" },
-      el("span", { class: "ff-where-account", "data-role": "account" }, view.account),
-      el("span", { class: "ff-where-host ff-host", dir: "ltr", "data-role": "server-host" }, view.host),
+      el("span", { class: "ff-where-account", "data-role": "account", title: view.account }, view.account),
+      el("span", { class: "ff-where-host ff-host", dir: "ltr", "data-role": "server-host", title: view.host }, view.host),
     );
   }
 
