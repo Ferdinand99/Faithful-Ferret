@@ -39,8 +39,13 @@ The packed size is checked against a budget of 8 MiB.
 - two static test pages for the frame cases on two names of one site that are both different from the vault, for example
   `https://frames.example.test` (site A) and `https://login.example.test` (site B), served without single sign-on (see
   "The frame pages" below);
-- the signed test build of the extension (an `.xpi` signed for unlisted distribution, installable in an ordinary
-  Firefox), Firefox 153 or newer;
+- the signed release build of the extension, Firefox 153 or newer. It is signed for unlisted distribution by the manual
+  workflow "Extension sign release build" (`.github/workflows/extension-sign-release.yml`, started with
+  `gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>` and approved in its environment). Download the
+  run's artifact `ferret-release-mv2-signed` (the signed `.xpi` and `SHA256SUMS`), run `sha256sum -c SHA256SUMS` in its
+  folder, and check that the "unsigned sha256" in the run's summary is the SHA-256 of the release package you build
+  yourself from the same commit (`node scripts/build.mjs --browser firefox --manifest mv2 --variant release` in
+  `extension/`);
 - a second browser (for example Chromium, or a private window) for the web vault;
 - a text editor to paste the clipboard into;
 - an unencrypted Bitwarden JSON file with about a thousand made-up logins, including one login for site A, one for site B
@@ -77,8 +82,9 @@ Reload every open vault tab after a deploy: a tab loaded before it still runs th
 
 ### 3. The extension: install and sign in (Firefox, about 10 minutes)
 
-1. Install the signed test build (`about:addons`, "Install Add-on From File").
-   *Expected:* Firefox installs it without a warning about an unsigned add-on; the Ferret button is in the toolbar.
+1. Install the signed release build (`about:addons`, the gear menu, "Install Add-on From File", the checked `.xpi`).
+   *Expected:* Firefox installs "Faithful Ferret" without a warning about an unsigned add-on; the Ferret button is in the
+   toolbar.
 2. Press the button.
    *Expected:* "Not signed in" with a "Sign in" button.
 3. Press "Sign in". In the tab, type the vault address and continue; press "Give access to the server" and allow it in
