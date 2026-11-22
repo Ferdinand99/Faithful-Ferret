@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.5.0...v0.6.0) (2026-11-22)
+
+
+### Features
+
+* **core:** folder labels inside the item body, through the WASM binding ([#213](https://github.com/Ferdinand99/Faithful-Ferret/issues/213)) ([d62bbf5](https://github.com/Ferdinand99/Faithful-Ferret/commit/d62bbf5ab70190eae638e9e4b0c5ca304799bf33))
+* devices and DPoP-bound tokens ([c6daf9a](https://github.com/Ferdinand99/Faithful-Ferret/commit/c6daf9a2698d88d4b8d05dea3d421fe36e27d045))
+
+
+### Bug Fixes
+
+* **server:** close the findings of the final review of device tokens ([#200](https://github.com/Ferdinand99/Faithful-Ferret/issues/200)) ([027db45](https://github.com/Ferdinand99/Faithful-Ferret/commit/027db45838fca19f45a63a35755f393eb249bcf2))
+
 ## [0.5.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.4.0...v0.5.0) (2026-11-21)
 
 

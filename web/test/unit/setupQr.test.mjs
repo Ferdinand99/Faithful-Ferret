@@ -63,6 +63,53 @@ test("the_reader_refuses_what_is_not_a_sheet_text", async () => {
   assert.equal(unknown.code, "kdf_profile_unknown");
 });
 
+test("the_reader_ignores_white_space_in_the_text_as_the_pdf_wraps_it", async () => {
+  const text = qrText({ url: "https://Vault.Example:8443" });
+  const expectRead = async (pasted, label) => {
+    const c = client();
+    const qr = await readSetupQr(c, pasted);
+    assert.deepEqual([qr.host, qr.port, qr.accountId, qr.skBit], ["vault.example", 8443, ACCOUNT, true], label);
+    // The core is asked with the text as one piece, whatever was pasted.
+    assert.deepEqual(c.calls.map((call) => call.method), ["setup_qr_parse"], label);
+    assert.equal(c.calls[0].snapshot[0], text, label);
+  };
+  /** The text broken into lines of `size` characters, joined by `join`. */
+  const wrapped = (size, join) => text.match(new RegExp(`.{1,${size}}`, "gu")).join(join);
+  // The PDF prints the text with a short line width; a browser turns the line breaks into spaces (Firefox) or drops them (Chromium).
+  await expectRead(wrapped(8, " "), "spaces");
+  await expectRead(wrapped(8, "\n"), "line feeds");
+  await expectRead(wrapped(8, ""), "line breaks dropped");
+  for (const size of [8, 13, 21, 40]) await expectRead(`${wrapped(size, "\r\n")}\r\n`, `CRLF every ${size}`);
+  await expectRead(wrapped(8, "\t"), "tabs");
+  await expectRead(` ${wrapped(8, " ")} `, "no-break spaces");
+  await expectRead(wrapped(8, "  　"), "other Unicode spaces");
+  await expectRead(`﻿ ${wrapped(10, " \n ")}  `, "a mix, with a byte order mark and a line separator");
+});
+
+test("a_text_that_is_not_a_sheet_text_is_still_refused_when_white_space_is_removed", async () => {
+  const text = qrText();
+  const lines = (value) => value.replace(/(.{8})/g, "$1\n");
+  const refused = async (pasted, code) => {
+    const c = client();
+    const error = await readSetupQr(c, pasted).catch((e) => e);
+    assert.ok(error instanceof SetupQrError);
+    assert.equal(error.code, code);
+    return c;
+  };
+  // Removing white space does not make a wrong text right.
+  await refused(lines(text.replace("&s=1", "&s=2")), "malformed_setup_qr");
+  await refused(lines(`${text}x`), "malformed_setup_qr");
+  await refused(lines(text.slice(0, -1)), "malformed_setup_qr");
+  await refused("  \r\n\t ", "malformed_setup_qr");
+  await refused(lines(text.replace("ferret-setup:v1", "ferret-setup:v2")), "qr_unsupported");
+  // The limit is on the text without white space: 1700 characters reach the core, 1701 do not, and white space does not count.
+  assert.equal((await refused(lines("x".repeat(1_700)), "malformed_setup_qr")).calls.length, 1);
+  assert.equal((await refused(lines("x".repeat(1_701)), "qr_too_large")).calls.length, 0);
+  // A raw paste of more than twice the limit is refused as too large before it is cleaned.
+  assert.equal((await refused(" ".repeat(3_401), "qr_too_large")).calls.length, 0);
+  assert.equal((await refused(`${text}${" ".repeat(3_400)}`, "qr_too_large")).calls.length, 0);
+});
+
 test("the_reader_checks_the_form_of_the_answer", async () => {
   const good = () => ({
     server_url: SERVER, scheme: "https", host: "vault.example", port: null,

@@ -13,8 +13,14 @@
 //!   "passkey": { "cred_id", "rp_id", "user_handle", "user_name", "priv",
 //!                "sign_count", "created", "prf_seed_uv"?, "prf_seed_nouv"? }?,
 //!   "notes": text?, "created": u64, "modified": u64, "favorite": bool,
-//!   "device": text? }
+//!   "device": text?,
+//!   "folders": [ text ]? }
 //! ```
+//!
+//! `folders` is read and written through [`ItemBody::folders`] and
+//! [`ItemBody::set_folders`] (see [`super::folders`] for its rules). It is
+//! kept with the unknown keys in `extra`, so a body without it is written as
+//! before and a version that does not know it keeps it.
 //!
 //! Every object, at every level, keeps the keys it does not know in an
 //! `extra` list, in the order they were read, and writes them again after

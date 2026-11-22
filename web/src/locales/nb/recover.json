@@ -33,7 +33,7 @@
   "recover.offer.recover": "Tjeneren sier at den er gjenopprettet fra en backup fra før du sist endret hovedpassordet. Denne enheten nekter det eldre passordet for å beskytte deg. Har du gjenopprettet tjeneren selv, bruk gjenopprettingsnøkkelen: gjenopprett kontoen og skriv ditt nyeste hovedpassord som det nye. Har du ikke det, kan dette være et angrep: kontakt den som drifter tjeneren.",
   "recover.offer.use_key": "Bruk gjenopprettingsnøkkelen",
   "recover.password_help": "Minst 12 tegn med hemmelig nøkkel, 15 uten. Bruk det fra nå av; gjenopprettingsnøkkelen er eneste vei tilbake hvis du glemmer det.",
-  "recover.qr_help": "Linjen under QR-koden på side 1 av nødarket. En enhet som husker denne kontoen, kan la feltet stå tomt.",
+  "recover.qr_help": "Teksten under QR-koden på side 1 av nødarket. Den kan gå over flere linjer: kopier den hel, i ett strekk. Mellomrom og linjeskift ignoreres. En enhet som husker denne kontoen, kan la feltet stå tomt.",
   "recover.qr_label": "Tekst fra arkets QR-kode (side 1)",
   "recover.reset_open": "En gjenopprettingsøkt for denne nettleseren er fortsatt åpen (den varer i 30 minutter), så koden du allerede har brukt, trengs ikke igjen for den samme e-postadressen.",
   "recover.rk": "Gjenopprettingsnøkkel (side 2)",
