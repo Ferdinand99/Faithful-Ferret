@@ -206,6 +206,10 @@ default), and one with a TOTP secret for a site with no page.
 - Between the check of a frame's holder in its parent and the write in the frame there is a short window that cannot be closed
   across documents: at most one value can get through (design § 10.5).
 - A middle frame of another origin needs its own host permission; without it the fill is refused.
+- Firefox tells an extension nothing about a locked screen: the vault locks when the system has been idle for the "Lock after"
+  time, or when that time has passed without use of Ferret's own pages, not when the screen locks.
+- The persistent MV2 background page has no "Terminate" in Firefox: ending it means turning the add-on off and on (or
+  reloading it), or restarting Firefox.
 - Two-factor sign-in is not supported in the extension or on the web vault's Unlock page yet.
 - Revoking a device does not erase what it holds; a revoked web vault browser gets "Unlock" (it still needs the master password
   and the secret key it remembers).
