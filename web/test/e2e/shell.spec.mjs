@@ -90,7 +90,6 @@ const outside = (page) =>
   });
 
 const ENTRIES = [
-  ["nav-new", "#/items/new"],
   ["nav-items", "#/items"],
   ["nav-favorites", "#/favorites"],
   ["nav-transfer", "#/export"],
@@ -191,7 +190,7 @@ test.describe("the side menu on a desktop", () => {
       await page.keyboard.press("Tab");
       seen.push(await page.evaluate(() => document.activeElement?.getAttribute("data-role") ?? document.activeElement?.tagName));
     }
-    expect(seen.slice(0, 9)).toEqual(["skip", "brand", "collapse", "nav-new", "nav-items", "nav-favorites", "nav-transfer", "nav-trash", "account-menu-button"]);
+    expect(seen.slice(0, 8)).toEqual(["skip", "brand", "collapse", "nav-items", "nav-favorites", "nav-transfer", "nav-trash", "account-menu-button"]);
     // The skip link puts the focus on the screen.
     await page.locator('[data-role="skip"]').focus();
     await expect(page.locator('[data-role="skip"]')).toBeVisible();
@@ -286,7 +285,6 @@ for (const scheme of ["light", "dark"]) {
         mark: css(".vault-side .brand", "backgroundImage", "::before"),
         avatar: css(".vault-side .avatar", "backgroundColor"),
         avatarText: css(".vault-side .avatar", "color"),
-        newItem: css('[data-role="nav-new"]', "backgroundColor"),
       };
     });
     const lightness = (rgb) => {
@@ -301,11 +299,10 @@ for (const scheme of ["light", "dark"]) {
       expect(lightness(look.text)).toBeLessThan(0.3);
     }
     // The current entry is tinted, the mark is the page's own picture, the round mark has readable letters in the brand
-    // colour, and "New item" is an ordinary entry (the list page has the filled button).
+    // colour. There is no "New item" entry: the list page has the filled "Add" button.
     expect(look.current).not.toBe("rgba(0, 0, 0, 0)");
     expect(look.mark).toContain("data:image/svg+xml");
     expect(Math.abs(lightness(look.avatar) - lightness(look.avatarText))).toBeGreaterThan(0.4);
-    expect(look.newItem).toBe("rgba(0, 0, 0, 0)");
     await page.screenshot({ path: testInfo.outputPath(`shell-desktop-${scheme}.png`) });
     // Folded to a rail as well.
     await page.locator('[data-role="collapse"]').click();
@@ -369,7 +366,7 @@ test.describe("the drawer of a phone", () => {
     await page.locator('[data-role="menu-open"]').click();
     await expect(page.locator('[data-role="menu-close"]')).toBeFocused();
     const inside = () => page.evaluate(() => document.activeElement?.closest('[data-role="side"]') !== null && document.activeElement?.closest('[data-role="side"]') !== undefined);
-    // Forward past the last control and on round: never the skip link, the page footer or the screen behind.
+    // Forward past the last control and on round: never the skip link or the screen behind.
     for (let i = 0; i < 30; i += 1) {
       await page.keyboard.press("Tab");
       expect(await inside(), `Tab ${i + 1}`).toBe(true);
@@ -378,12 +375,11 @@ test.describe("the drawer of a phone", () => {
       await page.keyboard.press("Shift+Tab");
       expect(await inside(), `Shift+Tab ${i + 1}`).toBe(true);
     }
-    // The parts outside the drawer are out of reach, the page's own footer too.
-    expect(await page.evaluate(() => document.getElementById("foot").inert)).toBe(true);
+    // The parts outside the drawer are out of reach.
     expect(await page.evaluate(() => document.querySelector('[data-role="skip"]').inert)).toBe(true);
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-role="side"]')).toBeHidden();
-    expect(await page.evaluate(() => document.getElementById("foot").inert)).toBe(false);
+    expect(await page.evaluate(() => document.querySelector('[data-role="skip"]').inert)).toBe(false);
   });
 
   test("the_account_menu_opens_inside_the_drawer_and_escape_closes_the_menu_before_the_drawer", async ({ page }) => {

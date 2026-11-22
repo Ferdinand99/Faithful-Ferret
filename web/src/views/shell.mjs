@@ -21,6 +21,7 @@ import { countItems } from "./sidebarModel.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
+import { createThemeChoice } from "../theme.mjs";
 import { createUiPrefs } from "../uiPrefs.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
@@ -48,6 +49,7 @@ import { createUiPrefs } from "../uiPrefs.mjs";
  * @property {{ check(): Promise<boolean>, go(): void | Promise<void> }} [admin] the way to the admin pages; the switch shows only when `check` answers true
  * @property {() => Promise<void> | void} [signOut] what "Sign out" does (it leaves for the sign-in page itself, and rejects when the server could not be asked); without it the menu has no such item
  * @property {ReturnType<typeof createUiPrefs>} [prefs] what this device remembers about the menu
+ * @property {ReturnType<typeof createThemeChoice>} [theme] the theme choice of the account menu (Light, Dark, System)
  * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders of the vault, for the pinned ones (the vault has none yet)
  *
  * @typedef {object} LiveSource
@@ -128,7 +130,7 @@ function trackLock(session, screen) {
  * takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), folders = [], win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders = [], win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, el("span", { class: "pill-text" }, t("sync.state.syncing")));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -136,7 +138,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
   const items = () => (typeof engine.list === "function" ? engine.list() : []);
   const chrome = sidebarView({
-    t, routes, counts: countItems(items(), MANIFEST_ID), folders, prefs, email, status, liveStatus, admin, accountPaths,
+    t, routes, counts: countItems(items(), MANIFEST_ID), folders, prefs, theme, email, status, liveStatus, admin, accountPaths,
     onLock: async () => {
       await lock();
     },
@@ -164,9 +166,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   skip.addEventListener("click", () => {
     if (typeof main.focus === "function") main.focus();
   });
-  // Out of reach while the drawer is open: the screen, the skip link, and the page's own footer (outside the frame).
-  const pageFoot = globalThis.document?.getElementById?.("foot") ?? null;
-  chrome.setBehind([skip, body, ...(pageFoot === null ? [] : [pageFoot])]);
+  // Out of reach while the drawer is open: the screen and the skip link.
+  chrome.setBehind([skip, body]);
   // What the frame hands to the page (the window's media query, the parts it holds) is let go when the frame leaves the page or the vault locks.
   scope.add(() => chrome.dispose());
   mount(root, skip, chrome.top, el("div", { class: "vault-layout" }, chrome.side, chrome.backdrop, body));

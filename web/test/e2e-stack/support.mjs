@@ -498,7 +498,10 @@ export async function lockNow(page) {
  * @param {{ name: string, username?: string, password?: string, url?: string, notes?: string }} item
  */
 export async function createItem(page, item) {
-  await page.locator('[data-role="nav-new"]').click();
+  // The list's Add button starts a new item (the side menu has no entry for it).
+  await page.locator('[data-role="nav-items"]').click();
+  await expect(page.locator('[data-role="list"]')).toBeVisible();
+  await page.locator('[data-role="new-item"]').click();
   await expect(page.locator('[data-role="edit-form"]')).toBeVisible();
   await page.locator('[data-role="name"]').fill(item.name);
   if (item.username) await page.locator('[data-role="username"]').fill(item.username);
@@ -518,7 +521,12 @@ export async function createItem(page, item) {
 export async function findRows(page, name) {
   await page.locator('[data-role="list"]').waitFor({ state: "attached", timeout: 10_000 }).catch(() => {});
   const search = page.locator('[data-role="search"]');
-  // An empty vault has no search field, and every name is then absent in any case.
+  // An empty vault has no search field. A device that is still in its first sync shows the same empty list, and the search
+  // appears when the first items arrive: while the list says it is empty, give it a moment to turn out otherwise, so the
+  // locator below never looks at a list that is about to become a windowed one.
+  if (name !== "" && !(await search.isVisible()) && (await page.locator('[data-role="list-empty"]').isVisible())) {
+    await search.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
+  }
   if (name !== "" && (await search.isVisible())) await search.fill(name);
   return page.locator('[data-role="item"]', { hasText: name });
 }
@@ -857,7 +865,7 @@ export const warningBanner = (page, code) => page.locator(`[data-role="banner"][
  */
 export async function listNames(page) {
   const count = (await page.locator('[data-role="count"]').textContent()) ?? "";
-  const total = Number(/(d+)s*items?$/.exec(count.trim())?.[1] ?? 0);
+  const total = Number(/(\d+)\s*items?$/.exec(count.trim())?.[1] ?? 0);
   if (total > 150) throw new Error(`listNames: the list holds ${total} items and draws only a window of them; use findRows`);
   return page.locator('[data-role="item"] [data-role="item-link"]').allTextContents();
 }

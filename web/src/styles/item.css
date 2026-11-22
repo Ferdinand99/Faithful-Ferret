@@ -1,0 +1,295 @@
+/* One item and its edit form, in the cards of the Hedgerow look, and the empty state that the pages of the shell share.
+   The colours come from the tokens in base.css, so both themes follow; no state is shown by colour alone (every mark
+   and notice has words, the star has a label). */
+
+/* The page: a column of header and cards. */
+.vault-ui .item-view,
+.vault-ui .edit-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.vault-ui .edit-view > h1 {
+  overflow-wrap: anywhere;
+  font-size: 1.5rem;
+  letter-spacing: -0.019em;
+}
+
+.vault-ui .back-row {
+  margin: 0;
+}
+
+.vault-ui .back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  margin-inline-start: -4px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.vault-ui .back-link::before {
+  width: 18px;
+  height: 18px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .back-link:hover {
+    color: var(--text);
+  }
+}
+
+/* The header: the tile, the name and what it is, and the actions. */
+.vault-ui .item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-4);
+}
+
+.vault-ui .item-head .item-tile {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  font-size: 1.25rem;
+}
+
+.vault-ui .item-title {
+  display: flex;
+  flex: 1 1 14rem;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vault-ui .item-title h1 {
+  overflow-wrap: anywhere;
+  font-size: 1.5rem;
+  letter-spacing: -0.019em;
+}
+
+.vault-ui .item-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.vault-ui .type {
+  margin: 0;
+  color: var(--muted);
+}
+
+.vault-ui .item-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-ui .folder-chip {
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-ui .item-actions {
+  flex: none;
+  margin-inline-start: auto;
+  justify-content: flex-end;
+}
+
+.vault-ui .item-more {
+  position: relative;
+  display: inline-flex;
+}
+
+.vault-ui .btn-icon {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+}
+
+.vault-ui .item-menu {
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+}
+
+.vault-ui .star {
+  margin-inline-start: 0.25rem;
+  margin-inline-end: 0;
+  color: var(--brand);
+}
+
+.vault-ui .marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-ui .marks:empty {
+  display: none;
+}
+
+/* The cards. */
+.vault-ui .item-section {
+  padding-block: var(--sp-4);
+}
+
+.vault-ui .item-section > h2 {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vault-ui .field-row {
+  display: grid;
+  grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .item-section > .field-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.vault-ui .field-row .label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.vault-ui .field-row .value,
+.vault-ui .urls .value {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+.vault-ui .field-row .actions,
+.vault-ui .urls .actions {
+  justify-content: flex-end;
+}
+
+.vault-ui .urls ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-ui .urls li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.vault-ui .urls li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 30rem) {
+  .vault-ui .field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vault-ui .field-row .actions,
+  .vault-ui .urls .actions {
+    justify-content: flex-start;
+  }
+
+  .vault-ui .urls li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vault-ui .item-actions {
+    flex: 1 1 100%;
+    margin-inline-start: 0;
+    justify-content: flex-start;
+  }
+
+  .vault-ui .item-actions .btn:not(.btn-icon) {
+    flex: 1 1 auto;
+  }
+
+  .vault-ui .edit-view .actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* The edit form: the same cards, in a column. */
+.vault-ui .edit-view form {
+  gap: var(--sp-4);
+}
+
+.vault-ui .edit-view .stack > * + * {
+  margin-top: var(--sp-4);
+}
+
+.vault-ui .edit-view form > * + * {
+  margin-top: 0;
+}
+
+@media (pointer: coarse) {
+  .vault-ui .btn-icon {
+    width: 44px;
+    min-width: 44px;
+  }
+}
+
+/* An empty page: an icon, one line, and the one thing to do next. */
+.vault-ui .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-10) var(--sp-4);
+  text-align: center;
+}
+
+.vault-ui .icon.empty-icon {
+  width: 44px;
+  height: 44px;
+  color: var(--muted);
+}
+
+.vault-ui .empty-state .empty-text {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--muted);
+}
+
+.vault-ui .empty-state .actions {
+  justify-content: center;
+  margin-top: var(--sp-1);
+}
+
+.vault-ui .empty-state .actions:empty {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .vault-ui .item-section,
+  .vault-ui .folder-chip {
+    border: 1px solid CanvasText;
+  }
+}

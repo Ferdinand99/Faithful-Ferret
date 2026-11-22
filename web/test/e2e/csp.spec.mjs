@@ -177,7 +177,7 @@ test("inter_is_added_by_script_without_a_font_source", async ({ page }) => {
   expect(seen.console).toEqual([]);
 });
 
-test("the_page_follows_the_system_theme_and_a_choice_in_the_footer_wins_and_is_remembered", async ({ page }) => {
+test("the_page_follows_the_system_theme_and_a_stored_choice_wins_and_the_menu_choice_is_one_word", async ({ page }) => {
   const seen = await watch(page);
   const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
   const LIGHT = "rgb(245, 245, 247)";
@@ -190,27 +190,29 @@ test("the_page_follows_the_system_theme_and_a_choice_in_the_footer_wins_and_is_r
   expect(await background()).toBe(DARK);
   await page.emulateMedia({ colorScheme: "light" });
   expect(await background()).toBe(LIGHT);
+  // The theme is chosen in the account menu of the vault, so the page itself has no footer and no switch.
+  await expect(page.locator("#foot")).toHaveCount(0);
+  await expect(page.locator('[data-role="theme"]')).toHaveCount(0);
 
-  // Dark, chosen in the footer: set at once and remembered. The only thing stored is the word.
-  await page.locator('[data-theme-set="dark"]').click();
+  // The choice is made through the module that the menu uses: set at once and remembered. The only thing stored is the word.
+  const choose = (theme) => page.evaluate(async (name) => (await import("/app/theme.mjs")).createThemeChoice().set(name), theme);
+  await choose("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(await background()).toBe(DARK);
-  await expect(page.locator('[data-theme-set="dark"]')).toHaveAttribute("aria-pressed", "true");
   expect(await page.evaluate(() => Object.entries(localStorage))).toEqual([["ferret-theme", "dark"]]);
 
   // After a reload the choice is back before the first paint of the page's own script.
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.locator('[data-theme-set="dark"]')).toHaveAttribute("aria-pressed", "true");
   expect(await background()).toBe(DARK);
 
-  await page.locator('[data-theme-set="light"]').click();
+  await choose("light");
   expect(await background()).toBe(LIGHT);
   await page.emulateMedia({ colorScheme: "dark" });
   expect(await background()).toBe(LIGHT);
 
-  // Auto: nothing is stored and the system decides again.
-  await page.locator('[data-theme-set="auto"]').click();
+  // System: nothing is stored and the system decides again.
+  await choose("auto");
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
   expect(await background()).toBe(DARK);

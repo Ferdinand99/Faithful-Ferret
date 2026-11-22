@@ -12,7 +12,7 @@ import trashRoute from "../../src/routes/trash.route.mjs";
 import { fakeEngine, find, t, withDom } from "./vaultHelpers.mjs";
 
 const ROUTES = [listRoute, newRoute, favoritesRoute, exportRoute, trashRoute];
-const ROLES = ["nav-items", "nav-new", "nav-favorites", "nav-transfer", "nav-trash"];
+const ROLES = ["nav-items", "nav-favorites", "nav-transfer", "nav-trash"];
 
 function frame(win) {
   const engine = fakeEngine();
@@ -49,7 +49,7 @@ test("the_entry_of_the_open_screen_is_marked_and_the_mark_follows_the_address", 
     assert.deepEqual(current(), ["nav-items"]);
 
     win.go("#/items/new");
-    assert.deepEqual(current(), ["nav-new"], "making an item is its own entry, not the list");
+    assert.deepEqual(current(), ["nav-items"], "making an item has no entry of its own: it belongs to the list, whose Add button starts it");
     // An item or its edit form or its conflict belongs to the list.
     win.go("#/items/0123456789abcdef0123456789abcdef/edit");
     assert.deepEqual(current(), ["nav-items"]);

@@ -10,6 +10,8 @@
 // still has the same id and stops with `item_changed` if not.
 import { el, mount } from "../dom.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
+import { favouriteDraft, folderLabels, groupFields, tileLetter, tileType } from "./itemModel.mjs";
+import { popMenu, within } from "./popMenu.mjs";
 
 /** What a hidden value looks like. */
 const DOTS = "••••••••";
@@ -33,21 +35,26 @@ const isNotFound = (error) => /** @type {any} */ (error)?.code === "not_found";
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
  *   clipboard?: { writeText(text: string): Promise<void> } | null,
- * }} options
+ *   moveToFolder?: (id: string) => void,
+ *   folderChip?: (label: string) => Node,
+ * }} options `moveToFolder` and `folderChip` are the folder task's way in: with `moveToFolder` the ⋮ menu has "Move to folder",
+ *   without it the entry is not there; `folderChip` makes the chip of one folder label (a plain label by default)
  * @returns {Promise<HTMLElement>}
  */
 export async function itemView({
   engine, sync, client, id, t, go = () => {}, touch = () => true, scope,
-  clipboard = globalThis.navigator?.clipboard ?? null,
+  clipboard = globalThis.navigator?.clipboard ?? null, moveToFolder, folderChip,
 }) {
-  const root = el("section", { class: "card item-card", "data-role": "item" });
+  const root = el("section", { class: "item-view", "data-role": "item" });
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
   const host = el("div", { class: "dialog-host", "data-role": "dialog-host" });
 
   /** Which secret is on the page: its key only, never the value. @type {string | null} */
   let revealedKey = null;
-  /** The slots that show a value, by key. @type {Map<string, { slot: HTMLElement, toggle: HTMLButtonElement }>} */
+  /** The slots that show a value, by key. @type {Map<string, { slot: HTMLElement, toggle: HTMLButtonElement, label: string }>} */
   const slots = new Map();
+  /** The menu of the ⋮ button, when the item has one; closed on a press outside it and on a lock. @type {ReturnType<typeof popMenu> | null} */
+  let moreMenu = null;
 
   /** @param {string} text */
   function say(text) {
@@ -57,12 +64,27 @@ export async function itemView({
   /** Hides whatever is shown. */
   function hideAll() {
     revealedKey = null;
-    for (const { slot, toggle } of slots.values()) {
+    for (const { slot, toggle, label } of slots.values()) {
       mount(slot, document.createTextNode(DOTS));
       mount(toggle, document.createTextNode(t("vault.item.show")));
+      toggle.setAttribute("aria-label", t("vault.item.show_label", { label }));
     }
   }
+  /** A press outside the open ⋮ menu closes it; a page that has left the screen stops listening. @type {boolean} */
+  let seenOnPage = false;
+  const doc = /** @type {any} */ (globalThis).document;
+  const pointerOutside = (/** @type {any} */ event) => {
+    if (/** @type {any} */ (root).isConnected === true) seenOnPage = true;
+    else if (seenOnPage) {
+      doc?.removeEventListener?.("pointerdown", pointerOutside);
+      return;
+    }
+    if (moreMenu?.isOpen() && !within(event.target, moreMenu.menu) && !within(event.target, moreMenu.trigger)) moreMenu.close(false);
+  };
+  doc?.addEventListener?.("pointerdown", pointerOutside);
   scope?.add(() => {
+    doc?.removeEventListener?.("pointerdown", pointerOutside);
+    moreMenu = null;
     hideAll();
     slots.clear();
     mount(root);
@@ -105,18 +127,23 @@ export async function itemView({
   }
 
   /**
-   * One value that may be secret.
+   * One value that may be secret: its label, the value (dots when it is secret) and the buttons. The buttons name the
+   * field they act on ("Copy Password"), so a screen reader hears more than "Copy" and "Show" over and over.
    * @param {{ key: string, label: string, plain: string | null, get(): Promise<string> }} spec
    *   `plain` is the value when the core shows it, else null; `get` asks the worker.
    */
   function valueRow({ key, label, plain, get }) {
     const slot = el("span", { class: "value", "data-role": "value", "data-key": key }, plain ?? DOTS);
-    const copy = el("button", { type: "button", class: "btn btn-secondary btn-sm i-copy", "data-role": "copy", "data-key": key }, t("vault.item.copy"));
+    const copy = el("button", {
+      type: "button", class: "btn btn-secondary btn-sm i-copy", "aria-label": t("vault.item.copy_label", { label }), "data-role": "copy", "data-key": key,
+    }, t("vault.item.copy"));
     /** @type {HTMLButtonElement | null} */
     let toggle = null;
     if (plain === null) {
-      toggle = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "reveal", "data-key": key }, t("vault.item.show")));
-      slots.set(key, { slot, toggle });
+      toggle = /** @type {HTMLButtonElement} */ (el("button", {
+        type: "button", class: "btn btn-secondary btn-sm", "aria-label": t("vault.item.show_label", { label }), "data-role": "reveal", "data-key": key,
+      }, t("vault.item.show")));
+      slots.set(key, { slot, toggle, label });
       toggle.addEventListener("click", async () => {
         if (!touch()) return;
         if (revealedKey === key) {
@@ -130,6 +157,7 @@ export async function itemView({
           revealedKey = key;
           mount(slot, document.createTextNode(value));
           mount(/** @type {HTMLButtonElement} */ (toggle), document.createTextNode(t("vault.item.hide")));
+          /** @type {HTMLButtonElement} */ (toggle).setAttribute("aria-label", t("vault.item.hide_label", { label }));
         } catch (error) {
           hideAll();
           say(describeError(t, error));
@@ -149,6 +177,12 @@ export async function itemView({
       el("span", { class: "label" }, label),
       slot,
       el("span", { class: "actions" }, toggle, copy));
+  }
+
+  /** A card of the page: a heading, then its rows. @param {string | null} heading @param {string} kind @param {Node[]} rows */
+  function card(heading, kind, rows) {
+    return el("section", { class: "card item-section", "data-role": "item-card", "data-card": kind },
+      ...(heading === null ? [] : [el("h2", null, heading)]), ...rows);
   }
 
   /** Reads the item and builds the screen again. */
@@ -219,36 +253,64 @@ export async function itemView({
       notices.push(notice("blocked", why, discard));
     }
 
-    /** @type {HTMLElement[]} */
-    const rows = [];
-    /** @type {any[]} */
-    const fields = Array.isArray(view.fields) ? view.fields : [];
-    fields.forEach((field, index) => {
-      const label = String(field.label ?? "") || t("vault.item.field");
-      const plain = typeof field.value === "string" ? field.value : null;
-      rows.push(valueRow({
-        key: `f${index}`, label, plain,
-        get: () => fieldValue(index, String(field.id)),
-      }));
+    const name = String(view.name ?? "") === "" ? t("vault.item.unnamed") : String(view.name);
+    const groups = groupFields(view.fields);
+    /** @param {import("./itemModel.mjs").FieldSpec} field */
+    const fieldRow = (field) => valueRow({
+      key: field.key, label: field.label || t("vault.item.field"), plain: field.plain,
+      get: () => fieldValue(field.index, field.id),
     });
     /** @type {any[]} */
     const urls = Array.isArray(view.urls) ? view.urls : [];
+
+    // The cards: the sign-in fields, the other fields, the addresses and the notes; a card with nothing in it is not drawn.
+    /** @type {HTMLElement[]} */
+    const cards = [];
+    if (groups.login.length > 0) cards.push(card(t("vault.item.card_login"), "login", groups.login.map(fieldRow)));
+    if (groups.custom.length > 0) cards.push(card(t(groups.login.length > 0 ? "vault.item.card_fields" : "vault.item.card_details"), "fields", groups.custom.map(fieldRow)));
+    if (urls.length > 0) {
+      cards.push(el("section", { class: "card item-section urls", "data-role": "urls", "data-card": "urls" },
+        el("h2", null, t("vault.item.addresses")),
+        el("ul", null, ...urls.map((u) => {
+          const address = String(u.url ?? "");
+          const copy = el("button", {
+            type: "button", class: "btn btn-secondary btn-sm i-copy", "aria-label": t("vault.item.copy_label", { label: t("vault.item.address") }), "data-role": "copy-url",
+          }, t("vault.item.copy"));
+          copy.addEventListener("click", async () => {
+            if (!touch()) return;
+            try {
+              await toClipboard(address);
+              say(t("vault.item.copied", { label: t("vault.item.address") }));
+            } catch (error) {
+              say(describeError(t, error));
+            }
+          });
+          return el("li", { "data-role": "url-row" }, el("span", { class: "value", "data-role": "url" }, address), el("span", { class: "actions" }, copy));
+        }))));
+    }
     if (view.has_notes) {
-      rows.push(valueRow({
+      cards.push(card(null, "notes", [valueRow({
         key: "notes", label: t("vault.item.notes"), plain: null,
         get: () => withOpen(({ handle }) => client.vault.reveal_item_notes(handle)),
-      }));
+      })]));
     }
 
+    // The header: the tile, the name with its star, the type and marks, the folder labels, and the actions.
     const editable = canChange(entry);
-    const actions = el("div", { class: "actions", "data-role": "actions" });
+    const labels = folderLabels(view);
+    // Hidden until the item carries folder labels (the vault has none before the folder task); the folder task makes the chips links.
+    const chips = el("div", { class: "item-folders", role: "list", "aria-label": t("vault.item.folders"), "data-role": "folder-chips" },
+      ...labels.map((label) => el("span", { class: "folder-chip", role: "listitem", "data-role": "folder-chip" }, typeof folderChip === "function" ? folderChip(label) : label)));
+    chips.hidden = labels.length === 0;
+
+    const actions = el("div", { class: "actions item-actions", "data-role": "actions" });
+    moreMenu = null;
     if (editable) {
-      const del = el("button", { type: "button", class: "btn btn-danger i-trash", "data-role": "delete" }, t("vault.item.delete"));
+      const del = el("button", { type: "button", class: "btn btn-danger i-trash", "data-role": "delete" }, t("vault.item.trash"));
       del.addEventListener("click", async () => {
         if (!touch()) return;
         const yes = await askConfirm({
-          t, host, title: "vault.dialog.delete_title", body: "vault.dialog.delete_body", confirm: "vault.dialog.delete_confirm",
-          vars: { name: String(view.name ?? "") },
+          t, host, title: "list.trash_title_one", body: "list.trash_body", confirm: "list.trash_confirm", vars: { name },
         });
         if (!yes) return;
         try {
@@ -258,24 +320,63 @@ export async function itemView({
           say(describeError(t, error));
         }
       });
-      mount(actions, el("a", { class: "btn btn-primary i-pencil", href: `#/items/${id}/edit`, "data-role": "edit" }, t("vault.item.edit")), del);
+      const edit = el("a", { class: "btn btn-primary i-pencil", href: `#/items/${id}/edit`, "data-role": "edit" }, t("vault.item.edit"));
+
+      // The ⋮ menu holds what is not the main action. The favourite mark switches with a patch of that one key.
+      const favorite = el("button", { type: "button", role: "menuitem", tabindex: "-1", class: "side-menuitem", "data-role": "favorite" },
+        el("span", { class: "icon", "data-icon": "star", "aria-hidden": "true" }), t(view.favorite ? "vault.item.favorite_remove" : "vault.item.favorite_add"));
+      /** @type {HTMLElement[]} */
+      const entries = [favorite];
+      if (typeof moveToFolder === "function") {
+        const move = el("button", { type: "button", role: "menuitem", tabindex: "-1", class: "side-menuitem", "data-role": "move" },
+          el("span", { class: "icon", "data-icon": "folder", "aria-hidden": "true" }), t("list.menu_move"));
+        move.addEventListener("click", () => {
+          moreMenu?.close(false);
+          moveToFolder(id);
+        });
+        entries.push(move);
+      }
+      const more = el("button", {
+        type: "button", class: "btn btn-secondary btn-icon", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": t("vault.item.more", { name }), "data-role": "more",
+      }, el("span", { class: "icon", "data-icon": "more", "aria-hidden": "true" }));
+      const menu = el("div", { class: "side-menu item-menu", role: "menu", "aria-label": t("vault.item.more", { name }), "data-role": "more-menu" }, ...entries);
+      const pop = popMenu({ trigger: more, menu, items: () => entries, escape: true });
+      moreMenu = pop;
+      favorite.addEventListener("click", async () => {
+        pop.close(true);
+        if (!touch()) return;
+        // The newest revision: a change that came in since the page was drawn is not overwritten (the engine refuses a stale one).
+        const now = engine.list().find((/** @type {any} */ i) => i.id === id);
+        const draft = favouriteDraft({ favorite: view.favorite === true });
+        try {
+          await engine.update(id, draft, now?.rev);
+          say(t(draft.favorite ? "vault.item.favorited" : "vault.item.unfavorited"));
+          await load();
+        } catch (error) {
+          say(describeError(t, error));
+        }
+      });
+      mount(actions, edit, del, el("span", { class: "item-more" }, more, menu));
     }
 
+    const header = el("header", { class: "item-head", "data-role": "item-head" },
+      el("span", { class: "tile item-tile", "data-type": tileType(view.item_type), "aria-hidden": "true" }, tileLetter(view.name)),
+      el("div", { class: "item-title" },
+        el("h1", null, name, view.favorite ? el("span", { class: "star", role: "img", "aria-label": t("vault.item.favorite") }, " ★") : null),
+        el("div", { class: "item-sub" },
+          el("p", { class: "type", "data-role": "type" }, typeLabel(t, view.item_type)),
+          el("div", { class: "marks" }, ...marks),
+          chips)),
+      actions);
+
     mount(root, ...[
-      el("h1", null, view.favorite ? el("span", { class: "star", role: "img", "aria-label": t("vault.item.favorite") }, "★ ") : null,
-        String(view.name ?? "") === "" ? t("vault.item.unnamed") : String(view.name)),
-      el("p", { class: "type", "data-role": "type" }, typeLabel(t, view.item_type)),
-      el("div", { class: "marks" }, ...marks),
+      el("p", { class: "back-row" }, el("a", { class: "back-link i-back", href: "#/items", "data-role": "back" }, t("vault.item.back"))),
+      header,
       ...notices,
-      el("div", { class: "fields" }, ...rows),
-      urls.length === 0 ? null : el("div", { class: "urls", "data-role": "urls" },
-        el("h2", null, t("vault.item.addresses")),
-        el("ul", null, ...urls.map((u) => el("li", { "data-role": "url" }, String(u.url ?? ""))))),
-      view.has_totp ? el("p", { class: "aside", "data-role": "totp-note" }, t("vault.item.totp_note")) : null,
       message,
       host,
-      actions,
-      el("p", { class: "aside" }, el("a", { href: "#/items", "data-role": "back" }, t("vault.item.back")))].filter((node) => node !== null));
+      ...cards,
+      view.has_totp ? el("p", { class: "aside", "data-role": "totp-note" }, t("vault.item.totp_note")) : null].filter((node) => node !== null));
   }
 
   /**

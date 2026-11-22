@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createWipeScope } from "../../src/views/common.mjs";
 import { editView } from "../../src/views/edit.mjs";
-import { all, click, coded, fakeClient, fakeEngine, fire, find, settle, submit, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { all, click, coded, fakeClient, fakeEngine, fire, find, settle, submit, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
 const NEW_ID = "ab".repeat(16);
@@ -330,5 +330,56 @@ test("a_form_that_moved_to_a_copy_still_answers_to_the_key_of_the_old_item", asy
     engine.emit("copied", { from: ID, to: COPY });
     assert.equal(forms[0].key, `edit:${COPY}`);
     assert.deepEqual(forms[0].keys, [`edit:${ID}`, `edit:${COPY}`]);
+  });
+});
+
+// ------------------------------------------------------------------ the new look
+
+test("the_form_is_three_cards_details_sign_in_and_notes_with_the_actions_below", async () => {
+  await withDom(async () => {
+    const { root } = await edit();
+    const form = find(root, "edit-form");
+    const cards = [...form.childNodes].filter((n) => n.getAttribute?.("class")?.includes("item-section")).map((n) => n.getAttribute("data-role"));
+    assert.deepEqual(cards, ["details-card", "login-fields", "notes-slot"]);
+    assert.ok(textOf(find(root, "details-card")).includes("vault.edit.card_details"));
+    assert.ok(textOf(find(root, "login-fields")).includes("vault.item.card_login"));
+    // The name and the favourite are in the first card, the sign-in fields in the second.
+    assert.ok(find(find(root, "details-card"), "name") && find(find(root, "details-card"), "favorite"));
+    assert.ok(["username", "password", "url"].every((role) => find(find(root, "login-fields"), role)));
+    // The save and cancel buttons come after the cards.
+    const order = [...form.childNodes].map((n) => n.getAttribute?.("data-role") ?? n.getAttribute?.("class") ?? "");
+    assert.ok(order.indexOf("notes-slot") < order.findIndex((c) => c.includes("actions")));
+    assert.ok(find(root, "save") && find(root, "cancel"));
+  });
+});
+
+test("the_hook_for_the_folder_task_is_in_the_first_card_and_hidden", async () => {
+  await withDom(async () => {
+    const { root } = await edit();
+    const slot = find(find(root, "details-card"), "folder-slot");
+    assert.ok(slot, "the slot is there");
+    assert.equal(slot.hidden, true, "and hidden: the vault has no folders yet");
+    assert.equal(slot.childNodes.length, 0);
+  });
+  await withDom(async () => {
+    const { root } = await edit({ id: null });
+    assert.equal(find(root, "folder-slot").hidden, true);
+    assert.ok(find(find(root, "details-card"), "type"), "a new item chooses its type in the first card");
+  });
+});
+
+test("every_input_still_has_its_label_and_the_save_still_sends_the_same_draft", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit();
+    // Each input is named by a label that points at it.
+    const inputs = [...walk(root)].filter((n) => ["input", "textarea", "select"].includes(n.tagName) && n.getAttribute("type") !== "checkbox");
+    const labelled = new Set([...walk(root)].filter((n) => n.tagName === "label").map((n) => n.getAttribute("for")));
+    for (const input of inputs) assert.ok(labelled.has(input.getAttribute("id")), `label for ${input.getAttribute("data-role")}`);
+    type(root, "name", "Bank 2");
+    await submit(find(root, "edit-form"));
+    const [kind, , draft] = engine.calls.find((c) => c[0] === "update");
+    assert.equal(kind, "update");
+    assert.equal(draft.name, "Bank 2");
+    assert.equal(draft.favorite, false);
   });
 });
