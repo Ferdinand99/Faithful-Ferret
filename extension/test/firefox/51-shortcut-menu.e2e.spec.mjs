@@ -15,13 +15,17 @@ after(() => stopFixtures());
 /** The shortcut of the fill command (manifest/parts/commands.json) and the menu item's title. */
 const FILL_SHORTCUT = "Alt+Shift+L";
 const MENU_LABEL = "Fill with Ferret";
+/** @type {Record<string, string>} */
+const OWN_HOST = { release: "second.fixture.test", esr: "login.example.org" };
 
 test("shortcut_and_menu_each_fill_the_fixture_login", async () => {
   for (const channel of channels()) {
     const session = await start(channel);
     try {
       const server = await fixtures();
-      const loginUrl = server.url(server.hosts[0], "/static/login.html");
+      // A host of its own per channel: the stack's one account keeps the logins of the other specs and of the other
+      // channel, and a second match would (rightly) open the popup instead of filling.
+      const loginUrl = server.url(OWN_HOST[channel] ?? "second.fixture.test", "/static/login.html");
       const page = helpers(session);
       const tag = randomBytes(4).toString("hex");
       const name = `Shortcut-login-${tag}`;

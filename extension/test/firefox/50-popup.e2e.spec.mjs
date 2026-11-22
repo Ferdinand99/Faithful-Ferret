@@ -72,9 +72,16 @@ test("click_fills_the_fixture_login", async () => {
       await session.navigate(`${POPUP_URL}?tab=${command.tabId}`);
       await page.ready();
       await page.waitVisible('[data-role="suggestion"]', SLOW);
-      assert.equal(await page.text('[data-role="suggestions"] [data-role="row-name"]'), name);
-      assert.equal(await page.text('[data-role="suggestions"] [data-role="row-user"]'), username);
-      await page.click('[data-role="suggestion"] [data-role="fill"]');
+      // The stack's one account keeps the logins of the other channel too: this run's login is the row with its name.
+      const marked = await session.waitFor(() => session.content((/** @type {string} */ wanted) => {
+        const row = [...document.querySelectorAll('[data-role="suggestion"]')].find((r) => r.querySelector('[data-role="row-name"]')?.textContent?.trim() === wanted);
+        if (!row) return false;
+        row.setAttribute("data-e2e-this-run", "1");
+        return true;
+      }, name), SLOW, "this run's suggestion");
+      assert.equal(marked, true);
+      assert.equal(await page.text('[data-e2e-this-run] [data-role="row-user"]'), username);
+      await page.click('[data-e2e-this-run] [data-role="fill"]');
       await page.waitVisible('[data-role="toast"]', 20_000);
       assert.equal(await page.text('[data-role="toast"]'), "Filled in.", channel);
       // The popup never had the password.
