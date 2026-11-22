@@ -532,6 +532,13 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
+/* A value that is shown, not typed (the remembered e-mail on the unlock page): no box to type in. */
+.unlock input[readonly] {
+  background: transparent;
+  border-color: transparent;
+  padding-inline: 0;
+}
+
 /* A box or a round button and its label. */
 .choice {
   display: flex;
