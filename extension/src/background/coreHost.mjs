@@ -191,6 +191,13 @@ export function createCoreHost({
     return clientPromise;
   };
 
+  /**
+   * The check of the deadline that the lock module gives the host (`setGuard`): true when the vault may not be used
+   * now. Until one is set nothing is due, as in a host that is used without a lock.
+   * @type {() => boolean}
+   */
+  let guard = () => false;
+
   /** @param {LockReason} reason @returns {Promise<void>} */
   async function lock(reason) {
     if (!LOCK_REASONS.includes(reason)) throw new CoreError("bad_reason");
@@ -223,7 +230,11 @@ export function createCoreHost({
    *     moved) every call is refused with `vault_locked` before it reaches the
    *     client, and an answer that arrives after a lock is dropped. Such a client
    *     never starts a new worker after a lock, so nothing it holds can reach a
-   *     vault that was opened later. The sync engine gets one per unlock.
+   *     vault that was opened later. The sync engine gets one per unlock. Before
+   *     every call on the vault worker the deadline is checked (the guard): a
+   *     deadline that has passed locks the host and the call is refused, so a
+   *     call that comes between two messages never uses a vault whose time
+   *     has run out.
    * Without `open` (the account session, whose sign-in and unlock run on the
    * worker before the vault opens) the calls go through while the host is
    * locked; the epoch rules of `call` still decide whether the vault opens.
@@ -247,6 +258,10 @@ export function createCoreHost({
             if (typeof method !== "string" || method === "then") return undefined;
             return async (/** @type {unknown[]} */ ...args) => {
               if (!usable()) throw new CoreError("vault_locked");
+              if (open && worker === "vault" && guard()) {
+                await lock("timeout").catch(() => {});
+                throw new CoreError("vault_locked");
+              }
               const real = await client();
               if (!usable()) throw new CoreError("vault_locked");
               const started = epoch;
@@ -270,6 +285,15 @@ export function createCoreHost({
   }
 
   return {
+    /**
+     * Sets the check of the deadline (see `liveClient`). The lock module gives it; it must answer at once.
+     * @param {() => boolean} check
+     */
+    setGuard(check) {
+      if (typeof check !== "function") throw new CoreError("bad_guard");
+      guard = check;
+    },
+
     /**
      * Runs one operation. Rejects with a `CoreError` (`unknown_core_op`,
      * `vault_locked`) or with the code of the client's error; never with a
