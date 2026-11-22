@@ -128,9 +128,9 @@ Security is the top priority of the project, and this is how the design handles 
   not been independently audited by anyone. Making the design and code public is how others can check it, and
   [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a scoped starting point for anyone who wants to review the
   cryptographic core.
-- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. The server always serves the
-  web vault, and there is no switch to turn it off. If you do not want to trust the server that delivers the code, use the browser extension
-  and the apps.
+- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. The
+  server always serves the web vault, and there is no switch to turn it off. If you do not want to trust the server
+  that delivers the code, use the browser extension and the apps.
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
