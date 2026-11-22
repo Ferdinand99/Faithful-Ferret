@@ -1,4 +1,4 @@
-// The browser tests that run against the end-to-end test stack on the LANBox
+// The browser tests that run against the end-to-end test stack on the build host
 // (scripts/lanbox-ferret-test.sh e2e-run): the real server, over https, on the
 // test host names. There is no web server here. The runner makes Chromium and
 // WebKit trust the stack's test CA, so for them a certificate problem is a test

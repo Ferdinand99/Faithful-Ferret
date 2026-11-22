@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fuzz a target for a while on the LANBox (never locally, never Docker
-# Desktop, never Tower): libFuzzer with AddressSanitizer through cargo-fuzz,
+# Fuzz a target for a while on the build host (never locally, never Docker
+# Desktop, never a production host): libFuzzer with AddressSanitizer through cargo-fuzz,
 # inside the builder image, with the pinned nightly toolchain of fuzz/NIGHTLY.
 #
 #   scripts/lanbox-fuzz.sh <target|all> <seconds>   fuzz each target for <seconds>

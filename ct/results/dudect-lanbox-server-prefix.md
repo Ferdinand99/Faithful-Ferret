@@ -1,4 +1,4 @@
-# Dudect run on the LANBox: only the benches with "server" in the name
+# Dudect run on the build host: only the benches with "server" in the name
 
 Written by `scripts/lanbox-ct.sh dudect-native` (2026-10-31T04:04:26Z). The limit is
 |t| < 4.5 after 10^6 measurements, a bench over 4.5 measured again with 10^7. Every

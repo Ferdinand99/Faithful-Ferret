@@ -116,6 +116,15 @@ jobs:
       - run: shellcheck scripts/check-lanbox-labels.sh
       - run: scripts/check-lanbox-labels.sh
 
+  neutral:
+    name: No private test addresses in tracked files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: shellcheck scripts/check-neutral-addresses.sh
+      - run: scripts/check-neutral-addresses.sh --self-test
+      - run: scripts/check-neutral-addresses.sh
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-24.04

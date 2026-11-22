@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Check the web vault (web/) on the LANBox Docker host (never locally, never
-# Docker Desktop, never Tower), in the pinned Playwright image.
+# Check the web vault (web/) on the build host (never locally, never
+# Docker Desktop, never a production host), in the pinned Playwright image.
 #
 #   scripts/lanbox-web.sh                     build, type check, unit tests, Playwright (3 browsers)
 #   scripts/lanbox-web.sh unit                build, type check and unit tests only
@@ -16,7 +16,7 @@
 # the work directory, npm's cache and /tmp are tmpfs.
 #
 # Env overrides:
-#   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
+#   FERRET_DOCKER_ARGS  replaces the default "--context lanbox"
 #   FERRET_CPUS         CPU limit (default 4, at most 8)
 #   FERRET_MEMORY       container memory limit (default 12g)
 #   FERRET_PASS_ENV     space-separated names of environment variables that are
@@ -43,7 +43,7 @@ if [ "$cpus" -gt 8 ]; then
   exit 2
 fi
 # shellcheck disable=SC2206
-docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
+docker_args=(${FERRET_DOCKER_ARGS:---context lanbox})
 pass_env=()
 for name in ${FERRET_PASS_ENV:-}; do
   if ! printf '%s' "$name" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then

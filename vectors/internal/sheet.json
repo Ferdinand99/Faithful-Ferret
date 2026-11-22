@@ -43,11 +43,11 @@
         "account_id": "0123456789abcdef1032547698badcfe",
         "ksf_profile": 1,
         "server_public_key": "0000000000000000000000000000000000000000000000000000000000000000",
-        "server_url": "http://10.0.3.26:3001",
+        "server_url": "http://192.0.2.26:3001",
         "sk_bit": false
       },
       "expect": {
-        "payload": "ferret-setup:v1?u=http%3A%2F%2F10.0.3.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
+        "payload": "ferret-setup:v1?u=http%3A%2F%2F192.0.2.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect_error": null
     },
@@ -617,13 +617,13 @@
       "synthetic": true,
       "rng": [],
       "input": {
-        "payload": "ferret-setup:v1?u=http%3A%2F%2F10.0.3.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
+        "payload": "ferret-setup:v1?u=http%3A%2F%2F192.0.2.26%3A3001&a=0123456789abcdef1032547698badcfe&k=1&s=0&o=0000000000000000000000000000000000000000000000000000000000000000"
       },
       "expect": {
         "account_id": "0123456789abcdef1032547698badcfe",
         "ksf_profile": 1,
         "server_public_key": "0000000000000000000000000000000000000000000000000000000000000000",
-        "server_url": "http://10.0.3.26:3001",
+        "server_url": "http://192.0.2.26:3001",
         "sk_bit": false
       },
       "expect_error": null

@@ -32,6 +32,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 file=docker/compose.ferret-test.yml
+# The public addresses are not in the compose file: they come from the environment or from
+# docker/.env, and compose refuses to start without them. Neutral example values for the checks.
+export FERRET_VAULT_URL=https://vault.example.test FERRET_ADMIN_URL=https://admin.example.test
+for missing in FERRET_VAULT_URL FERRET_ADMIN_URL; do
+  if env -u "$missing" FERRET_SETUP_TOKEN=check FERRET_TRUSTED_PROXIES=172.17.0.2 docker compose -f "$file" config >/dev/null 2>&1; then
+    echo "check-ferret-test-stack: $file starts without $missing" >&2
+    exit 1
+  fi
+done
 config="$(FERRET_SETUP_TOKEN=check FERRET_TRUSTED_PROXIES=172.17.0.2 docker compose -f "$file" config --format json)"
 
 printf '%s' "$config" | node -e '
@@ -61,8 +70,9 @@ for (const [k, v] of Object.entries(c.volumes)) {
 }
 if (c.networks && Object.keys(c.networks).length) fail("no networks expected");
 const env = s.environment || {};
-if (env.FERRET_VAULT_URL !== "https://vault-test.opland.net") fail("FERRET_VAULT_URL");
-if (env.FERRET_ADMIN_URL !== "https://ferret-test.opland.net") fail("FERRET_ADMIN_URL");
+if (env.FERRET_VAULT_URL !== process.env.FERRET_VAULT_URL) fail("FERRET_VAULT_URL must come from the environment or docker/.env");
+if (env.FERRET_ADMIN_URL !== process.env.FERRET_ADMIN_URL) fail("FERRET_ADMIN_URL must come from the environment or docker/.env");
+for (const k of ["FERRET_VAULT_URL", "FERRET_ADMIN_URL"]) if (!(env[k] || "").startsWith("https://")) fail(k + " must be an https address");
 for (const k of Object.keys(env)) if (/E2E/i.test(k)) fail("no test variable allowed: " + k);
 if ("TZ" in env) fail("TZ does nothing without tzdata in the image");
 if (env.FERRET_TRUST_PROXY !== "1") fail("FERRET_TRUST_PROXY");
@@ -103,7 +113,7 @@ for (const [k, s] of Object.entries(e2e.services)) {
   if (s.container_name !== k) fail(k + ": container_name");
   if (s.labels?.owner !== "ferret-e2e") fail(k + ": label owner=ferret-e2e");
   if (s.ports && s.ports.length) fail(k + ": no published ports");
-  if (s.network_mode) fail(k + ": no network_mode (host networking would reach the LANBox)");
+  if (s.network_mode) fail(k + ": no network_mode (host networking would reach the build host)");
   // Only the app has volumes: the named volume ferret-e2e-data on /data and the named volume ferret-e2e-backups on /backups, nothing else.
   const mounts = (s.volumes || []).map((v) => (typeof v === "string" ? v : v.source + ":" + v.target));
   const want = k === "ferret-e2e-app" ? ["ferret-e2e-data:/data", "ferret-e2e-backups:/backups"] : [];
@@ -370,7 +380,7 @@ done
   # The tunnel client at another address, and at none.
   tunnel_lookup() { echo "address 172.17.0.3"; }
   tunnel_mismatch >/dev/null || { echo "check-ferret-test-stack: plain.env: another tunnel address passed" >&2; exit 1; }
-  # A tunnel client that Docker cannot see (a Proxmox CT) is believed only through
+  # A tunnel client that Docker cannot see (on a host of its own) is believed only through
   # the explicit value, which is a valid single address here: no mismatch.
   tunnel_lookup() { echo notfound; }
   if tunnel_mismatch >/dev/null; then echo "check-ferret-test-stack: plain.env: an explicit single address was refused when the tunnel client is outside Docker" >&2; exit 1; fi
@@ -665,7 +675,7 @@ cut_off "the copy back" 'MODE=restore' 'volume rm ferret-test-data-relabel$' 'vo
 cut_off "the temporary volume cannot be removed at the end" 'volume rm ferret-test-data-relabel$' '' 'MODE=restore' 'remove it by hand before run up'
 unset STUB_VOLUMES
 
-# A tunnel client that runs outside Docker (since the move to Proxmox, Newt is a CT
+# A tunnel client that runs outside Docker (Newt may run on a host of its own
 # that `docker inspect` cannot see). The real tunnel_lookup, reachable and
 # require_tunnel run against a stand-in docker program that only answers `inspect`
 # and `run` from the environment and records the `run` arguments; `compose` goes to
@@ -713,7 +723,7 @@ run_log="$tmp/run.log"
 cat_env() { printf '%s\n' 'FERRET_SETUP_TOKEN=check' "FERRET_TRUSTED_PROXIES=$1" > "$tmp/case.env"; }
 # Runs one script function in a subshell with the stand-in docker. Arguments: the
 # value of FERRET_TRUSTED_PROXIES (or the word UNSET), then the function and its
-# environment, e.g. outcome 10.0.3.169 require_tunnel. Prints its output; the
+# environment, e.g. outcome 192.0.2.169 require_tunnel. Prints its output; the
 # exit code is the function's.
 outcome() {
   local value="$1"; shift
@@ -729,26 +739,36 @@ outcome() {
 }
 expect_fail() { echo "check-ferret-test-stack: $1" >&2; exit 1; }
 
-# The default address of the LANBox is the build VM.
+# The address of the build host has no default: the commands that print or use it refuse
+# without FERRET_TEST_HOST, and use it when it is set.
 (
-  unset FERRET_LANBOX
+  unset FERRET_TEST_HOST
   # shellcheck disable=SC1091
   source scripts/lanbox-ferret-test.sh
   # shellcheck disable=SC2154
-  [ "$lanbox" = 10.0.3.152 ] || expect_fail "FERRET_LANBOX must default to 10.0.3.152"
+  [ -z "$test_host" ] || expect_fail "FERRET_TEST_HOST must have no default"
+  out="$( (require_test_host) 2>&1)" && expect_fail "require_test_host accepted an unset FERRET_TEST_HOST"
+  printf '%s' "$out" | grep -q 'FERRET_TEST_HOST' || expect_fail "no message that names FERRET_TEST_HOST: $out"
+)
+(
+  export FERRET_TEST_HOST=build.example.test
+  # shellcheck disable=SC1091
+  source scripts/lanbox-ferret-test.sh
+  [ "$test_host" = build.example.test ] || expect_fail "FERRET_TEST_HOST is not used"
+  require_test_host
 )
 
 # What counts as a single valid address.
 (
   # shellcheck disable=SC1091
   source scripts/lanbox-ferret-test.sh
-  for ok in 10.0.3.169 192.168.1.20 172.17.0.2 1.2.3.4 223.255.255.254 169.253.1.1 169.255.1.1 10.0.0.254 10.0.1.1; do
+  for ok in 192.0.2.169 192.168.1.20 172.17.0.2 1.2.3.4 223.255.255.254 169.253.1.1 169.255.1.1 10.0.0.254 10.0.1.1; do
     single_ipv4 "$ok" || expect_fail "single_ipv4 refused $ok"
   done
-  for bad in "" 10.0.3 10.0.3.169.1 10.0.3.256 10.0.3.1690 010.0.3.169 10.0.03.169 10.0.3.169/32 10.0.3.0/24 \
-             "10.0.3.169,10.0.3.170" "10.0.3.169 10.0.3.170" " 10.0.3.169" "10.0.3.169 " newt abc.def.ghi.jkl ::1 fe80::1 \
+  for bad in "" 192.0.2 192.0.2.169.1 192.0.2.256 192.0.2.1690 192.0.02.169 192.00.2.169 010.0.2.169 192.0.2.169/32 192.0.2.0/24 \
+             "192.0.2.169,192.0.2.170" "192.0.2.169 192.0.2.170" " 192.0.2.169" "192.0.2.169 " newt abc.def.ghi.jkl ::1 fe80::1 \
              0.0.0.0 0.1.2.3 127.0.0.1 127.1.2.3 224.0.0.1 239.1.1.1 255.255.255.255 -1.0.0.1 \
-             10.0.3.0 10.0.3.255 192.168.1.0 192.168.1.255 169.254.1.1 169.254.0.0 169.254.169.254 10x0x3x169 "10.0.3.169
+             192.0.2.0 192.0.2.255 192.168.1.0 192.168.1.255 169.254.1.1 169.254.0.0 169.254.169.254 192x0x2x169 "192.0.2.169
 1.2.3.4"; do
     if single_ipv4 "$bad"; then expect_fail "single_ipv4 accepted '$bad'"; fi
   done
@@ -757,11 +777,11 @@ expect_fail() { echo "check-ferret-test-stack: $1" >&2; exit 1; }
 # Newt outside Docker, answering ping: accepted, no warning, one ping with the
 # label of the stack and no more privilege than the ping needs.
 : > "$run_log"
-out="$(FAKE_PING_RC=0 outcome 10.0.3.169 require_tunnel)" || expect_fail "a single address was refused for a tunnel client outside Docker: $out"
+out="$(FAKE_PING_RC=0 outcome 192.0.2.169 require_tunnel)" || expect_fail "a single address was refused for a tunnel client outside Docker: $out"
 [ -z "$out" ] || expect_fail "output for an address that answers ping: $out"
 grep -q -- '--label owner=ferret-test' "$run_log" || expect_fail "the reachability check has no owner=ferret-test label"
 grep -q -- '--cap-drop ALL' "$run_log" || expect_fail "the reachability check keeps its capabilities"
-grep -q -- 'ping -c 1 -W 3 10.0.3.169' "$run_log" || expect_fail "the reachability check does not ping the address"
+grep -q -- 'ping -c 1 -W 3 192.0.2.169' "$run_log" || expect_fail "the reachability check does not ping the address"
 if grep -qE 'docker\.sock|--privileged|-v ' "$run_log"; then expect_fail "the reachability check has a mount or privilege"; fi
 # The ping container is removed when it ends, cannot write, cannot gain privileges
 # and is limited in processes and memory.
@@ -769,12 +789,12 @@ for flag in '--rm' '--read-only' '--security-opt no-new-privileges:true' '--pids
   grep -q -- "$flag" "$run_log" || expect_fail "the reachability check lacks $flag"
 done
 # Not answering ping: a warning, not a refusal.
-out="$(FAKE_PING_RC=1 outcome 10.0.3.169 require_tunnel)" || expect_fail "a silent address was refused: $out"
-printf '%s' "$out" | grep -q 'WARNING.*10.0.3.169 does not answer ping' || expect_fail "no warning for an address that does not answer ping: $out"
+out="$(FAKE_PING_RC=1 outcome 192.0.2.169 require_tunnel)" || expect_fail "a silent address was refused: $out"
+printf '%s' "$out" | grep -q 'WARNING.*192.0.2.169 does not answer ping' || expect_fail "no warning for an address that does not answer ping: $out"
 # `status` warns the same way and prints nothing for a good one.
-out="$(FAKE_PING_RC=1 outcome 10.0.3.169 check_tunnel)"
+out="$(FAKE_PING_RC=1 outcome 192.0.2.169 check_tunnel)"
 printf '%s' "$out" | grep -q 'WARNING.*does not answer ping' || expect_fail "status gave no warning for a silent address: $out"
-out="$(FAKE_PING_RC=0 outcome 10.0.3.169 check_tunnel)"
+out="$(FAKE_PING_RC=0 outcome 192.0.2.169 check_tunnel)"
 [ -z "$out" ] || expect_fail "status warned about a good address: $out"
 
 # Newt exists as a Docker container but its address cannot be read (host, none or
@@ -784,17 +804,17 @@ out="$(FAKE_PING_RC=0 outcome 10.0.3.169 check_tunnel)"
 refuse_unreadable() { # description, then VAR=value pairs of the fake docker
   local what="$1"; shift
   : > "$run_log"
-  if out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 10.0.3.169 require_tunnel)"; then
+  if out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 192.0.2.169 require_tunnel)"; then
     expect_fail "$what: require_tunnel accepted the explicit address"
   fi
   printf '%s' "$out" | grep -q 'refusing to start' || expect_fail "$what: no refusal message: $out"
   printf '%s' "$out" | grep -q 'cannot read the address of Newt' || expect_fail "$what: wrong reason: $out"
   [ ! -s "$run_log" ] || expect_fail "$what: reached docker run"
   # The status command warns for it too.
-  out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 10.0.3.169 check_tunnel)"
+  out="$(for kv in "$@"; do export "${kv?}"; done; FAKE_PING_RC=0 outcome 192.0.2.169 check_tunnel)"
   printf '%s' "$out" | grep -q 'WARNING: cannot read the address of Newt' || expect_fail "$what: status gave no warning: $out"
 }
-refuse_unreadable "a host-mode Newt" FAKE_NEWT_MODE=host FAKE_NEWT_IP=10.0.3.152
+refuse_unreadable "a host-mode Newt" FAKE_NEWT_MODE=host FAKE_NEWT_IP=192.0.2.152
 refuse_unreadable "a Newt without a network of its own" FAKE_NEWT_MODE=none FAKE_NEWT_IP=172.17.0.9
 refuse_unreadable "a Newt in another container's network" FAKE_NEWT_MODE=container:abc123 FAKE_NEWT_IP=172.17.0.9
 refuse_unreadable "a stopped Newt (bridge)" FAKE_NEWT_MODE=bridge FAKE_NEWT_IP= FAKE_NEWT_STOPPED=1
@@ -803,7 +823,7 @@ refuse_unreadable "a running Newt with no address on its network" FAKE_NEWT_MODE
 refuse_unreadable "a failed docker inspect (not 'no such container')" FAKE_INSPECT_ERROR=1
 
 # Refused without any ping: not set, and everything that is not one valid address.
-for bad in UNSET "" "10.0.3.169,10.0.3.170" "10.0.3.0/24" "10.0.3.169/32" newt 10.0.3.256 010.0.3.169 0.0.0.0 127.0.0.1 224.0.0.1 ::1; do
+for bad in UNSET "" "192.0.2.169,192.0.2.170" "192.0.2.0/24" "192.0.2.169/32" newt 192.0.2.256 192.0.02.169 0.0.0.0 127.0.0.1 224.0.0.1 ::1; do
   : > "$run_log"
   if out="$(FAKE_PING_RC=0 outcome "$bad" require_tunnel)"; then expect_fail "require_tunnel accepted '$bad' for a tunnel client outside Docker"; fi
   printf '%s' "$out" | grep -q 'refusing to start' || expect_fail "no refusal message for '$bad': $out"
@@ -814,7 +834,7 @@ done
 # Newt as a Docker container: its address stays the only one that is believed.
 : > "$run_log"
 out="$(FAKE_NEWT_MODE=bridge FAKE_NEWT_IP=172.17.0.2 FAKE_PING_RC=0 outcome 172.17.0.2 require_tunnel)" || expect_fail "the address of the Docker container was refused: $out"
-if out="$(FAKE_NEWT_MODE=bridge FAKE_NEWT_IP=172.17.0.2 FAKE_PING_RC=0 outcome 10.0.3.169 require_tunnel)"; then
+if out="$(FAKE_NEWT_MODE=bridge FAKE_NEWT_IP=172.17.0.2 FAKE_PING_RC=0 outcome 192.0.2.169 require_tunnel)"; then
   expect_fail "an address that is not the Docker container's was accepted: $out"
 fi
 printf '%s' "$out" | grep -q 'Newt is at 172.17.0.2' || expect_fail "no mismatch message for a Docker container: $out"

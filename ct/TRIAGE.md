@@ -25,7 +25,7 @@ Tool versions: analyzer from `trailofbits/skills` at the commit in
 stops if the toolchain is another), targets `x86_64-unknown-linux-gnu` and
 `aarch64-unknown-linux-gnu`, `-C overflow-checks=on` as in the release profile
 that is shipped (its `subtle` is built the same way), run in the builder image
-on the LANBox (`scripts/lanbox-ct.sh analyze`).
+on the build host (`scripts/lanbox-ct.sh analyze`).
 
 ## What was found and fixed
 
@@ -391,7 +391,7 @@ the caller left it: an unknown name has no record, so this is inherent, and
 256, both `Active`) shows how large that kind of effect is by itself. The
 finish failure was not the library: nothing on its path had changed (see S-3).
 
-Result of 29fbc6b (quiet LANBox, 10^7): known against unknown
+Result of 29fbc6b (quiet build host, 10^7): known against unknown
 -3.90, known against disabled -2.54, pre-login -2.56, all controls fine. S-2 is
 fixed; what remains is the caller's own record and the caller's own lookup,
 which R10 carries.
@@ -518,7 +518,7 @@ shipped code, and the release run repeats the finish benches (`CT_REPEAT=3`).
 
 **Decisive, before the fix of S-2.** `ct/results/dudect-lanbox-server-prefix.md`:
 `CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on
-e4e6334 with a quiet LANBox (1-minute load average 1.35 at the start, 1.21 at the
+e4e6334 with a quiet build host (1-minute load average 1.35 at the start, 1.21 at the
 end, the dudect process pinned to cpu 6). A gated bench over 4.5 at 10^7 fails
 without a rerun.
 
@@ -562,7 +562,7 @@ benches of S-3, the null controls `control_server_prelogin_null` and
 
 **29fbc6b, at `opt-level = "s"`.** `ct/results/dudect-lanbox-server-29fbc6b.md`:
 `CT_ONLY=server`, 10^7 measurements per bench, controls in the same run, on a
-quiet LANBox (1-minute load average 0.92 at the start; the load at the end was
+quiet build host (1-minute load average 0.92 at the start; the load at the end was
 not captured, because the local client was stopped overnight and the file was
 written from the container log, which may also lack the last information bench;
 see the header of the file). The timed binary was checked first: `stored_for`,
@@ -583,7 +583,7 @@ see the header of the file). The timed binary was checked first: `stored_for`,
 | `info_server_login_start_fixed_vs_pool` | +1.76 | below 4.5 |
 | `info_server_prelogin_resolve_credential` | +5.28 (not gated) | see below |
 
-**At the profile the server ships (b7f2c54, `opt-level = 3`).** Quiet LANBox,
+**At the profile the server ships (b7f2c54, `opt-level = 3`).** Quiet build host,
 10^7: login start +2.76 (known against unknown, null +1.68) and -2.88 (known
 against disabled), pre-login +1.87 (null -1.45), state binding +1.74, all under
 4.5, and `info_server_prelogin_resolve_credential` +6.18 (positive for the
@@ -596,7 +596,7 @@ the history of how S-2 and S-3 were found.
 
 **Decisive, ef12966, at `opt-level = 3`, three repeats.**
 `ct/results/dudect-lanbox-server.md`: `CT_ONLY=server CT_REPEAT=3`, 10^7
-measurements per bench, controls in the same run, a quiet LANBox (1-minute load
+measurements per bench, controls in the same run, a quiet build host (1-minute load
 average 0.81 at the start and 1.07 at the end, exit status 0). The timed binary
 was checked first (`stored_for` 16 lines, `choose_answer` 28, `pick_account` 6,
 0 conditional jumps; `Finish::prepare` has the mask loop). The profile is
@@ -739,7 +739,7 @@ with its reason, and each is repeated in the report.
   with one repetition `base32_decode` gave |t| of 5 to 14 in some runs, with
   alternating sign, and even two fixed strings (`info_base32_a_vs_z`) gave 5 to
   7; with eight repetitions 24 runs of the bench and its three variants stayed
-  below 4; at 10^7, five runs on the LANBox were all below 2.7
+  below 4; at 10^7, five runs on the build host were all below 2.7
   (`ct/results/base32-wasm-1e7.md`). In native, `unpad_ct` failed the gate (|t| of 7 to 22 at 10^6 and 26
   to 66 at 10^7, growing with n, so not noise) while the inputs of the zero
   class were `vec![0; n]`: `calloc` gives the shared zero page, so the source
@@ -750,10 +750,10 @@ with its reason, and each is repeated in the report.
   teach; the controls of `unpad_scan` are `info_unpad_random_pair` and
   `info_unpad_same`. On hosted runners `unpad_ct` stayed positive and grew with
   n, and its own null `info_unpad_random_pair` was at the threshold on some
-  machines (-4.77 on the LANBox once, +4.99 hosted), so a smaller bias remained:
+  machines (-4.77 on the build host once, +4.99 hosted), so a smaller bias remained:
   the two buffers of a pair were always allocated left then right, which fixes
   their offsets in a cache line by class. They are now allocated in a random
-  order per pair. After that, on the LANBox, `unpad_ct` at 10^6 (five runs) is
+  order per pair. After that, on the build host, `unpad_ct` at 10^6 (five runs) is
   within +-2.4 and the random-pair and same-input nulls at 10^7 (five runs
   each) within +-3.3 (`ct/results/base32-wasm-1e7.md`); the hosted values are in
   the CI log of the pull request.

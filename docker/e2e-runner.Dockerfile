@@ -1,7 +1,7 @@
 # The runner of the end-to-end browser tests: the Playwright image of
 # scripts/lanbox-browsers.sh (same tag and digest) plus certutil, which fills the
 # NSS database that Chromium reads its trusted authorities from. Built once on
-# the LANBox by `scripts/lanbox-ferret-test.sh e2e-run` and removed by `e2e-down`,
+# the build host by `scripts/lanbox-ferret-test.sh e2e-run` and removed by `e2e-down`,
 # so a test run needs no package mirror.
 #
 # The package version is pinned. When Ubuntu replaces it in the noble archive the

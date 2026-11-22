@@ -1,4 +1,4 @@
-# Dudect run on the LANBox: only the benches with "server" in the name
+# Dudect run on the build host: only the benches with "server" in the name
 
 Written by hand from the container log of `scripts/lanbox-ct.sh dudect-native`
 (`CT_ONLY=server`, started 2026-10-31T07:57:25Z): the local client was stopped
