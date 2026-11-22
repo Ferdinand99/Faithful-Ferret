@@ -74,17 +74,16 @@ test("unlock_runs_a_full_sign_in_with_the_remembered_email_and_the_stored_secret
   await sessionEnds(world);
   world.requests.length = 0;
   const remembered = await world.session.remembered();
-  const opened = await world.session.unlock({ password: PASSWORD, email: remembered.email });
+  const opened = await world.session.signIn({ email: remembered.email, password: PASSWORD });
 
   assert.equal(opened.accountId, ACCOUNT);
   assert.equal(opened.purpose, "login", "a sign-in, not a re-authentication of a session");
   assert.deepEqual(world.requests.map((r) => `${r.method} ${r.url}`), [
-    "GET /api/auth/session",
     "POST /api/auth/opaque/login/start",
     "POST /api/auth/opaque/login/finish",
     "GET /api/vault/unlock-methods",
   ]);
-  const start = world.requests[1].body;
+  const start = world.requests[0].body;
   assert.equal(start.email, EMAIL);
   assert.equal(start.purpose, "login");
   // The secret key sealed on this device, and the pinned record as the core's guard and pin state.
@@ -110,7 +109,7 @@ test("a_wrong_password_on_unlock_renews_nothing_and_keeps_the_page", async () =>
   await sessionEnds(world);
   world.requests.length = 0;
   wrong = true;
-  const error = await world.session.unlock({ password: `${PASSWORD}-wrong`, email: EMAIL }).catch((e) => e);
+  const error = await world.session.signIn({ email: EMAIL, password: `${PASSWORD}-wrong` }).catch((e) => e);
   assert.equal(error.code, "decrypt", "the sign-in page's own refusal");
   assert.equal(leavesUnlock(error.code), false, "the Unlock page stays");
   assert.equal(world.requests.filter((r) => r.url.endsWith("/login/finish")).length, 0, "the proof of a wrong password never reaches the server");
@@ -135,7 +134,7 @@ test("a_refused_pin_on_unlock_ends_the_new_session_and_leads_to_the_sign_in_page
   await sessionEnds(world);
   world.requests.length = 0;
   refuse = true;
-  const error = await world.session.unlock({ password: PASSWORD, email: EMAIL }).catch((e) => e);
+  const error = await world.session.signIn({ email: EMAIL, password: PASSWORD }).catch((e) => e);
   assert.equal(error.code, "pinned_server_key", "the core's refusal, as on the sign-in page");
   assert.equal(leavesUnlock(error.code), true, "the sign-in page shows it");
   assert.equal(world.session.current(), null);
@@ -150,7 +149,7 @@ test("the_kits_second_factor_on_unlock_gets_the_sign_in_pages_message", async ()
   await signIn(world);
   await sessionEnds(world);
   twoFactor = true;
-  const error = await world.session.unlock({ password: PASSWORD, email: EMAIL }).catch((e) => e);
+  const error = await world.session.signIn({ email: EMAIL, password: PASSWORD }).catch((e) => e);
   assert.equal(error.code, "two_factor_unsupported");
   assert.equal(leavesUnlock(error.code), false);
   assert.equal(world.session.current(), null);
@@ -192,7 +191,7 @@ test("a_revoked_browser_is_shown_unlock_and_still_needs_the_full_sign_in", async
   await sessionEnds(world);
   assert.equal(await pageNow(world), "unlock_remembered");
   world.requests.length = 0;
-  await world.session.unlock({ password: PASSWORD, email: EMAIL });
+  await world.session.signIn({ email: EMAIL, password: PASSWORD });
   assert.ok(world.requests.some((r) => r.url.endsWith("/login/finish")), "a new session needs the OPAQUE proof of the password");
 });
 
@@ -241,10 +240,24 @@ test("a_refused_sign_in_remembers_nothing", async () => {
 
 test("leaves_unlock_covers_the_pinned_checks_and_a_missing_key_only", () => {
   for (const code of ["pinned_server_key", "pinned_auth_key", "pinned_kek_generation", "pinned_elsewhere", "pinned_account_mismatch", "pinned_profile_downgrade",
-    "epoch_mismatch", "method_list_changed", "method_list_missing", "method_list_unknown", "methods_invalid", "kdf_profile_downgrade", "sk_required", "sk_answer_required"]) {
+    "epoch_mismatch", "method_list_changed", "method_list_missing", "method_list_unknown", "methods_invalid", "kdf_profile_downgrade", "kdf_profile_unknown", "sk_required", "sk_answer_required"]) {
     assert.equal(leavesUnlock(code), true, code);
   }
   for (const code of ["decrypt", "denied", "throttled", "network", "two_factor_unsupported", "unknown", "worker_failed", "session_ended"]) {
     assert.equal(leavesUnlock(code), false, code);
   }
+});
+
+test("unlock_signs_in_the_account_it_shows_even_when_another_tab_opened_a_session_meanwhile", async () => {
+  const world = await scenario();
+  await signIn(world);
+  await sessionEnds(world);
+  // Another tab signed in meanwhile: the server session is live again. The Unlock page still signs in, never re-authenticates.
+  world.server.state.signedIn = true;
+  world.requests.length = 0;
+  const opened = await world.session.signIn({ email: EMAIL, password: PASSWORD });
+  assert.equal(opened.purpose, "login");
+  assert.equal(world.requests.find((r) => r.url.endsWith("/login/start")).body.purpose, "login");
+  assert.equal(world.requests.find((r) => r.url.endsWith("/login/start")).body.email, EMAIL, "the e-mail the page showed");
+  assert.equal(world.requests.some((r) => r.url === "/api/auth/session"), false, "the live session is not asked for its account");
 });

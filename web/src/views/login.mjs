@@ -94,6 +94,8 @@ export function loginView(deps) {
 
   /** The e-mail the last sign-in was tried with: after a refusal it names the account whose restore note to look for. @type {string | null} */
   let triedEmail = null;
+  /** The account a refusal handed over from the Unlock page was about (see the end of this function). @type {string | null} */
+  let handedAccount = null;
 
   /**
    * Offers "Forget the other server" for an account that is pinned under another address. The button asks
@@ -166,7 +168,7 @@ export function loginView(deps) {
     let restoreNote = null;
     if (deps.restoreNote && OLDER_METHOD_ERRORS.includes(codeOf(error))) {
       try {
-        restoreNote = await deps.restoreNote({ accountId: info?.accountId ?? null, email: triedEmail });
+        restoreNote = await deps.restoreNote({ accountId: info?.accountId ?? handedAccount, email: triedEmail });
       } catch {
         restoreNote = null;
       }
@@ -481,6 +483,11 @@ export function loginView(deps) {
   mount(root, ...parts);
   // The refusal the Unlock page gave way with (a pinned check, a missing secret key): the sign-in page says it.
   const handed = reauthPage ? null : takeRefusal();
-  if (handed !== null) void showError(handed);
+  if (handed !== null) {
+    // The sign-in that was refused was for the remembered account: its restore note picks the text, as after a sign-in here.
+    triedEmail = handed.email;
+    handedAccount = handed.accountId;
+    void showError(handed.error);
+  }
   return root;
 }

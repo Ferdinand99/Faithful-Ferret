@@ -142,7 +142,7 @@ export function entryPage({ info, remembered }) {
 
 /** Codes after which the Unlock page gives way to the full sign-in page (a refused pin, a missing secret key). */
 const LEAVE_CODES = Object.freeze([
-  "epoch_mismatch", "kdf_profile_downgrade", "method_list_changed", "method_list_missing", "method_list_unknown",
+  "epoch_mismatch", "kdf_profile_downgrade", "kdf_profile_unknown", "method_list_changed", "method_list_missing", "method_list_unknown",
   "methods_invalid", "profile_rejected", "sk_answer_required", "sk_required",
 ]);
 
@@ -157,23 +157,30 @@ export function leavesUnlock(code) {
   return code.startsWith("pinned_") || LEAVE_CODES.includes(code);
 }
 
-/** A refusal handed from the Unlock page to the sign-in page it gave way to (memory only, read once). @type {unknown} */
+/**
+ * A refusal handed from the Unlock page to the sign-in page it gave way to, with the account and e-mail it was about
+ * (so the sign-in page finds the note about an accepted restore, as after its own sign-in). Memory only, read once.
+ * @typedef {{ error: unknown, accountId: string | null, email: string | null }} HeldRefusal
+ */
+
+/** @type {HeldRefusal | null} */
 let held = null;
 
 /**
  * Hands a refusal to the next sign-in page.
  * @param {unknown} error
+ * @param {{ accountId?: string | null, email?: string | null }} [who] the account the Unlock page was for
  */
-export function holdRefusal(error) {
-  held = error;
+export function holdRefusal(error, who = {}) {
+  held = { error, accountId: who.accountId ?? null, email: who.email ?? null };
 }
 
 /**
  * The refusal the last Unlock page handed over, once; null when there is none.
- * @returns {unknown}
+ * @returns {HeldRefusal | null}
  */
 export function takeRefusal() {
-  const error = held;
+  const handed = held;
   held = null;
-  return error;
+  return handed;
 }

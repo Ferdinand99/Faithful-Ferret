@@ -303,6 +303,31 @@ test("a_lock_in_the_middle_of_a_rename_is_told_on_the_next_folders_page", async 
   });
 });
 
+test("a_held_stopped_line_is_shown_only_to_the_account_it_is_about", async () => {
+  await withDom(async () => {
+    const engine = liveEngine([item(1, ["Work"]), item(2, ["Work"])]);
+    const scope = createWipeScope();
+    let open = true;
+    const update = engine.update;
+    engine.update = async (id, draft, rev) => {
+      await update(id, draft, rev);
+      open = false;
+      scope.run();
+    };
+    const root = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, touch: () => open, scope, accountId: "aa".repeat(16) });
+    await click(all(root, "folder-rename")[0]);
+    find(root, "folder-new-name").value = "Jobb";
+    await submit(find(root, "folder-rename-form"));
+    await settle();
+    engine.update = update;
+    // Another account signed in in this tab: its Folders page says nothing of the first account's run, and the line is gone.
+    const other = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, accountId: "bb".repeat(16) });
+    assert.equal(textOf(find(other, "message")).trim(), "");
+    const back = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, accountId: "aa".repeat(16) });
+    assert.equal(textOf(find(back, "message")).trim(), "", "dropped, not kept for later");
+  });
+});
+
 test("a_side_menu_whose_frame_left_the_page_lets_go_of_its_pin_watcher", async () => {
   await withDom(async () => {
     clearFolderLinks();

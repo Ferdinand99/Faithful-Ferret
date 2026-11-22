@@ -73,7 +73,8 @@ export async function prepareUnlock(session) {
 /**
  * @param {{
  *   session: {
- *     unlock(args: { password: string, skCode?: string, email?: string }): Promise<unknown>,
+ *     unlock(args: { password: string, skCode?: string }): Promise<unknown>,
+ *     signIn?(args: { email: string, password: string }): Promise<unknown>,
  *     signOut?(): Promise<unknown>,
  *     forgetRemembered?(accountId?: string): Promise<unknown>,
  *   },
@@ -184,7 +185,7 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
     }
     if (onLeave) onLeave(error);
     else {
-      holdRefusal(error);
+      holdRefusal(error, { accountId: accountId ?? null, email });
       go("/login");
     }
   }
@@ -228,8 +229,14 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
       if (sk) sk.value = "";
       busy(true);
       try {
-        // An ended session: a full sign-in with the remembered e-mail (the secret key comes from this device).
-        await session.unlock(remembered ? { password: typed, email } : skCode === "" ? { password: typed } : { password: typed, skCode });
+        // An ended session: a full sign-in with the remembered e-mail (the secret key comes from this device). It is a
+        // sign-in, never a re-authentication: a session another tab opened meanwhile is not taken over for another account.
+        if (remembered) {
+          if (typeof session.signIn !== "function") throw new TypeError("the session cannot sign in");
+          await session.signIn({ email, password: typed });
+        } else {
+          await session.unlock(skCode === "" ? { password: typed } : { password: typed, skCode });
+        }
       } catch (error) {
         busy(false);
         const code = codeOf(error);

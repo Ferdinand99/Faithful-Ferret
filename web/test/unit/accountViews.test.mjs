@@ -753,7 +753,7 @@ test("with_no_session_a_remembered_account_makes_the_sign_in_page_unlock", async
     byRole(root, "password").value = PASSWORD;
     await fire(byRole(root, "unlock-form"), "submit");
     await settle();
-    assert.deepEqual(session.calls, [["unlock", { password: PASSWORD, email: EMAIL }]], "a full sign-in with the remembered e-mail");
+    assert.deepEqual(session.calls, [["signIn", { email: EMAIL, password: PASSWORD }]], "a full sign-in with the remembered e-mail");
     assert.deepEqual(went, ["/"]);
 
     // A hand-over continues after the unlock, as after a sign-in.
@@ -798,5 +798,26 @@ test("the_sign_in_page_shows_the_refusal_the_unlock_page_gave_way_with", async (
     const next = loginView(loginDeps().deps);
     await settle();
     assert.equal(byRole(next, "error").hidden, true);
+  });
+});
+
+test("a_handed_over_refusal_about_an_older_method_keeps_the_restore_text", async () => {
+  const { holdRefusal } = await import("../../src/flows/rememberedAccount.mjs");
+  await withDom(async () => {
+    const asked = [];
+    const note = { acceptedAt: Date.UTC(2026, 10, 1), restoreEpoch: 2, manifestOlder: true };
+    holdRefusal(coded("method_list_changed"), { accountId: ACCOUNT, email: EMAIL });
+    const root = loginView(loginDeps({
+      restoreNote: async (who) => {
+        asked.push(who);
+        return who.accountId === ACCOUNT || who.email === EMAIL ? note : null;
+      },
+    }).deps);
+    await settle();
+    assert.deepEqual(asked, [{ accountId: ACCOUNT, email: EMAIL }], "the note of the account the Unlock page was for");
+    const error = byRole(root, "error");
+    assert.equal(error.hidden, false);
+    assert.ok(textOf(error).includes("The server was restored from before you last changed an unlock method"), textOf(error));
+    assert.equal(textOf(error).includes(i18n().t("account.error.method_list_changed")), false, "not the plain warning");
   });
 });

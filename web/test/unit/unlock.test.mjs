@@ -266,6 +266,12 @@ function endedSession({ remembered = { accountId: "aa".repeat(16), email: "ada@e
   session.signOut = async () => {
     session.signOuts += 1;
   };
+  session.signIns = [];
+  session.signIn = async (args) => {
+    session.signIns.push({ ...args });
+    if (session.unlockError) throw session.unlockError;
+    session.isOpen = true;
+  };
   return session;
 }
 
@@ -286,7 +292,8 @@ test("an_ended_session_on_a_browser_that_remembers_the_account_is_unlock_with_th
 
     type(host, "password", PASSWORD);
     await submit(find(host, "unlock-form"));
-    assert.deepEqual(session.unlocks, [{ password: PASSWORD, email: "ada@example.test" }], "a full sign-in with the remembered e-mail");
+    assert.deepEqual(session.signIns, [{ email: "ada@example.test", password: PASSWORD }], "a full sign-in with the e-mail it shows");
+    assert.deepEqual(session.unlocks, [], "never a re-authentication of whatever session is live");
     assert.equal(find(host, "password").value, "");
     assert.equal(unlocked(), 1);
   });
@@ -332,7 +339,7 @@ test("a_wrong_password_on_unlock_keeps_the_page_with_the_sign_in_pages_text", as
 
 test("a_refused_pin_on_unlock_forgets_the_account_and_hands_the_refusal_to_the_sign_in_page", async () => {
   const { takeRefusal } = await import("../../src/flows/rememberedAccount.mjs");
-  for (const code of ["pinned_server_key", "pinned_elsewhere", "sk_required"]) {
+  for (const code of ["pinned_server_key", "pinned_elsewhere", "sk_required", "kdf_profile_unknown"]) {
     await withDom(async () => {
       const session = endedSession();
       session.unlockError = coded(code);
@@ -341,7 +348,7 @@ test("a_refused_pin_on_unlock_forgets_the_account_and_hands_the_refusal_to_the_s
       await submit(find(host, "unlock-form"));
       assert.deepEqual(session.forgotten, ["aa".repeat(16)], `${code}: the device forgets the account`);
       assert.deepEqual(moves, ["/login"], `${code}: the full sign-in page`);
-      assert.equal(takeRefusal(), session.unlockError, `${code}: the sign-in page gets the refusal`);
+      assert.deepEqual(takeRefusal(), { error: session.unlockError, accountId: "aa".repeat(16), email: "ada@example.test" }, `${code}: the sign-in page gets the refusal and whose it was`);
       assert.equal(takeRefusal(), null, "once");
     });
   }
@@ -354,7 +361,7 @@ test("not_you_signs_out_and_goes_to_the_sign_in_page", async () => {
     await find(host, "not-you").listeners.find(([kind]) => kind === "click")[1]();
     assert.equal(session.signOuts, 1);
     assert.deepEqual(moves, ["/login"]);
-    assert.deepEqual(session.unlocks, []);
+    assert.deepEqual(session.signIns, []);
 
     // A sign-out that could not reach the server still leaves for the sign-in page (the device has forgotten the account).
     const offline = endedSession();
