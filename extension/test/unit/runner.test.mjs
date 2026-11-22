@@ -238,7 +238,9 @@ test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_
     assert.equal(code.includes(trigger), false, trigger);
   }
   assert.match(code, /^permissions:\n {2}contents: read\n/m);
-  assert.equal(/contents: write|id-token|packages:/.test(code), false);
+  // The only write access is contents: write, in the publish job (pinned by the next test).
+  assert.equal(/id-token|packages:|pull-requests:|actions:|deployments:|pages:|statuses:|: write-all|permissions: write/.test(code), false);
+  assert.equal([...code.matchAll(/contents: write/g)].length, 1);
   // Every third-party action is pinned by a full commit SHA.
   const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
   assert.ok(uses.length >= 6);
@@ -288,5 +290,96 @@ test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_
   assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-1\/[^"]+"/);
   assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-2\/[^"]+"/);
   assert.match(code, /bash scripts\/check-ext-release\.sh /);
+  // The release carries an update_url, so it is linted as a self-hosted add-on (that only drops AMO's hosting rules).
+  assert.match(code, /web-ext lint --source-dir "\$RUNNER_TEMP\/build-1\/ferret-firefox-mv2-release" --warnings-as-errors --self-hosted\n/);
   assert.equal(/--variant test/.test(code), false, "the test variant is signed by the measure workflow");
+});
+
+/**
+ * The jobs of a workflow (comments removed), by name.
+ * @param {string} code
+ * @returns {Map<string, string>}
+ */
+function jobsOf(code) {
+  const body = code.slice(code.indexOf("\njobs:\n") + "\njobs:\n".length);
+  /** @type {Map<string, string>} */
+  const jobs = new Map();
+  const parts = body.split(/^ {2}([a-z][\w-]*):\n/m);
+  for (let i = 1; i < parts.length; i += 2) jobs.set(parts[i], parts[i + 1]);
+  return jobs;
+}
+
+test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signed_file", () => {
+  const text = read(".github/workflows/extension-sign-release.yml");
+  const code = text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  const jobs = jobsOf(code);
+  assert.deepEqual([...jobs.keys()], ["build", "sign", "manifest", "publish"]);
+  const manifest = /** @type {string} */ (jobs.get("manifest"));
+  const publish = /** @type {string} */ (jobs.get("publish"));
+  const sign = /** @type {string} */ (jobs.get("sign"));
+  // The order: publishing needs the signing (and so its approval) and the written manifest.
+  assert.match(manifest, /^ {4}needs: \[build, sign\]\n/m);
+  assert.match(publish, /^ {4}needs: \[build, sign, manifest\]\n/m);
+  // The sign job hands over the name and the SHA-256 of the signed file, nothing else.
+  assert.match(sign, /^ {4}outputs:\n {6}name: \$\{\{ steps\.signed\.outputs\.name \}\}\n {6}sha256: \$\{\{ steps\.signed\.outputs\.sha256 \}\}\n {4}steps:/m);
+  // Permissions: only the publish job widens them, to contents: write and nothing else; no environment, no secret.
+  for (const name of ["build", "sign", "manifest"]) {
+    assert.equal(/^ {4}permissions:/m.test(/** @type {string} */ (jobs.get(name))), false, `${name} keeps the read-only default`);
+  }
+  assert.match(publish, /^ {4}permissions:\n {6}contents: write\n {4}steps:/m);
+  for (const job of [manifest, publish]) {
+    assert.equal(job.includes("secrets"), false);
+    assert.equal(/^ {4}environment:/m.test(job), false);
+  }
+  // Actions pinned by commit SHA in both jobs.
+  for (const job of [manifest, publish]) {
+    const uses = [...job.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+    assert.ok(uses.length >= 2);
+    for (const use of uses) assert.match(use, /@[0-9a-f]{40}$/, use);
+  }
+  // The publish job runs no code from the repository: no checkout, no node, no npm, no script of ours.
+  assert.equal(/actions\/checkout|setup-node|\bnode |\bnpm |scripts\//.test(publish), false);
+  // The manifest job checks out only the build scripts of the built commit, without credentials, and has no write token.
+  assert.match(manifest, /ref: \$\{\{ needs\.build\.outputs\.commit \}\}\n\s+persist-credentials: false\n\s+sparse-checkout: \|\n\s+extension\/scripts\/\n/);
+  assert.match(manifest, /node extension\/scripts\/updates-json\.mjs \\\n\s+--xpi "\$RUNNER_TEMP\/signed\/\$NAME" \\\n\s+--sha256 "\$SHA256"/);
+  // A missing release is the first publication only on a 404; any other answer stops the run.
+  assert.match(manifest, /"HTTP\/"\*" 404"\*\)\n[^;]*exists=false/);
+  assert.match(manifest, /\*\)\n\s+echo "::error::Unexpected answer/);
+  // Both jobs check the signed file against the SHA-256 the sign job reported, and its name against the version.
+  for (const job of [manifest, publish]) {
+    assert.match(job, /SHA256: \$\{\{ needs\.sign\.outputs\.sha256 \}\}/);
+    assert.match(job, /if \[ "\$actual" != "\$SHA256" \]; then/);
+    assert.match(job, /if \[ "\$NAME" != "ferret-firefox-mv2-release-\$\{VERSION\}-signed\.xpi" \]; then/);
+  }
+  // The token reaches gh through the environment of the steps that call it, never the writer step.
+  const steps = (/** @type {string} */ job) => job.split(/\n {6}- /);
+  for (const step of [...steps(manifest), ...steps(publish)]) {
+    if (step.includes("github.token")) {
+      assert.match(step, /^ {10}GH_TOKEN: \$\{\{ github\.token \}\}$/m);
+      assert.match(step, /\bgh (?:api|release) /);
+    }
+    if (step.includes("updates-json.mjs")) assert.equal(step.includes("github.token") || step.includes("GH_TOKEN"), false, "no token for the writer");
+  }
+  // Releases: an extension-v<version> tag (never v*), never the latest, an existing release is never replaced.
+  assert.match(publish, /tag="extension-v\$\{VERSION\}"/);
+  assert.equal(/gh release create "?v/.test(publish), false);
+  assert.equal([...publish.matchAll(/gh release create /g)].length, 2);
+  assert.equal([...publish.matchAll(/--latest=false/g)].length, 2);
+  assert.equal(/gh release (?:delete|edit)|git push|git tag|--draft|--prerelease/.test(publish), false);
+  assert.match(publish, /if \[ "\$existing" != "\$SHA256" \]; then/);
+  // Only updates.json is ever replaced (--clobber), never a package.
+  const clobbers = publish.split("\n").filter((line) => line.includes("--clobber"));
+  assert.deepEqual(clobbers.map((line) => line.trim()), ['gh release upload extension-updates "$RUNNER_TEMP/updates/updates.json" --repo "$GITHUB_REPOSITORY" --clobber']);
+  // The newest entry is this version with this hash, and what is served afterwards is compared, over HTTPS only.
+  assert.match(publish, /\.version == \$v and \.update_hash == \$h/);
+  assert.match(publish, /--arg h "sha256:\$SHA256"/);
+  assert.equal([...publish.matchAll(/curl -fsSL --proto '=https' --proto-redir '=https' /g)].length, 2);
+  assert.match(publish, /cmp -s "\$RUNNER_TEMP\/fetched\.json" "\$RUNNER_TEMP\/updates\/updates\.json"/);
+  assert.match(publish, /if \[ "\$fetched" != "\$SHA256" \]; then/);
+  // No input or expression is spliced into a run script of these jobs: values come through env.
+  for (const job of [manifest, publish]) {
+    for (const block of job.matchAll(/run: \|\n((?: {10}.*\n?)+)/g)) {
+      assert.equal(/\$\{\{/.test(block[1]), false, `an expression inside a run script: ${block[1].slice(0, 80)}`);
+    }
+  }
 });

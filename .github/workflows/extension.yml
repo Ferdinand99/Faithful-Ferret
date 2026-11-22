@@ -73,7 +73,7 @@ jobs:
         run: |
           for mv in mv3 mv2; do
             node scripts/build.mjs --browser firefox --manifest "$mv" --variant release
-            npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors
+            npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors --self-hosted
           done
       - name: Check the release packages
         run: bash scripts/check-ext-release.sh
