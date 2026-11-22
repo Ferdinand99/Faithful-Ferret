@@ -211,7 +211,7 @@ test("top_frame_candidates_use_the_core_match", async () => {
   const list = await w.list({ session: "s1" });
   assert.deepEqual(list.items.map((i) => [i.name, i.username, i.how, i.frames.map((f) => f.frameId)]), [["The core matched it", "kari", "domain", [0]]]);
   // The list names the item by its id and the frame by the browser's facts: no handle and no reference.
-  assert.deepEqual(list.items[0].frames, [{ frameId: 0, documentId: "doc-0", url: `${LOGIN}/`, origin: LOGIN }]);
+  assert.deepEqual(list.items[0].frames, [{ frameId: 0, documentId: "doc-0", url: `${LOGIN}/`, origin: LOGIN, ancestors: [] }]);
   assert.equal(list.items[0].itemId, itemId(2));
   assert.equal("ref" in list.items[0], false);
   assert.equal(list.insecure, false);
@@ -235,6 +235,35 @@ test("top_frame_candidates_use_the_core_match", async () => {
   assert.equal(w2.source.opened, 150);
   assert.equal(w2.source.closed, 150);
   assert.equal(w2.source.live.size, 0);
+});
+
+test("each_fillable_frame_names_the_documents_above_it_up_to_the_top", async () => {
+  // top → 11 (same site) → 13 (same site), and 12 beside 11: each frame carries its chain, the parent first, as the
+  // browser gives it (the fill checks the frame's holder in each of these documents).
+  const rows = /** @type {Array<[number, number, string]>} */ ([
+    [0, -1, `${WWW}/`],
+    [11, 0, `${WWW}/outer`],
+    [13, 11, `${LOGIN}/inner`],
+    [12, 0, `${LOGIN}/beside`],
+  ]);
+  const frames = await fillableFrames(TAB, { webNavigation: navigation(rows), core: fakeCore({ sameSite: () => true }) });
+  assert.deepEqual(Object.fromEntries(frames.map((f) => [f.frameId, f.ancestors])), {
+    0: [],
+    11: [{ frameId: 0, documentId: "doc-0" }],
+    13: [{ frameId: 11, documentId: "doc-11" }, { frameId: 0, documentId: "doc-0" }],
+    12: [{ frameId: 0, documentId: "doc-0" }],
+  });
+  // A document id the browser does not give is left out, and the frame id stays.
+  const bare = await fillableFrames(TAB, { webNavigation: navigation([[0, -1, `${WWW}/`, { documentId: undefined }], [11, 0, `${WWW}/x`]]), core: fakeCore({ sameSite: () => true }) });
+  assert.deepEqual(bare.find((f) => f.frameId === 11)?.ancestors, [{ frameId: 0 }]);
+  // The chain reaches the fill flow through the page matching: the item's frame carries it.
+  /** The core host: the display host, and one item that matches frame 13. @param {string} op */
+  const call = async (op) =>
+    op === "display_host"
+      ? { a_label: "www.example.net", unicode: "www.example.net" }
+      : { items: [{ item_id: "ab".repeat(16), name: "Login", username: null, how: "host", frame_ids: [13] }], grant_frames: [] };
+  const list = await candidates(TAB, { coreHost: { call }, frames: async () => frames, permissions: { contains: async () => true } });
+  assert.deepEqual(list.items[0]?.frames.map((f) => f.ancestors), [[{ frameId: 11, documentId: "doc-11" }, { frameId: 0, documentId: "doc-0" }]]);
 });
 
 test("same_site_comes_from_the_core", async () => {

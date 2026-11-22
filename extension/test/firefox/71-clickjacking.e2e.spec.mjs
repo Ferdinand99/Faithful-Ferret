@@ -14,6 +14,11 @@
 // - A navigation between the choice ("Fill" is pressed on a reference of the
 //   list) and the fill, of the page or of the login frame (to a foreign site,
 //   a data: page, about:blank), fills nothing anywhere.
+// - A same-site login frame that the page above it hides or covers (opacity on
+//   the <iframe>, a hidden parent, off the page, a transparent cover) gets
+//   nothing, and the popup says why; the same frame shown is filled. A frame
+//   that the page hides after the fill script reported (when the user name has
+//   gone in) gets no password.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { SITES, siteById } from "../fixtures/sites/index.mjs";
@@ -38,6 +43,7 @@ async function worldOf(channel) {
 }
 
 const FIELD_ROWS = SITES.filter((site) => site.expect.outcome === "fields");
+const HIDDEN_FRAME_ROWS = SITES.filter((site) => site.expect.outcome === "frame_hidden");
 const HOSTILE_ROWS = SITES.filter((site) => site.expect.outcome === "turns_hostile" || site.id === "blur-navigate");
 
 /** @param {number} ms */
@@ -230,5 +236,70 @@ test("navigation_between_pick_and_fill_fills_nothing", async () => {
       assert.deepEqual(await documentsHolding(w.session, password), [], `${where}: the password is nowhere`);
       assert.deepEqual(await documentsHolding(w.session, USERNAME), [], `${where}: nor the user name`);
     }
+  }
+});
+
+test("a_frame_that_its_page_hides_or_covers_gets_nothing_and_the_shown_frame_is_filled", async () => {
+  for (const channel of channels()) {
+    const w = await worldOf(channel);
+    const password = w.passwords.host;
+    assert.ok(HIDDEN_FRAME_ROWS.length >= 4, `${channel}: ${HIDDEN_FRAME_ROWS.length} rows`);
+    for (const site of [...HIDDEN_FRAME_ROWS, siteById("framed-visible")]) {
+      const where = `${channel} ${site.id}`;
+      const tabId = await w.visit(w.server.siteUrl(site.id));
+      // The list is the frame rules' and the core's: the frame is offered (its iframe's style is not theirs to see).
+      await w.ui.open();
+      let list;
+      try {
+        list = await w.ui.body("candidates", { tab_id: tabId });
+      } finally {
+        await w.ui.close();
+      }
+      const row = list.handles.find((/** @type {any} */ h) => h.name === w.named.host);
+      assert.ok(row && row.frame_ids.some((/** @type {number} */ id) => id !== 0), `${where}: offered in the frame (${JSON.stringify(list)})`);
+      const view = await w.popup(tabId);
+      let toast = "";
+      try {
+        await view.shot(`71-${site.id}`);
+        toast = await view.fill(w.named.host);
+        await view.shot(`71-${site.id}-after`);
+      } finally {
+        await view.close();
+      }
+      if (site.expect.outcome === "fill_in_frame") {
+        assert.equal(toast, POPUP_TEXT["popup.filled"], `${where}: the shown frame is filled`);
+        assert.deepEqual(await documentsHolding(w.session, password), [String(site.expect.frame)], `${where}: the password is in the frame`);
+        assert.deepEqual(await documentsHolding(w.session, USERNAME), [String(site.expect.frame)], `${where}: the user name is in the frame`);
+      } else {
+        assert.equal(toast, POPUP_TEXT["popup.error.frame_hidden"], `${where}: refused, and the popup says why`);
+        assert.deepEqual(await documentsHolding(w.session, password), [], `${where}: the password is nowhere`);
+        assert.deepEqual(await documentsHolding(w.session, USERNAME), [], `${where}: nor the user name`);
+      }
+    }
+  }
+});
+
+test("a_frame_hidden_after_the_report_gets_no_password", async () => {
+  for (const channel of channels()) {
+    const w = await worldOf(channel);
+    const site = siteById("framed-late-hide");
+    const tabId = await w.visit(w.server.siteUrl(site.id));
+    await w.ui.open();
+    let fill;
+    try {
+      const list = await w.ui.body("candidates", { tab_id: tabId });
+      const row = list.handles.find((/** @type {any} */ h) => h.name === w.named.host);
+      assert.ok(row && row.frame_ids.some((/** @type {number} */ id) => id !== 0), `${channel}: offered in the frame (${JSON.stringify(list)})`);
+      // The frame is shown when the fill script reports and when the user name goes in; then the page hides it.
+      fill = await w.ui.body("fill", { ref: row.ref, tab_id: tabId });
+    } finally {
+      await w.ui.close();
+    }
+    await w.session.screenshot(shotPath(channel, "71-framed-late-hide-page"));
+    assert.deepEqual(fill, { ok: false, reason: "frame_hidden" }, `${channel}: the password is refused`);
+    const state = await w.session.content(() => /** @type {any} */ (window).fixtureState());
+    assert.equal(state.hidden, true, `${channel}: the page hid the frame after the user name went in`);
+    assert.deepEqual(await documentsHolding(w.session, USERNAME), [String(site.expect.frame)], `${channel}: the user name went in before the frame was hidden`);
+    assert.deepEqual(await documentsHolding(w.session, w.passwords.host), [], `${channel}: the password is nowhere`);
   }
 });

@@ -56,6 +56,19 @@
 // an empty report: an aimed request never falls back to another field of the
 // page. An aim is good for the next request only, and for AIM_MS at most;
 // `aim(null)` takes it back.
+//
+// A frame (`where`, `frameShown`): the checks above see only the frame's own
+// document. Before a value goes into a frame below the top, the extension asks
+// the engine of that frame where the field is (its sample points, after the
+// field checks), and then the engine of each document above it whether the
+// field is shown there too: the element that holds the frame below (an
+// `iframe`, `frame`, `object` or `embed`, found by the browser's own
+// `runtime.getFrameId`) must pass the ancestor chain (and have no `zoom`) and
+// the size rule, and each of the field's points, moved into that document by
+// the holder's content box, must be in its viewport and reach the holder in
+// the hit test. A page that covers or clips only the form inside a larger
+// frame is caught that way. The answers go back as the results of the
+// extension's own calls, never as messages a page or a frame could send.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 
@@ -72,6 +85,23 @@ export const FILL_GLOBAL = "__ferretFill";
 export const AIM_MS = 3_000;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** The elements that can hold a frame. */
+const FRAME_HOLDERS = new Set(["iframe", "frame", "object", "embed"]);
+/** The most points of a field that are checked in the documents above its frame. */
+const MAX_POINTS = 5;
+
+/**
+ * Whether `points` is a list of 1 to MAX_POINTS points [x, y] of finite numbers.
+ * @param {unknown} points
+ */
+function validPoints(points) {
+  return (
+    Array.isArray(points) &&
+    points.length >= 1 &&
+    points.length <= MAX_POINTS &&
+    points.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 1e7))
+  );
+}
 const TEXT_TYPES = new Set(["text", "email", "tel", "number", "search", "url"]);
 const USERNAME_TYPES = new Set(["text", "email", "tel"]);
 const TOTP_HINT = /(?:^|[^a-z])(?:otp|totp|2fa|mfa|tfa)(?:[^a-z]|$)|one.?time|verification.?code|authenticator|auth.?code|two.?factor/;
@@ -246,11 +276,13 @@ function groupOf(anchor, candidates) {
  *   runtimeId: string,
  *   extensionBase: string,
  *   targetOf?: (targetElementId: number) => any,
+ *   frameIdOf?: (element: any) => number,
  *   clock?: () => number,
  * }} deps `send` delivers a message to the extension; `runtimeId` and `extensionBase` (`moz-extension://<uuid>/`) say who may talk to the engine;
- *   `targetOf` is `menus.getTargetElement` (the element of a context menu click) and `clock` the time in milliseconds
+ *   `targetOf` is `menus.getTargetElement` (the element of a context menu click), `frameIdOf` is `runtime.getFrameId`
+ *   (the frame id of the frame an element holds) and `clock` the time in milliseconds
  */
-export function createFillEngine({ window, document, send, runtimeId, extensionBase, targetOf = () => null, clock = () => Date.now() }) {
+export function createFillEngine({ window, document, send, runtimeId, extensionBase, targetOf = () => null, frameIdOf = () => -1, clock = () => Date.now() }) {
   // The native setter. In Firefox the content script reads the page through
   // Xray wrappers, so this is the browser's own setter whatever the page has
   // replaced; taking it once here is only a second line of defence.
@@ -272,8 +304,19 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (element.ownerDocument !== document || element.isConnected !== true) return "gone";
     // :disabled also covers an input inside a disabled fieldset.
     if (element.matches(":disabled") || element.readOnly === true) return "hidden";
+    return shown(element);
+  }
 
-    // From the field up to the root, through shadow roots and slots.
+  /**
+   * Why the ancestor chain of `element` hides it, or null: from the element up
+   * to the root, through shadow roots and slots. `holder`: the element holds a
+   * frame, so `zoom` is refused as well (a frame's points are mapped into this
+   * document by translation only).
+   * @param {any} element
+   * @param {boolean} [holder]
+   * @returns {"hidden" | null}
+   */
+  function chainProblem(element, holder = false) {
     /** @type {any} */
     let node = element;
     for (let depth = 0; node !== null; depth += 1) {
@@ -282,24 +325,29 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       if (node.inert === true || node.hasAttribute("inert")) return "hidden";
       const style = window.getComputedStyle(node);
       if (!style || styleProblem(style) !== null) return "hidden";
+      if (holder) {
+        const zoom = read(style, "zoom");
+        if (zoom !== "" && zoom !== "1" && zoom !== "normal") return "hidden";
+      }
       node = flatParent(node);
     }
+    return null;
+  }
 
-    const rect = element.getBoundingClientRect();
-    const { left, top, width, height } = rect;
-    if (![left, top, width, height].every(Number.isFinite)) return "hidden";
-    if (width < MIN_SIDE || height < MIN_SIDE) return "hidden";
-    const viewWidth = document.documentElement.clientWidth || window.innerWidth;
-    const viewHeight = document.documentElement.clientHeight || window.innerHeight;
-    const inside = (/** @type {number} */ x, /** @type {number} */ y) => x >= 0 && y >= 0 && x < viewWidth && y < viewHeight;
-    const shownWidth = Math.min(left + width, viewWidth) - Math.max(left, 0);
-    const shownHeight = Math.min(top + height, viewHeight) - Math.max(top, 0);
-    if (!(shownWidth > 0) || !(shownHeight > 0)) return "hidden";
-    if ((shownWidth * shownHeight) / (width * height) < MIN_VISIBLE_SHARE) return "hidden";
-    if (!inside(left + width / 2, top + height / 2)) return "hidden";
+  /** The size of this document's viewport. */
+  const viewport = () => ({
+    width: document.documentElement.clientWidth || window.innerWidth,
+    height: document.documentElement.clientHeight || window.innerHeight,
+  });
 
-    // The document, then every shadow root down to the field, must each name
-    // the next level (or the field) as the topmost element at the point.
+  /**
+   * Whether a click at (x, y) reaches `element`: the document, then every
+   * shadow root down to it, must each name the next level (or the element) as
+   * the topmost element there. "gone" when the element is not in this document.
+   * @param {any} element @param {number} x @param {number} y
+   * @returns {"gone" | "hidden" | "covered" | null}
+   */
+  function hitProblem(element, x, y) {
     /** @type {any[]} */
     const roots = [];
     for (let root = element.getRootNode(); root; root = root.host ? root.host.getRootNode() : null) {
@@ -307,24 +355,70 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       if (roots.length > MAX_DEPTH) return "hidden";
     }
     if (roots[0] !== document) return "gone";
-    for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]]) {
-      const x = left + width * fx;
-      const y = top + height * fy;
-      if (!inside(x, y)) continue;
-      for (let i = 0; i < roots.length; i += 1) {
-        const expected = i < roots.length - 1 ? roots[i + 1].host : element;
-        const hits = roots[i].elementsFromPoint(x, y);
-        if (!hits || hits[0] !== expected) return "covered";
-      }
+    for (let i = 0; i < roots.length; i += 1) {
+      const expected = i < roots.length - 1 ? roots[i + 1].host : element;
+      const hits = roots[i].elementsFromPoint(x, y);
+      if (!hits || hits[0] !== expected) return "covered";
     }
     return null;
   }
 
   /**
-   * Every input of the frame in document order, through shadow roots.
+   * The sample points of a rectangle (the centre and four more) that lie in
+   * the viewport: where the hit test asks, and what a frame's parent checks.
+   * @param {{ left: number, top: number, width: number, height: number }} rect
+   * @returns {Array<[number, number]>}
+   */
+  function samplePoints({ left, top, width, height }) {
+    const view = viewport();
+    /** @type {Array<[number, number]>} */
+    const out = [];
+    for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]]) {
+      const x = left + width * fx;
+      const y = top + height * fy;
+      if (x >= 0 && y >= 0 && x < view.width && y < view.height) out.push([x, y]);
+    }
+    return out;
+  }
+
+  /**
+   * Whether the user sees the field `element` in this document, and if not,
+   * why: the ancestor chain, the size, the viewport and the hit test.
+   * Everything but what only an input has.
+   * @param {any} element
+   * @returns {"gone" | "hidden" | "covered" | null}
+   */
+  function shown(element) {
+    if (!isElement(element) || element.ownerDocument !== document || element.isConnected !== true) return "gone";
+    if (chainProblem(element) !== null) return "hidden";
+
+    const rect = element.getBoundingClientRect();
+    const { left, top, width, height } = rect;
+    if (![left, top, width, height].every(Number.isFinite)) return "hidden";
+    if (width < MIN_SIDE || height < MIN_SIDE) return "hidden";
+    const view = viewport();
+    const shownWidth = Math.min(left + width, view.width) - Math.max(left, 0);
+    const shownHeight = Math.min(top + height, view.height) - Math.max(top, 0);
+    if (!(shownWidth > 0) || !(shownHeight > 0)) return "hidden";
+    if ((shownWidth * shownHeight) / (width * height) < MIN_VISIBLE_SHARE) return "hidden";
+    const cx = left + width / 2;
+    const cy = top + height / 2;
+    if (!(cx >= 0 && cy >= 0 && cx < view.width && cy < view.height)) return "hidden";
+
+    for (const [x, y] of samplePoints(rect)) {
+      const problem = hitProblem(element, x, y);
+      if (problem !== null) return problem;
+    }
+    return null;
+  }
+
+  /**
+   * Every element of the frame whose local name `wanted` accepts, in document
+   * order, through shadow roots.
+   * @param {(name: string) => boolean} wanted
    * @returns {any[]}
    */
-  function allInputs() {
+  function allElements(wanted) {
     /** @type {any[]} */
     const out = [];
     let seen = 0;
@@ -333,13 +427,88 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       for (const node of root.querySelectorAll("*")) {
         seen += 1;
         if (seen > MAX_NODES) return;
-        if (node.localName === "input") out.push(node);
+        if (wanted(node.localName)) out.push(node);
         const inner = shadowOf(node);
         if (inner) visit(inner);
       }
     };
     visit(document);
     return out;
+  }
+
+  /** Every input of the frame in document order, through shadow roots. */
+  const allInputs = () => allElements((name) => name === "input");
+
+  /**
+   * Whether a field of the frame `frameId` (a frame of this document) is shown
+   * here: the one element that holds the frame (the browser names the frame
+   * each element holds) must pass the ancestor chain (and have no `zoom`) and
+   * be at least MIN_SIDE pixels each way, and each of the field's points, given
+   * in the frame's own viewport and moved into this document by the holder's
+   * content box, must be inside this viewport and reach the holder in the hit
+   * test. The answer carries the moved points, for the document above this
+   * one. "gone" when no element, or more than one, holds the frame.
+   * @param {unknown} frameId
+   * @param {unknown} points
+   * @returns {{ verdict: "shown", points: Array<[number, number]> } | { verdict: "gone" | "hidden" | "covered" }}
+   */
+  function frameShown(frameId, points) {
+    if (typeof frameId !== "number" || !Number.isSafeInteger(frameId) || frameId <= 0) return { verdict: "gone" };
+    if (!validPoints(points)) return { verdict: "hidden" };
+    const holders = allElements((name) => FRAME_HOLDERS.has(name)).filter((element) => {
+      try {
+        return frameIdOf(element) === frameId;
+      } catch {
+        // An element that holds no frame (an object showing an image, say).
+        return false;
+      }
+    });
+    if (holders.length !== 1) return { verdict: "gone" };
+    const [holder] = holders;
+    if (!isElement(holder) || holder.ownerDocument !== document || holder.isConnected !== true) return { verdict: "gone" };
+    if (chainProblem(holder, true) !== null) return { verdict: "hidden" };
+    const rect = holder.getBoundingClientRect();
+    if (![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)) return { verdict: "hidden" };
+    if (rect.width < MIN_SIDE || rect.height < MIN_SIDE) return { verdict: "hidden" };
+    // The frame's viewport starts at the holder's content box: inside its border and its padding.
+    const style = window.getComputedStyle(holder);
+    const px = (/** @type {string} */ name) => {
+      const value = Number.parseFloat(read(style, name));
+      return Number.isFinite(value) ? value : 0;
+    };
+    const originX = rect.left + (Number.isFinite(holder.clientLeft) ? holder.clientLeft : 0) + px("padding-left");
+    const originY = rect.top + (Number.isFinite(holder.clientTop) ? holder.clientTop : 0) + px("padding-top");
+    const view = viewport();
+    /** @type {Array<[number, number]>} */
+    const moved = [];
+    for (const [x, y] of /** @type {Array<[number, number]>} */ (points)) {
+      const ax = originX + x;
+      const ay = originY + y;
+      if (!(ax >= 0 && ay >= 0 && ax < view.width && ay < view.height)) return { verdict: "hidden" };
+      const problem = hitProblem(holder, ax, ay);
+      if (problem === "gone") return { verdict: "gone" };
+      if (problem !== null) return { verdict: problem };
+      moved.push([ax, ay]);
+    }
+    return { verdict: "shown", points: moved };
+  }
+
+  /**
+   * Where the field of `kind` of the pending request `requestId` is: its
+   * sample points in this frame's viewport, when it passes every check now,
+   * else why not. For the documents above this frame (see `frameShown`).
+   * @param {unknown} requestId
+   * @param {unknown} kind
+   * @returns {{ points: Array<[number, number]> } | { problem: "gone" | "hidden" | "covered" | "wrong_kind" }}
+   */
+  function where(requestId, kind) {
+    if (pending === null || typeof requestId !== "string" || pending.requestId !== requestId) return { problem: "gone" };
+    const field = pending.fields.find((f) => f.kind === kind);
+    if (!field) return { problem: "wrong_kind" };
+    const problem = inspect(field.element);
+    if (problem !== null) return { problem };
+    const points = samplePoints(field.element.getBoundingClientRect());
+    return points.length > 0 ? { points } : { problem: "hidden" };
   }
 
   /**
@@ -587,19 +756,21 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     else answer(requestId, false, result.reason);
   }
 
-  return Object.freeze({ begin, aim, onMessage });
+  return Object.freeze({ begin, aim, where, frameShown, onMessage });
 }
 
 /**
  * Starts the engine once per page: a second injection finds the first and
  * changes nothing. The extension asks for a report through
- * `globalThis.__ferretFill.begin(id)`, and aims it at a clicked field through
- * `aim(targetElementId)`: properties of the isolated world that the page
- * cannot see.
+ * `globalThis.__ferretFill.begin(id)`, aims it at a clicked field through
+ * `aim(targetElementId)`, asks where a field of the pending request is through
+ * `where(requestId, kind)` and whether a field of a frame of the page is shown
+ * through `frameShown(frameId, points)`: properties of the isolated world that
+ * the page cannot see.
  *
  * @param {any} [api] the `browser` object
  * @param {any} [scope] the global object of the script (the page window)
- * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean }}
+ * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean, where: (requestId: string, kind: string) => object, frameShown: (frameId: number, points: unknown) => object }}
  */
 export function start(api = /** @type {any} */ (globalThis).browser, scope = globalThis) {
   const existing = Object.getOwnPropertyDescriptor(scope, FILL_GLOBAL);
@@ -612,11 +783,12 @@ export function start(api = /** @type {any} */ (globalThis).browser, scope = glo
     runtimeId: runtime.id,
     extensionBase: runtime.getURL(""),
     targetOf: (id) => api.menus?.getTargetElement?.(id) ?? null,
+    frameIdOf: (element) => runtime.getFrameId(element),
   });
   runtime.onMessage.addListener((/** @type {unknown} */ raw, /** @type {unknown} */ sender) => {
     engine.onMessage(raw, sender);
   });
-  const offer = Object.freeze({ begin: engine.begin, aim: engine.aim });
+  const offer = Object.freeze({ begin: engine.begin, aim: engine.aim, where: engine.where, frameShown: engine.frameShown });
   Object.defineProperty(scope, FILL_GLOBAL, { value: offer, configurable: false, enumerable: false, writable: false });
   return offer;
 }
