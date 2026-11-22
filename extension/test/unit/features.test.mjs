@@ -24,6 +24,7 @@ const SAVE_PATHS = Object.freeze({
     "form_capture", "form_gone", "page_ready",
     "offer_list", "offer_save", "offer_update", "offer_dismiss", "offer_never",
     "generate", "fill_generated",
+    "sync_items", "item_conflict", "item_resolve", "item_discard",
   ]),
   /** The attribute every control of the feature carries, so a page module that builds one is found. */
   control: 'data-feature="save"',

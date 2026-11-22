@@ -58,6 +58,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("settings", { lock_seconds: 900 }),
     record("server_check", { ok: true }),
     record("sync_state", { running: false, live: "offline", warnings: [] }),
+    record("forget_preview", { ok: true, pending: 0, shared: false }),
     record("forget_server", { ok: true }),
     record("candidates", { handles: [], insecure: false, grant: [] }),
     record("search", { handles: [], total: 0 }),
@@ -83,6 +84,7 @@ const requests = {
   settings: () => encode("settings", {}),
   server_check: () => encode("server_check", { server: "https://vault.example" }),
   sync_state: () => encode("sync_state", {}),
+  forget_preview: () => encode("forget_preview", { server: "https://vault.example" }),
   forget_server: () => encode("forget_server", { server: "https://vault.example" }),
   candidates: () => encode("candidates", { tab_id: 1, frame_id: 0 }),
   search: () => encode("search", { query: "x" }),
@@ -285,7 +287,7 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;
   // The setting and the lock button are for the extension's own pages: a content script can neither change the setting nor lock.
-  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(), "junk", 5, undefined]) {
+  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_preview(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(), "junk", 5, undefined]) {
     assert.equal(await router.onMessage(raw, sender), undefined);
   }
   assert.deepEqual(log, []);

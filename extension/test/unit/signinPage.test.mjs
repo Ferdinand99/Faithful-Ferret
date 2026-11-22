@@ -252,7 +252,7 @@ test("the_popup_views_follow_the_state_of_the_background", async () => {
     host: SERVER,
     account: "",
     server: SERVER,
-    sync: { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [] },
+    sync: { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [], pending: 0, blocked: 0, conflicts: 0 },
   });
   assert.equal(viewOf(/** @type {any} */ ({ state: "weird" })).view, "signed_out");
 

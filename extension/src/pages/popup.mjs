@@ -1,11 +1,14 @@
-// The popup (design document, sections 7.2, 10.3.1 and 10.6). It shows
-// whether a device is signed in, unlocks it with the master password, locks it
-// with the button in the header, shows what the sync found (its state, a stop
-// with "Try again" and "Forget this server", and the warnings), and, while the
+// The popup (design document, sections 7.2, 8.5, 8.6, 10.3.1 and 10.6). It
+// shows whether a device is signed in, unlocks it with the master password,
+// locks it with the button in the header, shows what the sync found (its state,
+// a stop with "Try again" and "Forget this server", "Accept the older state"
+// for a restored server (olderState.mjs), and the warnings), and, while the
 // vault is open, the list of the vault (popupList.mjs): the candidates of the
 // page with "Fill", the favourites and all items, search, a filter by type,
-// copying and one item's view. The views are in popupFlow.mjs; this file builds
-// them with `el()`.
+// copying and one item's view. In a build with saving from the extension on,
+// the sync's part also shows the changes that wait and the items that need the
+// user, with their conflict cards (conflictCard.mjs). The views are in
+// popupFlow.mjs; this file builds them with `el()`.
 //
 // The page the popup is about is the active tab of the window it was opened
 // from. A popup that was popped out into a window of its own keeps that tab
@@ -15,9 +18,14 @@
 // The first sign-in never happens here: Firefox closes the popup when a
 // permission is asked for, so it is done in the sign-in tab.
 
+import { FEATURES } from "../shared/features.mjs";
 import { el, mount } from "../shared/dom.mjs";
+import { createSyncAttention, createSyncItems } from "./conflictCard.mjs";
+import { createOlderPanel } from "./olderState.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
-import { createListFlow, createPopupFlow, followStep, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
+import {
+  createListFlow, createOlderFlow, createPopupFlow, createSyncItemsFlow, followStep, forgetBodyKey, statusKey, stopKey, warningKey,
+} from "./popupFlow.mjs";
 import { createVaultList } from "./popupList.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
@@ -72,6 +80,8 @@ async function main() {
   const ui = connectUi(browser.runtime);
   const flow = createPopupFlow(ui.request);
   const listFlow = createListFlow(ui.request);
+  const olderFlow = createOlderFlow(ui.request);
+  const itemsFlow = FEATURES.save ? createSyncItemsFlow(ui.request) : null;
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
   // The panel is as tall as Firefox lets a popup be; a tab or a window gives the popup its own height (popup.css).
@@ -114,15 +124,23 @@ async function main() {
   }
 
   /**
-   * "Forget this server": a button, then a question with its two answers. Only the server the popup shows is forgotten.
+   * "Forget this server": a button, then a question with its two answers. The question names the changes that were never
+   * sent and an account another address of the server keeps, with the web vault's words. Only the server the popup
+   * shows is forgotten.
    * @param {PopupView} view
    */
   function forgetPart(view) {
     const box = el("div", { class: "ff-forget", "data-role": "forget" });
     const start = el("button", { type: "button", class: "ff-button", "data-role": "sync-action", "data-action": "forget" }, texts.t("sync.action.forget"));
-    start.addEventListener("click", () => ask());
+    start.addEventListener("click", async () => {
+      start.setAttribute("disabled", "");
+      const preview = await flow.forgetPreview(view.server);
+      start.removeAttribute("disabled");
+      ask(preview);
+    });
     mount(box, start);
-    function ask() {
+    /** @param {{ pending: number, shared: boolean } | null} preview */
+    function ask(preview) {
       const error = errorBox();
       const confirm = el("button", { type: "button", class: "ff-button ff-danger", "data-role": "forget-confirm" }, texts.t("sync.forget.confirm"));
       const cancel = el("button", { type: "button", class: "ff-button", "data-role": "forget-cancel" }, texts.t("sync.forget.cancel"));
@@ -147,11 +165,11 @@ async function main() {
       mount(
         box,
         el("h2", null, texts.t("sync.forget.title")),
-        el("p", { "data-role": "forget-text" }, texts.t("sync.forget.body")),
+        el("p", { "data-role": "forget-text", "data-body": forgetBodyKey(preview) }, texts.t(forgetBodyKey(preview), { count: preview?.pending ?? 0 })),
         el("div", { class: "ff-actions" }, confirm, cancel),
         error,
       );
-      confirm.focus();
+      cancel.focus();
     }
     return box;
   }
@@ -224,11 +242,29 @@ async function main() {
   }
 
   /**
-   * What the sync shows: its state, a stop with its two ways on, and the warnings. Nothing here names an item.
+   * Shows a panel in the sync's part (accepting an older state, the items that need the user), in place of what it
+   * shows; closing the panel shows the popup as the background reports it then.
+   * @param {HTMLElement} slot
+   * @param {(close: () => void) => HTMLElement} make
+   */
+  function panel(slot, make) {
+    const close = () => {
+      void flow.load().then(
+        (next) => show(next),
+        () => {},
+      );
+    };
+    mount(slot, make(close));
+  }
+
+  /**
+   * What the sync shows: its state, a stop with its ways on, and the warnings; in a build with saving on, also the
+   * changes that wait and the items that need the user. Nothing here names an item.
    * @param {PopupView} view
    * @param {string | null} note the i18n key of a note under the stop (an answer to "Try again"), or null
+   * @param {HTMLElement} slot where the sync's part is shown (a panel takes its place)
    */
-  function syncPart(view, note) {
+  function syncPart(view, note, slot) {
     const sync = view.sync;
     const halted = sync?.halted ?? null;
     const box = el("div", { class: "ff-sync", "data-role": "sync", "data-state": halted !== null ? "halted" : (sync?.status ?? "starting"), "data-live": sync?.live ?? "offline" });
@@ -237,8 +273,12 @@ async function main() {
       const noteBox = errorBox();
       const actions = el("div", { class: "ff-actions", "data-role": "sync-actions" });
       for (const action of sync.actions) {
-        if (action === "try_again") {
-          const button = el("button", { type: "button", class: "ff-button ff-primary", "data-role": "sync-action", "data-action": "try_again" }, texts.t("sync.action.try_again"));
+        if (action === "accept_older") {
+          const button = el("button", { type: "button", class: "ff-button ff-primary", "data-role": "sync-action", "data-action": "accept_older" }, texts.t("sync.action.accept_older"));
+          button.addEventListener("click", () => panel(slot, (close) => createOlderPanel({ texts, flow: olderFlow, onClose: close }).root));
+          actions.append(button);
+        } else if (action === "try_again") {
+          const button = el("button", { type: "button", class: sync.actions[0] === "try_again" ? "ff-button ff-primary" : "ff-button", "data-role": "sync-action", "data-action": "try_again" }, texts.t("sync.action.try_again"));
           button.addEventListener("click", async () => {
             button.setAttribute("disabled", "");
             try {
@@ -272,6 +312,15 @@ async function main() {
       for (const code of sync.warnings) list.append(el("li", { "data-role": "sync-warning", "data-code": code }, texts.t(warningKey(code))));
       box.append(list);
     }
+    if (FEATURES.save && itemsFlow !== null) {
+      const items = itemsFlow;
+      const attention = createSyncAttention({
+        texts,
+        sync,
+        onReview: () => panel(slot, (close) => createSyncItems({ texts, flow: items, onClose: close }).root),
+      });
+      if (attention !== null) box.append(attention);
+    }
     return box;
   }
 
@@ -281,7 +330,8 @@ async function main() {
    * @param {string | null} [note] see `syncPart`
    */
   function unlocked(view, note = null) {
-    const syncSlot = el("div", { class: "ff-sync-slot", "data-role": "sync-slot" }, syncPart(view, note));
+    const syncSlot = el("div", { class: "ff-sync-slot", "data-role": "sync-slot" });
+    mount(syncSlot, syncPart(view, note, syncSlot));
     const vault = createVaultList({
       texts,
       list: listFlow,
@@ -314,7 +364,8 @@ async function main() {
 
   /**
    * The sync's part follows the background while the popup is open: it is built again only when what the background
-   * says has changed, and not while the user answers the question of "Forget this server". The list is read again
+   * says has changed, and not while the user answers the question of "Forget this server" or is in a panel of the
+   * sync (accepting an older state, the items that need the user). The list is read again
    * when the sync's state changes (the vault may hold new items), unless the user is in a menu or an item's view.
    * A change of the view (a lock, another account) builds the popup again, also while that question is open. Reading
    * the state never moves the auto-lock's deadline (`state` and `sync_state` are exempt).
@@ -336,7 +387,8 @@ async function main() {
       }
       // Something else was shown meanwhile (an action of the user wins).
       if (refresh !== null || document.body.dataset.view !== "unlocked") return;
-      const step = followStep(view, next, root.querySelector('[data-role="forget-confirm"]') !== null);
+      // A question or a panel the user is in (forgetting, accepting an older state, the items) is not built again.
+      const step = followStep(view, next, root.querySelector('[data-role="forget-confirm"], [data-hold="1"]') !== null);
       if (step === "same" || next === null) {
         follow(view, note, syncSlot, vault);
         return;
@@ -345,7 +397,7 @@ async function main() {
         show(next, note);
         return;
       }
-      mount(syncSlot, syncPart(next, note));
+      mount(syncSlot, syncPart(next, note, syncSlot));
       // Not the user's doing: the reload does not move the auto-lock's deadline.
       if (!vault.busy()) void vault.reload({ automatic: true }).catch(() => {});
       follow(next, note, syncSlot, vault);

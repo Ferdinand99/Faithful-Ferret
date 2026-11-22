@@ -296,7 +296,7 @@ test("the_lock_button_locks_and_the_popup_shows_the_unlock_view", async () => {
   const popup = createPopupFlow(world.page("pages/popup.html").request);
   const open = await popup.load();
   // This world has no sync handler: the popup shows a sync that does not run.
-  const idle = { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [] };
+  const idle = { running: false, status: null, live: "offline", halted: null, actions: [], warnings: [], pending: 0, blocked: 0, conflicts: 0 };
   assert.deepEqual(open, { view: "unlocked", host: "vault.example.com", account: EMAIL, server: SERVER, sync: idle });
 
   const locksBefore = world.client.locks;

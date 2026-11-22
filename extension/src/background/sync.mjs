@@ -16,9 +16,33 @@
 //                  or a value), and why the device's tokens ended when the
 //                  server said it (`ended`)
 //   sync_retry     "Try again" after a stop
+//   sync_older_preview
+//                  what accepting the older state of a restored server would
+//                  do (counts only), for the popup to show before it asks
+//   sync_accept_older
+//                  "Accept the older state", after the user typed the word
+//   forget_preview what "Forget this server" would lose: the changes this
+//                  device has not sent yet, and whether another address of the
+//                  server keeps the same account (counts and a yes or no)
 //   forget_server  "Forget this server": the device is revoked at the server,
 //                  its key record deleted, and everything this device keeps of
 //                  the server and the account removed
+//
+// And, for the items whose change waits or was refused (saving from the
+// extension; the popup shows them only in a build with that feature):
+//
+//   sync_items     the items with a conflict, a refused change or a change that
+//                  waits to be sent: a name, a user name and a state each, with
+//                  a reference good only in the page's session
+//   item_conflict  the two versions of an item in conflict: name, user name,
+//                  when and on which device each was changed (never a password
+//                  or any other value of the item)
+//   item_resolve   "Keep mine" or "Keep the server's", against the versions the
+//                  page was shown last (`item_conflict`)
+//   item_discard   "Discard the draft" of an item whose change was refused
+//
+// The engine stays here: these operations call its own methods for conflicts,
+// discarding and the older state, and no other module is given it for them.
 //
 // The engine starts when an op of the session has opened the vault, and stops
 // at every lock of the core host. It reaches the workers only through a live
@@ -56,6 +80,34 @@ const isCode = (code) => typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.te
 
 /** The engine's `error` events that the popup shows as warnings (the engine clears them with `warning_cleared`). */
 const ERROR_WARNINGS = Object.freeze(["checkpoint_upload_failed"]);
+
+/** The most items `sync_items` lists. */
+export const MAX_SYNC_ITEMS = 40;
+
+/** The most page sessions whose references are kept (the oldest goes first), and the most references one may hold. */
+const MAX_REF_SESSIONS = 8;
+const MAX_SESSION_REFS = 256;
+
+/** The most characters of a name, a user name or a device name the popup is given. */
+const ITEM_TEXT = 128;
+
+const SESSION = /^[0-9a-f]{32}$/;
+const ITEM_ID = /^[0-9a-f]{32}$/;
+
+/** The answers of the engine to a choice, a discard or an older state that the page has a text for; any other is an error. */
+const ITEM_REASONS = Object.freeze(["not_found", "conflict_changed", "conflict_unsettled", "busy", "invalid_state"]);
+
+/** The reasons `restore_not_verified` may carry that the page has a sentence for. */
+const NOT_VERIFIED_REASONS = Object.freeze(["no_checkpoint"]);
+
+/** @param {unknown} text @returns {string} the text, cut to ITEM_TEXT characters */
+const itemText = (text) => {
+  const chars = [...(typeof text === "string" ? text : "")];
+  return chars.length > ITEM_TEXT ? `${chars.slice(0, ITEM_TEXT - 1).join("")}…` : chars.join("");
+};
+
+/** @param {Uint8Array} bytes */
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** The refusal that ends a device's tokens because they were used from somewhere else (design document, section 7.6). */
 export const TOKEN_REUSED = "token_reused";
@@ -110,7 +162,19 @@ export class SyncHostError extends Error {
  *   resumeAfterHalt(): Promise<void>,
  *   syncNow(): Promise<void>,
  *   on(event: string, fn: (payload: any) => void): () => void,
+ *   list?(): ItemState[],
+ *   restorePreview?(): Promise<{ reupload: number, conflicts: number, manifestOlder?: boolean }>,
+ *   acceptOlderState?(): Promise<{ reuploaded: number, conflicts: number, manifestOlder?: boolean }>,
+ *   conflict?(id: string): Promise<{ local: ConflictSide, server: ConflictSide, seen: Seen, close(): Promise<void> }>,
+ *   resolve?(id: string, choice: "mine" | "theirs", seen?: Seen): Promise<void>,
+ *   discard?(id: string): Promise<void>,
  * }} Engine the part of the sync engine this module uses
+ * @typedef {{
+ *   id: string, name: string, username: string, pending: boolean, blocked: boolean, blockedReason: string | null, conflict: boolean,
+ * }} ItemState the part of the engine's item summary that says how an item stands with the server
+ * @typedef {{ rev: number, deleted: boolean, view: any }} ConflictSide
+ * @typedef {{ rev: number, deleted: boolean }} Seen the server row a page was shown, given back with the choice
+ * @typedef {{ itemId: string, seen: Seen | null }} ItemRef
  * @typedef {{ start(): void, stop(): void, state(): string }} Channel
  * @typedef {{
  *   engine: Engine,
@@ -143,8 +207,10 @@ export class SyncHostError extends Error {
  *   win?: any,
  *   createEngine?: (options: Record<string, any>) => Engine,
  *   createChannel?: (options: Record<string, any>) => Channel,
+ *   random?: (bytes: Uint8Array) => Uint8Array,
  * }} options `createEngine` and `createChannel` are the shared engine and live channel (the tests pass fakes); `win`
- *   is where the `online` event comes from; `locks` is the Web Locks of the origin (`navigator.locks`)
+ *   is where the `online` event comes from; `locks` is the Web Locks of the origin (`navigator.locks`); `random` fills
+ *   the bytes of a page's references to items
  */
 export function createSyncHost({
   sessionHost,
@@ -153,6 +219,10 @@ export function createSyncHost({
   win = globalThis,
   createEngine = (options) => /** @type {Engine} */ (/** @type {unknown} */ (createSyncEngine(/** @type {any} */ (options)))),
   createChannel = (options) => /** @type {Channel} */ (createLiveChannel(/** @type {any} */ (options))),
+  random = (bytes) => {
+    globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
+    return bytes;
+  },
 }) {
   const store = sessionHost.store;
   /** The engine of the vault that is open, or null. @type {Running | null} */
@@ -161,11 +231,18 @@ export function createSyncHost({
   let host = null;
   /** Why the server ended this device's tokens, when that is known (`token_reused`), until the next unlock. @type {string | null} */
   let endedBy = null;
+  /**
+   * The references to items that the pages got from `sync_items`, by page session: random names that are good only in
+   * that session and only until the vault locks, each with the server row the page was last shown for it.
+   * @type {Map<string, Map<string, ItemRef>>}
+   */
+  const refs = new Map();
 
   /** Stops the engine and its channel, if one runs. */
   function stop() {
     const old = running;
     running = null;
+    refs.clear();
     if (old === null) return;
     old.ended = true;
     try {
@@ -320,7 +397,302 @@ export function createSyncHost({
       live: run.live,
       ...(isCode(health.halted) ? { halted: health.halted } : {}),
       warnings,
+      ...countsOf(run),
     };
+  }
+
+  /**
+   * How the items stand with the server, as counts: changes that wait to be sent, changes the server refused, and
+   * conflicts. Each item counts once, under the state that matters most (a conflict is also a refused change that waits).
+   * @param {Running} run
+   */
+  function countsOf(run) {
+    let pending = 0;
+    let blocked = 0;
+    let conflicts = 0;
+    for (const item of listOf(run)) {
+      if (item?.conflict === true) conflicts += 1;
+      else if (item?.blocked === true) blocked += 1;
+      else if (item?.pending === true) pending += 1;
+    }
+    return { pending, blocked, conflicts };
+  }
+
+  /** The engine's list of the items (empty when the engine has none to give). @param {Running} run @returns {ItemState[]} */
+  const listOf = (run) => (typeof run.engine.list === "function" ? run.engine.list() : []);
+
+  /** The engine of the open vault, for an op of a page. */
+  function runningNow() {
+    const run = running;
+    if (run === null) throw new SyncHostError("sync_not_running");
+    return run;
+  }
+
+  /** @param {unknown} session */
+  const sessionOf = (session) => {
+    if (typeof session !== "string" || !SESSION.test(session)) throw new SyncHostError("invalid_input");
+    return session;
+  };
+
+  /**
+   * The reference of an item in a page session: the same item gets the same name in one session.
+   * @param {string} session @param {string} itemId
+   */
+  function issue(session, itemId) {
+    let own = refs.get(session);
+    if (!own) {
+      own = new Map();
+      refs.set(session, own);
+      // The oldest session goes when there are too many (a page that is still open asks again).
+      while (refs.size > MAX_REF_SESSIONS) refs.delete(/** @type {string} */ (refs.keys().next().value));
+    }
+    for (const [ref, entry] of own) if (entry.itemId === itemId) return ref;
+    if (own.size >= MAX_SESSION_REFS) own.delete(/** @type {string} */ (own.keys().next().value));
+    const ref = hex(random(new Uint8Array(16)));
+    own.set(ref, { itemId, seen: null });
+    return ref;
+  }
+
+  /** @param {string} session @param {unknown} ref @returns {ItemRef | null} */
+  const entryOf = (session, ref) => (typeof ref === "string" ? refs.get(session)?.get(ref) ?? null : null);
+
+  /** A count from the engine, as a page may be given it. @param {unknown} n */
+  const count = (n) => (typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? Math.min(n, 1_000_000) : 0);
+
+  /**
+   * Runs one call of the engine for an item: an answer the page has a text for comes back as a reason, a lock as
+   * `vault_locked`, and anything else as the error it is.
+   * @template T @param {Running} run @param {() => Promise<T>} work
+   * @returns {Promise<T | { ok: false, reason: string }>}
+   */
+  async function itemCall(run, work) {
+    try {
+      const result = await work();
+      if (run.ended) throw new SyncHostError("vault_locked");
+      return result;
+    } catch (error) {
+      if (error instanceof SyncHostError) throw error;
+      const code = /** @type {any} */ (error)?.code;
+      if (code === "stopped" || run.ended) throw new SyncHostError("vault_locked");
+      if (ITEM_REASONS.includes(code)) return { ok: false, reason: code };
+      throw error;
+    }
+  }
+
+  /**
+   * The refusal of the engine about an older state, as a reason the page has a text for: the older state does not check
+   * out (`not_verified`, with the reason the page has a sentence for), there is nothing to accept (`invalid_state`), it
+   * is being accepted now (`busy`), or the server sent a feed that cannot be right (`bad_feed`).
+   * @param {Running} run @param {unknown} error
+   * @returns {{ ok: false, reason: string }}
+   */
+  function olderRefusal(run, error) {
+    if (error instanceof SyncHostError) throw error;
+    const code = /** @type {any} */ (error)?.code;
+    if (code === "stopped" || run.ended) throw new SyncHostError("vault_locked");
+    if (code === "restore_not_verified") {
+      const why = /** @type {any} */ (error)?.reason;
+      return { ok: false, reason: NOT_VERIFIED_REASONS.includes(why) ? `not_verified_${why}` : "not_verified" };
+    }
+    if (code === "invalid_state" || code === "busy" || code === "bad_feed") return { ok: false, reason: code };
+    throw error;
+  }
+
+  /** What accepting the older state would do: counts only, nothing is stored or sent. */
+  async function olderPreview() {
+    const run = runningNow();
+    try {
+      const counts = await /** @type {NonNullable<Engine["restorePreview"]>} */ (run.engine.restorePreview)();
+      if (run.ended) throw new SyncHostError("vault_locked");
+      return { ok: true, reupload: count(counts?.reupload), conflicts: count(counts?.conflicts), manifest_older: counts?.manifestOlder === true };
+    } catch (error) {
+      return olderRefusal(run, error);
+    }
+  }
+
+  /**
+   * "Accept the older state" (design document, section 8.6, "Legitimate rollbacks"). The page asks for a typed word
+   * first; the request says it did (`confirmed`). The items the engine could not open are counted, never named.
+   * @param {any} args
+   */
+  async function acceptOlder(args) {
+    if (args?.confirmed !== true) return { ok: false, reason: "not_confirmed" };
+    const run = runningNow();
+    /** @type {Set<string>} */
+    const unreadable = new Set();
+    const off = run.engine.on("error", (payload) => {
+      if (payload?.code === "restore_item_unreadable") unreadable.add(String(payload.id ?? unreadable.size));
+    });
+    try {
+      const done = await /** @type {NonNullable<Engine["acceptOlderState"]>} */ (run.engine.acceptOlderState)();
+      if (run.ended) throw new SyncHostError("vault_locked");
+      return {
+        ok: true,
+        reuploaded: count(done?.reuploaded),
+        conflicts: count(done?.conflicts),
+        manifest_older: done?.manifestOlder === true,
+        unreadable: count(unreadable.size),
+      };
+    } catch (error) {
+      return olderRefusal(run, error);
+    } finally {
+      off();
+    }
+  }
+
+  /**
+   * The accounts this device keeps records of for `server`, from its own records only (never the server's word): the
+   * open session, the key record, and the keys of the pinned records, sync states and device secrets of that server.
+   * @param {string} server @param {AccountSession} session @param {any} db
+   */
+  async function accountsFor(server, session, db) {
+    /** @type {Set<string>} */
+    const accounts = new Set();
+    const open = session.current()?.accountId;
+    if (hex16.is(open)) accounts.add(/** @type {string} */ (open));
+    const keyed = (await loadDeviceKey(db, server).catch(() => null))?.accountId;
+    if (hex16.is(keyed)) accounts.add(/** @type {string} */ (keyed));
+    for (const id of await store.accountsOf(db, server)) accounts.add(id);
+    return [...accounts].sort();
+  }
+
+  /**
+   * What "Forget this server" would lose, for the question the page asks first (as the web vault asks it): the changes
+   * of these accounts that were never sent, and whether another address of the server keeps the same account (then the
+   * saved items, the trash, the sync flags and those changes stay, for that address). Counts and a yes or no only.
+   * @param {unknown} expected the server the page shows
+   */
+  async function forgetPreview(expected) {
+    const server = await sessionHost.storedServer();
+    if (server === null) return { ok: true, pending: 0, shared: false };
+    if (expected !== server) return { ok: false, reason: "another_server" };
+    const session = await sessionHost.sessionFor(server);
+    const db = await store.open();
+    let pending = 0;
+    let shared = false;
+    for (const accountId of await accountsFor(server, session, db)) {
+      pending += count(await store.pendingWrites(db, accountId));
+      if ((await store.sharedAccount(db, server, accountId)) === true) shared = true;
+    }
+    return { ok: true, pending: count(pending), shared };
+  }
+
+  /**
+   * The items whose change waits or was refused, conflicts first, then refused changes, then changes that wait to be
+   * sent, each with a reference for this page session. A refused change carries the server's code (`reason`).
+   * @param {any} args
+   */
+  function itemsOf(args) {
+    const run = runningNow();
+    const session = sessionOf(args?.session);
+    const rank = (/** @type {ItemState} */ item) => (item.conflict === true ? 0 : item.blocked === true ? 1 : 2);
+    const found = listOf(run)
+      .filter((item) => typeof item?.id === "string" && ITEM_ID.test(item.id) && (item.conflict === true || item.blocked === true || item.pending === true))
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => rank(a.item) - rank(b.item) || a.index - b.index)
+      .map(({ item }) => item);
+    const items = found.slice(0, MAX_SYNC_ITEMS).map((item) => {
+      const state = item.conflict === true ? "conflict" : item.blocked === true ? "blocked" : "pending";
+      const username = itemText(item.username);
+      return {
+        ref: issue(session, item.id),
+        name: itemText(item.name),
+        ...(username !== "" ? { username } : {}),
+        state,
+        ...(state === "blocked" && isCode(item.blockedReason) ? { reason: item.blockedReason } : {}),
+      };
+    });
+    return { items, total: found.length };
+  }
+
+  /**
+   * One version of an item in conflict as a page may see it: its name, its user name (or e-mail), when and on which
+   * device it was last changed, or that it is a deletion. The view the engine gives holds no secret value; only these
+   * fields of it are read.
+   * @param {ConflictSide} side
+   */
+  function sideOf(side) {
+    const deleted = side?.deleted === true;
+    const view = deleted || side?.view === null || typeof side?.view !== "object" ? null : side.view;
+    /** @type {any[]} */
+    const fields = Array.isArray(view?.fields) ? view.fields : [];
+    const plain = (/** @type {string} */ id) => {
+      const value = fields.find((f) => f?.id === id)?.value;
+      return typeof value === "string" ? value : "";
+    };
+    const username = itemText(plain("username") || plain("email"));
+    const device = itemText(view?.device);
+    const modified = Number.isSafeInteger(view?.modified) && view.modified > 0 ? view.modified : null;
+    return {
+      deleted,
+      ...(view !== null ? { name: itemText(view.name) } : {}),
+      ...(username !== "" ? { username } : {}),
+      ...(modified !== null ? { modified } : {}),
+      ...(device !== "" ? { device } : {}),
+    };
+  }
+
+  /**
+   * The two versions of an item in conflict, for the card. The handles the engine opens for them are closed before the
+   * answer goes out. The server row they were shown against is kept with the reference: a choice is made against it.
+   * @param {any} args
+   */
+  async function conflictCard(args) {
+    const run = runningNow();
+    const entry = entryOf(sessionOf(args?.session), args?.ref);
+    if (entry === null) return { ok: false, reason: "not_offered" };
+    entry.seen = null;
+    return itemCall(run, async () => {
+      const data = await /** @type {NonNullable<Engine["conflict"]>} */ (run.engine.conflict)(entry.itemId);
+      try {
+        const seen = data?.seen;
+        if (!Number.isSafeInteger(seen?.rev) || typeof seen?.deleted !== "boolean") throw new SyncHostError("internal");
+        entry.seen = { rev: seen.rev, deleted: seen.deleted };
+        return { ok: true, mine: sideOf(data.local), theirs: sideOf(data.server) };
+      } finally {
+        await Promise.resolve(data?.close()).catch(() => {});
+      }
+    });
+  }
+
+  /**
+   * "Keep mine" (the version of this device is written on top of the server's) or "Keep the server's" (the draft is
+   * dropped), against the server row the page was shown last. A choice the page was not shown the versions for is
+   * refused (`not_shown`); so is one whose server row has changed since (`conflict_changed`). Either way the page reads
+   * the versions again before the next choice.
+   * @param {any} args
+   */
+  async function resolveItem(args) {
+    const run = runningNow();
+    const entry = entryOf(sessionOf(args?.session), args?.ref);
+    if (entry === null) return { ok: false, reason: "not_offered" };
+    const choice = args?.choice;
+    if (choice !== "mine" && choice !== "theirs") throw new SyncHostError("invalid_input");
+    const seen = entry.seen;
+    entry.seen = null;
+    if (seen === null) return { ok: false, reason: "not_shown" };
+    return itemCall(run, async () => {
+      await /** @type {NonNullable<Engine["resolve"]>} */ (run.engine.resolve)(entry.itemId, choice, seen);
+      return { ok: true };
+    });
+  }
+
+  /**
+   * "Discard the draft" of an item whose change the server refused: the draft goes, and the server's version stays. Not
+   * for a conflict, which has its own two choices.
+   * @param {any} args
+   */
+  async function discardItem(args) {
+    const run = runningNow();
+    const entry = entryOf(sessionOf(args?.session), args?.ref);
+    if (entry === null) return { ok: false, reason: "not_offered" };
+    const now = listOf(run).find((item) => item?.id === entry.itemId);
+    if (now?.blocked !== true) return { ok: false, reason: "not_found" };
+    if (now.conflict === true) return { ok: false, reason: "in_conflict" };
+    return itemCall(run, async () => {
+      await /** @type {NonNullable<Engine["discard"]>} */ (run.engine.discard)(entry.itemId);
+      return { ok: true };
+    });
   }
 
   /** "Try again" after a stop. */
@@ -359,13 +731,7 @@ export function createSyncHost({
       stop();
       const session = await sessionHost.sessionFor(server);
       const db = await store.open();
-      /** @type {Set<string>} */
-      const accounts = new Set();
-      const open = session.current()?.accountId;
-      if (hex16.is(open)) accounts.add(/** @type {string} */ (open));
-      const keyed = (await loadDeviceKey(db, server).catch(() => null))?.accountId;
-      if (hex16.is(keyed)) accounts.add(/** @type {string} */ (keyed));
-      for (const id of await store.accountsOf(db, server)) accounts.add(id);
+      const accounts = await accountsFor(server, session, db);
       await host?.lock("sign_out");
       // The device is signed out at the server once (best effort: it is forgotten here whether or not the server
       // answers), and whatever is left of its key record goes after that.
@@ -380,7 +746,7 @@ export function createSyncHost({
         }
         await deleteDeviceKey(db, server);
       };
-      for (const accountId of [...accounts].sort()) {
+      for (const accountId of accounts) {
         await forgetServer({
           api: { post: revoke },
           session: {
@@ -419,11 +785,26 @@ export function createSyncHost({
   const ops = Object.freeze({
     sync_state: { vault: false, worker: /** @type {const} */ ("none"), run: async () => snapshot() },
     sync_retry: { vault: true, worker: /** @type {const} */ ("vault"), run: async () => retry() },
+    sync_older_preview: { vault: true, worker: /** @type {const} */ ("vault"), run: async () => olderPreview() },
+    sync_accept_older: {
+      vault: true,
+      worker: /** @type {const} */ ("vault"),
+      run: async (/** @type {any} */ _client, /** @type {any} */ args) => acceptOlder(args),
+    },
+    forget_preview: {
+      vault: false,
+      worker: /** @type {const} */ ("none"),
+      run: async (/** @type {any} */ _client, /** @type {any} */ args) => forgetPreview(args?.server),
+    },
     forget_server: {
       vault: false,
       worker: /** @type {const} */ ("none"),
       run: async (/** @type {any} */ _client, /** @type {any} */ args) => forget(args?.server),
     },
+    sync_items: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => itemsOf(args) },
+    item_conflict: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => conflictCard(args) },
+    item_resolve: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => resolveItem(args) },
+    item_discard: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => discardItem(args) },
   });
 
   return {
@@ -442,5 +823,13 @@ export function createSyncHost({
 
     /** The engine that runs now, or null: the matching (match.mjs) and the popup's item ops (fillFlow.mjs) read its list and open its items. */
     engine: () => running?.engine ?? null,
+
+    /**
+     * The page whose port this was has gone: its references to items end with it.
+     * @param {string} session
+     */
+    endSession(session) {
+      refs.delete(session);
+    },
   };
 }

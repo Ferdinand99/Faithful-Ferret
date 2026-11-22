@@ -21,6 +21,7 @@ import * as fillProbe from "./fillProbe.mjs";
 import { createMatchProbe } from "./matchProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
+import { createWriteProbe } from "./writeProbe.mjs";
 
 export const TEST_CORE_PORT = "ferret-test-core";
 export const TEST_MEASURE_PORT = "ferret-test-measure";
@@ -153,6 +154,7 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
 export function install({ browser, runtime, coreHost, now, engine = () => null }) {
   coreHost.addOps(ops);
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
+  coreHost.addOps(createWriteProbe({ engine }).ops);
   const storageLocal = browser.storage.local;
   const { log } = startMeasureLog({
     runtime: browser.runtime,

@@ -36,8 +36,11 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * `sync_state` reads the codes of the sync (no key; a poll of it must not move
  * the deadline), and `forget_server` must work on a locked or signed-out device
  * too (it needs no key: it revokes the device and removes local records).
+ * `forget_preview` is the question before it, on the same devices: it reads two
+ * counts of the local records (unsent changes, and whether another address
+ * keeps the account), needs no key and changes nothing.
  */
-export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_server"]);
+export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_preview", "forget_server"]);
 
 export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";

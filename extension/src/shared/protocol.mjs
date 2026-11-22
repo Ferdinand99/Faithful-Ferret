@@ -133,6 +133,19 @@ const handle = object(
   { optional: ["username", "insecure", "favorite", "type", "site", "frame_id", "frame_ids"] },
 );
 const empty = object({});
+const count = integer({ min: 0, max: 1_000_000 });
+// One version of an item in conflict, as a page may see it.
+const conflictSide = object(
+  {
+    deleted: boolean(),
+    name: string({ max: 256 }),
+    username: string({ max: 256 }),
+    // When it was last changed, in milliseconds since 1970.
+    modified: integer({ min: 0, max: 8_640_000_000_000_000 }),
+    device: string({ max: 256 }),
+  },
+  { optional: ["name", "username", "modified", "device"] },
+);
 
 /**
  * @template {Record<string, { request: import("./schema.mjs").Schema, reply?: import("./schema.mjs").Schema }>} T
@@ -277,14 +290,73 @@ export const UI_TYPES = defineTypes({
         halted: reason,
         warnings: array(reason, { max: 16 }),
         ended: string({ max: 16, oneOf: ["token_reused"] }),
+        // How many items have a change that waits to be sent, a change the server refused, or a conflict.
+        pending: count,
+        blocked: count,
+        conflicts: count,
       },
-      { optional: ["status", "halted", "ended"] },
+      { optional: ["status", "halted", "ended", "pending", "blocked", "conflicts"] },
     ),
   },
   // "Try again" after a stop of the sync.
   sync_retry: { request: empty, reply: okReply },
+  // What accepting the older state of a restored server would do: how many of this device's newer changes would be sent,
+  // how many items would become conflicts, and whether the server's unlock methods are older. Nothing is done.
+  sync_older_preview: {
+    request: empty,
+    reply: object(
+      { ok: boolean(), reason, reupload: count, conflicts: count, manifest_older: boolean() },
+      { optional: ["reason", "reupload", "conflicts", "manifest_older"] },
+    ),
+  },
+  // "Accept the older state", once the user has typed the word (`confirmed`). The counts of what was done; the items
+  // that could not be opened are counted, never named.
+  sync_accept_older: {
+    request: object({ confirmed: boolean() }),
+    reply: object(
+      { ok: boolean(), reason, reuploaded: count, conflicts: count, manifest_older: boolean(), unreadable: count },
+      { optional: ["reason", "reuploaded", "conflicts", "manifest_older", "unreadable"] },
+    ),
+  },
+  // What "Forget this server" would lose, for its question: the changes not yet sent, and whether another address of the
+  // server keeps the same account (then they and the saved items stay, for that address).
+  forget_preview: {
+    request: object({ server: serverUrl }),
+    reply: object({ ok: boolean(), reason, pending: count, shared: boolean() }, { optional: ["reason", "pending", "shared"] }),
+  },
   // "Forget this server": `server` is the one the page showed; another stored one is not forgotten.
   forget_server: { request: object({ server: serverUrl }), reply: okReply },
+  // The items whose change waits to be sent, was refused (`reason`: the server's code), or is in conflict, conflicts
+  // first, each with a reference good only in this page's session. Names and user names only.
+  sync_items: {
+    request: empty,
+    reply: object({
+      items: array(
+        object(
+          { ref, name: string({ max: 256 }), username: string({ max: 256 }), state: string({ max: 16, oneOf: ["conflict", "blocked", "pending"] }), reason },
+          { optional: ["username", "reason"] },
+        ),
+        { max: 40 },
+      ),
+      total: count,
+    }),
+  },
+  // The two versions of an item in conflict: for each, its name, user name, when and on which device it was changed, or
+  // that it is a deletion. Never a password or another value of the item.
+  item_conflict: {
+    request: object({ ref }),
+    reply: object(
+      { ok: boolean(), reason, mine: conflictSide, theirs: conflictSide },
+      { optional: ["reason", "mine", "theirs"] },
+    ),
+  },
+  // "Keep mine" or "Keep the server's", against the versions `item_conflict` showed this page last.
+  item_resolve: {
+    request: object({ ref, choice: string({ max: 8, oneOf: ["mine", "theirs"] }) }),
+    reply: okReply,
+  },
+  // "Discard the draft" of an item whose change the server refused.
+  item_discard: { request: object({ ref }), reply: okReply },
   settings: {
     // The bounds are those of LOCK_CHOICES; the background accepts only the listed values.
     request: object(

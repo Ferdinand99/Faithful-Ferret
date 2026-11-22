@@ -113,7 +113,10 @@ const router = createRouter({
   coreHost,
   handlers: /** @type {readonly import("./router.mjs").Handler[]} */ (HANDLERS),
   // The references a page got end with its port.
-  onSessionEnd: (session) => fillHost.endSession(session),
+  onSessionEnd: (session) => {
+    fillHost.endSession(session);
+    syncHost.endSession(session);
+  },
 });
 
 runtime.onConnect.addListener(router.onConnect);

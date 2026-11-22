@@ -11,59 +11,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UI_TYPES } from "../../src/shared/protocol.mjs";
 import {
-  ACCOUNT, EMAIL, SERVER, SK_CODE, VAULT, answer, coreClient, deviceServer, fakeChannels, fakeEngines, memoryDb, memoryStore, pkg, sessionWorld,
+  ACCOUNT, EMAIL, SERVER, SK_CODE, VAULT, answer, coreClient, deviceServer, fakeEngines, memoryDb, pkg,
 } from "./sessionHelpers.mjs";
-
-const MP = "Correct-horse-UNIQUE-4711";
-const OTHER = "https://other.example.org";
-
-/** A shared session in device mode over `fetchImpl`, as the background makes it. @param {typeof fetch} fetchImpl */
-async function realSessions(fetchImpl) {
-  const { load } = await pkg();
-  const { createCryptoSession } = await load("shared/crypto/session.mjs");
-  return (/** @type {any} */ options) => createCryptoSession({ ...options, fetchImpl, locks: null });
-}
-
-/** Waits until `condition()` holds (a few hundred turns at most). @param {() => unknown} condition @param {string} what */
-async function until(condition, what) {
-  for (let i = 0; i < 400; i += 1) {
-    if (await condition()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  assert.fail(`never: ${what}`);
-}
-
-/**
- * The local stores with what "forget this server" uses: it records each removal and the Web Locks held then. The
- * accounts this device keeps records of are the pinned ones (the fake keeps one server). `failures` makes the next
- * removals fail.
- * @param {ReturnType<typeof memoryDb>} db
- */
-function forgettingStore(db) {
-  const store = memoryStore(db);
-  /** @type {{ held: () => string[] }} */
-  const locks = { held: () => [] };
-  /** @type {Array<{ server: string, accountId: string, held: string[] }>} */
-  const forgotten = [];
-  const failures = { left: 0 };
-  return Object.assign(store, {
-    locks,
-    forgotten,
-    failures,
-    pendingWrites: async () => 0,
-    sharedAccount: async () => false,
-    accountsOf: async () => [...store.pinned.keys()],
-    forgetServer: async (/** @type {any} */ _db, /** @type {string} */ server, /** @type {string} */ accountId) => {
-      if (failures.left > 0) {
-        failures.left -= 1;
-        throw new Error("the store failed");
-      }
-      forgotten.push({ server, accountId, held: locks.held() });
-      store.pinned.delete(accountId);
-      return { removed: { pinned: 1 } };
-    },
-  });
-}
+import { MP, OTHER, syncWorld, until } from "./syncWorld.mjs";
 
 /**
  * Makes every write transaction on the device key records fail while `on` is set (an IndexedDB that refuses).
@@ -77,61 +27,6 @@ function failingKeyRecords(db) {
     return real(names, mode);
   };
   return switchOf;
-}
-
-/**
- * The background with the sync wired in, the page's flows, and the fake server it talks to.
- * @param {{ engines?: ReturnType<typeof fakeEngines>, channels?: ReturnType<typeof fakeChannels> | null, server?: ReturnType<typeof deviceServer>, client?: any }} [o]
- *   `channels: null` uses the shared live channel
- */
-async function syncWorld({ engines = fakeEngines(), channels = fakeChannels(), server = deviceServer(), client = coreClient() } = {}) {
-  /** Paths whose next request waits until the test lets it go (`hold(path)` returns that). @type {Map<string, { reached: Promise<void>, go: () => void, arrived: () => void }>} */
-  const holds = new Map();
-  const { load } = await pkg();
-  const [{ createSignInFlow }, { createPopupFlow }] = await Promise.all([load("pages/signinFlow.mjs"), load("pages/popupFlow.mjs")]);
-  /** Every request the background sent, with what it was sent with. @type {Array<{ url: string, init: RequestInit }>} */
-  const inits = [];
-  /** @type {typeof fetch} */
-  const fetchImpl = async (url, init = {}) => {
-    inits.push({ url: String(url), init });
-    const path = new URL(String(url)).pathname;
-    const held = holds.get(path);
-    if (held) {
-      holds.delete(path);
-      held.arrived();
-      await held.reached;
-    }
-    return server.fetchImpl(url, init);
-  };
-  /** The next request to `path` waits; `arrived` settles when it is there, `go()` lets it on. @param {string} path */
-  const hold = (path) => {
-    /** @type {() => void} */
-    let go = () => {};
-    /** @type {() => void} */
-    let arrived = () => {};
-    const reached = new Promise((resolve) => (go = () => resolve(undefined)));
-    const there = new Promise((resolve) => (arrived = () => resolve(undefined)));
-    holds.set(path, { reached, go, arrived });
-    return { arrived: there, go: () => go() };
-  };
-  const db = memoryDb();
-  const store = forgettingStore(db);
-  const world = await sessionWorld({
-    createSession: await realSessions(fetchImpl),
-    client,
-    store,
-    sync: { createEngine: engines.create, ...(channels ? { createChannel: channels.create } : {}) },
-  });
-  store.locks.held = () => [...world.locks.held];
-  const popup = createPopupFlow(world.page("pages/popup.html").request);
-  const signIn = async () => {
-    const flow = createSignInFlow({ request: world.page("pages/signin.html").request, requestPermission: async () => true });
-    assert.equal((await flow.check(SERVER)).ok, true);
-    assert.deepEqual(await flow.grant(), { ok: true });
-    const result = await flow.signIn({ email: EMAIL, password: MP, skAnswer: "yes", secretKey: SK_CODE, remember: true });
-    assert.deepEqual(result, { ok: true, account_email: EMAIL, server: SERVER });
-  };
-  return { world, engines, channels, server, inits, db, store, popup, signIn, hold };
 }
 
 /** The device key records of the in-memory IndexedDB, by server. @param {ReturnType<typeof memoryDb>} db */
@@ -229,22 +124,24 @@ test("a_halt_shows_retry_and_forget_in_the_popup_and_nothing_else", async () => 
 
   // Before a stop: the state and no button.
   let view = await popup.load();
-  assert.deepEqual(view.sync, { running: true, status: "idle", live: "offline", halted: null, actions: [], warnings: [] });
+  assert.deepEqual(view.sync, { running: true, status: "idle", live: "offline", halted: null, actions: [], warnings: [], pending: 0, blocked: 0, conflicts: 0 });
 
-  // Every stop, a known one or one this version has no text for, offers exactly "Try again" and "Forget this server".
+  // Every stop, a known one or one this version has no text for, offers exactly "Try again" and "Forget this server";
+  // a restored server offers "Accept the older state" first.
   for (const code of [...flowModule.STOP_TEXTS, "something_new"]) {
     engine.halt(code);
     view = await popup.load();
     assert.equal(view.sync.halted, code);
-    assert.deepEqual(view.sync.actions, ["try_again", "forget"], code);
+    assert.deepEqual(view.sync.actions, code === "server_restored" ? ["accept_older", "try_again", "forget"] : ["try_again", "forget"], code);
     assert.equal(flowModule.stopKey(code), `sync.stop.${code === "something_new" ? "generic" : code}`);
   }
   // A stop closes the stream (a stopped engine takes no hints).
   assert.equal(channels?.made[0].running, false);
 
-  // Nothing else can be asked of a stopped sync: no message type accepts an older state or shows what happened.
+  // Nothing else can be asked of a stopped sync than these: the older state is accepted only through its preview and
+  // its accept (acceptOlder.test.mjs); nothing shows "what happened" or checks again.
   const syncTypes = Object.keys(UI_TYPES).filter((type) => /sync|forget|restore|accept|older/.test(type)).sort();
-  assert.deepEqual(syncTypes, ["forget_server", "sync_retry", "sync_state"]);
+  assert.deepEqual(syncTypes, ["forget_preview", "forget_server", "sync_accept_older", "sync_items", "sync_older_preview", "sync_retry", "sync_state"]);
   const { readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const popupSource = await readFile(join((await pkg()).dir, "pages", "popup.mjs"), "utf8");
@@ -557,8 +454,12 @@ test("every_sync_text_is_there_in_both_languages", async () => {
       ...REASONS.map((/** @type {string} */ code) => `sync.error.${code}`),
       "sync.action.try_again",
       "sync.action.forget",
+      "sync.action.accept_older",
       "sync.forget.title",
       "sync.forget.body",
+      "sync.forget.body_pending",
+      "sync.forget.body_shared",
+      "sync.forget.body_shared_pending",
       "sync.forget.confirm",
       "sync.forget.cancel",
     ];
