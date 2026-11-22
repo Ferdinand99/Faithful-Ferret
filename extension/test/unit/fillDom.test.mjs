@@ -1200,14 +1200,8 @@ test("a_frame_whose_document_its_parent_wrote_reports_no_field", () => {
     });
     assert.deepEqual(t.begin(), [], JSON.stringify(attributes));
   }
-  // The address of the parent in a frame whose holder the frame cannot see.
-  const same = framed((window) => {
-    window.parent = { location: { href: "https://example.com/login" } };
-    window.frameElement = null;
-  });
-  assert.deepEqual(same.begin(), []);
   // Controls: a frame loaded from its own address, a frame below a parent of another origin (nothing can be read), and
-  // the top.
+  // the top (no holder; its parent is itself, which a content script may see as another object with the same address).
   const loaded = framed((window, document) => {
     window.parent = { location: { href: "https://example.com/" } };
     window.frameElement = holder(document, { src: "/login" });
@@ -1219,7 +1213,8 @@ test("a_frame_whose_document_its_parent_wrote_reports_no_field", () => {
   });
   assert.deepEqual(kinds(foreignParent.begin()), ["username", "password"]);
   const top = framed((window) => {
-    window.parent = window;
+    window.parent = { location: { href: "https://example.com/login" } };
+    window.frameElement = null;
   });
   assert.deepEqual(kinds(top.begin()), ["username", "password"]);
 });

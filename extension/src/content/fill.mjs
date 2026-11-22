@@ -452,28 +452,22 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    * Whether this frame's document was written by its parent rather than loaded:
    * a frame below the top whose holder (the parent's `iframe`, `frame`,
    * `object` or `embed`, reachable only when the parent has this frame's
-   * origin) has no address of its own or an `about:` one, or a `srcdoc`; or a
-   * frame that shows its parent's own address (what `document.open()` from the
-   * parent gives it). Such a document is the parent page's markup in a frame,
-   * not a page the user opened, and it reports no field.
+   * origin) has a `srcdoc`, or no address of its own, or an `about:` one. That
+   * is what `document.open()` from the parent leaves (the frame then shows the
+   * parent's address). Such a document is the parent page's markup in a frame,
+   * not a page the user opened, and it reports no field. The top has no holder,
+   * and a frame below a parent of another origin cannot see its holder (the
+   * parent could not have written it either).
    * @returns {boolean}
    */
   function writtenByParent() {
     try {
-      const parent = window.parent;
-      if (parent === undefined || parent === null || parent === window) return false;
       const holder = window.frameElement;
-      if (isElement(holder)) {
-        if (holder.hasAttribute("srcdoc")) return true;
-        const address = holder.getAttribute(holder.localName === "object" ? "data" : "src");
-        if (typeof address !== "string" || address.trim() === "" || /^\s*about:/i.test(address)) return true;
-      }
-      const own = window.location?.href;
-      const above = parent.location?.href;
-      return typeof own === "string" && typeof above === "string" && own === above;
+      if (!isElement(holder)) return false;
+      if (holder.hasAttribute("srcdoc")) return true;
+      const address = holder.getAttribute(holder.localName === "object" ? "data" : "src");
+      return typeof address !== "string" || address.trim() === "" || /^\s*about:/i.test(address);
     } catch {
-      // A parent of another origin: its address and its holder cannot be read, and it cannot have written this
-      // document either.
       return false;
     }
   }
