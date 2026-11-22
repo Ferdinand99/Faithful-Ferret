@@ -5,7 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { mergePhases, scanDocs, unreadableOf } from "../firefox/matrix.mjs";
+import { mergePhases, scanDocs, shortcutWentToAnExtensionPage, unreadableOf } from "../firefox/matrix.mjs";
 import { computeMatrix, ruleMatches, unsafeFillsOf, unsafeOffersOf, writeReport } from "../firefox/matrixReport.mjs";
 
 const ENTRIES = {
@@ -255,6 +255,26 @@ test("a_frame_the_scan_cannot_read_is_reported_and_not_skipped", async () => {
   assert.equal(unreadableOf(rows).length, 1, JSON.stringify(rows));
   assert.deepEqual(rows.filter((r) => r.type !== "unreadable").map((r) => r.id), ["u"]);
   assert.equal(unreadableOf([{ type: "text" }]).length, 0, "a readable page has none (positive control)");
+});
+
+test("only_a_shortcut_that_went_to_an_extension_page_is_tried_again_and_retries_are_counted", () => {
+  const message = (/** @type {string} */ tabUrl) => new Error(`release: the shortcut on https://forms.example.net/x/ gave no activeTab ({"kind":"command","tabId":2,"tabUrl":"${tabUrl}"})`);
+  assert.equal(shortcutWentToAnExtensionPage(message("moz-extension://5c1d6b3e/test/bridge.html")), true, "the command went to the bridge tab");
+  assert.equal(shortcutWentToAnExtensionPage(message("https://forms.example.net/x/")), false, "it reached the page: a failure of the extension");
+  assert.equal(shortcutWentToAnExtensionPage(new Error('{"tabUrl":"moz-extension://x/"} but another error')), false, "another error");
+  assert.equal(shortcutWentToAnExtensionPage(new Error("gave no activeTab ({\"kind\":\"command\",\"tabUrl\":null})")), false, "no address at all");
+  // The count reaches the report.
+  const c = filling("login-a");
+  const retried = { ...ran(c, filled()), observed: { ...ran(c, filled()).observed, retries: 2 } };
+  const m = computeMatrix([retried, ran(filling("login-b"), filled())], { part: "fill" });
+  assert.deepEqual(m.retries, { total: 2, cases: [{ id: "login-a", retries: 2 }] });
+  const dir = mkdtempSync(join(tmpdir(), "ferret-matrix-"));
+  try {
+    writeReport(dir, "release", m);
+    assert.ok(readFileSync(join(dir, "matrix.md"), "utf8").includes("shortcut retries (the command went to the bridge tab) | | 2 | login-a x2"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the_phases_of_a_case_are_merged_into_one_result", () => {

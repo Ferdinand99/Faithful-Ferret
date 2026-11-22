@@ -285,11 +285,21 @@ export const unreadableOf = (rows) => rows.filter((r) => r.type === "unreadable"
  */
 
 /**
- * Opens a case's page and does its `prepare` steps. Returns the tab's id.
- * @param {World} w @param {Record<string, any>} c
+ * Whether an error of `visit` says that the shortcut's command went to an extension page (the bridge tab) and not
+ * to the page: the command's tab address is a `moz-extension:` one. A command that reached the page and still gave no
+ * activeTab is a failure of the extension and is not matched.
+ * @param {unknown} error
  */
-async function openCase(w, c) {
-  // The real shortcut goes to the tab the window shows, and now and then that is still the bridge tab: try again.
+export const shortcutWentToAnExtensionPage = (error) => /gave no activeTab/.test(String(error)) && /"tabUrl":"moz-extension:/.test(String(error));
+
+/**
+ * Opens a case's page and does its `prepare` steps. Returns the tab's id. `count.n` counts the times the real shortcut
+ * went to the bridge tab and the page was opened again (twice at most).
+ * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count]
+ */
+async function openCase(w, c, count = { n: 0 }) {
+  // The real shortcut goes to the tab the window shows, and now and then that is still the bridge tab: try again,
+  // and count it. Any other failure, also a command that reached the page and gave no activeTab, fails at once.
   /** @type {number} */
   let tabId = 0;
   for (let attempt = 1; ; attempt += 1) {
@@ -297,7 +307,8 @@ async function openCase(w, c) {
       tabId = await w.visit(caseUrl(c, w.server));
       break;
     } catch (error) {
-      if (attempt >= 3 || !/gave no activeTab/.test(String(error))) throw error;
+      if (attempt >= 3 || !shortcutWentToAnExtensionPage(error)) throw error;
+      count.n += 1;
       await sleep(1000);
     }
   }
@@ -353,15 +364,16 @@ export async function fillCase(w, c) {
     result.error = "the matrix vault has no one-time-code entry yet";
     return result;
   }
+  const count = { n: 0 };
   try {
-    let tabId = await openCase(w, c);
+    let tabId = await openCase(w, c, count);
     // A positive case fills the entry it names; any other case fills every entry the page is offered (what a
     // person who clicks Fill on each would get).
     const keys = want ? [want.entry] : await offeredEntries(w, tabId);
     const unique = [...new Set(keys)];
     for (let i = 0; i < unique.length; i += 1) {
       const key = unique[i];
-      if (i > 0) tabId = await openCase(w, c);
+      if (i > 0) tabId = await openCase(w, c, count);
       const reply = await fillEntry(w, tabId, key);
       result.observed?.tried?.push({ entry: key, ok: reply.ok, ...(reply.reason ? { reason: reply.reason } : {}) });
       // The page may put the state back (a controlled field) or move on; look after a moment.
@@ -380,6 +392,7 @@ export async function fillCase(w, c) {
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);
   }
+  if (result.observed) result.observed.retries = count.n;
   return result;
 }
 
@@ -421,8 +434,9 @@ export async function offersPeek(w, tabId) {
 export async function captureCase(w, c) {
   /** @type {import("./matrixReport.mjs").Result} */
   const result = { case: c, ran: { fill: false, capture: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
+  const count = { n: 0 };
   try {
-    const tabId = await openCase(w, c);
+    const tabId = await openCase(w, c, count);
     const first = await offersPeek(w, tabId);
     if (!first.available) {
       result.error = NO_OFFERS;
@@ -472,6 +486,7 @@ export async function captureCase(w, c) {
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);
   }
+  if (result.observed) result.observed.retries = count.n;
   return result;
 }
 
@@ -532,8 +547,9 @@ export async function generateFillVia(w, tabId) {
 export async function generatorCase(w, c) {
   /** @type {import("./matrixReport.mjs").Result} */
   const result = { case: c, ran: { fill: false, capture: false, generated: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
+  const count = { n: 0 };
   try {
-    const tabId = await openCase(w, c);
+    const tabId = await openCase(w, c, count);
     await generateFillVia(w, tabId);
     await sleep(500);
     const rows = await scanDocs(w.session);
@@ -551,6 +567,7 @@ export async function generatorCase(w, c) {
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);
   }
+  if (result.observed) result.observed.retries = count.n;
   return result;
 }
 
@@ -599,6 +616,7 @@ export function mergePhases(...phases) {
         offers: c?.observed?.offers ?? [],
         ...(c?.observed?.vault_changed !== undefined ? { vault_changed: c.observed.vault_changed } : {}),
         generated: g?.observed?.generated ?? null,
+        retries: [f, c, g].reduce((sum, r) => sum + (r?.observed?.retries ?? 0), 0),
       },
       ...(errors.length > 0 ? { error: [...new Set(errors)].join("; ") } : {}),
     };

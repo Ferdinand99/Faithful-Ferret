@@ -117,6 +117,9 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
       assert.equal(results.length, cases.length, `${channel}: a result for every case`);
       for (const r of results) assert.ok(r.ran.fill || r.ran.capture || typeof r.error === "string", `${channel}: ${r.case.id} either ran or says why not`);
 
+      // Nothing wrote to the vault between the cases or in the fill and generator passes either: the item list is what it
+      // was before the phases (each case of the capture phase also compares its own before and after).
+      assert.deepEqual(await w.vaultState(), vault, `${channel}: the vault changed during the run`);
       const matrix = computeMatrix(results, { set: SET, part: PART, manifest, grep: GREP });
       writeReport(OUT, channel, matrix);
       assert.ok(existsSync(join(OUT, `${channel}-${manifest}.json`)), `${channel}: the report is written`);

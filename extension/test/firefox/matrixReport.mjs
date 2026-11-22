@@ -218,6 +218,7 @@ export function ruleMatches(rule, docUrl) {
  *   tried: Array<{ entry: string, ok: boolean, reason?: string }>,
  *   entries: Record<string, { url: string, matching: "host" | "domain" | "exact", domain?: string }>,
  *   vault_changed?: boolean,
+ *   retries?: number,
  *   offers: Array<{ type: string, origin: string, username: string | null, password_field: string | null, reuse?: boolean, info?: string,
  *                   target_entry?: string, target_host?: string, target_match?: string, picked?: boolean, written_without_click?: boolean }>,
  *   generated: { filled: string[] } | null,
@@ -404,6 +405,8 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
   const falseCases = [];
   let negativeRan = 0;
   const generatedCount = { passed: 0, total: 0 };
+  /** The cases whose page had to be opened again because the shortcut went to the bridge tab. @type {Array<{ id: string, retries: number }>} */
+  const retried = [];
   /** @type {string[]} */
   const generatedNotRun = [];
   /** @type {Array<{ id: string, category: string, class: string, fill: string, capture: string }>} */
@@ -474,6 +477,7 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
       } else if (generatedCheck(r).status === "pass") generatedCount.passed += 1;
       else misses.push({ id: c.id, category: c.category, part: "generated", reason: generatedCheck(r).reason ?? "failed" });
     }
+    if ((r.observed?.retries ?? 0) > 0) retried.push({ id: c.id, retries: r.observed?.retries ?? 0 });
     cases.push({ id: c.id, category: c.category, class: c.class, fill: status.fill, capture: status.capture });
   }
 
@@ -503,6 +507,7 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
     falseOffers,
     notRun,
     misses,
+    retries: { total: retried.reduce((sum, x) => sum + x.retries, 0), cases: retried },
     cases,
     met,
     gate: met && complete,
@@ -533,7 +538,9 @@ function markdownOf(channel, m) {
   if (m.generated) lines.push(`| generator (not gated yet) | ${m.generated.passed} | ${m.generated.total} | ${m.generated.selected ? percent(m.generated.rate) : "not selected"} |`);
   lines.push(`| unsafe fills | | ${m.unsafeFills.length} | |`, `| unsafe offers | | ${m.unsafeOffers.length} | |`);
   lines.push(`| false offers (harmless negatives) | | ${m.falseOffers.cases.length} | ${percent(m.falseOffers.rate)} |`);
-  lines.push(`| cases that did not run | | ${m.notRun.length} | |`, "");
+  lines.push(`| cases that did not run | | ${m.notRun.length} | |`);
+  // The shortcut now and then goes to the bridge tab and the page is opened again; a channel that needs it more is visible here.
+  lines.push(`| shortcut retries (the command went to the bridge tab) | | ${m.retries?.total ?? 0} | ${(m.retries?.cases ?? []).map((x) => `${x.id} x${x.retries}`).join(", ")} |`, "");
   lines.push("| Category | Passed | Total | Rate |", "|---|---|---|---|");
   for (const [name, v] of Object.entries(m.perCategory).sort()) lines.push(`| ${name} | ${v.passed} | ${v.total} | ${percent(v.rate)} |`);
   lines.push("");
