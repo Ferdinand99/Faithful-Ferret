@@ -73,6 +73,12 @@ test("refuses_what_it_cannot_join_instead_of_guessing", () => {
     ["export let", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "export let a = 1;\n" }, /export let/],
     ["an import after code on the same line", { "content/entry.mjs": 'globalThis.x = 1; import "./x.mjs";\n', "content/x.mjs": "export const a = 1;\n" }, /not supported/],
     ["an import form inside a block comment, with the real one missing", { "content/entry.mjs": '/*\nimport "./x.mjs";\n*/\nimport "./y.mjs";\n', "content/x.mjs": "export const a = 1;\n", "content/y.mjs": "export const b = 1;\n" }, /not supported/],
+    ["an export list with a let", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "let a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
+    ["an export list with a var", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "var a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
+    ["an export list with a second const of a list", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "const b = 0, a = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
+    ["an export list with a name that does not exist", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "const ab = 1;\nexport { a };\n" }, /needs a top-level function, const or class/],
+    ["a name the joiner keeps for its modules", { "content/entry.mjs": "const __m0 = 1;\nglobalThis.x = __m0;\n" }, /__m<number>/],
+    ["a module name in another file", { "content/entry.mjs": 'import { a } from "./x.mjs";\nglobalThis.x = a;\n', "content/x.mjs": "export const a = __m7;\n" }, /__m<number>/],
     ["an export with an alias", { "content/entry.mjs": 'import "./x.mjs";\n', "content/x.mjs": "const a = 1;\nexport { a as b };\n" }, /plain names/],
     ["a script that does not parse", { "content/entry.mjs": "const = ;\n" }, /does not parse/],
   ];
