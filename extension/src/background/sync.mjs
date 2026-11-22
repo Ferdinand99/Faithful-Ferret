@@ -392,7 +392,7 @@ export function createSyncHost({
       sessionHost.onOpen((opened) => start(opened));
     },
 
-    /** The engine that runs now, or null (for the tests). */
+    /** The engine that runs now, or null: the matching (match.mjs) reads its list and opens its items, and the tests look at it. */
     engine: () => running?.engine ?? null,
   };
 }

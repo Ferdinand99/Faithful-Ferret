@@ -149,10 +149,17 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
       decode(raw("copy", { ref: "h", field: "password", [key]: "x" }), UI_TYPES),
     );
   }
-  // A reply to the page never has a value, only handles and flags.
+  // A reply to the page never has a value, only references, names and flags.
   refusesShape(() =>
     decode(
-      raw("candidates", { handles: [{ ref: "h", name: "n", password: "x" }] }),
+      raw("candidates", { insecure: false, items: [{ ref: "h", name: "n", how: "host", frame_id: 0, password: "x" }], grant: [] }),
+      UI_TYPES,
+      { reply: true },
+    ),
+  );
+  refusesShape(() =>
+    decode(
+      raw("candidates", { insecure: false, items: [{ ref: "h", name: "n", how: "host", frame_id: 0, handle: 3 }], grant: [] }),
       UI_TYPES,
       { reply: true },
     ),
@@ -215,7 +222,16 @@ test("every UI request and reply round-trips with a sample body", () => {
     unlock: [{ mp: "pw", sk: "A3-XXXX" }, { ok: false, reason: "wrong_credentials" }],
     candidates: [
       { tab_id: 1, frame_id: 0 },
-      { handles: [{ ref: "h1", name: "Example", username: "me", insecure: false }] },
+      {
+        host: { a_label: "login.example.net", unicode: "login.example.net" },
+        insecure: false,
+        items: [{ ref: "h1", name: "Example", username: "me", how: "host", frame_id: 0 }],
+        grant: [{ origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" } }],
+      },
+    ],
+    grant_check: [
+      { origin: "https://sso.example.net" },
+      { ok: true, origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" }, pattern: "https://sso.example.net/*" },
     ],
     search: [{ query: "ex" }, { handles: [] }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],

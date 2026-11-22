@@ -110,6 +110,7 @@ const frameId = integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
 // A host name as the extension shows it (the core's `display_host`): the Unicode form, and the A-label next to it.
 const host = string({ min: 1, max: 300 });
+const displayHost = object({ a_label: host, unicode: host });
 const email = string({ min: 1, max: 254 });
 const handle = object(
   {
@@ -185,9 +186,41 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
+  // The items a tab is offered (all of its fillable frames, or the one `frame_id` names). The host is the core's
+  // `display_host` of the page; `insecure` marks a plain `http` page; `grant` lists the frames of the same site
+  // that are offered nothing until their host permission is granted. A reference is good for filling its frame,
+  // in this popup session only.
   candidates: {
-    request: object({ tab_id: tabId, frame_id: frameId }),
-    reply: handles,
+    request: object({ tab_id: tabId, frame_id: frameId }, { optional: ["frame_id"] }),
+    reply: object(
+      {
+        host: displayHost,
+        insecure: boolean(),
+        items: array(
+          object(
+            {
+              ref,
+              name: string({ max: 256 }),
+              username: string({ max: 256 }),
+              how: string({ max: 8, oneOf: ["exact", "host", "domain"] }),
+              frame_id: frameId,
+            },
+            { optional: ["username"] },
+          ),
+          { max: 100 },
+        ),
+        grant: array(object({ origin, host: displayHost }), { max: 32 }),
+      },
+      { optional: ["host"] },
+    ),
+  },
+  // The origin the grant tab was opened for, checked by the core: an `https` origin, its host and the permission.
+  grant_check: {
+    request: object({ origin }),
+    reply: object(
+      { ok: boolean(), reason, origin, host: displayHost, pattern: string({ min: 1, max: 320 }) },
+      { optional: ["reason", "origin", "host", "pattern"] },
+    ),
   },
   // A search finds anything in the vault. Its handles are for copying only.
   search: {

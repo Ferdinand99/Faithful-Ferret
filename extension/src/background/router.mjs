@@ -49,9 +49,19 @@ import { LOCK_EXEMPT } from "./lock.mjs";
  *   touch?: () => void,
  *   setSeconds?: (n: number) => Promise<void>,
  *   getSeconds?: () => Promise<number>,
+ *   session?: string,
  * }} HandlerContext
+ *   `session` (UI port only) names the port the message came on: a random id made when the page connected, so what
+ *   a handler hands out for one popup (the references of a list) can be told from what it handed out for another.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
+
+/** A new id for a UI port: 16 random bytes in hex. */
+function newSession() {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** @param {unknown} error @returns {string} */
 function reasonOf(error) {
@@ -136,8 +146,9 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
    *
    * @param {any} port
    * @param {unknown} raw
+   * @param {string} session the id of the port
    */
-  async function onUiMessage(port, raw) {
+  async function onUiMessage(port, raw, session) {
     /** @type {{ id: string, type: string, body: any }} */
     let message;
     try {
@@ -172,6 +183,7 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       touch: () => lock.touch(),
       setSeconds: (/** @type {number} */ n) => lock.setSeconds(n),
       getSeconds: () => lock.getSeconds(),
+      session,
     });
     /** @type {unknown} */
     let result;
@@ -204,8 +216,9 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       }
       return;
     }
+    const session = newSession();
     port.onMessage.addListener((/** @type {unknown} */ raw) => {
-      onUiMessage(port, raw).catch(() => {});
+      onUiMessage(port, raw, session).catch(() => {});
     });
   }
 

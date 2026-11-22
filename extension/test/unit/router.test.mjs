@@ -59,7 +59,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("server_check", { ok: true }),
     record("sync_state", { running: false, live: "offline", warnings: [] }),
     record("forget_server", { ok: true }),
-    record("candidates", { handles: [] }),
+    record("candidates", { insecure: false, items: [], grant: [] }),
     record("search", { handles: [] }),
     record("frame_report", undefined),
     record("fill_result", undefined),
@@ -140,7 +140,7 @@ test("a_call_with_an_open_vault_reaches_the_handler_and_moves_the_deadline", asy
   clock.advance(5 * MINUTE);
   await port.send(requests.candidates());
   assert.deepEqual(log.map((e) => e.type), ["candidates"]);
-  assert.deepEqual(decode(port.sent[0], UI_TYPES, { reply: true }).body, { handles: [] });
+  assert.deepEqual(decode(port.sent[0], UI_TYPES, { reply: true }).body, { insecure: false, items: [], grant: [] });
   assert.equal((await storage.get(LOCK_AT_KEY))[LOCK_AT_KEY], clock.now() + 15 * MINUTE);
 });
 
@@ -241,7 +241,9 @@ test("the_handler_context_has_the_call_and_no_key_or_client", async () => {
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.candidates());
   const { ctx } = log[0];
-  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "getSeconds", "lock", "sender", "setSeconds", "state", "touch", "type"]);
+  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "getSeconds", "lock", "sender", "session", "setSeconds", "state", "touch", "type"]);
+  // The session names the port (a random id), not the page or anything it sent.
+  assert.match(ctx.session, /^[0-9a-f]{32}$/);
   assert.equal(ctx.type, "candidates");
   assert.equal(Object.isFrozen(ctx), true);
   assert.equal(ctx.channel, "ui");
