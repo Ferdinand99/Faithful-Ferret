@@ -438,7 +438,7 @@ test("the_account_route_offers_the_admin_pages_to_an_administrator_of_a_vault_wi
   }
 });
 
-test("the_frame_has_an_account_link_that_is_marked_on_the_pages_of_the_account", async () => {
+test("the_frame_has_an_account_link_in_the_account_menu_that_is_marked_on_the_pages_of_the_account", async () => {
   await withDom(async () => {
     const win = { location: { hash: "#/items" }, addEventListener() {}, removeEventListener() {} };
     const root = shellView({
@@ -447,12 +447,13 @@ test("the_frame_has_an_account_link_that_is_marked_on_the_pages_of_the_account",
     });
     const link = find(root, "nav-account");
     assert.equal(link.getAttribute("href"), "#/account");
-    assert.equal(textOf(link).trim(), "security.nav.account");
+    assert.equal(textOf(link).trim(), "shell.account.settings");
     assert.equal(link.getAttribute("aria-current"), "false");
-    // It stands in a landmark of its own, with its own name.
-    const nav = [...allNodes(root)].find((n) => n.tagName === "nav" && n.getAttribute("data-role") === null && n.getAttribute("aria-label") === "security.nav.account");
-    assert.ok(nav, "an account navigation landmark");
-    assert.ok([...allNodes(nav)].includes(link));
+    // It is an item of the account menu, which has its own name.
+    const menu = find(root, "account-menu");
+    assert.equal(menu.getAttribute("role"), "menu");
+    assert.equal(menu.getAttribute("aria-label"), "security.nav.account");
+    assert.ok([...allNodes(menu)].includes(link));
   });
 });
 

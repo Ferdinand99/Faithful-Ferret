@@ -25,6 +25,7 @@ export const BASE_SERVICES = Object.freeze(["client", "i18n", "createImportWorke
  * @property {(ctx: RouteContext) => Node | Promise<Node>} load
  * @property {string} [menu]  the menu the page is listed in (`account`: the account page links to it); `title` is its label
  * @property {number} [menuOrder]  where it stands in that menu (lower first; 100 when not given)
+ * @property {import("./views/sidebarModel.mjs").SidebarMeta} [sidebar]  where the side menu of the vault lists the page (section, order, icon, label)
  *
  * @typedef {object} ServiceDef
  * @property {string} name
