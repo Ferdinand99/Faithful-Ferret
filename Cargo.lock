@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2 0.5.3",
  "argon2 0.6.0",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-core-wasm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-server-auth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
@@ -510,7 +510,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-vectorgen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ferret-core",
  "ferret-server-auth",
@@ -555,9 +555,9 @@ checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1364,9 +1364,9 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

@@ -70,6 +70,9 @@ pub struct ItemView {
     pub device: Option<String>,
     /// Whether the item is read-only because its schema is newer.
     pub read_only: bool,
+    /// The folder names, in the order they are stored (empty for an item
+    /// in no folder). See [`ItemBody::folders`].
+    pub folders: Vec<String>,
 }
 
 impl ItemBody {
@@ -109,6 +112,7 @@ impl ItemBody {
             favorite: self.favorite,
             device: self.device.clone(),
             read_only: self.is_read_only(),
+            folders: self.folders(),
         }
     }
 }

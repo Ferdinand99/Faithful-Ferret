@@ -1482,6 +1482,153 @@ test("copy_on_a_locked_vault_is_vault_locked", () => {
   assert.equal(code(() => vault.copy_item(h, COPY, COPY_AT)), "vault_locked");
 });
 
+// ---------------------------------------------------------------- folders
+
+const FOLDER_ITEM = fill(16, 0x46);
+
+/** A schema 1 body as a version before folders wrote it, with one unknown key. */
+const OLD_BODY = { schema: 1, type: "login", name: "Old", fields: [], urls: [], created: 1, modified: 2, favorite: false, zeta: "kept" };
+
+test("folders_round_trip_through_a_draft_and_the_view", () => {
+  const { vault } = newAccount("folders-round-trip");
+  const sealed = vault.encrypt_item(FOLDER_ITEM, 1, { ...LOGIN_DRAFT, folders: [" Work ", "Personal", "Æsj"] }, undefined, NOW);
+  const h = open(vault, FOLDER_ITEM, sealed);
+  assert.deepEqual(vault.item_view(h).folders, ["Work", "Personal", "Æsj"], "trimmed, in the order given");
+  // The names are inside the encrypted body only.
+  const hex = Buffer.from(sealed.envelope).toString("hex");
+  assert.ok(!hex.includes(Buffer.from("Personal").toString("hex")), "no folder name in the clear");
+  // A copy keeps them.
+  const copy = vault.copy_item(h, fill(16, 0x47), NOW + 5);
+  assert.deepEqual(vault.item_view(open(vault, fill(16, 0x47), copy)).folders, ["Work", "Personal", "Æsj"]);
+});
+
+test("an_item_written_before_folders_opens_with_none", () => {
+  const { vault } = newAccount("folders-old");
+  // A new item without the key, and a body sealed as an older version wrote it.
+  const h = open(vault, FOLDER_ITEM, vault.encrypt_item(FOLDER_ITEM, 1, LOGIN_DRAFT, undefined, NOW));
+  assert.deepEqual(vault.item_view(h).folders, []);
+  const old = vault.test_seal_plaintext(fill(16, 0x48), 1, new Uint8Array(cbor(OLD_BODY)));
+  const view = vault.item_view(open(vault, fill(16, 0x48), old));
+  assert.deepEqual(view.folders, []);
+  assert.equal(view.read_only, false);
+});
+
+test("a_draft_without_folders_keeps_them_and_an_empty_list_clears_them", () => {
+  const { vault } = newAccount("folders-edit");
+  let sealed = vault.encrypt_item(FOLDER_ITEM, 1, { ...LOGIN_DRAFT, folders: ["Work", "Home"] }, undefined, NOW);
+  let h = open(vault, FOLDER_ITEM, sealed);
+  const step = (rev, draft) => {
+    sealed = vault.encrypt_item(FOLDER_ITEM, rev, draft, h, NOW + rev);
+    h = open(vault, FOLDER_ITEM, sealed);
+    return vault.item_view(h).folders;
+  };
+  // Absent: kept, through every kind of edit that does not name them.
+  assert.deepEqual(step(2, { name: "Renamed" }), ["Work", "Home"]);
+  assert.deepEqual(step(3, { favorite: true, notes: "n", fields: [{ id: "user", value: "bob" }] }), ["Work", "Home"]);
+  assert.deepEqual(step(4, {}), ["Work", "Home"]);
+  // `null` is the same as absent.
+  assert.deepEqual(step(5, { folders: null }), ["Work", "Home"]);
+  // A list replaces them; an empty list clears them.
+  assert.deepEqual(step(6, { folders: ["home", "Travel"] }), ["home", "Travel"]);
+  assert.deepEqual(step(7, { folders: [] }), []);
+  assert.deepEqual(step(8, { name: "Again" }), []);
+  // Names are stored and shown in NFC; ZWJ and ZWNJ are allowed.
+  assert.deepEqual(step(9, { folders: ["Blåbær", "\u{1F469}‍\u{1F4BB}"] }), ["Blåbær", "\u{1F469}‍\u{1F4BB}"]);
+  assert.equal(vault.item_view(h).folders[0], "Blåbær");
+  // A new item with an empty list has none.
+  const fresh = vault.encrypt_item(fill(16, 0x49), 1, { ...LOGIN_DRAFT, folders: [] }, undefined, NOW);
+  assert.deepEqual(vault.item_view(open(vault, fill(16, 0x49), fresh)).folders, []);
+});
+
+test("folder_names_that_break_a_rule_are_refused_with_a_code", () => {
+  const { vault } = newAccount("folders-rules");
+  const h = open(vault, FOLDER_ITEM, vault.encrypt_item(FOLDER_ITEM, 1, { ...LOGIN_DRAFT, folders: ["Work"] }, undefined, NOW));
+  const twenty = Array.from({ length: 20 }, (_, i) => `F${i}`);
+  const cases = [
+    ["folder_empty", [""]],
+    ["folder_empty", ["Work", "   "]],
+    ["folder_too_long", ["x".repeat(65)]],
+    ["folder_too_long", ["ø".repeat(64) + "x"]],
+    ["folder_too_many", [...twenty, "F20"]],
+    ["folder_duplicate", ["Work", "work"]],
+    ["folder_duplicate", ["Ærlig", " ærlig "]],
+    ["folder_duplicate", ["å", "å"]],
+    ["folder_bad_character", ["Wo\nrk"]],
+    ["folder_bad_character", ["‮kcab"]],
+    ["folder_bad_character", ["⁦x⁩"]],
+    ["folder_bad_character", ["​"]],
+    ["folder_bad_character", ["﻿"]],
+    ["invalid_input", [1]],
+    ["invalid_input", [null]],
+    ["invalid_input", "Work"],
+    ["invalid_input", { 0: "Work" }],
+  ];
+  for (const [expected, folders] of cases) {
+    // On an edit and on a new item; nothing is sealed, the open item stays.
+    assert.equal(code(() => vault.encrypt_item(FOLDER_ITEM, 2, { folders }, h, NOW + 1)), expected, JSON.stringify(folders));
+    assert.equal(code(() => vault.encrypt_item(fill(16, 0x4a), 1, { ...LOGIN_DRAFT, folders }, undefined, NOW)), expected, JSON.stringify(folders));
+    assert.deepEqual(vault.item_view(h).folders, ["Work"]);
+  }
+  // The limits themselves pass: 20 names, 64 characters (not bytes).
+  const sealed = vault.encrypt_item(FOLDER_ITEM, 2, { folders: [...twenty.slice(0, 19), "ø".repeat(64)] }, h, NOW + 1);
+  assert.equal(vault.item_view(open(vault, FOLDER_ITEM, sealed)).folders.length, 20);
+});
+
+test("unknown_body_keys_survive_edits_with_and_without_folders", () => {
+  const account = newAccount("folders-unknown");
+  const { vault } = account;
+  let sealed = vault.test_seal_plaintext(FOLDER_ITEM, 1, new Uint8Array(cbor({ ...OLD_BODY, folders: ["A", "a", ""] })));
+  let h = open(vault, FOLDER_ITEM, sealed);
+  // A stored value against the rules is shown leniently.
+  assert.deepEqual(vault.item_view(h).folders, ["A"]);
+  const bodyOf = (s) => {
+    const text = vault.reveal_plain_export([row(FOLDER_ITEM, s)], "json", false, reauthToken(account), NOW + 10);
+    return JSON.parse(text).items[0].body;
+  };
+  // Not named in the draft: the stored value is kept exactly, and so is the unknown key.
+  sealed = vault.encrypt_item(FOLDER_ITEM, 2, { name: "Edited" }, h, NOW + 1);
+  h = open(vault, FOLDER_ITEM, sealed);
+  let body = bodyOf(sealed);
+  assert.equal(body.zeta, "kept");
+  assert.deepEqual(body.folders, ["A", "a", ""]);
+  // Set: replaced by the checked list, the unknown key still there.
+  sealed = vault.encrypt_item(FOLDER_ITEM, 3, { folders: ["B"] }, h, NOW + 2);
+  h = open(vault, FOLDER_ITEM, sealed);
+  body = bodyOf(sealed);
+  assert.equal(body.zeta, "kept");
+  assert.deepEqual(body.folders, ["B"]);
+  // Cleared: the key is gone, the unknown key stays.
+  sealed = vault.encrypt_item(FOLDER_ITEM, 4, { folders: [] }, h, NOW + 3);
+  body = bodyOf(sealed);
+  assert.equal(body.zeta, "kept");
+  assert.equal("folders" in body, false);
+});
+
+test("an_encrypted_export_and_its_import_keep_folders", () => {
+  const { vault } = newAccount("folders-export");
+  const ids = [fill(16, 0x41), fill(16, 0x42)];
+  const rows = [
+    row(ids[0], vault.encrypt_item(ids[0], 1, { ...LOGIN_DRAFT, folders: ["Work", "Personal"] }, undefined, NOW)),
+    row(ids[1], vault.encrypt_item(ids[1], 1, { item_type: "note", name: "Second", notes: "n" }, undefined, NOW)),
+  ];
+  const kdf = { m_kib: 65536, t: 3, p: 1 };
+  const started = vault.test_export_begin(rows, NOW, kdf);
+  const exportPassword = "export password for tests";
+  const wrapKey = wasm.argon2_export_key(enc.encode(exportPassword), started.salt, started.kdf, "write", enc.encode(PASSWORD));
+  const file = vault.export_finish(wrapKey);
+  const header = wasm.import_header(file);
+  const key = wasm.argon2_export_key(enc.encode(exportPassword), header.salt, header.kdf, "open", null);
+  assert.equal(vault.import_open(file, key).count, 2);
+  const views = [0, 1].map((i) => vault.import_view(i));
+  const index = views.findIndex((v) => v.view.name === "Example");
+  assert.deepEqual(views[index].view.folders, ["Work", "Personal"]);
+  assert.deepEqual(views[1 - index].view.folders, []);
+  const newId = fill(16, 0x92);
+  const sealed = vault.import_seal(index, newId, 1);
+  assert.deepEqual(vault.item_view(open(vault, newId, sealed)).folders, ["Work", "Personal"]);
+  vault.import_close();
+});
+
 // ------------------------------------------------------- new recovery key
 
 const floorOf = (p, type) => p.kek_generation_max.find((f) => f.type === type).generation;

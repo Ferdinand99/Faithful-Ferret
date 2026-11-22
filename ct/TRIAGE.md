@@ -686,7 +686,10 @@ with its reason, and each is repeated in the report.
   characters are the secret, the length is not. There is no table-free NFKD,
   and the result must equal other implementations byte for byte. It runs once
   per unlock in the user's own worker, so the observer would have to share the
-  device. Accepted.
+  device. Depending on inlining, the lookups sit in `normalize_password` itself
+  or in helpers of `core` (UTF-8 decoding, `chars`) and of
+  `unicode-normalization` (shared with the NFC of folder names), which the
+  scan counts but does not gate (R6). Accepted.
 - **R2. TOTP code.** `totp_code` takes the dynamic truncation of the HMAC
   output modulo 10^digits. The dividend is the HMAC output of this one code,
   not the TOTP secret, and the code is shown to the user and sent to a server.
