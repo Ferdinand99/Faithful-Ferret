@@ -401,6 +401,8 @@ test("reveal_allowlist_has_reveal_password_history_and_nothing_else_new", () => 
 // The size of the release module (pkg-web, after wasm-opt) before the password
 // generator, its word list, the field comparison and the password history were
 // added: v0.7.0 with its dependency updates, built with the pinned toolchain.
+// This is the budget of the generator only: a later feature that grows the
+// module sets a new baseline in its own pull request and states its growth there.
 const WASM_BYTES_BEFORE_GENERATOR = 1_330_115;
 
 test("wasm_size_grows_by_less_than_100_kib", () => {

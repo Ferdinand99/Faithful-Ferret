@@ -154,8 +154,9 @@ pub fn generate_passphrase<R: SecureRng>(
         let digit = uniform_index(10, rng)?;
         let at = uniform_index(u32::from(o.words), rng)?;
         let digit = b'0'.saturating_add(u8::try_from(digit).unwrap_or(0));
-        // Where the digit goes shows in the result, as the lengths of the
-        // words do; the branch tells nothing more.
+        // The word that gets the digit is chosen by a branch, so it can show
+        // in the timing, as the length of each word can (see the module
+        // documentation of the generator for why that is accepted).
         for (k, word) in picked.iter_mut().enumerate() {
             if u32::try_from(k).unwrap_or(u32::MAX) == at {
                 word.push(digit);

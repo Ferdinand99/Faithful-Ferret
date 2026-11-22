@@ -238,6 +238,19 @@ test("item_field_equals_zeroizes_its_copy_of_the_candidate", () => {
   const long = sentinel("long") + "x".repeat(5000);
   assert.equal(code(() => vault.item_field_equals(item.handle, "password", long)), "too_large");
   assert.deepEqual(findInMemory(enc(long.slice(0, 40))), [], "a refused candidate is wiped");
+  // A candidate with a character outside ASCII: wasm-bindgen's glue writes the
+  // ASCII start, reallocates to make room, and writes the rest into the block
+  // the binding then owns and wipes. The start may stay in the block that was
+  // freed (as the binding's documentation says); nothing after the first
+  // character outside ASCII, and never the whole value, may stay.
+  const head = sentinel("head");
+  const tail = sentinel("tail");
+  const mixed = `${head}-é-${tail}`;
+  assert.equal(vault.item_field_equals(item.handle, "password", mixed), false);
+  assert.deepEqual(findInMemory(enc(mixed)), [], "the whole value is not left");
+  assert.deepEqual(findInMemory(enc(`é-${tail}`)), [], "nothing after the first character outside ASCII is left");
+  assert.deepEqual(findInMemory(enc(tail)), [], "the end of the value is not left");
+  assert.ok(findInMemory(enc(head)).length <= 1, "at most one copy of the ASCII start");
   // The stored value is in the open item, as it must be (the scan works on it).
   assert.ok(findInMemory(enc("the-stored-password")).length > 0);
 });

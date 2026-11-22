@@ -23,9 +23,11 @@
 //! class, the swap of the shuffle and the word of the list are found by a
 //! walk over the whole alphabet, prefix or list that selects with `subtle`,
 //! so the address that is read does not depend on the random index either.
-//! What is not hidden is the length of the result (a passphrase's words have
-//! different lengths), which the caller sees anyway, and whether a draw was
-//! refused.
+//! What is not hidden: whether a draw was refused, and in a passphrase the
+//! length of each word (the loops that copy a word run over it) and the word
+//! that gets the digit (placed by a branch). These can show in the timing of
+//! the call. That is accepted because the value goes to the caller at once,
+//! and no other party can time the worker that runs the core.
 //!
 //! **Strength.** [`Generated::bits`] is the entropy estimate for display:
 //! `length * log2(alphabet)` for a password and
