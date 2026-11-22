@@ -1,0 +1,284 @@
+# Signs the RELEASE variant of the Firefox extension (MV2, add-on id
+# ferret@hedgerow.tools) with Mozilla (AMO, unlisted channel) and keeps the signed
+# .xpi as an artifact of the run. The test variant is signed by
+# extension-sign-measure.yml, never by this file.
+#
+# Manual only: `workflow_dispatch`, never on a push, a tag or a pull request. The
+# input `ref` names the code to build: a full 40-character commit SHA that is
+# reachable from `ext` or `main`, or the branch name `ext` or `main` (resolved to
+# its commit, which the run prints). Anything else is refused before anything is
+# built. Start it on the `ext` branch:
+#
+#   gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>
+#
+# A copy of this file on `main` is what lets GitHub list and dispatch it; the copy
+# on `ext` must be the same file.
+#
+# Two jobs:
+#
+# 1. `build` has no secrets and no environment. It checks out the resolved commit,
+#    installs the locked packages without their install scripts, builds the release
+#    package twice and refuses to go on unless both builds have the same SHA-256.
+#    Then `web-ext lint`, the release check (scripts/check-ext-release.sh: no test
+#    hooks, test pages, test host names, test ids or test-only permissions, only the
+#    release manifest keys), a check of the add-on id, the manifest version and the
+#    name, and the size against 8 MiB. The unsigned .xpi and its SHA-256 are kept as
+#    an artifact.
+# 2. `sign` belongs to the environment `amo-signing`, which has a required reviewer
+#    (every signing waits for an approval click) and allows deployments from the
+#    `ext` branch only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
+#    environment. The job downloads the artifact of job 1, checks its SHA-256
+#    against the one job 1 reported, unpacks it and signs exactly those files. It
+#    runs no code from the repository: it checks out only extension/package.json
+#    and extension/package-lock.json, to install the locked web-ext. The secrets
+#    are read by the signing step only, through its environment (web-ext reads
+#    WEB_EXT_API_KEY and WEB_EXT_API_SECRET), never as command-line flags and never
+#    printed. After signing, the files of the signed .xpi (apart from Mozilla's
+#    META-INF/ signature files) must be byte for byte the files of the unsigned one.
+#
+# The input reaches the shell through the environment, never spliced into a command
+# line or into script text. The workflow has read access to the repository and
+# nothing else; third-party actions are pinned by commit SHA.
+#
+# The version is the one in extension/package.json of the commit. AMO refuses a
+# version it has seen, and this workflow never changes the version of what it
+# signs: bump it in the source first.
+name: Extension sign release build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit to build and sign (a full 40-character SHA reachable from ext or main, or the branch name ext or main)
+        type: string
+        required: true
+
+concurrency:
+  group: extension-sign-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check the release package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      version: ${{ steps.check.outputs.version }}
+      sha256: ${{ steps.reproducible.outputs.sha256 }}
+    steps:
+      # Full history of every branch, so that the input can be checked against
+      # ext and main before anything of the commit runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the input to a commit on ext or main
+        id: resolve
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" = ext ] || [ "$REF" = main ]; then
+            commit="$(git rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}")"
+          elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            if ! git cat-file -e "${REF}^{commit}" 2>/dev/null; then
+              echo "::error::The input is not a commit of this repository."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$REF" refs/remotes/origin/ext \
+              && ! git merge-base --is-ancestor "$REF" refs/remotes/origin/main; then
+              echo "::error::The commit is not reachable from ext or main."
+              exit 1
+            fi
+            commit="$REF"
+          else
+            echo "::error::The input must be a full 40-character commit SHA (lower case) or the branch name ext or main."
+            exit 1
+          fi
+          git checkout --quiet --detach "$commit"
+          git clean -ffdxq
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "Building commit $commit"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the locked packages
+        working-directory: extension
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build the release package twice (fetches the published WASM package and checks its SHA-256)
+        id: reproducible
+        working-directory: extension
+        run: |
+          set -euo pipefail
+          for n in 1 2; do
+            node scripts/build.mjs --browser firefox --manifest mv2 --variant release --out "$RUNNER_TEMP/build-$n"
+          done
+          first="$(sha256sum "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release.xpi" | cut -d' ' -f1)"
+          second="$(sha256sum "$RUNNER_TEMP/build-2/ferret-firefox-mv2-release.xpi" | cut -d' ' -f1)"
+          if [ "$first" != "$second" ]; then
+            echo "::error::The two builds differ ($first, $second): the package is not reproducible."
+            exit 1
+          fi
+          echo "sha256=$first" >> "$GITHUB_OUTPUT"
+          echo "Both builds: sha256 $first"
+      - name: Lint the package
+        working-directory: extension
+        run: npm exec --no -- web-ext lint --source-dir "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release" --warnings-as-errors
+      - name: Release check (no test hooks, test pages, test hosts, test ids or test-only permissions)
+        run: bash scripts/check-ext-release.sh "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release.xpi"
+      - name: Check the add-on id, the manifest version, the name and the size
+        id: check
+        run: |
+          set -euo pipefail
+          # The script is JavaScript in single quotes on purpose: the shell expands nothing in it.
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const dir = `${process.env.RUNNER_TEMP}/build-1/ferret-firefox-mv2-release`;
+            const manifest = JSON.parse(fs.readFileSync(`${dir}/manifest.json`, "utf8"));
+            const id = manifest.browser_specific_settings?.gecko?.id;
+            if (id !== "ferret@hedgerow.tools") throw new Error(`the add-on id is ${id}, not the release id`);
+            if (manifest.manifest_version !== 2) throw new Error("the manifest version is not 2");
+            if (/\(test\)/.test(String(manifest.name))) throw new Error("the name is the test variant name");
+            if (!/^[0-9]+(\.[0-9]+){0,3}$/.test(String(manifest.version))) throw new Error("the version is not a plain dotted number");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${manifest.version}\n`);
+            console.log(`${manifest.name} ${manifest.version} (${id}, MV2)`);
+          '
+          bytes="$(stat -c %s "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release.xpi")"
+          limit=$((8 * 1024 * 1024))
+          echo "Size: $bytes bytes of $limit"
+          if [ "$bytes" -gt "$limit" ]; then
+            echo "::error::The package is $bytes bytes, over 8 MiB."
+            exit 1
+          fi
+      - name: Keep the unsigned package and its SHA-256
+        env:
+          COMMIT: ${{ steps.resolve.outputs.commit }}
+          VERSION: ${{ steps.check.outputs.version }}
+          SHA256: ${{ steps.reproducible.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/unsigned"
+          cp "$RUNNER_TEMP/build-1/ferret-firefox-mv2-release.xpi" "$RUNNER_TEMP/unsigned/"
+          (cd "$RUNNER_TEMP/unsigned" && sha256sum ferret-firefox-mv2-release.xpi > SHA256SUMS && cat SHA256SUMS)
+          {
+            echo "### Unsigned release package"
+            echo
+            echo "- commit: \`$COMMIT\`"
+            echo "- version: \`$VERSION\`"
+            echo "- sha256 (both builds): \`$SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ferret-release-mv2-unsigned
+          path: |
+            ${{ runner.temp }}/unsigned/ferret-firefox-mv2-release.xpi
+            ${{ runner.temp }}/unsigned/SHA256SUMS
+          if-no-files-found: error
+          # The approval can come days later; the sign job needs the file then.
+          retention-days: 7
+
+  sign:
+    name: Sign the release package (unlisted)
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: amo-signing
+    # web-ext waits up to 15 minutes for Mozilla's answer; the approval click comes before the job starts.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ferret-release-mv2-unsigned
+          path: ${{ runner.temp }}/unsigned
+      - name: The downloaded package is the one that was built
+        working-directory: ${{ runner.temp }}/unsigned
+        env:
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          actual="$(sha256sum ferret-firefox-mv2-release.xpi | cut -d' ' -f1)"
+          if [ "$actual" != "$SHA256" ]; then
+            echo "::error::The artifact has sha256 $actual, the build job reported $SHA256."
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/source"
+          unzip -q ferret-firefox-mv2-release.xpi -d "$RUNNER_TEMP/source"
+      # Only the two files npm needs: no script of the repository runs in this job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: |
+            extension/package.json
+            extension/package-lock.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the locked web-ext
+        working-directory: extension
+        run: |
+          npm ci --no-audit --no-fund --ignore-scripts
+          npm exec --no -- web-ext --version
+      - name: Sign with Mozilla (unlisted)
+        working-directory: extension
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npm exec --no -- web-ext sign \
+            --no-config-discovery \
+            --source-dir "$RUNNER_TEMP/source" \
+            --artifacts-dir "$RUNNER_TEMP/signed" \
+            --channel unlisted \
+            --approval-timeout 900000
+      - name: Check and name the signed file
+        env:
+          COMMIT: ${{ needs.build.outputs.commit }}
+          VERSION: ${{ needs.build.outputs.version }}
+          UNSIGNED_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          count="$(find "$RUNNER_TEMP/signed" -maxdepth 1 -name '*.xpi' | wc -l)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected one signed .xpi, found $count."
+            exit 1
+          fi
+          name="ferret-firefox-mv2-release-${VERSION}-signed.xpi"
+          mkdir -p "$RUNNER_TEMP/out"
+          mv "$RUNNER_TEMP/signed"/*.xpi "$RUNNER_TEMP/out/$name"
+          # Mozilla adds its signature under META-INF/; every other file must be the one that was built.
+          mkdir "$RUNNER_TEMP/signed-files"
+          unzip -q "$RUNNER_TEMP/out/$name" -d "$RUNNER_TEMP/signed-files"
+          if [ ! -d "$RUNNER_TEMP/signed-files/META-INF" ]; then
+            echo "::error::The signed file has no META-INF/ signature."
+            exit 1
+          fi
+          rm -r "$RUNNER_TEMP/signed-files/META-INF"
+          diff -r "$RUNNER_TEMP/source" "$RUNNER_TEMP/signed-files"
+          cd "$RUNNER_TEMP/out"
+          sha256sum "$name" > SHA256SUMS
+          cat SHA256SUMS
+          signed="$(cut -d' ' -f1 SHA256SUMS)"
+          {
+            echo "### Signed release package (unlisted)"
+            echo
+            echo "- file: \`$name\`"
+            echo "- sha256: \`$signed\`"
+            echo "- commit: \`$COMMIT\`"
+            echo "- version: \`$VERSION\`"
+            echo "- unsigned sha256: \`$UNSIGNED_SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ferret-release-mv2-signed
+          path: |
+            ${{ runner.temp }}/out/*.xpi
+            ${{ runner.temp }}/out/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
