@@ -1,18 +1,24 @@
-# The Faithful Ferret test stack on the LANBox, behind the Pangolin proxy
-# (which does TLS and single sign-on and forwards to these two ports):
+# The Faithful Ferret test stack on a private test host, behind a reverse proxy
+# with a tunnel client (which does TLS and single sign-on and forwards to these two
+# ports):
 #
-#   https://ferret-test.opland.net  ->  http://10.0.3.152:3040   admin pages and API
-#   https://vault-test.opland.net   ->  http://10.0.3.152:3041   web vault
+#   FERRET_ADMIN_URL  ->  http://<test host>:3040   admin pages and API
+#   FERRET_VAULT_URL  ->  http://<test host>:3041   web vault
+#
+# The public addresses are not in this file: set FERRET_VAULT_URL and
+# FERRET_ADMIN_URL (for example https://vault.example.test and
+# https://admin.example.test) in docker/.env or in the environment of the shell.
 #
 # Use scripts/lanbox-ferret-test.sh; it makes docker/.env (not in git) with the
-# setup token and the proxy addresses, and runs everything through the Docker
-# context `lanbox` (alias `unraid`), on the build VM. The data is throwaway test data.
+# setup token, the proxy address and these two URLs, and runs everything through
+# the Docker context that FERRET_DOCKER_ARGS names (default `--context lanbox`).
+# The data is throwaway test data.
 #
-# Newt, the tunnel client, runs outside Docker (Proxmox CT 130, 10.0.3.169): set
-# FERRET_TRUSTED_PROXIES=10.0.3.169 in docker/.env. The script accepts one valid
-# IPv4 address there, or the address of a Docker container named Newt. The Newt CT
-# needs a static IP (a fixed address or a DHCP reservation): the server trusts exactly
-# this address.
+# The tunnel client runs outside Docker on a host of its own: set
+# FERRET_TRUSTED_PROXIES to its address in docker/.env. The script accepts one
+# valid IPv4 address there, or the address of a Docker container named Newt. That
+# host needs a static IP (a fixed address or a DHCP reservation): the server
+# trusts exactly this address.
 name: ferret-test
 
 services:
@@ -27,7 +33,7 @@ services:
       labels:
         owner: ferret-test
     container_name: ferret-test-app
-    # Not started by Docker after a LANBox reboot: `scripts/lanbox-ferret-test.sh up`
+    # Not started by Docker after a reboot of the test host: `scripts/lanbox-ferret-test.sh up`
     # starts it, and its check of the trusted proxy address runs first.
     restart: "no"
     mem_limit: 512m
@@ -67,20 +73,20 @@ services:
     #    when the address differs, but nothing checks it while the container
     #    runs. Another container that is put on newt-net with a different
     #    address is not believed; one that is given 172.30.0.2 would be.
-    #  * A host that can send ARP on the LANBox's bridges can pose as that
+    #  * A host that can send ARP on the bridges of the test host can pose as that
     #    address.
     #  * Everything Newt forwards counts as the proxy, including a Pangolin raw
     #    TCP resource or client access aimed at these ports, which skips the
     #    sign-in of the proxy and can send any X-Forwarded-* header.
     #  * The host network lets the process reach loopback-only services of the
-    #    LANBox.
+    #    test host.
     network_mode: host
     volumes:
       - ferret-test-data:/data
     environment:
       FERRET_DATA_DIR: /data
-      FERRET_VAULT_URL: https://vault-test.opland.net
-      FERRET_ADMIN_URL: https://ferret-test.opland.net
+      FERRET_VAULT_URL: ${FERRET_VAULT_URL:?set FERRET_VAULT_URL in docker/.env}
+      FERRET_ADMIN_URL: ${FERRET_ADMIN_URL:?set FERRET_ADMIN_URL in docker/.env}
       # The address the Pangolin tunnel traffic reaches the server from: the
       # address of the Newt container on newt-net. Never a bridge
       # gateway (the server refuses it). Set in docker/.env.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The Faithful Ferret test stacks on the LANBox. Everything goes through the Docker
-# context `unraid`; never Docker Desktop, never Tower.
+# The Faithful Ferret test stacks on the build host. Everything goes through the Docker
+# context `lanbox` (see FERRET_DOCKER_ARGS); never Docker Desktop, never a production host.
 #
-# The test stack (compose project ferret-test, behind Pangolin). Only resources
+# The test stack (compose project ferret-test, behind a reverse proxy). Only resources
 # named ferret-test* and labelled owner=ferret-test are created, changed or removed:
 #
 #   scripts/lanbox-ferret-test.sh up       build and start (alias: redeploy); refuses when the
@@ -73,23 +73,28 @@
 #
 # docker/.env (not in git; on a Unix host it is made with mode 600) holds
 # FERRET_SETUP_TOKEN and FERRET_TRUSTED_PROXIES of the test stack. It is made on
-# the first `up`: the proxy address is the one of the Newt container on the LANBox
+# the first `up`: the proxy address is the one of the Newt container on the build host
 # (read only, `docker inspect`), or FERRET_TRUSTED_PROXIES from the environment. Like compose,
 # a variable in the environment of the shell wins over the file. Edit the file and
 # run `up` again to change it; `peers` shows which addresses the server has seen.
 #
-# Newt outside Docker (Proxmox CT 130 at 10.0.3.169, which `docker inspect` cannot see):
-# set FERRET_TRUSTED_PROXIES=10.0.3.169 in docker/.env. When no Docker container of the
+# Newt outside Docker (on a host of its own, which `docker inspect` cannot see):
+# set FERRET_TRUSTED_PROXIES=<its address> in docker/.env. When no Docker container of the
 # tunnel client exists, `up` accepts that value only as exactly one valid IPv4 address
-# (no list, no network, no loopback, not .0 or .255, not link-local) and warns when the build VM gets no ping answer
+# (no list, no network, no loopback, not .0 or .255, not link-local) and warns when the build host gets no ping answer
 # from it. With a Docker container, its address is still the only one that is accepted;
 # a container that exists but has no readable address (stopped, host network) is refused,
-# never treated as "outside Docker". The CT needs a static IP (a fixed address or a DHCP
+# never treated as "outside Docker". That host needs a static IP (a fixed address or a DHCP
 # reservation), because the server trusts exactly this address.
 #
 # Env overrides:
-#   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
-#   FERRET_LANBOX       address of the LANBox (default 10.0.3.152, the build VM)
+#   FERRET_DOCKER_ARGS  replaces the default "--context lanbox"
+#   FERRET_TEST_HOST    address or name of the build host, for the direct addresses that
+#                       `up` prints and for `smoke` (no default: they refuse without it)
+#   FERRET_VAULT_URL, FERRET_ADMIN_URL  the public https addresses of the vault and the
+#                       admin pages behind the proxy, for example https://vault.example.test
+#                       and https://admin.example.test (no default: `up` writes them to
+#                       docker/.env on the first run, and compose refuses to start without them)
 #   FERRET_PROXY_CONTAINER  name of the tunnel client container (default Newt)
 # The snapshot steps are handed to take_snapshot and restore_snapshot by name.
 # shellcheck disable=SC2329
@@ -102,14 +107,14 @@ project=ferret-test
 container=ferret-test-app
 volume=ferret-test-data
 label=owner=ferret-test
-lanbox="${FERRET_LANBOX:-10.0.3.152}"
+test_host="${FERRET_TEST_HOST:-}"
 admin_port=3040
 vault_port=3041
 envfile="${FERRET_ENV_FILE:-docker/.env}"
 composefile=docker/compose.ferret-test.yml
 
 # shellcheck disable=SC2206
-docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
+docker_args=(${FERRET_DOCKER_ARGS:---context lanbox})
 dk() { docker "${docker_args[@]}" "$@"; }
 dc() { dk compose -p "$project" -f "$composefile" --env-file "$envfile" "$@"; }
 
@@ -198,12 +203,12 @@ dce() {
   return "$rc"
 }
 
-# The tunnel client of the proxy (the Newt container) as Docker on the build VM
+# The tunnel client of the proxy (the Newt container) as Docker on the build host
 # knows it, read only. The container name can be changed with
 # FERRET_PROXY_CONTAINER. Prints exactly one of:
 #   address <ip>  the container runs on a network with an address
 #   notfound      Docker answered that there is no container with that name (the
-#                 tunnel client runs outside Docker, for example in a Proxmox CT)
+#                 tunnel client runs outside Docker, for example on a separate host)
 #   unreadable    anything else: the container exists but is stopped or has no
 #                 address of its own (host, none or another container's network),
 #                 or Docker could not be asked (a failed ssh or daemon call).
@@ -285,12 +290,22 @@ make_env() {
     echo "name of the tunnel client container (default Newt)." >&2
     exit 2
   fi
+  local vault_url="${FERRET_VAULT_URL:-}" admin_url="${FERRET_ADMIN_URL:-}"
+  if [ -z "$vault_url" ] || [ -z "$admin_url" ]; then
+    echo "lanbox-ferret-test: no $envfile yet and no public addresses. Run again with" >&2
+    echo "FERRET_VAULT_URL and FERRET_ADMIN_URL set to the https addresses of the vault and" >&2
+    echo "of the admin pages behind the proxy (for example https://vault.example.test and" >&2
+    echo "https://admin.example.test)." >&2
+    exit 2
+  fi
   local token
   token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   umask 077
   {
     echo "FERRET_SETUP_TOKEN=$token"
     echo "FERRET_TRUSTED_PROXIES=$proxies"
+    echo "FERRET_VAULT_URL=$vault_url"
+    echo "FERRET_ADMIN_URL=$admin_url"
   } > "$envfile"
   echo "lanbox-ferret-test: wrote $envfile (trusted proxy: $proxies)" >&2
   first_deploy=1
@@ -316,7 +331,7 @@ single_ipv4() {
   ! { [ "$1" -eq 169 ] && [ "$2" -eq 254 ]; }
 }
 
-# Whether the build VM can reach the address (one ping from a throwaway container
+# Whether the build host can reach the address (one ping from a throwaway container
 # on the host network). Only a warning when it cannot: a tunnel client may drop
 # ping, and a wrong address fails closed (nobody is trusted).
 reachable() {
@@ -330,13 +345,13 @@ reachable() {
 # tunnel client now. Prints the reason when it is not.
 #
 # The tunnel client is found in two ways (see tunnel_lookup):
-#  * As a Docker container on the build VM. Its address is then the only one that
+#  * As a Docker container on the build host. Its address is then the only one that
 #    is believed: any other FERRET_TRUSTED_PROXIES is a mismatch. When the
 #    container exists but its address cannot be read (stopped, host or none
 #    network, another container's network) or Docker cannot be asked, the answer
 #    is a refusal, never the explicit value below.
 #  * Outside Docker: only when Docker answers that there is no container with that
-#    name (since the move to Proxmox, Newt runs in its own CT). Then
+#    name (Newt may run on a host of its own). Then
 #    FERRET_TRUSTED_PROXIES is the one source of the address and it is accepted
 #    only as exactly one valid IPv4 address. A list, a network, a name, an empty
 #    value or an address that cannot be a client is refused.
@@ -355,29 +370,29 @@ tunnel_mismatch() {
       ;;
     notfound) ;;
     *)
-      echo "cannot read the address of $tunnel_container on the network it uses to reach the LANBox (the container exists but is stopped or has no address of its own, or Docker on the LANBox could not be asked)"
+      echo "cannot read the address of $tunnel_container on the network it uses to reach the build host (the container exists but is stopped or has no address of its own, or Docker on the build host could not be asked)"
       return 0
       ;;
   esac
   if [ -z "$configured" ]; then
-    echo "there is no Docker container named $tunnel_container on the LANBox, and FERRET_TRUSTED_PROXIES is empty"
+    echo "there is no Docker container named $tunnel_container on the build host, and FERRET_TRUSTED_PROXIES is empty"
     return 0
   fi
   if ! single_ipv4 "$configured"; then
-    echo "there is no Docker container named $tunnel_container on the LANBox, so FERRET_TRUSTED_PROXIES must be exactly one IPv4 address (no list, no network, no loopback, not .0 or .255), but it is $configured"
+    echo "there is no Docker container named $tunnel_container on the build host, so FERRET_TRUSTED_PROXIES must be exactly one IPv4 address (no list, no network, no loopback, not .0 or .255), but it is $configured"
     return 0
   fi
   return 1
 }
 
 # Prints a warning when the address of a tunnel client that runs outside Docker
-# does not answer from the build VM. Nothing when the address comes from Docker.
+# does not answer from the build host. Nothing when the address comes from Docker.
 unreachable_warning() {
   local configured
   [ "$(tunnel_lookup)" = notfound ] || return 0
   configured="$(configured_proxies)"
   single_ipv4 "$configured" || return 0
-  reachable "$configured" || echo "the address $configured does not answer ping from the LANBox (a tunnel client may block ping; check that it is the right address, and run the peers command after a sign-in to see which addresses the server sees)"
+  reachable "$configured" || echo "the address $configured does not answer ping from the build host (a tunnel client may block ping; check that it is the right address, and run the peers command after a sign-in to see which addresses the server sees)"
 }
 
 # `up` refuses to start on a mismatch: a proxy address that is not the tunnel
@@ -387,9 +402,9 @@ require_tunnel() {
   if why="$(tunnel_mismatch)"; then
     echo "lanbox-ferret-test: refusing to start: $why." >&2
     echo "Set FERRET_TRUSTED_PROXIES in $envfile (and not in the shell) to the address of" >&2
-    echo "$tunnel_container. When it runs outside Docker (a Proxmox CT, for example), that is" >&2
+    echo "$tunnel_container. When it runs outside Docker (a separate host, for example), that is" >&2
     echo "its own LAN address, as one single IPv4 address (not a list, not a network), and that" >&2
-    echo "CT needs a static IP (a fixed address or a DHCP reservation)." >&2
+    echo "host needs a static IP (a fixed address or a DHCP reservation)." >&2
     echo "Run up again." >&2
     exit 1
   fi
@@ -409,7 +424,7 @@ check_tunnel() {
   fi
 }
 
-# Refuses to start when something else on the LANBox already listens on one of
+# Refuses to start when something else on the build host already listens on one of
 # the two ports (the stack uses the host network, so `docker ps` cannot tell).
 # A throwaway container on the host network lists the listening ports.
 alpine_image=alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
@@ -421,26 +436,63 @@ check_ports() {
   listeners="$(dk run --rm --name ferret-test-portcheck --network host --label "$label" "$alpine_image" netstat -ltn)"
   for port in "$admin_port" "$vault_port"; do
     if printf '%s\n' "$listeners" | grep -Eq "[:.]${port}[[:space:]]"; then
-      echo "lanbox-ferret-test: port $port is already in use on the LANBox" >&2
+      echo "lanbox-ferret-test: port $port is already in use on the build host" >&2
       exit 1
     fi
   done
 }
 
+# The address of the build host for the direct addresses; no default, so a missing
+# value stops the command with a clear message instead of using someone else's host.
+require_test_host() {
+  if [ -z "$test_host" ]; then
+    echo "lanbox-ferret-test: set FERRET_TEST_HOST to the address or name of the build host" >&2
+    exit 2
+  fi
+}
+
+# A public address that compose will inject (the environment of the shell wins over
+# docker/.env); stops with a clear message when it is not set.
+public_url() {
+  local url
+  url="$(compose_value "$1")"
+  if [ -z "$url" ]; then
+    echo "lanbox-ferret-test: $1 is not set (docker/.env or the environment of the shell)" >&2
+    exit 2
+  fi
+  printf '%s\n' "$url"
+}
+
 print_addresses() {
+  local admin_url vault_url
+  require_test_host
+  admin_url="$(public_url FERRET_ADMIN_URL)" || exit 2
+  vault_url="$(public_url FERRET_VAULT_URL)" || exit 2
   echo
-  echo "Admin  (Pangolin) https://ferret-test.opland.net    direct http://$lanbox:$admin_port"
-  echo "Vault  (Pangolin) https://vault-test.opland.net     direct http://$lanbox:$vault_port"
+  echo "Admin  (proxy) $admin_url    direct http://$test_host:$admin_port"
+  echo "Vault  (proxy) $vault_url    direct http://$test_host:$vault_port"
 }
 
 print_setup_link() {
-  echo "First administrator: open https://ferret-test.opland.net/setup?token=$(compose_value FERRET_SETUP_TOKEN)"
+  local admin_url
+  admin_url="$(public_url FERRET_ADMIN_URL)" || exit 2
+  echo "First administrator: open $admin_url/setup?token=$(compose_value FERRET_SETUP_TOKEN)"
+}
+
+# Compose must accept the env file: the setup token, the proxy address and the two
+# public addresses are all required. Compose prints which one is missing.
+require_compose_env() {
+  if ! dc config --quiet >/dev/null; then
+    echo "lanbox-ferret-test: compose does not accept $envfile (see above)." >&2
+    exit 2
+  fi
 }
 
 # Both listeners: 200 on /healthz, no Server header, the security headers of the
 # listener, and application/wasm for the WebAssembly file on the vault listener.
 smoke() {
   local fail=0 port wasm response
+  require_test_host
   check() { # name, "ok" or anything else
     if [ "$2" = ok ]; then echo "  ok    $1"; else echo "  FAIL  $1"; fail=1; fi
   }
@@ -449,8 +501,8 @@ smoke() {
   has() { printf '%s\n' "$1" | grep -qi "^$2:" && echo ok || echo no; }
   absent() { printf '%s\n' "$1" | grep -qi "^$2:" && echo no || echo ok; }
   for port in "$admin_port" "$vault_port"; do
-    echo "http://$lanbox:$port"
-    response="$(headers_of "http://$lanbox:$port/healthz")"
+    echo "http://$test_host:$port"
+    response="$(headers_of "http://$test_host:$port/healthz")"
     check "/healthz answers 200" "$(printf '%s\n' "$response" | head -n 1 | grep -q ' 200' && echo ok || echo no)"
     check "no Server header" "$(absent "$response" server)"
     if [ "$port" = "$vault_port" ]; then
@@ -464,9 +516,9 @@ smoke() {
       done
     fi
   done
-  wasm="$(curl -sS -m 10 "http://$lanbox:$vault_port/" 2>/dev/null | grep -oE '/[A-Za-z0-9_./-]*\.wasm' | head -n 1 || true)"
+  wasm="$(curl -sS -m 10 "http://$test_host:$vault_port/" 2>/dev/null | grep -oE '/[A-Za-z0-9_./-]*\.wasm' | head -n 1 || true)"
   wasm="${wasm:-/pkg-web/ferret_core_wasm_bg.wasm}"
-  response="$(headers_of "http://$lanbox:$vault_port$wasm")"
+  response="$(headers_of "http://$test_host:$vault_port$wasm")"
   check "$wasm is application/wasm" "$(printf '%s\n' "$response" | grep -qi '^content-type: application/wasm' && echo ok || echo no)"
   check "$wasm has no Server header" "$(absent "$response" server)"
   if [ "$fail" -ne 0 ]; then
@@ -1070,6 +1122,7 @@ case "${1:-}" in
   up | redeploy)
     first_deploy=0
     make_env
+    require_compose_env
     require_tunnel
     require_data_label
     check_ports
@@ -1095,7 +1148,7 @@ case "${1:-}" in
     if [ -f "$envfile" ]; then dc down -v --remove-orphans; fi
     reset_resources
     rm -f "$envfile"
-    echo "reset: done (docker/.env removed; the next up makes a new setup token)"
+    echo "reset: done (docker/.env removed; the next up makes a new setup token and needs FERRET_VAULT_URL and FERRET_ADMIN_URL again)"
     ;;
   logs)
     dk logs -f --tail 200 "$container"

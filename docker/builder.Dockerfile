@@ -1,4 +1,4 @@
-# Builder image for the Ferret core. Built on the LANBox Docker host by
+# Builder image for the Ferret core. Built on the build host by
 # scripts/lanbox.sh and tagged ferret-core-builder:<hash of this file>.
 # Every tool is pinned. Nothing here ships in a release.
 #

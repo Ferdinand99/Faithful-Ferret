@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Checks of the Faithful Ferret test stacks that need the LANBox Docker host
-# (never Docker Desktop, never Tower). The checks that need no host are in
+# Checks of the Faithful Ferret test stacks that need the build host
+# (never Docker Desktop, never a production host). The checks that need no host are in
 # scripts/check-ferret-test-stack.sh.
 #
 #   scripts/lanbox-ferret-e2e-check.sh          all checks
@@ -35,7 +35,7 @@
 # reset check also uses owner=ferret-e2e-resettest on its decoys) and is removed
 # on exit. The owner's stack (ferret-test) is only read.
 #
-# Env overrides: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_BROWSERS
+# Env overrides: FERRET_DOCKER_ARGS (default "--context lanbox"), FERRET_E2E_BROWSERS
 # (the Playwright projects of the stack check, default "chromium firefox webkit").
 # The Go templates and awk programs below are in single quotes on purpose.
 # shellcheck disable=SC2016

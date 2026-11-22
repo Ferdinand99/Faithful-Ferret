@@ -1275,7 +1275,7 @@ pub(crate) fn sheet() -> Result<Vec<u8>, Error> {
         "sheet/build/002",
         "a LAN address over http, no secret key",
         "sheet.qr.build",
-        build("http://10.0.3.26:3001", account, 1, false, &[0u8; 32]),
+        build("http://192.0.2.26:3001", account, 1, false, &[0u8; 32]),
     )?;
     let lan = out["payload"].as_str().unwrap().to_owned();
     m.ok(

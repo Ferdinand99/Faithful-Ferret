@@ -8,7 +8,7 @@
 # the release archives, and the module that the web vault in the image embeds).
 #
 # Needs: cargo-about 0.9.3 (CI installs it with a pinned checksum) and Node.js. The build
-# environments are the LANBox (cargo and Node are not run on the development PC).
+# environments are the build host (cargo and Node are not run on the development PC).
 # Run from anywhere: scripts/notices.sh [--check]
 set -euo pipefail
 

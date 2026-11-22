@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the WebAssembly packages on the LANBox (never locally, never Docker
-# Desktop, never Tower) and stream them back.
+# Build the WebAssembly packages on the build host (never locally, never Docker
+# Desktop, never a production host) and stream them back.
 #
 #   scripts/lanbox-wasm.sh              pkg-web and pkg-node (the release build)
 #   scripts/lanbox-wasm.sh --test       pkg-node-test (the Node tests' build:

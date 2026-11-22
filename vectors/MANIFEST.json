@@ -37,7 +37,7 @@
     "internal/rekey.json": "956026a04ea9f7f7662f2210966ef229b5897555b0b23d94538edf9aa28bce3e",
     "internal/server-opaque.json": "4455ebb09f7234bb0dfcb26c6e913a3f984736d3bc15b7fd9dfc67e070874918",
     "internal/server-secrets.json": "006bc72ddb3f66b24b9bbc5a917f42a30bcabb17e0101095d8dcabe1bd8e65a2",
-    "internal/sheet.json": "acc2bcf0c8ff9e67938676d35a83681b8eb1b9b51653011a083c33b68d7e766c",
+    "internal/sheet.json": "a04a0ea3a36665eeadd3210853a3483129b114b45728b3b08025c1e6dd309888",
     "internal/sync.json": "b4deaed58823c3d6ab6af1c31509c45ea2b7d21c8c12fd41a78e97dc07fe5744",
     "internal/tlv.json": "9ad5038c7013130ddddfe5c40b47892b9db79b6a2802e33deecf9216b5bc3769",
     "internal/tomb-tag.json": "aef81862d54146bb8a018ceae728a0ced8c5900df446e2ae55fc7ff8b0c82f1a",

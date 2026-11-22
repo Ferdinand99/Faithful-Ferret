@@ -1,4 +1,4 @@
-# The Faithful Ferret end-to-end test stack on the LANBox: a throwaway server
+# The Faithful Ferret end-to-end test stack on the build host: a throwaway server
 # that the browser tests (Playwright) talk to over https, with a test clock.
 #
 # It is separate from the stack of the owner (docker/compose.ferret-test.yml,

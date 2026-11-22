@@ -1,6 +1,6 @@
 # WebAssembly base32_decode at 10^7 measurements
 
-Run on the LANBox (2026-10-30T06:50:47Z) on the wasm-opt -Oz module of ct/dudect, with the 8 repetitions inside a measurement that the runner uses for short targets:
+Run on the build host (2026-10-30T06:50:47Z) on the wasm-opt -Oz module of ct/dudect, with the 8 repetitions inside a measurement that the runner uses for short targets:
 
 `CT_ONLY=base32_decode CT_REPEAT=5 FERRET_CT_N=10000000 scripts/lanbox.sh --exec ct/run.sh dudect-wasm`
 
@@ -20,4 +20,4 @@ dudect wasm in Node: {"node":"v22.23.4","v8":"12.4.254.21-node.57","measurements
 [ok] base32_decode
 ```
 
-Also, the native unpad bench after the allocation order of the two classes was randomised (LANBox, same day): unpad_ct 10^6 x 5: -2.33, +1.44, +2.11, +1.87, -2.00; info_unpad_random_pair 10^7 x 5: +2.33, -2.02, +1.88, -2.66, +1.91; info_unpad_same 10^7 x 5: -2.33, -1.61, -1.77, -1.78, +3.24.
+Also, the native unpad bench after the allocation order of the two classes was randomised (build host, same day): unpad_ct 10^6 x 5: -2.33, +1.44, +2.11, +1.87, -2.00; info_unpad_random_pair 10^7 x 5: +2.33, -2.02, +1.88, -2.66, +1.91; info_unpad_same 10^7 x 5: -2.33, -1.61, -1.77, -1.78, +3.24.

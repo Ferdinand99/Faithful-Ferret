@@ -81,20 +81,20 @@ async fn send(router: &Router, peer: &str) -> String {
 
 #[tokio::test]
 async fn forwarded_headers_from_an_unlisted_peer_are_removed() {
-    let router = echo(list(&["10.0.3.26"]));
-    for peer in ["198.51.100.10:4000", "10.0.3.27:4000", "[2001:db8::1]:4000"] {
+    let router = echo(list(&["10.0.0.26"]));
+    for peer in ["198.51.100.10:4000", "10.0.0.27:4000", "[2001:db8::1]:4000"] {
         // Everything but the unrelated header is gone.
         assert_eq!(send(&router, peer).await, "x-keep=yes", "{peer}");
     }
     // With no list at all, nobody is believed.
     let none = echo(list(&[]));
-    assert_eq!(send(&none, "10.0.3.26:4000").await, "x-keep=yes");
+    assert_eq!(send(&none, "10.0.0.26:4000").await, "x-keep=yes");
 }
 
 #[tokio::test]
 async fn forwarded_headers_from_a_listed_proxy_are_kept() {
-    let router = echo(list(&["10.0.3.26", "192.168.7.0/24"]));
-    for peer in ["10.0.3.26:4000", "192.168.7.200:4000"] {
+    let router = echo(list(&["10.0.0.26", "192.168.7.0/24"]));
+    for peer in ["10.0.0.26:4000", "192.168.7.200:4000"] {
         let seen = send(&router, peer).await;
         for name in FORWARDING {
             assert!(seen.contains(name), "{peer}: {name} missing from {seen}");
@@ -151,12 +151,12 @@ fn docker_bridge_gateway_in_the_trusted_list_is_rejected_at_startup() {
         );
     }
     // An IPv4 network written as IPv6 would never match.
-    assert!(refused(&["::ffff:10.0.3.0/120"]).contains("written as IPv6"));
+    assert!(refused(&["::ffff:10.0.0.0/120"]).contains("written as IPv6"));
     // A list that trusts everyone is refused too, and one bad item spoils a
     // list of good ones.
     assert!(refused(&["0.0.0.0/0"]).contains("every address"));
     assert!(refused(&["::/0"]).contains("every address"));
-    refused(&["10.0.3.26", "172.17.0.1"]);
+    refused(&["10.0.0.26", "172.17.0.1"]);
 
     // Addresses next to the gateways are fine: a proxy container, hosts outside
     // the pool, a /30 that starts after ".1".
@@ -166,9 +166,9 @@ fn docker_bridge_gateway_in_the_trusted_list_is_rejected_at_startup() {
         "172.18.0.4/30",
         "172.32.0.1",
         "172.15.255.1",
-        "10.0.3.26",
-        "10.0.3.0/24",
-        "10.0.3.0/25",
+        "10.0.0.26",
+        "10.0.0.0/24",
+        "10.0.0.0/25",
         "192.168.1.1",
         "192.168.17.1",
         "192.168.16.2",
@@ -176,7 +176,7 @@ fn docker_bridge_gateway_in_the_trusted_list_is_rejected_at_startup() {
         "::1",
         "fd00:1::5",
         "2001:db8:1:2::/64",
-        "::ffff:10.0.3.26",
+        "::ffff:10.0.0.26",
     ] {
         list(&[entry]);
     }
@@ -195,7 +195,7 @@ async fn the_server_does_not_start_with_the_gateway_in_the_trusted_list() {
         "--admin-url",
         "https://admin.ferret.test",
         "--trusted-proxies",
-        "10.0.3.26,172.17.0.1",
+        "10.0.0.26,172.17.0.1",
     ])
     .expect("a configuration");
     let outcome = ferret_server::start(&config, Arc::new(SystemClock) as Arc<dyn Clock>).await;
@@ -208,15 +208,15 @@ async fn the_server_does_not_start_with_the_gateway_in_the_trusted_list() {
 #[test]
 fn cidr_and_single_ip_entries_parse() {
     let proxies = list(&[
-        "10.0.3.26",
+        "10.0.0.26",
         " 192.168.7.0/24 ",
         "",
         "fd00::5",
         "2001:db8:1:2::/64",
     ]);
     let ip = |s: &str| -> IpAddr { s.parse().expect("an address") };
-    assert!(proxies.contains(ip("10.0.3.26")));
-    assert!(!proxies.contains(ip("10.0.3.27")));
+    assert!(proxies.contains(ip("10.0.0.26")));
+    assert!(!proxies.contains(ip("10.0.0.27")));
     assert!(proxies.contains(ip("192.168.7.0")));
     assert!(proxies.contains(ip("192.168.7.255")));
     assert!(!proxies.contains(ip("192.168.8.1")));
@@ -240,13 +240,13 @@ fn cidr_and_single_ip_entries_parse() {
 
 #[test]
 fn ipv6_peer_in_a_listed_cidr() {
-    let proxies = list(&["2001:db8:aa:1::/64", "10.0.3.0/24"]);
+    let proxies = list(&["2001:db8:aa:1::/64", "10.0.0.0/24"]);
     let ip = |s: &str| -> IpAddr { s.parse().expect("an address") };
     assert!(proxies.contains(ip("2001:db8:aa:1::1")));
     assert!(proxies.contains(ip("2001:db8:aa:1:ffff::9")));
     assert!(!proxies.contains(ip("2001:db8:aa:2::1")));
     // A dual-stack listener reports an IPv4 peer as an IPv4-mapped address.
-    assert!(proxies.contains(ip("::ffff:10.0.3.9")));
+    assert!(proxies.contains(ip("::ffff:10.0.0.9")));
     assert!(!proxies.contains(ip("::ffff:10.0.4.9")));
 }
 
@@ -263,8 +263,8 @@ async fn an_ipv6_peer_in_a_listed_cidr_keeps_its_headers() {
 
 #[test]
 fn https_is_false_without_a_trusted_proxy_even_when_the_header_says_https() {
-    let proxies = list(&["10.0.3.26"]);
-    let proxy: IpAddr = "10.0.3.26".parse().unwrap();
+    let proxies = list(&["10.0.0.26"]);
+    let proxy: IpAddr = "10.0.0.26".parse().unwrap();
     let stranger: IpAddr = "198.51.100.10".parse().unwrap();
     let with = |value: &'static str| {
         let mut headers = HeaderMap::new();
@@ -332,13 +332,13 @@ async fn peer_log_prints_each_new_peer_once_and_nothing_else() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let router = echo(list(&["10.0.3.26"]).with_peer_log(true));
+    let router = echo(list(&["10.0.0.26"]).with_peer_log(true));
     for peer in [
         "198.51.100.10:4000",
         "198.51.100.10:4001",
-        "10.0.3.26:5000",
+        "10.0.0.26:5000",
         "198.51.100.10:4002",
-        "10.0.3.26:5001",
+        "10.0.0.26:5001",
         "[2001:db8::1]:4000",
     ] {
         send(&router, peer).await;
@@ -348,7 +348,7 @@ async fn peer_log_prints_each_new_peer_once_and_nothing_else() {
     assert_eq!(lines.len(), 3, "{text}");
     for (line, peer) in lines
         .iter()
-        .zip(["198.51.100.10", "10.0.3.26", "2001:db8::1"])
+        .zip(["198.51.100.10", "10.0.0.26", "2001:db8::1"])
     {
         assert!(line.contains(peer), "{line}");
         assert!(line.contains("new peer address"), "{line}");
@@ -360,7 +360,7 @@ async fn peer_log_prints_each_new_peer_once_and_nothing_else() {
     assert!(lines[0].contains("trusted=false"), "{}", lines[0]);
 
     // Switched off, it prints nothing.
-    let quiet = echo(list(&["10.0.3.26"]).with_peer_log(false));
+    let quiet = echo(list(&["10.0.0.26"]).with_peer_log(false));
     let before = sink.0.lock().unwrap().len();
     send(&quiet, "203.0.113.5:4000").await;
     assert_eq!(sink.0.lock().unwrap().len(), before);
