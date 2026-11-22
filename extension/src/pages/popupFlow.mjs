@@ -77,8 +77,12 @@ export const statusKey = (status) => `sync.status.${status !== null && STATUS_TE
 
 /**
  * @typedef {{ running: boolean, status: string | null, live: string, halted: string | null, actions: string[], warnings: string[] }} SyncView
- * @typedef {{ view: "signed_out" | "locked" | "unlocked", host: string, account: string, server: string, sync: SyncView | null }} PopupView
+ * @typedef {{ view: "signed_out" | "locked" | "unlocked", host: string, account: string, server: string, sync: SyncView | null, ended?: string }} PopupView
+ *   `ended`: why the server ended the device's tokens, when the background knows it (signed out only; one of ENDED_TEXTS)
  */
+
+/** The reasons for a sign-out that the popup has a text for (`sync.ended.<code>`); any other shows nothing more. */
+export const ENDED_TEXTS = Object.freeze(["token_reused"]);
 
 /**
  * What the sync shows, from the answer of `sync_state`.
@@ -102,17 +106,19 @@ export function syncViewOf(reply) {
 
 /**
  * @param {Record<string, any>} state the answer of `state`
- * @param {Record<string, any> | null} [sync] the answer of `sync_state` (an open vault only)
+ * @param {Record<string, any> | null} [sync] the answer of `sync_state` (an open vault, or a device that is signed out)
  * @returns {PopupView}
  */
 export function viewOf(state, sync = null) {
   const view = state?.state === "unlocked" ? "unlocked" : state?.state === "locked" ? "locked" : "signed_out";
+  const ended = view === "signed_out" && ENDED_TEXTS.includes(sync?.ended) ? { ended: /** @type {string} */ (sync?.ended) } : {};
   return {
     view,
     host: shownHost(state ?? {}),
     account: typeof state?.account === "string" ? state.account : "",
     server: typeof state?.server === "string" ? state.server : "",
     sync: view === "unlocked" ? syncViewOf(sync) : null,
+    ...ended,
   };
 }
 
@@ -138,7 +144,8 @@ export function followStep(shown, next, asking) {
 export function createPopupFlow(request) {
   const load = async () => {
     const state = await request("state", {});
-    if (state?.state !== "unlocked") return viewOf(state);
+    // A locked vault shows nothing of the sync; a device that is signed out may show why (`ended`).
+    if (state?.state === "locked") return viewOf(state);
     return viewOf(state, await request("sync_state", {}).catch(() => null));
   };
   return {
@@ -207,6 +214,7 @@ export const ACTION_ERRORS = Object.freeze([
   "not_filled",
   "no_site",
   "clipboard",
+  "not_cleared",
   "not_found",
   "sync_not_running",
 ]);

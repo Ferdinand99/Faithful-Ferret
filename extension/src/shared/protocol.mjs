@@ -265,7 +265,8 @@ export const UI_TYPES = defineTypes({
     request: object({ ref }),
     reply: okReply,
   },
-  // What the sync shows in the popup: codes only (the state, a stop, the warnings), never an item or a name.
+  // What the sync shows in the popup: codes only (the state, a stop, the warnings, why the device's tokens ended), never
+  // an item or a name.
   sync_state: {
     request: empty,
     reply: object(
@@ -275,8 +276,9 @@ export const UI_TYPES = defineTypes({
         live: string({ max: 16, oneOf: ["connecting", "live", "fallback", "offline", "unauthorized"] }),
         halted: reason,
         warnings: array(reason, { max: 16 }),
+        ended: string({ max: 16, oneOf: ["token_reused"] }),
       },
-      { optional: ["status", "halted"] },
+      { optional: ["status", "halted", "ended"] },
     ),
   },
   // "Try again" after a stop of the sync.
