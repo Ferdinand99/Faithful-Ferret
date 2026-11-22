@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.6.1...v0.7.0) (2026-11-22)
+
+
+### Features
+
+* Firefox extension and new web vault layout ([1afe199](https://github.com/Ferdinand99/Faithful-Ferret/commit/1afe199d63880e38aee077ab34a1563801ac06d4))
+* **web:** folders as encrypted labels inside each item ([#219](https://github.com/Ferdinand99/Faithful-Ferret/issues/219)) ([a215f5c](https://github.com/Ferdinand99/Faithful-Ferret/commit/a215f5c08744f9c8cbc3fef51c61c3f16b78fd82))
+* **web:** unlock with the master password after the session has ended ([#225](https://github.com/Ferdinand99/Faithful-Ferret/issues/225)) ([6f23b90](https://github.com/Ferdinand99/Faithful-Ferret/commit/6f23b901dbacd2479105b6a1ddb9ea17d04722bd))
+
+
+### Bug Fixes
+
+* **extension:** keep the popup's foot visible and add a copy menu to its rows ([#235](https://github.com/Ferdinand99/Faithful-Ferret/issues/235)) ([552484c](https://github.com/Ferdinand99/Faithful-Ferret/commit/552484c75a073845cd5dae5fe3256d02eeec5e91))
+* **ext:** final review fixes before the extension hand test ([#232](https://github.com/Ferdinand99/Faithful-Ferret/issues/232)) ([ff3c514](https://github.com/Ferdinand99/Faithful-Ferret/commit/ff3c51405410653f7619e0404392a61d2d15c9a4))
+* **ext:** refuse a fill into a frame that its page hides or covers ([#226](https://github.com/Ferdinand99/Faithful-Ferret/issues/226)) ([8ad33c6](https://github.com/Ferdinand99/Faithful-Ferret/commit/8ad33c6cc612f8c9ef80f115e6cce3a44a3906d1))
+
 ## [0.6.1](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.6.0...v0.6.1) (2026-11-22)
 
 

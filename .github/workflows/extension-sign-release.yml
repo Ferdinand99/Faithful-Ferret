@@ -7,12 +7,12 @@
 # input `ref` names the code to build: a full 40-character commit SHA that is
 # reachable from `ext` or `main`, or the branch name `ext` or `main` (resolved to
 # its commit, which the run prints). Anything else is refused before anything is
-# built. Start it on the `ext` branch:
+# built. Start it on `main`, with the commit on `main` as the input:
 #
-#   gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>
+#   gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>
 #
-# A copy of this file on `main` is what lets GitHub list and dispatch it; the copy
-# on `ext` must be the same file.
+# GitHub lists and dispatches the copy of this file on the branch it is started on,
+# so the copies on `main` and `ext` must be the same file.
 #
 # Two jobs:
 #
@@ -26,15 +26,17 @@
 #    an artifact.
 # 2. `sign` belongs to the environment `amo-signing`, which has a required reviewer
 #    (every signing waits for an approval click) and allows deployments from the
-#    `ext` branch only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
+#    `ext` and `main` branches only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
 #    environment. The job downloads the artifact of job 1, checks its SHA-256
 #    against the one job 1 reported, unpacks it and signs exactly those files. It
 #    runs no code from the repository: it checks out only extension/package.json
 #    and extension/package-lock.json, to install the locked web-ext. The secrets
 #    are read by the signing step only, through its environment (web-ext reads
 #    WEB_EXT_API_KEY and WEB_EXT_API_SECRET), never as command-line flags and never
-#    printed. After signing, the files of the signed .xpi (apart from Mozilla's
-#    META-INF/ signature files) must be byte for byte the files of the unsigned one.
+#    printed. After signing, the files of the signed .xpi must be the files of the
+#    unsigned one, apart from Mozilla's META-INF/ signature files and manifest.json:
+#    Mozilla rewrites manifest.json when it signs (it drops the trailing newline), so
+#    that one file is compared as parsed JSON, and every other file byte for byte.
 #
 # The input reaches the shell through the environment, never spliced into a command
 # line or into script text. The workflow has read access to the repository and
@@ -264,6 +266,18 @@ jobs:
             exit 1
           fi
           rm -r "$RUNNER_TEMP/signed-files/META-INF"
+          # Mozilla rewrites manifest.json when it signs (it dropped the trailing newline), so
+          # that one file is compared as parsed JSON. The script is JavaScript in single quotes
+          # on purpose: the shell expands nothing in it, and the paths come in as arguments.
+          node -e '
+            const fs = require("fs");
+            const { isDeepStrictEqual } = require("util");
+            const [built, signed] = process.argv.slice(1).map((file) => JSON.parse(fs.readFileSync(file, "utf8")));
+            if (!isDeepStrictEqual(built, signed)) throw new Error("manifest.json differs in content after signing");
+            console.log("manifest.json: same content as built");
+          ' "$RUNNER_TEMP/source/manifest.json" "$RUNNER_TEMP/signed-files/manifest.json"
+          rm "$RUNNER_TEMP/source/manifest.json" "$RUNNER_TEMP/signed-files/manifest.json"
+          # Every other file must be byte for byte the one that was built (and no file may be added).
           diff -r "$RUNNER_TEMP/source" "$RUNNER_TEMP/signed-files"
           cd "$RUNNER_TEMP/out"
           sha256sum "$name" > SHA256SUMS
