@@ -161,7 +161,7 @@ What is checked before the approval is asked for (the build job, which has no se
 
 What is checked after the approval (the sign job): the downloaded package has the SHA-256 the build job reported; it is signed unlisted with the locked web-ext; the signed package holds exactly the files of the unsigned one apart from Mozilla's `META-INF/` signature. The signed `.xpi` and its SHA-256 are kept as the artifact `ferret-release-mv2-signed` for seven days, and the SHA-256 is in the job summary.
 
-AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`.
+AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`. The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
 
 ## The measurement by hand
 
