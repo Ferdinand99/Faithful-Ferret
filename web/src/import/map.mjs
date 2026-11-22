@@ -15,8 +15,14 @@
 // * A one-time password is read as `otpauth://totp/`; a bare base32 secret becomes
 //   `otpauth://totp/?secret=...`; `steam://` and everything that does not read go to a hidden field
 //   with a warning. The core's strict parser has the last word when the item is sealed.
+// * The folder (and collection) names of an item become its folders, under the core's rules for a
+//   name (folders.mjs): a name the rules refuse is left out with a warning and counted, a name that
+//   repeats another (ignoring case) is taken once, and an item keeps at most 20; the core never gets
+//   a list it would refuse, so one bad name never stops an import.
 // * Nothing of the file but counts and a position leaves the report: a warning is a code and the
 //   index of the item in the file.
+
+import { MAX_FOLDERS, checkFolderName, normalizeFolder, sameFolder } from "../folders.mjs";
 
 /** The most warnings one report keeps; the rest are counted in `report.warningsDropped`. */
 export const MAX_WARNINGS = 20_000;
@@ -93,7 +99,7 @@ export function resolveLabels(custom) {
  *     matchNull: number, http: number, textAddresses: number, sealed: number,
  *   },
  *   skipped: {
- *     passkeys: number, folders: number, collections: number, linked: number,
+ *     passkeys: number, folders: number, linked: number,
  *     unknownKeys: number, otherTypes: number, trashed: number, tooLarge: number,
  *     passwordHistory: number, reprompt: number, attachments: number, fieldHistory: number, tags: number,
  *   },
@@ -109,7 +115,7 @@ export function resolveLabels(custom) {
 export function createReport() {
   return {
     counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0 },
-    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
+    skipped: { passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
     warnings: [],
     warningsDropped: 0,
   };
@@ -157,7 +163,7 @@ export function wellFormed(text) {
  * @typedef {{ url: string, matching: string }} UrlDraft
  * @typedef {{
  *   item_type: string, name: string, favorite: boolean,
- *   fields?: FieldDraft[], urls?: UrlDraft[], totp?: { uri: string }, notes?: string,
+ *   fields?: FieldDraft[], urls?: UrlDraft[], totp?: { uri: string }, notes?: string, folders?: string[],
  * }} ItemDraft
  */
 
@@ -383,6 +389,42 @@ export function addTotp(draft, raw, { report, index, labels }) {
 /**
  * @typedef {{ report: ImportReport, index: number, labels: Readonly<Record<string, string>> }} MapContext
  */
+
+/**
+ * Puts the folder names of an item into its draft (`folders`), under the core's rules: a name that is refused
+ * (empty, too long, a character that is not allowed) is left out with the warning `folder_skipped`, a repeat is
+ * taken once, and past the 20th the names are left out with the warning `folder_too_many`. Each name left out
+ * is counted in `skipped.folders`.
+ * @param {ItemDraft} draft
+ * @param {readonly unknown[]} names
+ * @param {MapContext} context
+ */
+export function addFolders(draft, names, { report, index }) {
+  /** @type {string[]} */
+  const kept = [];
+  let refused = false;
+  let over = false;
+  for (const raw of names) {
+    const name = scalar(raw);
+    if (name.trim() === "") continue;
+    if (checkFolderName(name) !== null) {
+      refused = true;
+      report.skipped.folders++;
+      continue;
+    }
+    const clean = normalizeFolder(name);
+    if (kept.some((have) => sameFolder(have, clean))) continue;
+    if (kept.length >= MAX_FOLDERS) {
+      over = true;
+      report.skipped.folders++;
+      continue;
+    }
+    kept.push(clean);
+  }
+  if (refused) warn(report, "folder_skipped", index);
+  if (over) warn(report, "folder_too_many", index);
+  if (kept.length > 0) draft.folders = kept;
+}
 
 /**
  * A login.

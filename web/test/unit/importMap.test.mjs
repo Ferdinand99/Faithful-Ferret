@@ -182,7 +182,7 @@ test("a_draft_has_the_shape_the_vault_takes_and_nothing_else", () => {
 test("the_report_counts_and_keeps_a_code_and_a_position_only", () => {
   const report = createReport();
   assert.deepEqual(Object.keys(report), ["counts", "skipped", "warnings", "warningsDropped"]);
-  assert.deepEqual(Object.keys(report.skipped).sort(), ["attachments", "collections", "fieldHistory", "folders", "linked", "otherTypes", "passkeys", "passwordHistory", "reprompt", "tags", "tooLarge", "trashed", "unknownKeys"]);
+  assert.deepEqual(Object.keys(report.skipped).sort(), ["attachments", "fieldHistory", "folders", "linked", "otherTypes", "passkeys", "passwordHistory", "reprompt", "tags", "tooLarge", "trashed", "unknownKeys"]);
   warn(report, "x", 4);
   assert.deepEqual(report.warnings, [{ code: "x", index: 4 }]);
   for (let i = 0; i < MAX_WARNINGS + 5; i++) warn(report, "y", i);

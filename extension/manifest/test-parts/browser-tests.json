@@ -1,0 +1,9 @@
+{
+  "permissions": ["activeTab", "menus"],
+  "commands": {
+    "ferret-test-command": {
+      "description": "Test command: records that it was called with activeTab",
+      "suggested_key": { "default": "Alt+Shift+F9" }
+    }
+  }
+}

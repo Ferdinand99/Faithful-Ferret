@@ -1,0 +1,90 @@
+# The browser extension (extension/): builds of both manifest versions in both
+# variants, type check and unit tests, then `web-ext lint` and the release check,
+# with the unsigned release packages kept as artifacts. Nothing is signed or
+# submitted anywhere: there is no store key in this workflow and no signing step.
+# Third-party actions are pinned by commit SHA, the Playwright image (which
+# carries Node and npm) by digest. The workflow has read access only and never
+# uses `pull_request_target`.
+name: Extension
+
+on:
+  pull_request:
+  push:
+    branches: [main, ext]
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Build, types and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Playwright 1.64.1 on Ubuntu 24.04. Keep the tag and the digest in step
+      # with scripts/lanbox-ext.sh and the web vault's workflow.
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+    env:
+      HOME: /root
+      CI: "1"
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the locked packages
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build both manifest versions in both variants (fetches the published WASM package and checks its SHA-256)
+        run: |
+          for mv in mv3 mv2; do
+            for variant in release test; do
+              node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant"
+            done
+          done
+      - name: Type check
+        run: npm exec --no -- tsc -p jsconfig.json --noEmit
+      - name: Unit tests
+        run: node --test "test/unit/*.test.mjs"
+
+  lint:
+    name: Lint and release check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+    env:
+      HOME: /root
+      CI: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the locked packages
+        working-directory: extension
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Build the release packages and lint them
+        working-directory: extension
+        run: |
+          for mv in mv3 mv2; do
+            node scripts/build.mjs --browser firefox --manifest "$mv" --variant release
+            npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors
+          done
+      - name: Check the release packages
+        run: bash scripts/check-ext-release.sh
+      - name: Checksums of the unsigned packages
+        working-directory: extension/dist
+        run: sha256sum ferret-firefox-*-release.xpi | tee SHA256SUMS
+      - name: Keep the unsigned packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ferret-extension-unsigned
+          path: |
+            extension/dist/ferret-firefox-*-release.xpi
+            extension/dist/SHA256SUMS
+          if-no-files-found: error

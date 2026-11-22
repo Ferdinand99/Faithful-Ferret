@@ -253,3 +253,123 @@ test("a_refusal_of_an_older_password_after_a_restore_offers_the_recovery_key_on_
     assert.equal(find(host, "use-recovery-key"), null);
   });
 });
+
+/** A session whose server session has ended, on a browser that remembers the account. */
+function endedSession({ remembered = { accountId: "aa".repeat(16), email: "ada@example.test", skBit: true, skStored: true } } = {}) {
+  const session = fakeSession({ info: null, open: false });
+  session.signOuts = 0;
+  session.forgotten = [];
+  session.remembered = async () => remembered;
+  session.forgetRemembered = async (accountId) => {
+    session.forgotten.push(accountId);
+  };
+  session.signOut = async () => {
+    session.signOuts += 1;
+  };
+  session.signIns = [];
+  session.signIn = async (args) => {
+    session.signIns.push({ ...args });
+    if (session.unlockError) throw session.unlockError;
+    session.isOpen = true;
+  };
+  return session;
+}
+
+test("an_ended_session_on_a_browser_that_remembers_the_account_is_unlock_with_the_email_read_only", async () => {
+  await withDom(async () => {
+    const session = endedSession();
+    assert.deepEqual(await prepareUnlock(session), { signedIn: false, remembered: true, email: "ada@example.test", accountId: "aa".repeat(16), skRequired: false });
+    const { host, moves, unlocked } = await screen(session);
+    assert.deepEqual(moves, [], "the screen stays: no move to the sign-in page");
+    const email = find(host, "remembered-email");
+    assert.equal(email.value, "ada@example.test");
+    assert.equal(email.getAttribute("readonly"), "", "read only");
+    assert.equal(email.getAttribute("autocomplete"), "username");
+    assert.ok(find(host, "not-you"), "Not you? Sign out");
+    assert.equal(find(host, "secret-key"), null, "the device holds the key");
+    assert.equal(find(host, "other-account"), null);
+    assert.ok(textOf(host).includes("vault.unlock.ended"));
+
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.deepEqual(session.signIns, [{ email: "ada@example.test", password: PASSWORD }], "a full sign-in with the e-mail it shows");
+    assert.deepEqual(session.unlocks, [], "never a re-authentication of whatever session is live");
+    assert.equal(find(host, "password").value, "");
+    assert.equal(unlocked(), 1);
+  });
+});
+
+test("an_ended_session_without_a_usable_memory_goes_to_the_sign_in_page", async () => {
+  await withDom(async () => {
+    // The account has a secret key and this device holds none.
+    const missing = endedSession({ remembered: { accountId: "aa".repeat(16), email: "ada@example.test", skBit: true, skStored: false } });
+    assert.deepEqual(await prepareUnlock(missing), { signedIn: false });
+    assert.deepEqual((await screen(missing)).moves, ["/login"]);
+    // Nothing remembered (signed out, forgotten, new device).
+    const none = endedSession({ remembered: null });
+    assert.deepEqual((await screen(none)).moves, ["/login"]);
+    // A store that fails is nothing remembered.
+    const broken = endedSession();
+    broken.remembered = async () => {
+      throw new Error("store");
+    };
+    assert.deepEqual((await screen(broken)).moves, ["/login"]);
+  });
+});
+
+test("a_wrong_password_on_unlock_keeps_the_page_with_the_sign_in_pages_text", async () => {
+  await withDom(async () => {
+    const session = endedSession();
+    session.unlockError = coded("decrypt");
+    const { host, moves } = await screen(session);
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.deepEqual(moves, []);
+    assert.ok(textOf(find(host, "error")).includes("account.error.decrypt"));
+    assert.deepEqual(session.forgotten, [], "the device still remembers the account");
+    assert.equal(find(host, "password").value, "");
+    // The kit's second factor: the sign-in page's text, on the same page.
+    session.unlockError = coded("two_factor_unsupported");
+    type(host, "password", PASSWORD);
+    await submit(find(host, "unlock-form"));
+    assert.ok(textOf(find(host, "error")).includes("account.error.two_factor_unsupported"));
+    assert.deepEqual(moves, []);
+  });
+});
+
+test("a_refused_pin_on_unlock_forgets_the_account_and_hands_the_refusal_to_the_sign_in_page", async () => {
+  const { takeRefusal } = await import("../../src/flows/rememberedAccount.mjs");
+  for (const code of ["pinned_server_key", "pinned_elsewhere", "sk_required", "kdf_profile_unknown"]) {
+    await withDom(async () => {
+      const session = endedSession();
+      session.unlockError = coded(code);
+      const { host, moves } = await screen(session);
+      type(host, "password", PASSWORD);
+      await submit(find(host, "unlock-form"));
+      assert.deepEqual(session.forgotten, ["aa".repeat(16)], `${code}: the device forgets the account`);
+      assert.deepEqual(moves, ["/login"], `${code}: the full sign-in page`);
+      assert.deepEqual(takeRefusal(), { error: session.unlockError, accountId: "aa".repeat(16), email: "ada@example.test" }, `${code}: the sign-in page gets the refusal and whose it was`);
+      assert.equal(takeRefusal(), null, "once");
+    });
+  }
+});
+
+test("not_you_signs_out_and_goes_to_the_sign_in_page", async () => {
+  await withDom(async () => {
+    const session = endedSession();
+    const { host, moves } = await screen(session);
+    await find(host, "not-you").listeners.find(([kind]) => kind === "click")[1]();
+    assert.equal(session.signOuts, 1);
+    assert.deepEqual(moves, ["/login"]);
+    assert.deepEqual(session.signIns, []);
+
+    // A sign-out that could not reach the server still leaves for the sign-in page (the device has forgotten the account).
+    const offline = endedSession();
+    offline.signOut = async () => {
+      throw coded("signout_incomplete");
+    };
+    const second = await screen(offline);
+    await find(second.host, "not-you").listeners.find(([kind]) => kind === "click")[1]();
+    assert.deepEqual(second.moves, ["/login"]);
+  });
+});

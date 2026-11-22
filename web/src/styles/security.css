@@ -54,7 +54,7 @@
   border-radius: var(--r-lg);
   background: var(--card-raised);
   color: var(--text);
-  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), var(--shadow-pop);
+  box-shadow: 0 0 0 100vmax var(--scrim), var(--shadow-pop);
 }
 
 .reauth-dialog > * + * {
@@ -71,26 +71,4 @@
 
 .reauth-dialog .actions {
   margin-top: var(--sp-4);
-}
-
-/* The account link is its own landmark in the bar, apart from the item links, so that on a phone it can stand in
-   the first row (with the name and Lock) and the links and the sync state keep the room they had. */
-.vault-ui .vault-bar > nav.account-nav {
-  margin-inline-end: 0;
-}
-
-/* On a phone it stands in the first row, with the name and Lock. */
-@media (max-width: 40rem) {
-  .vault-ui .vault-bar > nav.account-nav {
-    order: 2;
-    margin-inline-start: auto;
-  }
-
-  .vault-ui .vault-bar > nav.account-nav a {
-    padding-inline: 8px;
-  }
-
-  .vault-ui .vault-bar > nav.account-nav + [data-role="lock"] {
-    margin-inline-start: 0;
-  }
 }

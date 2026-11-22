@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createWipeScope } from "../../src/views/common.mjs";
 import { editView } from "../../src/views/edit.mjs";
-import { all, click, coded, fakeClient, fakeEngine, fire, find, settle, submit, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { all, click, coded, fakeClient, fakeEngine, fire, find, settle, submit, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
 const NEW_ID = "ab".repeat(16);
@@ -330,5 +330,165 @@ test("a_form_that_moved_to_a_copy_still_answers_to_the_key_of_the_old_item", asy
     engine.emit("copied", { from: ID, to: COPY });
     assert.equal(forms[0].key, `edit:${COPY}`);
     assert.deepEqual(forms[0].keys, [`edit:${ID}`, `edit:${COPY}`]);
+  });
+});
+
+// ------------------------------------------------------------------ the new look
+
+test("the_form_is_three_cards_details_sign_in_and_notes_with_the_actions_below", async () => {
+  await withDom(async () => {
+    const { root } = await edit();
+    const form = find(root, "edit-form");
+    const cards = [...form.childNodes].filter((n) => n.getAttribute?.("class")?.includes("item-section")).map((n) => n.getAttribute("data-role"));
+    assert.deepEqual(cards, ["details-card", "login-fields", "notes-slot"]);
+    assert.ok(textOf(find(root, "details-card")).includes("vault.edit.card_details"));
+    assert.ok(textOf(find(root, "login-fields")).includes("vault.item.card_login"));
+    // The name and the favourite are in the first card, the sign-in fields in the second.
+    assert.ok(find(find(root, "details-card"), "name") && find(find(root, "details-card"), "favorite"));
+    assert.ok(["username", "password", "url"].every((role) => find(find(root, "login-fields"), role)));
+    // The save and cancel buttons come after the cards.
+    const order = [...form.childNodes].map((n) => n.getAttribute?.("data-role") ?? n.getAttribute?.("class") ?? "");
+    assert.ok(order.indexOf("notes-slot") < order.findIndex((c) => c.includes("actions")));
+    assert.ok(find(root, "save") && find(root, "cancel"));
+  });
+});
+
+/** An edit form over an engine whose vault has other items in folders too. */
+async function editWithFolders({ id = ID, folders = ["Work", "Bank"], others = [["22".repeat(16), ["Home", "work"]]] } = {}) {
+  const items = [{ ...ENTRY, folders }, ...others.map(([otherId, list]) => ({ ...ENTRY, id: otherId, name: "Other", folders: list }))];
+  const engine = fakeEngine({ items, views: { [ID]: { ...VIEW, folders } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
+  const client = fakeClient(engine, { notes: { [ID]: NOTES } });
+  const moves = [];
+  const root = await editView({ engine, client, id, t, go: (path) => moves.push(path) });
+  return { engine, root, moves };
+}
+
+const chips = (root) => all(root, "folder-picked-chip").map((chip) => textOf(chip).trim());
+const offers = (root) => all(root, "folder-offer").map((offer) => textOf(offer).trim());
+
+test("the_folder_picker_is_in_the_first_card_with_the_folders_of_the_item_and_of_the_vault", async () => {
+  await withDom(async () => {
+    const { root } = await editWithFolders();
+    const slot = find(find(root, "details-card"), "folder-slot");
+    assert.ok(slot && slot.hidden !== true, "the picker is shown: a folder is made by putting an item in it");
+    assert.deepEqual(chips(root), ["Bank", "Work"], "the item's folders, in display order");
+    // The other folders of the vault are offered; one that differs only in case from a chosen one is not.
+    assert.deepEqual(offers(root), ["Home"]);
+  });
+  await withDom(async () => {
+    const { root } = await edit({ id: null });
+    assert.ok(find(find(root, "details-card"), "folder-picker"), "a new item has the picker too");
+    assert.deepEqual(chips(find(root, "details-card")), []);
+    assert.ok(find(find(root, "details-card"), "type"), "a new item chooses its type in the first card");
+  });
+});
+
+test("a_save_that_did_not_touch_the_folders_sends_no_folders_so_the_item_keeps_them", async () => {
+  await withDom(async () => {
+    const { root, engine } = await editWithFolders();
+    type(root, "name", "Bank 2");
+    await submit(find(root, "edit-form"));
+    const [[kind, , draft]] = engine.calls.filter((call) => call[0] === "update");
+    assert.equal(kind, "update");
+    assert.equal("folders" in draft, false, "a draft without folders keeps every folder of the item, also any this screen does not show");
+  });
+});
+
+test("a_folder_is_added_by_typing_or_picking_and_removed_by_its_cross_and_the_draft_holds_the_whole_list", async () => {
+  await withDom(async () => {
+    const { root, engine } = await editWithFolders();
+    // Remove "Work", pick "Home", type a new one and press Enter (which never sends the form).
+    await click(all(root, "folder-remove").find((b) => b.getAttribute("data-folder") === "Work"));
+    await click(all(root, "folder-offer").find((b) => b.getAttribute("data-folder") === "Home"));
+    find(root, "folder-input").value = "  Taxes 2026 ";
+    const enter = await fire(find(root, "folder-input"), "keydown", { key: "Enter" });
+    assert.equal(enter.prevented, true);
+    assert.deepEqual(engine.calls.filter((call) => call[0] === "update"), [], "Enter adds the name and saves nothing");
+    assert.deepEqual(chips(root), ["Bank", "Home", "Taxes 2026"]);
+    await submit(find(root, "edit-form"));
+    const [[, , draft]] = engine.calls.filter((call) => call[0] === "update");
+    assert.deepEqual(draft.folders, ["Bank", "Home", "Taxes 2026"], "kept names first in the item's order, then the new ones, trimmed");
+  });
+});
+
+test("a_folder_that_exists_in_another_case_is_taken_in_the_spelling_the_vault_shows", async () => {
+  await withDom(async () => {
+    const { root, engine } = await editWithFolders({ folders: [], others: [["22".repeat(16), ["Home"]], ["33".repeat(16), ["Home"]]] });
+    find(root, "folder-input").value = "HOME";
+    await click(find(root, "folder-add"));
+    assert.deepEqual(chips(root), ["Home"]);
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.find((call) => call[0] === "update")[2].folders, ["Home"]);
+  });
+});
+
+test("a_name_that_breaks_a_rule_is_refused_with_the_text_of_its_code_and_nothing_is_saved", async () => {
+  await withDom(async () => {
+    const { root, engine } = await editWithFolders({ folders: ["Bank"] });
+    const tryName = async (name) => {
+      find(root, "folder-input").value = name;
+      await click(find(root, "folder-add"));
+      const box = find(root, "folder-error");
+      return box.hidden ? null : textOf(box).trim();
+    };
+    assert.equal(await tryName("x".repeat(65)), "folders.error.folder_too_long");
+    assert.equal(await tryName(`a${String.fromCharCode(0x202e)}b`), "folders.error.folder_bad_character");
+    assert.equal(await tryName(`zero${String.fromCharCode(0x200b)}width`), "folders.error.folder_bad_character");
+    assert.equal(await tryName("   "), "folders.error.folder_empty");
+    assert.equal(await tryName("BANK"), "folders.error.folder_duplicate");
+    assert.equal(await tryName("x".repeat(64)), null, "64 characters is the limit");
+    assert.equal(await tryName(`fam${String.fromCharCode(0x200d)}ily`), null, "a zero width joiner is allowed");
+    // A name typed and not added is added when the form is saved; one the rules refuse stops the save.
+    find(root, "folder-input").value = "a".repeat(70);
+    await submit(find(root, "edit-form"));
+    assert.deepEqual(engine.calls.filter((call) => call[0] === "update"), []);
+    assert.equal(textOf(find(root, "folder-error")).trim(), "folders.error.folder_too_long");
+  });
+});
+
+test("the_twenty_first_folder_is_refused_and_the_cores_own_refusal_is_shown_by_its_code", async () => {
+  await withDom(async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => `F${i}`);
+    const { root, engine } = await editWithFolders({ folders: twenty, others: [] });
+    find(root, "folder-input").value = "One more";
+    await click(find(root, "folder-add"));
+    assert.ok(textOf(find(root, "folder-error")).trim().startsWith("folders.error.folder_too_many"));
+    // The core has the last word: its code is shown under the picker.
+    await click(all(root, "folder-remove")[0]);
+    engine.failWith = coded("folder_duplicate");
+    await submit(find(root, "edit-form"));
+    assert.equal(textOf(find(root, "folder-error")).trim(), "folders.error.folder_duplicate");
+    assert.equal(find(root, "error").hidden, false);
+  });
+});
+
+test("the_picker_counts_as_an_edit_and_a_lock_wipes_it", async () => {
+  await withDom(async () => {
+    const scope = createWipeScope();
+    const engine = fakeEngine({ items: [{ ...ENTRY, folders: ["Bank"] }], views: { [ID]: { ...VIEW, folders: ["Bank"] } } });
+    const forms = [];
+    const root = await editView({ engine, client: fakeClient(engine), id: ID, t, scope, tracker: { trackUnsaved: (form) => (forms.push(form), () => {}) } });
+    const [form] = forms;
+    assert.equal(form.dirty(), false);
+    await click(find(root, "folder-remove"));
+    assert.equal(form.dirty(), true, "taking the item out of a folder is an edit that is not saved");
+    scope.run();
+    assert.equal(textOf(root).includes("Bank"), false, "no folder name stays on the page after a lock");
+  });
+});
+
+test("every_input_still_has_its_label_and_the_save_still_sends_the_same_draft", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit();
+    // Each input is named by a label that points at it.
+    const inputs = [...walk(root)].filter((n) => ["input", "textarea", "select"].includes(n.tagName) && n.getAttribute("type") !== "checkbox");
+    const labelled = new Set([...walk(root)].filter((n) => n.tagName === "label").map((n) => n.getAttribute("for")));
+    for (const input of inputs) assert.ok(labelled.has(input.getAttribute("id")), `label for ${input.getAttribute("data-role")}`);
+    type(root, "name", "Bank 2");
+    await submit(find(root, "edit-form"));
+    const [kind, , draft] = engine.calls.find((c) => c[0] === "update");
+    assert.equal(kind, "update");
+    assert.equal(draft.name, "Bank 2");
+    assert.equal(draft.favorite, false);
   });
 });

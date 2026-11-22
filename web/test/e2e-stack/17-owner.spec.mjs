@@ -2,7 +2,7 @@
 // button "Use here", opens no stream and asks the server for nothing; the button moves the vault to the tab where it is
 // pressed (the other tab is asked to stop and shows the notice), and a write that was waiting in the first tab is sent from
 // the second, once. When the first tab does not answer, the lock is taken after about three seconds.
-import { bodyText, createItem, expect, feedOf, freshContext, itemIdOf, newDevice, noViolations, openList, readStores, rowsNamed, secrets, serverRev, shot, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
+import { bodyText, createItem, expect, feedOf, freshContext, itemIdOf, newDevice, noViolations, openList, readStores, findRows, secrets, serverRev, shot, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -93,8 +93,8 @@ test("a_second_tab_shows_the_notice_and_use_here_moves_the_vault_without_losing_
     await expect(list(first)).toHaveCount(0);
     expect(await bodyText(first), "the tab that gave the vault up shows none of it").not.toContain(queued);
     expect(await ownerLocks(second), "one tab holds the vault, now the second").toBe(1);
-    await expect(rowsNamed(second, before)).toHaveCount(1);
-    await expect(rowsNamed(second, queued)).toHaveCount(1);
+    await expect((await findRows(second, before))).toHaveCount(1);
+    await expect((await findRows(second, queued))).toHaveCount(1);
     await shot(first, "17-owner-the-first-tab-after-use-here");
     await shot(second, "17-owner-the-vault-moved");
 
@@ -114,7 +114,7 @@ test("a_second_tab_shows_the_notice_and_use_here_moves_the_vault_without_losing_
     await expect(notice(second)).toBeVisible({ timeout: 30_000 });
     await openList(first);
     expect(await ownerLocks(first)).toBe(1);
-    await expect(rowsNamed(first, queued)).toHaveCount(1);
+    await expect((await findRows(first, queued))).toHaveCount(1);
     await synced(first);
     // Neither tab shows a warning.
     await expect(first.locator('[data-role="sync-banner"]')).toHaveCount(0);
@@ -166,7 +166,7 @@ test("use_here_takes_the_vault_after_about_three_seconds_when_the_other_tab_does
     expect(took, "the other tab was given about three seconds").toBeGreaterThanOrEqual(2_500);
     await expect(notice(first)).toBeVisible({ timeout: 30_000 });
     expect(await ownerLocks(second), "one tab holds the vault").toBe(1);
-    await expect(rowsNamed(second, name)).toHaveCount(1);
+    await expect((await findRows(second, name))).toHaveCount(1);
     await shot(second, "17-owner-taken-after-three-seconds");
   } finally {
     await context.close();

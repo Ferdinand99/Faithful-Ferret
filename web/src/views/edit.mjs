@@ -15,7 +15,9 @@
 // when the vault comes back (`thaw`); a lock wipes it as it wipes every screen. The form tells whether it
 // has edits (`dirty`) by comparing with what it started with, without holding a copy of any secret.
 import { el, mount } from "../dom.mjs";
-import { canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
+import { folderIndex } from "../folders.mjs";
+import { canChange, codeOf, describeError, listenWhileShown, markBadges } from "./common.mjs";
+import { FOLDER_ERRORS, folderPicker } from "./folderPicker.mjs";
 import { typeLabel } from "./item.mjs";
 
 const TYPES = Object.freeze(["login", "note"]);
@@ -35,7 +37,7 @@ const TYPES = Object.freeze(["login", "note"]);
  * @typedef {{ id: string, label?: string, kind?: string, value?: string }} FieldDraft
  * @typedef {{
  *   item_type?: string, name: string, favorite: boolean, fields?: FieldDraft[],
- *   urls?: { url: string, matching: string }[], notes?: string, remove_notes?: boolean,
+ *   urls?: { url: string, matching: string }[], notes?: string, remove_notes?: boolean, folders?: string[],
  * }} Draft
  */
 
@@ -43,6 +45,7 @@ const TYPES = Object.freeze(["login", "note"]);
 function scrub(draft) {
   for (const field of draft.fields ?? []) if (typeof field.value === "string") field.value = "";
   if (typeof draft.notes === "string") draft.notes = "";
+  if (Array.isArray(draft.folders)) draft.folders.length = 0;
   draft.name = "";
 }
 
@@ -56,11 +59,12 @@ function scrub(draft) {
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
  *   tracker?: { trackUnsaved(form: UnsavedForm): () => void },
+ *   locale?: string,
  * }} options `id` is null for a new item; `tracker` is told about the form's unsaved edits (the sync service)
  * @returns {Promise<HTMLElement>}
  */
-export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope, tracker }) {
-  const root = el("section", { class: "card edit", "data-role": "edit" });
+export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope, tracker, locale }) {
+  const root = el("section", { class: "edit-view", "data-role": "edit" });
 
   /** @type {any} */
   let view = null;
@@ -151,7 +155,15 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   notes.input.addEventListener("input", () => {
     notesTouched = true;
   });
-  const notesSlot = el("div", { "data-role": "notes-slot" });
+  const notesSlot = el("section", { class: "card item-section", "data-role": "notes-slot" });
+  // The folders of the item. They are sent only when the user changed them: a draft without `folders` keeps what the
+  // item has (also names this screen does not show), and a list replaces them.
+  const picker = folderPicker({
+    t, locale,
+    initial: Array.isArray(view?.folders) ? view.folders.filter((/** @type {unknown} */ n) => typeof n === "string") : [],
+    suggestions: () => folderIndex(typeof engine?.list === "function" ? engine.list() : [], locale).map((folder) => folder.name),
+  });
+  const folderSlot = el("div", { class: "folder-slot", "data-role": "folder-slot" }, picker.root);
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
@@ -184,7 +196,8 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     errorBox.hidden = false;
   }
 
-  const loginRows = el("div", { class: "stack", "data-role": "login-fields" }, username.row, password.row, url.row);
+  const loginRows = el("section", { class: "card item-section stack", "data-role": "login-fields" },
+    el("h2", null, t("vault.item.card_login")), username.row, password.row, url.row);
   const showsLogin = () => (id === null ? typeSelect.value === "login" : kind === "login" || oldUsername !== undefined || oldPassword !== undefined);
   const syncRows = () => {
     loginRows.hidden = !showsLogin();
@@ -203,6 +216,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   function wipeForm() {
     for (const input of [name.input, username.input, password.input, url.input, notes.input]) input.value = "";
     favorite.checked = false;
+    picker.wipe();
     notesLoaded = false;
     settled = true;
     for (const forget of leave.splice(0)) forget();
@@ -213,6 +227,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     if (settled || /** @type {any} */ (root).isConnected === false) return false;
     if (name.input.value !== start.name || username.input.value !== start.username || url.input.value !== start.url) return true;
     if (favorite.checked !== start.favorite || password.input.value !== "") return true;
+    if (picker.changed() || picker.typed()) return true;
     if (id === null && typeSelect.value !== "login") return true;
     return notesLoaded && (view?.has_notes === true ? notesTouched : notes.input.value !== "");
   }
@@ -228,6 +243,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     for (const control of [favorite, typeSelect, save, loadNotes]) {
       /** @type {any} */ (control).disabled = on;
     }
+    picker.setReadOnly(on);
     root.setAttribute("data-state", on ? "frozen" : "open");
     if (on) mount(status);
   }
@@ -265,6 +281,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       if (text !== "") draft.notes = text;
       else if (view?.has_notes === true) draft.remove_notes = true;
     }
+    if (picker.changed()) draft.folders = picker.value();
     return draft;
   }
 
@@ -281,6 +298,13 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       if (!touch()) return;
       if (name.input.value.trim() === "") {
         showError(describeError(t, { code: "name_required" }));
+        return;
+      }
+      // A folder name typed and not added yet is added now; one the rules refuse stops the save, with its reason.
+      if (!picker.commitTyped()) return;
+      const folderProblem = picker.check();
+      if (folderProblem !== null) {
+        picker.showError(folderProblem);
         return;
       }
       if (id !== null) {
@@ -306,14 +330,19 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
         mount(status);
         save.disabled = false;
         showError(describeError(t, error));
+        if (FOLDER_ERRORS.includes(codeOf(error))) picker.showError(codeOf(error));
       }
     },
   },
-  id === null ? el("div", { class: "field" }, el("label", { for: "edit-type" }, t("vault.edit.type")), typeSelect) : null,
-  name.row,
+  // The first card: what every item has, with its folders at the foot.
+  el("section", { class: "card item-section stack", "data-role": "details-card" },
+    el("h2", null, t("vault.edit.card_details")),
+    id === null ? el("div", { class: "field" }, el("label", { for: "edit-type" }, t("vault.edit.type")), typeSelect) : null,
+    name.row,
+    el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
+    folderSlot),
   loginRows,
   notesSlot,
-  el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
   status,
   errorBox,
   el("div", { class: "actions" }, save, cancel));

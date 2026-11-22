@@ -1,5 +1,6 @@
-// The frame around every vault screen: the sync status line, the banners for
-// warnings and refused changes, the lock button, and `enterVault`, which every
+// The frame around every vault screen: the side menu (with the sync status, the
+// account menu and Lock now), the banners for warnings and refused changes, and
+// `enterVault`, which every
 // vault route calls first (it decides between the screen asked for and the
 // unlock screen).
 //
@@ -7,13 +8,24 @@
 // locks is registered in a wipe scope, and the shell runs the scope before it
 // puts the unlock screen in place of everything else.
 import { el, mount } from "../dom.mjs";
+import { ADMIN_LANDING, configuredAdminUrl } from "../flows/adminUrl.mjs";
+import { goToAdmin } from "../flows/handoff.mjs";
 import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
+import { MANIFEST_ID } from "../sync/engine.mjs";
 import { createWipeScope, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 import { menuRoutes } from "./account.mjs";
+import { menuPathOf } from "./listModel.mjs";
+import { sidebarView } from "./sidebar.mjs";
+import { countItems } from "./sidebarModel.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
+import { THEME_KEY, createThemeChoice } from "../theme.mjs";
+import { createUiPrefs } from "../uiPrefs.mjs";
+import { folderIndex } from "../folders.mjs";
+import { createPinStore } from "../pinStore.mjs";
+import { clearFolderLinks, tokenFor } from "./folderLinks.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
 
@@ -35,6 +47,13 @@ import { unlockScreen } from "./unlock.mjs";
  * @property {readonly string[]} [accountPaths] the addresses of the pages the account page lists (routes that say `menu: "account"`); the account link is marked on them and on `/account`
  * @property {StandbySource} [standby] where the tab is told that another tab took the vault; without it the frame never shows the standby notice
  * @property {ExportReminder | null} [reminder] the reminder to take a new encrypted export; without it the frame never shows one
+ * @property {readonly any[]} [routes] the routes of the page; the side menu lists those that say `sidebar`
+ * @property {string | null} [email] the signed-in account, for the foot of the side menu
+ * @property {{ check(): Promise<boolean>, go(): void | Promise<void> }} [admin] the way to the admin pages; the switch shows only when `check` answers true
+ * @property {() => Promise<void> | void} [signOut] what "Sign out" does (it leaves for the sign-in page itself, and rejects when the server could not be asked); without it the menu has no such item
+ * @property {ReturnType<typeof createUiPrefs>} [prefs] what this device remembers about the menu
+ * @property {ReturnType<typeof createThemeChoice>} [theme] the theme choice of the account menu (Light, Dark, System)
+ * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders for the pinned ones; without it they are read from the engine's items (each with the token of its address as `id`)
  *
  * @typedef {object} LiveSource
  * @property {() => string} state
@@ -108,36 +127,59 @@ function trackLock(session, screen) {
 }
 
 /**
- * The frame: a bar with the navigation, the sync status and the lock button,
- * the banners, and the screen. When the vault locks, the screen and the
- * banners are cleared and the unlock screen takes the whole frame.
+ * The frame: the side menu (a drawer on a phone) with the navigation, the sync
+ * status, the account menu and Lock now; the banners; and the screen. When the
+ * vault locks, the screen and the banners are cleared and the unlock screen
+ * takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
-  const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, t("sync.state.syncing"));
+  const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, el("span", { class: "pill-text" }, t("sync.state.syncing")));
   const banners = el("div", { class: "banners", "data-role": "banners" });
-  const lockButton = el("button", { type: "button", class: "btn btn-secondary btn-sm i-lock", "data-role": "lock" }, t("vault.lock"));
-  const navItems = el("a", { href: "#/items", "data-role": "nav-items" }, t("vault.nav.items"));
-  const navNew = el("a", { href: "#/items/new", "data-role": "nav-new" }, t("vault.nav.new"));
-  const navAccount = el("a", { href: "#/account", "data-role": "nav-account" }, t("security.nav.account"));
-  // Its own landmark, apart from the item links: on a phone it stands in the first row with the name and Lock.
-  const accountNav = el("nav", { class: "account-nav", "aria-label": t("security.nav.account") }, navAccount);
-  const nav = el("nav", { "aria-label": t("vault.nav.label") }, navItems, navNew);
   // The live-update field: a second pill beside the sync state, only when the page has the channel.
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
-  const bar = el("header", { class: "vault-bar" },
-    el("a", { class: "brand", href: "#/items" }, t("app.name")),
-    nav,
-    // With the live field, the two states share one group, so that on a phone they stack in the second row of the bar.
-    liveStatus ? el("span", { class: "vault-status", "data-role": "status-group" }, status, liveStatus) : status,
-    accountNav,
-    lockButton);
-  const main = el("main", { class: "vault-main", "data-role": "content" }, content);
+  const items = () => (typeof engine.list === "function" ? engine.list() : []);
+  // The folders of the vault, for the pinned ones in the menu: the names the items carry, each with the token of its page.
+  const folderEntries = () => (folders ?? folderIndex(items()).map((folder) => ({ id: tokenFor(folder.name), name: folder.name })));
+  let folderShape = "";
+  const shapeOf = (/** @type {readonly { name: string }[]} */ list) => list.map((folder) => folder.name).join("\u0000");
+  const firstFolders = folderEntries();
+  folderShape = shapeOf(firstFolders);
+  const chrome = sidebarView({
+    t, routes, counts: countItems(items(), MANIFEST_ID), folders: firstFolders, prefs, theme, email, status, liveStatus, admin, accountPaths,
+    onLock: async () => {
+      await lock();
+    },
+    onSignOut: signOut
+      ? async () => {
+        try {
+          await signOut();
+        } catch {
+          // The device is signed out, but the server could not be asked to end its session: say so, in place of the page.
+          mount(root, el("section", { class: "auth-card vault-ui", role: "alert", "data-role": "signout-incomplete" },
+            el("p", null, t("account.error.signout_incomplete")),
+            el("p", null, el("a", { href: "#/login" }, t("shell.signout.login")))));
+        }
+      }
+      : undefined,
+    win,
+  });
+  const main = el("main", { class: "vault-main", id: "vault-content", tabindex: "-1", "data-role": "content" }, content);
   // What the engine has found out about the server (warnings and stops) has its own banner, which follows the engine's
   // table of warnings. An engine without `health` (a stand-in in a test) has none.
   const warnings = typeof engine.health === "function" ? syncBanner({ engine, router, t }) : null;
-  mount(root, ...[bar, warnings, banners, main].filter((node) => node !== null));
+  const body = el("div", { class: "vault-body" }, ...[warnings, banners, main].filter((node) => node !== null));
+  // For a keyboard: the way past the menu, straight to the screen.
+  const skip = el("button", { type: "button", class: "skip-link", "data-role": "skip" }, t("shell.skip"));
+  skip.addEventListener("click", () => {
+    if (typeof main.focus === "function") main.focus();
+  });
+  // Out of reach while the drawer is open: the screen and the skip link.
+  chrome.setBehind([skip, body]);
+  // What the frame hands to the page (the window's media query, the parts it holds) is let go when the frame leaves the page or the vault locks.
+  scope.add(() => chrome.dispose());
+  mount(root, skip, chrome.top, el("div", { class: "vault-layout" }, chrome.side, chrome.backdrop, body));
 
   /** @type {Map<string, HTMLElement>} */
   const shown = new Map();
@@ -171,7 +213,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     }
     const kind = String(payload?.kind ?? "");
     if (/^(?:failed|halted|idle|offline|retrying|syncing|unauthorized)$/.test(kind)) {
-      mount(status, document.createTextNode(t(kind === "halted" ? "syncwarnings.pill.halted" : `sync.state.${kind}`)));
+      mount(status, el("span", { class: "pill-text" }, t(kind === "halted" ? "syncwarnings.pill.halted" : `sync.state.${kind}`)));
       status.setAttribute("data-state", kind);
       if (kind === "unauthorized") banner("unauthorized", "error", t("vault.banner.sign_in_again"));
     }
@@ -223,33 +265,57 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     banner(`error:${code}:${payload?.id ?? ""}`, "error", named ? t("vault.banner.item", { name: named.name, message: text }) : text);
   }
 
-  // The link of the screen that is open says so (aria-current), and follows the address.
-  function markCurrent() {
-    const path = String(win?.location?.hash ?? "").replace(/^#/, "");
-    const onNew = path === "/items/new";
-    const onItems = !onNew && (path === "/items" || path.startsWith("/items/"));
-    // The account page and the pages it lists belong to the account link.
-    const onAccount = path === "/account" || accountPaths.includes(path);
-    navItems.setAttribute("aria-current", onItems ? "page" : "false");
-    navNew.setAttribute("aria-current", onNew ? "page" : "false");
-    navAccount.setAttribute("aria-current", onAccount ? "page" : "false");
-  }
-  markCurrent();
+  // The entry of the screen that is open says so (aria-current), and follows the address.
+  // The list keeps its filters after a "?": the part before it is the page, and the list with the favourites on belongs to the Favourites entry.
+  const pathNow = () => {
+    const raw = String(win?.location?.hash ?? "").replace(/^#/, "");
+    const cut = raw.indexOf("?");
+    return cut < 0 ? raw : menuPathOf(raw.slice(0, cut), raw.slice(cut + 1));
+  };
+  chrome.markCurrent(pathNow());
   if (typeof win?.addEventListener === "function") {
     const onHash = () => {
       // A frame that has left the page stops listening.
       if (/** @type {any} */ (root).isConnected === false) win.removeEventListener?.("hashchange", onHash);
-      else markCurrent();
+      else chrome.markCurrent(pathNow());
     };
     win.addEventListener("hashchange", onHash);
+    scope.add(() => win.removeEventListener?.("hashchange", onHash));
   }
+  // Another tab changed the theme: this page follows at once, and the account menu shows the new choice. (The event is only
+  // delivered to the other tabs, never to the one that made the change.)
+  if (typeof win?.addEventListener === "function") {
+    const onStorage = (/** @type {{ key?: string | null }} */ event) => {
+      // A frame that has left the page stops listening.
+      if (/** @type {any} */ (root).isConnected === false) {
+        win.removeEventListener?.("storage", onStorage);
+        return;
+      }
+      if (event?.key !== THEME_KEY && event?.key !== null && event?.key !== undefined) return;
+      theme.sync?.();
+      chrome.refreshTheme();
+    };
+    win.addEventListener("storage", onStorage);
+    scope.add(() => win.removeEventListener?.("storage", onStorage));
+  }
+  // The numbers beside "All items" and "Favourites" follow the items, and so do the pinned folders (a folder renamed or
+  // emptied on any device); the menu is built again only when the set of folders changed.
+  scope.add(listenWhileShown(root, engine, "changed", () => {
+    chrome.setCounts(countItems(items(), MANIFEST_ID));
+    if (folders !== undefined) return;
+    const next = folderEntries();
+    const shape = shapeOf(next);
+    if (shape === folderShape) return;
+    folderShape = shape;
+    chrome.setFolders(next);
+  }));
 
   /** @param {unknown} state */
   function onLive(state) {
     if (!liveStatus) return;
     const name = typeof state === "string" && LIVE_STATES.includes(state) ? state : "offline";
     const text = t(`live.state.${name}`);
-    mount(liveStatus, document.createTextNode(text));
+    mount(liveStatus, el("span", { class: "pill-text" }, text));
     liveStatus.setAttribute("aria-label", t("live.label", { state: text })); // the short word needs its subject
     liveStatus.setAttribute("data-state", name);
   }
@@ -299,16 +365,26 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   // said now: the announcement is made once, and a screen that missed it would show "Syncing" for good.
   const stood = typeof engine.status === "function" ? engine.status() : "";
   if (stood === "unauthorized" || stood === "offline" || stood === "failed") onState({ kind: stood });
-  listenWhileShown(root, engine, "state", onState);
-  listenWhileShown(root, engine, "error", onError);
+  scope.add(listenWhileShown(root, engine, "state", onState));
+  scope.add(listenWhileShown(root, engine, "error", onError));
 
   // Activity: a click or a key press moves the idle time on. When the lock time
   // has passed, `touch` locks instead and the event is dropped.
   const activity = () => void touch();
   root.addEventListener("pointerdown", activity);
   root.addEventListener("keydown", activity);
+  // Escape closes the open menu or the drawer and puts the focus back on what opened it; a press elsewhere closes a menu.
+  root.addEventListener("keydown", (/** @type {any} */ event) => {
+    chrome.trap(event);
+    if (event.key === "Escape" && chrome.escape()) event.preventDefault?.();
+  });
+  root.addEventListener("pointerdown", (/** @type {any} */ event) => chrome.press(event.target));
 
   function wipe() {
+    // The pins are held in memory only: a lock forgets them (a folder's name is an encrypted label of the vault), and the
+    // tokens of the folders' addresses with them.
+    prefs.clearPins();
+    clearFolderLinks();
     scope.run();
     shown.clear();
     // A frame that has left the page only needs to be emptied; the one on it gets the unlock screen.
@@ -320,7 +396,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   // Another tab took the vault: this one stops showing it. The engine has stopped already (the items and the open handles are gone);
   // what is on the screen goes too, and the notice takes the whole frame.
   if (standby) {
-    listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
+    scope.add(listenWhileShown(root, { on: (_event, fn) => standby.onStandby(fn) }, "standby", (/** @type {boolean} */ on) => {
       if (on !== true) return;
       // A form with edits that are not saved stays on screen, read-only, under the notice (with "Take back"); the lock wipes it.
       // Anything else on the screen goes, as before.
@@ -336,22 +412,19 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
       const card = standby.card();
       mount(root, card.root);
       card.focus();
-    });
+    }));
   }
 
   // An item that was restored over one the server had purged is a copy under a new id now (the engine's `copied`): the screen of
   // the old one moves to the copy, and the user is told once. An edit screen follows by itself (it keeps what was typed).
-  listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
+  scope.add(listenWhileShown(root, engine, "copied", (/** @type {any} */ payload) => {
     const from = payload?.from;
     const to = payload?.to;
     if (typeof from !== "string" || typeof to !== "string") return;
     if (String(win?.location?.hash ?? "").replace(/^#/, "") === `/items/${from}`) router.go(`/items/${to}`);
     banner(`copied:${to}`, "info", t("vault.banner.copied"));
-  });
+  }));
 
-  lockButton.addEventListener("click", async () => {
-    await lock();
-  });
   return root;
 }
 
@@ -383,7 +456,16 @@ export async function enterVault(ctx) {
   const autoLock = autoLockFor(session, sync);
 
   const open = session.current?.() ?? null;
-  const onUnlocked = () => go(path);
+  // After an unlock the same screen comes back, with the filters of its address (the list keeps them there).
+  const onUnlocked = () => {
+    const hash = String(globalThis.location?.hash ?? "");
+    const cut = hash.indexOf("?");
+    try {
+      go(cut < 0 ? path : `${path}${hash.slice(cut)}`);
+    } catch {
+      go(path);
+    }
+  };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
   const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
   if (!open) return { locked: lockedScreen() };
@@ -421,6 +503,9 @@ export async function enterVault(ctx) {
     return { locked: card };
   }
 
+  // The pinned folders of this device come back from their sealed record, once per unlock, before the first frame.
+  await restorePins(session, open, services.store, session.client ?? ctx.client);
+
   const scope = createWipeScope();
   const touch = () => autoLock.touch();
   return {
@@ -435,6 +520,9 @@ export async function enterVault(ctx) {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
       return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
+        routes: ctx.routes ?? [], email: typeof open.email === "string" ? open.email : null,
+        admin: adminWay(session, open.accountId),
+        signOut: typeof session.signOut === "function" ? () => signOutAndLeave(session, go) : undefined,
         accountPaths: menuRoutes(ctx.routes ?? []).map((route) => route.path),
         reminder: reminderOf(services.store, session.serverUrl, open.accountId),
         standby: typeof sync.onStandby === "function"
@@ -443,6 +531,94 @@ export async function enterVault(ctx) {
       });
     },
   };
+}
+
+/** The unlocks whose pins were read back already (each unlock is a new `current()` object). @type {WeakSet<object>} */
+const pinsRead = new WeakSet();
+
+/** The sessions whose lock forgets the pins and the folder tokens (every lock path, not only a frame's). @type {WeakSet<object>} */
+const lockForgets = new WeakSet();
+
+/**
+ * Reads the pinned folders back from their sealed record (pinStore.mjs) and lets later changes be kept there. A store or
+ * client that cannot do it (a stand-in) leaves the pins in memory only.
+ * @param {any} session @param {any} open the unlocked session's `current()` @param {any} store the store service @param {any} client
+ */
+async function restorePins(session, open, store, client) {
+  const prefs = createUiPrefs();
+  if (!lockForgets.has(session) && typeof session?.onLock === "function") {
+    lockForgets.add(session);
+    session.onLock(() => {
+      prefs.clearPins();
+      clearFolderLinks();
+    });
+  }
+  if (pinsRead.has(open)) return;
+  pinsRead.add(open);
+  const vault = client?.vault;
+  if (typeof store?.open !== "function" || typeof store.getSetting !== "function" || typeof vault?.encrypt_item !== "function"
+    || typeof open?.accountId !== "string" || typeof open?.vaultId !== "string" || !Number.isSafeInteger(open?.vkEpoch)) {
+    return;
+  }
+  const settings = {
+    get: async (/** @type {string} */ key) => store.getSetting(await store.open(), key),
+    set: async (/** @type {string} */ key, /** @type {unknown} */ value) => store.setSetting(await store.open(), key, value),
+    remove: async (/** @type {string} */ key) => store.deleteSetting(await store.open(), key),
+  };
+  const pins = createPinStore({ vault, settings, accountId: open.accountId, vaultId: open.vaultId, vkEpoch: open.vkEpoch });
+  const names = await pins.load();
+  // The vault may have locked while the record was read: then nothing comes back.
+  if (session.current?.() !== open) return;
+  prefs.restorePins(names, (list) => pins.save(list));
+}
+
+/** What the admin check found, per session and account: asked once, not on every page. @type {WeakMap<object, { accountId: string, admin: boolean }>} */
+const adminSeen = new WeakMap();
+
+/**
+ * The way to the admin pages for the switch in the side menu: only where this vault has an admin address, and
+ * the switch shows only when the server says the account is an administrator. A failed check shows no switch
+ * and is asked again at the next page.
+ * @param {any} session
+ * @param {string} accountId
+ * @returns {{ check(): Promise<boolean>, go(): Promise<void> } | undefined}
+ */
+function adminWay(session, accountId) {
+  const adminUrl = configuredAdminUrl();
+  if (adminUrl === null || typeof session?.info !== "function") return undefined;
+  return {
+    async check() {
+      const seen = adminSeen.get(session);
+      if (seen && seen.accountId === accountId) return seen.admin;
+      try {
+        const admin = (await session.info())?.admin === true;
+        adminSeen.set(session, { accountId, admin });
+        return admin;
+      } catch {
+        return false;
+      }
+    },
+    go: async () => goToAdmin({ adminUrl, next: ADMIN_LANDING, purpose: "login" }),
+  };
+}
+
+/**
+ * Sign out, then the sign-in page. The device is wiped whatever happens. When the server could not be asked to end its
+ * session (`signout_incomplete`) this rejects instead of leaving, so that the frame can say so; any other failure
+ * still leaves for the sign-in page, as the sign-in page's own button does.
+ * @param {any} session
+ * @param {(path: string) => void} go
+ */
+async function signOutAndLeave(session, go) {
+  /** @type {unknown} */
+  let failure = null;
+  try {
+    await session.signOut();
+  } catch (error) {
+    failure = error;
+  }
+  if (/** @type {any} */ (failure)?.code === "signout_incomplete") throw failure;
+  go("/login");
 }
 
 /**

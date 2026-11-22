@@ -141,7 +141,7 @@ const COUNT_KEYS = Object.freeze({
   items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0,
 });
 const SKIPPED_KEYS = Object.freeze({
-  passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
+  passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
   attachments: 0, fieldHistory: 0, tags: 0,
 });
 

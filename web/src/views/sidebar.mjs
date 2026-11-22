@@ -1,0 +1,408 @@
+// The side menu of the vault: the mark, the Vault/Admin switch, the entries
+// (sidebarModel.mjs says which), the pinned folders, and the account at the foot
+// with its menu. On a phone it is a drawer that a button in the top bar opens.
+//
+// Nothing here holds a secret. The e-mail address is on the page only as text
+// and as two letters; folder names are text nodes; the only thing kept on the
+// device in clear is the folded flag. The pinned folders are held in memory and
+// kept sealed under the vault key (uiPrefs.mjs, pinStore.mjs).
+//
+// The pieces the frame needs from outside (the sync and live pills, what Lock and
+// Sign out do) are handed in; the frame owns the rest of the page.
+import { el, mount } from "../dom.mjs";
+import { sameFolder } from "../folders.mjs";
+import { watchPins } from "../uiPrefs.mjs";
+import { focusNode, popMenu, within } from "./popMenu.mjs";
+import { currentEntry, initialsOf, sidebarModel } from "./sidebarModel.mjs";
+
+/** Where Help leads (the project's public documentation). */
+export const HELP_URL = "https://github.com/Ferdinand99/Faithful-Ferret/tree/main/docs";
+
+/** A phone: the menu is a drawer. Keep in step with styles/shell.css. */
+export const PHONE_QUERY = "(max-width: 767.98px)";
+
+let sequence = 0;
+let folderMenus = 0;
+
+/**
+ * @typedef {object} SidebarOptions
+ * @property {(key: string, vars?: Record<string, string | number>) => string} t
+ * @property {readonly any[]} routes the routes of the page; those with `sidebar` are listed
+ * @property {{ all: number, favorites: number }} counts
+ * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders the vault has (`id` is the token of the folder's address)
+ * @property {ReturnType<typeof import("../uiPrefs.mjs").createUiPrefs>} prefs
+ * @property {{ current(): string, set(theme: string): void }} [theme] the theme choice, shown in the account menu (without it the menu has none)
+ * @property {string | null} [email]
+ * @property {HTMLElement} status the sync state (a pill)
+ * @property {HTMLElement | null} liveStatus the live-update state, or null
+ * @property {() => Promise<void> | void} onLock
+ * @property {(() => Promise<void> | void) | undefined} [onSignOut]
+ * @property {{ check(): Promise<boolean>, go(): void | Promise<void> } | undefined} [admin] the way to the admin pages, for an administrator
+ * @property {readonly string[]} [accountPaths] the pages the account page lists
+ * @property {string} [helpUrl]
+ * @property {any} [win]
+ */
+
+/**
+ * @param {SidebarOptions} options
+ */
+export function sidebarView({
+  t, routes, counts, folders = [], prefs, theme, email = null, status, liveStatus, onLock, onSignOut, admin, accountPaths = [], helpUrl = HELP_URL, win,
+}) {
+  sequence += 1;
+  const sideId = `vault-side-${sequence}`;
+  const accountMenuId = `account-menu-${sequence}`;
+  let currentCounts = counts;
+  let currentFolders = folders;
+  /** The number beside each entry that has one, so that a new count changes the text and nothing else. @type {Map<string, { node: HTMLElement, key: string }>} */
+  const countNodes = new Map();
+  let path = "";
+  let drawerOpen = false;
+
+  // ---- the top bar of a phone: the button that opens the drawer, and the name
+  const menuButton = el("button", {
+    type: "button", class: "side-btn side-menu-open", "aria-label": t("shell.menu.open"), "aria-expanded": "false", "aria-controls": sideId, "data-role": "menu-open",
+  }, el("span", { class: "icon", "data-icon": "menu", "aria-hidden": "true" }));
+  const top = el("header", { class: "vault-top", "data-role": "top-bar" },
+    menuButton,
+    el("a", { class: "brand", href: "#/items" }, t("shell.brand")));
+
+  // ---- the head of the menu: the mark, the name, fold and close
+  const collapseButton = el("button", { type: "button", class: "side-btn side-collapse", "aria-controls": sideId, "data-role": "collapse" },
+    el("span", { class: "icon", "data-icon": "panel", "aria-hidden": "true" }));
+  const closeButton = el("button", { type: "button", class: "side-btn side-close", "aria-label": t("shell.menu.close"), "data-role": "menu-close" },
+    el("span", { class: "icon", "data-icon": "close", "aria-hidden": "true" }));
+  const head = el("div", { class: "side-head" },
+    el("a", { class: "brand", href: "#/items", "data-role": "brand" }, t("shell.brand")), collapseButton, closeButton);
+
+  // ---- the switch to the admin pages: only for an administrator
+  const switcher = el("button", { type: "button", class: "side-switch", "aria-label": t("shell.switch.label"), "data-role": "switch-admin" },
+    el("span", { class: "icon", "data-icon": "vault", "aria-hidden": "true" }),
+    el("span", { class: "side-label", "aria-hidden": "true" }, t("shell.switch.vault")),
+    el("span", { class: "side-switch-other", "aria-hidden": "true" }, el("span", { class: "icon", "data-icon": "switch", "aria-hidden": "true" }), t("shell.switch.admin")));
+  switcher.hidden = true;
+  switcher.addEventListener("click", () => void admin?.go());
+  if (admin) {
+    void Promise.resolve()
+      .then(() => admin.check())
+      .then((yes) => {
+        switcher.hidden = yes !== true;
+      })
+      .catch(() => undefined);
+  }
+
+  const lists = el("div", { class: "side-sections", "data-role": "side-sections" });
+  const nav = el("nav", { class: "side-nav", "aria-label": t("shell.nav.label") }, switcher, lists);
+
+  // ---- the account at the foot
+  const avatar = el("span", { class: "avatar", "aria-hidden": "true" }, initialsOf(email));
+  const accountButton = el("button", {
+    type: "button", class: "side-account-btn", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": accountMenuId,
+    "aria-label": t("shell.account.menu", { email: email ?? t("security.nav.account") }), "data-role": "account-menu-button",
+  }, avatar,
+  el("span", { class: "side-email", ...(email === null ? {} : { title: email }) }, email ?? t("security.nav.account")),
+  el("span", { class: "icon side-caret", "data-icon": "switch", "aria-hidden": "true" }));
+
+  /** A menu entry: a button, or a link when it goes to a page of this app. @param {string} role @param {string} icon @param {string} text @param {string | null} href */
+  const menuItem = (role, icon, text, href) => {
+    const attrs = { role: "menuitem", tabindex: "-1", class: "side-menuitem", "data-role": role };
+    const inner = [el("span", { class: "icon", "data-icon": icon, "aria-hidden": "true" }), text];
+    return href === null ? el("button", { type: "button", ...attrs }, ...inner) : el("a", { ...attrs, href }, ...inner);
+  };
+  /** Help is a link to a page outside the vault: it opens in a window of its own that has no way back to this one. */
+  const helpLink = () => {
+    const link = menuItem("help", "help", t("shell.account.help"), "#/help");
+    // `el` takes only addresses of this page; this one is a constant of this file.
+    link.setAttribute("href", helpUrl);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    return link;
+  };
+  const settingsItem = menuItem("nav-account", "account", t("shell.account.settings"), "#/account");
+  const helpItem = helpLink();
+  const lockItem = menuItem("lock", "lock", t("shell.account.lock"), null);
+  const signOutItem = menuItem("sign-out", "signout", t("shell.account.signout"), null);
+  // The theme choice: three radio entries in a group of their own. Choosing one changes the page at once and leaves the menu
+  // open, so the effect is seen; the choice is a per-device preference (theme.mjs), never vault data.
+  /** @type {Map<string, HTMLElement>} */
+  const themeItems = new Map();
+  for (const [name, icon, text] of /** @type {const} */ ([["light", "sun", "shell.theme.light"], ["dark", "moon", "shell.theme.dark"], ["auto", "auto", "shell.theme.system"]])) {
+    const item = el("button", {
+      type: "button", role: "menuitemradio", tabindex: "-1", class: "side-menuitem", "aria-checked": "false", "data-role": "theme-choice", "data-theme-set": name,
+    }, el("span", { class: "icon", "data-icon": icon, "aria-hidden": "true" }), t(text));
+    item.addEventListener("click", () => {
+      theme?.set(name);
+      paintTheme();
+    });
+    themeItems.set(name, item);
+  }
+  /** Marks the choice in force (read again, so another tab's change shows). */
+  function paintTheme() {
+    const now = theme?.current();
+    for (const [name, item] of themeItems) item.setAttribute("aria-checked", name === now ? "true" : "false");
+  }
+  paintTheme();
+  const themeGroup = el("div", { class: "side-menu-group", role: "group", "aria-labelledby": `${accountMenuId}-theme`, "data-role": "theme" },
+    el("span", { class: "side-menu-label", id: `${accountMenuId}-theme` }, t("shell.theme.label")), ...themeItems.values());
+  const themeEntries = theme ? [...themeItems.values()] : [];
+  const accountItems = [settingsItem, helpItem, ...themeEntries, lockItem, ...(onSignOut ? [signOutItem] : [])];
+  const accountMenu = el("div", { class: "side-menu", id: accountMenuId, role: "menu", "aria-label": t("security.nav.account"), "data-role": "account-menu" },
+    settingsItem, helpItem, el("div", { class: "side-menu-sep", role: "separator" }),
+    ...(theme ? [themeGroup, el("div", { class: "side-menu-sep", role: "separator" })] : []),
+    lockItem, ...(onSignOut ? [signOutItem] : []));
+  const foot = el("div", { class: "side-foot" },
+    el("div", { class: "side-account" }, accountButton, accountMenu),
+    el("div", { class: "side-sync", "data-role": "side-sync" }, status, ...(liveStatus ? [liveStatus] : [])));
+
+  const side = el("div", { class: "vault-side", id: sideId, "data-open": "false", "data-role": "side" }, head, nav, foot);
+  const backdrop = el("div", { class: "side-backdrop", "data-open": "false", "data-role": "drawer-backdrop", "aria-hidden": "true" });
+
+  // ---- menus: one open at a time
+  /** @type {ReturnType<typeof popMenu>[]} */
+  const menus = [];
+  const closeMenus = (/** @type {ReturnType<typeof popMenu> | null} */ except = null) => {
+    for (const menu of menus) if (menu !== except) menu.close(false);
+  };
+  const account = popMenu({ trigger: accountButton, menu: accountMenu, items: () => accountItems, onOpen: () => {
+    closeMenus();
+    paintTheme();
+  } });
+  menus.push(account);
+  // A menu is opened by the one control: a second one that opens closes the first (the folder menus do the same).
+  accountItems.filter((item) => !themeEntries.includes(item)).forEach((item) => item.addEventListener("click", () => account.close(false)));
+
+  settingsItem.addEventListener("click", () => closeDrawer(false));
+  lockItem.addEventListener("click", () => void onLock());
+  signOutItem.addEventListener("click", () => void onSignOut?.());
+
+  // ---- the drawer on a phone
+  /** The parts of the page that are out of reach while the drawer is open. @type {any[]} */
+  let behind = [];
+  /** @param {any[]} nodes */
+  function setBehind(nodes) {
+    behind = nodes;
+  }
+  /** @param {boolean} value */
+  function setDrawer(value) {
+    drawerOpen = value;
+    side.setAttribute("data-open", value ? "true" : "false");
+    backdrop.setAttribute("data-open", value ? "true" : "false");
+    menuButton.setAttribute("aria-expanded", value ? "true" : "false");
+    for (const node of [...behind, top]) node.inert = value;
+    if (value) closeMenus();
+  }
+  /** @param {boolean} returnFocus */
+  function closeDrawer(returnFocus) {
+    if (!drawerOpen) return;
+    setDrawer(false);
+    if (returnFocus) focusNode(menuButton);
+  }
+  menuButton.addEventListener("click", () => {
+    setDrawer(true);
+    focusNode(closeButton);
+  });
+  closeButton.addEventListener("click", () => closeDrawer(true));
+  backdrop.addEventListener("click", () => closeDrawer(true));
+  // Resizing to a wide window ends the drawer, so that nothing stays out of reach.
+  const matcher = (win ?? globalThis.window)?.matchMedia?.(PHONE_QUERY);
+  /** @param {any} event */
+  const onResize = (event) => {
+    if (event.matches !== true) closeDrawer(false);
+  };
+  matcher?.addEventListener?.("change", onResize);
+
+  // ---- fold to a rail (a wide window)
+  /** @param {boolean} value */
+  function paintCollapsed(value) {
+    side.setAttribute("data-collapsed", value ? "true" : "false");
+    const label = t(value ? "shell.menu.expand" : "shell.menu.collapse");
+    collapseButton.setAttribute("aria-label", label);
+    collapseButton.setAttribute("title", label);
+  }
+  paintCollapsed(prefs.collapsed());
+  collapseButton.addEventListener("click", () => {
+    const next = side.getAttribute("data-collapsed") !== "true";
+    prefs.setCollapsed(next);
+    paintCollapsed(next);
+  });
+
+  // ---- the entries
+  /** @param {import("./sidebarModel.mjs").SidebarEntry} entry */
+  function linkOf(entry) {
+    const label = entry.kind === "folder" ? entry.label : t(entry.label);
+    const icon = el("span", { class: "icon", "data-icon": entry.icon, "aria-hidden": "true" });
+    if (entry.kind === "soon") {
+      return el("span", { class: "side-link side-soon", role: "link", "aria-disabled": "true", "data-role": entry.role, title: t("shell.soon") },
+        icon, el("span", { class: "side-label" }, label), el("span", { class: "side-tag" }, t("shell.soon")));
+    }
+    const count = entry.count === null ? null : el("span", { class: "side-count" }, String(entry.count));
+    if (count !== null && entry.countKey !== null) countNodes.set(entry.id, { node: count, key: entry.countKey });
+    const link = el("a", { class: "side-link", href: /** @type {string} */ (entry.href), "data-role": entry.role, "data-entry": entry.id, title: label },
+      icon, el("span", { class: "side-label" }, label), ...(count === null ? [] : [count]));
+    link.addEventListener("click", () => closeDrawer(false));
+    return link;
+  }
+
+  /** @param {import("./sidebarModel.mjs").SidebarEntry} entry */
+  function folderItem(entry) {
+    const link = linkOf(entry);
+    const li = el("li", { class: "side-item side-folder", "data-depth": String(entry.depth), "data-folder": entry.folder ?? "" }, link);
+    if (entry.folder !== null) {
+      const name = entry.folder;
+      const menuId = `${sideId}-folder-menu-${(folderMenus += 1)}`;
+      const more = el("button", {
+        type: "button", class: "side-btn side-more", "aria-haspopup": "menu", "aria-expanded": "false", "data-role": "folder-menu-button",
+        "aria-label": t("shell.pinned.options", { name: entry.label }), "aria-controls": menuId,
+      }, el("span", { class: "icon", "data-icon": "more", "aria-hidden": "true" }));
+      const unpin = el("button", { type: "button", role: "menuitem", tabindex: "-1", class: "side-menuitem", "data-role": "unpin" },
+        el("span", { class: "icon", "data-icon": "pin", "aria-hidden": "true" }), t("shell.pinned.unpin"));
+      const menu = el("div", { class: "side-menu side-folder-menu", id: menuId, role: "menu", "aria-label": entry.label, "data-role": "folder-menu" }, unpin);
+      const pop = popMenu({ trigger: more, menu, items: () => [unpin], onOpen: () => closeMenus(pop) });
+      menus.push(pop);
+      unpin.addEventListener("click", () => {
+        prefs.unpin(name);
+        render();
+      });
+      li.appendChild(more);
+      li.appendChild(menu);
+    }
+    return li;
+  }
+
+  /** The pinned folders that the vault has now, in the spelling it shows (a pin of a folder with no item is kept, not shown). */
+  function pinnedNames() {
+    return prefs.pinned().flatMap((pin) => {
+      const folder = currentFolders.find((f) => sameFolder(f.name, pin));
+      return folder ? [folder.name] : [];
+    });
+  }
+
+  function render() {
+    // The folder menus built before are gone with their entries; the account menu stays.
+    for (let i = menus.length - 1; i >= 1; i -= 1) menus.splice(i, 1);
+    countNodes.clear();
+    const sections = sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: pinnedNames() });
+    mount(lists, ...sections.map((section) => {
+      const heading = section.heading === null ? null : el("h2", { class: "side-heading", id: `${sideId}-${section.id}` }, t(section.heading));
+      const list = el("ul", {
+        class: "side-list", "data-section": section.id, ...(heading === null ? {} : { "aria-labelledby": `${sideId}-${section.id}` }),
+      }, ...section.entries.map((entry) => (entry.kind === "folder" ? folderItem(entry) : el("li", { class: "side-item" }, linkOf(entry)))));
+      return el("div", { class: "side-section", "data-section": section.id }, ...(heading ? [heading] : []), list);
+    }));
+    lists.setAttribute("data-current", currentEntry(sections, path) ?? "");
+    markCurrent(path, sections);
+  }
+
+  /** Marks the entry the page belongs to (aria-current) and the account menu when the page is one of its. @param {string} next @param {import("./sidebarModel.mjs").SidebarSection[]} [sections] */
+  function markCurrent(next, sections) {
+    path = next;
+    const model = sections ?? sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: pinnedNames() });
+    const id = currentEntry(model, next);
+    const walk = (/** @type {any} */ node) => {
+      if (node?.getAttribute?.("data-entry") !== null && node?.getAttribute?.("data-entry") !== undefined) {
+        node.setAttribute("aria-current", node.getAttribute("data-entry") === id ? "page" : "false");
+      }
+      for (const child of node?.childNodes ?? []) walk(child);
+    };
+    walk(lists);
+    const onAccount = next === "/account" || accountPaths.includes(next);
+    settingsItem.setAttribute("aria-current", onAccount ? "page" : "false");
+    accountButton.setAttribute("data-current", onAccount ? "true" : "false");
+  }
+
+  render();
+  // A pin made on another screen (the Folders page) shows here at once. A menu whose frame has left the page lets go
+  // of its watcher at the next change, so it is not drawn again and its nodes (with folder names) are not kept.
+  let disposed = false;
+  const offPins = watchPins(() => {
+    if (disposed) return;
+    if (side.isConnected === false) {
+      offPins();
+      return;
+    }
+    render();
+  });
+
+  return {
+    top,
+    side,
+    backdrop,
+    setBehind,
+    /** @param {{ all: number, favorites: number }} next */
+    setCounts(next) {
+      if (next.all === currentCounts.all && next.favorites === currentCounts.favorites) return;
+      currentCounts = next;
+      // Only the numbers change, in place: the menu is not built again, so the focus stays where it is and a screen
+      // reader is not told about new entries.
+      for (const { node, key } of countNodes.values()) {
+        const value = String(/** @type {Record<string, number>} */ (next)[key]);
+        const text = /** @type {any} */ (node.firstChild);
+        if (text === null) node.appendChild(document.createTextNode(value));
+        else if (text.data !== value) text.data = value;
+      }
+    },
+    /** @param {readonly { id: string, name: string, parentId?: string | null }[]} next */
+    setFolders(next) {
+      currentFolders = next;
+      render();
+    },
+    /** The folders the menu shows now. */
+    folders: () => currentFolders,
+    markCurrent: (/** @type {string} */ next) => markCurrent(next),
+    /** The theme choice was changed elsewhere (another tab): the checked entry follows. */
+    refreshTheme: paintTheme,
+    refs: { menuButton, closeButton, collapseButton, accountButton, switcher, lockItem, signOutItem, settingsItem, helpItem, accountMenu, themeItems },
+    state: () => ({ drawerOpen, accountOpen: account.isOpen(), collapsed: side.getAttribute("data-collapsed") === "true" }),
+    openDrawer: () => {
+      setDrawer(true);
+      focusNode(closeButton);
+    },
+    /** Escape: the open menu first, then the drawer; the focus goes back to what opened it. @returns {boolean} whether there was something to close */
+    escape() {
+      const open = menus.find((menu) => menu.isOpen());
+      if (open) {
+        open.close(true);
+        return true;
+      }
+      if (drawerOpen) {
+        closeDrawer(true);
+        return true;
+      }
+      return false;
+    },
+    /**
+     * Tab in the open drawer goes round inside it: past the last control to the first, back from the first to the last
+     * (the rest of the page is inert, so the focus would otherwise leave the page).
+     * @param {any} event
+     */
+    trap(event) {
+      if (!drawerOpen || event.key !== "Tab" || typeof side.querySelectorAll !== "function") return;
+      const list = [...side.querySelectorAll("a[href], button:not([disabled])")].filter((node) => node.getAttribute("tabindex") !== "-1" && node.getClientRects().length > 0);
+      if (list.length === 0) return;
+      // From an item of an open menu the next stop is counted from the menu's own button.
+      const owner = menus.find((menu) => within(event.target, menu.menu));
+      const current = owner ? owner.trigger : event.target;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (event.shiftKey === true ? current === first : current === last) {
+        event.preventDefault?.();
+        focusNode(event.shiftKey === true ? last : first);
+      }
+    },
+    /** A press anywhere: an open menu closes when the press is outside it. @param {any} target */
+    press(target) {
+      for (const menu of menus) if (menu.isOpen() && !within(target, menu.menu) && !within(target, menu.trigger)) menu.close(false);
+    },
+    closeMenus: () => closeMenus(),
+    closeDrawer: () => closeDrawer(false),
+    /** Lets go of everything outside the menu that points into it: the window's media query and the parts of the page it holds. */
+    dispose() {
+      disposed = true;
+      offPins();
+      matcher?.removeEventListener?.("change", onResize);
+      behind = [];
+      countNodes.clear();
+      menus.length = 0;
+    },
+  };
+}

@@ -44,8 +44,8 @@ test("a_preview_gives_the_page_counts_and_codes_never_a_value_of_the_file", asyn
   assert.equal(preview.counts.http, 1);
   assert.equal(preview.counts.textAddresses, 2);
   assert.deepEqual(
-    { passkeys: preview.skipped.passkeys, folders: preview.skipped.folders, collections: preview.skipped.collections, otherTypes: preview.skipped.otherTypes, trashed: preview.skipped.trashed, passwordHistory: preview.skipped.passwordHistory },
-    { passkeys: 1, folders: 2, collections: 1, otherTypes: 2, trashed: 1, passwordHistory: 1 },
+    { passkeys: preview.skipped.passkeys, folders: preview.skipped.folders, otherTypes: preview.skipped.otherTypes, trashed: preview.skipped.trashed, passwordHistory: preview.skipped.passwordHistory },
+    { passkeys: 1, folders: 0, otherTypes: 2, trashed: 1, passwordHistory: 1 },
   );
   // Warnings are counted by code (the index of an item in the file is not given on).
   const byCode = Object.fromEntries(preview.warnings.map((warning) => [warning.code, warning.count]));

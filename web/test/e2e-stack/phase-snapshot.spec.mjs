@@ -5,7 +5,7 @@
 // snapshot and puts it back between the phases with
 // scripts/lanbox-ferret-test.sh e2e-snapshot and e2e-restore-snapshot, and hands
 // the state of one phase to the next in FERRET_E2E_STATE.
-import { adopt, createItem, expect, freshContext, leave, previousState, rowsNamed, secrets, setUpAccount, signInOn, test, vaultUrl } from "./support.mjs";
+import { adopt, createItem, expect, freshContext, leave, previousState, findRows, secrets, setUpAccount, signInOn, test, vaultUrl } from "./support.mjs";
 
 const phase = process.env.FERRET_E2E_PHASE ?? "";
 test.skip(!phase.startsWith("snapshot-"), "run by the check script, around e2e-snapshot and e2e-restore-snapshot");
@@ -44,7 +44,7 @@ test("snapshot_second_write", async ({ browser }) => {
   const context = await freshContext(browser);
   const page = await context.newPage();
   await signInOn(page);
-  await expect(rowsNamed(page, `First-${state.itemTitle}`)).toHaveCount(1, { timeout: 30_000 });
+  await expect((await findRows(page, `First-${state.itemTitle}`))).toHaveCount(1, { timeout: 30_000 });
   await createItem(page, { name: `Second-${state.itemTitle}` });
   await expect.poll(async () => (await feed(context)).latest_seq, { timeout: 30_000 }).toBeGreaterThan(state.snapSeq);
   leave("second", { ok: true });
@@ -60,8 +60,8 @@ test("e2e_snapshot_and_restore_raise_restore_epoch", async ({ browser }) => {
   const page = await context.newPage();
   await signInOn(page);
   // The first write is there, the second is gone with the data that was put back.
-  await expect(rowsNamed(page, `First-${state.itemTitle}`)).toHaveCount(1, { timeout: 30_000 });
-  await expect(rowsNamed(page, `Second-${state.itemTitle}`)).toHaveCount(0);
+  await expect((await findRows(page, `First-${state.itemTitle}`))).toHaveCount(1, { timeout: 30_000 });
+  await expect((await findRows(page, `Second-${state.itemTitle}`))).toHaveCount(0);
   const restored = await feed(context);
   // The bump takes `max(stored + 1, now, at_least)`, so the epoch is higher, by one or up to the time.
   expect(restored.restore_epoch, "the restore epoch is higher").toBeGreaterThan(state.snapEpoch);

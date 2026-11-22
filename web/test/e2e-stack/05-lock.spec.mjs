@@ -1,6 +1,6 @@
 // Locking removes every secret from the page and from memory, ends
 // the worker that held the keys, and a password alone opens the vault again.
-import { bodyText, createItem, expect, freshContext, memory, pace, recordWorkers, requireAccount, secrets, signInOn, signOutOn, SLOW, tamperPinnedServerKey, test, unlockWith, workers } from "./support.mjs";
+import { bodyText, createItem, expect, findRows, freshContext, lockNow, memory, pace, recordWorkers, requireAccount, secrets, signInOn, signOutOn, SLOW, tamperPinnedServerKey, test, unlockWith, workers } from "./support.mjs";
 
 test("lock_and_unlock_roundtrip", async ({ browser }) => {
   test.setTimeout(400_000);
@@ -23,7 +23,7 @@ test("lock_and_unlock_roundtrip", async ({ browser }) => {
   expect(open.items).toBeGreaterThan(0);
   expect((await workers(page)).filter((w) => !w.ended).length).toBeGreaterThan(0);
 
-  await page.locator('[data-role="lock"]').click();
+  await lockNow(page);
   await expect(page.locator('[data-role="unlock"]')).toBeVisible({ timeout: 20_000 });
 
   // No secret is left in the page: not the revealed password, not the name, not the user name.
@@ -47,6 +47,37 @@ test("lock_and_unlock_roundtrip", async ({ browser }) => {
   expect((await memory(page)).engine).toBe(true);
   // The revealed value did not come back: it is hidden again.
   expect(await bodyText(page)).not.toContain(password);
+  await context.close();
+});
+
+test("lock_on_the_list_and_unlock_brings_the_list_back_with_its_filters", async ({ browser }) => {
+  test.setTimeout(400_000);
+  requireAccount();
+  const context = await freshContext(browser);
+  const page = await context.newPage();
+  await signInOn(page);
+  const name = `Lock-list-${secrets.itemTitle}`;
+  await createItem(page, { name, username: secrets.itemUsername, password: `${secrets.itemPassword}-list` });
+  // The list, with a filter in its address and a search in its field.
+  await page.evaluate(() => {
+    location.hash = "#/items?type=login";
+  });
+  await expect(page.locator('[data-role="type-chip"]')).toContainText("Type: Login", { timeout: SLOW });
+  await expect(await findRows(page, name)).toHaveCount(1);
+
+  await lockNow(page);
+  await expect(page.locator('[data-role="unlock"]')).toBeVisible({ timeout: 20_000 });
+  expect(await bodyText(page), "no item name stays on the page").not.toContain(name);
+  expect(await memory(page)).toEqual({ engine: false, items: 0 });
+
+  // The unlock form is replaced by the list at the same address, with the same filter.
+  await unlockWith(page, secrets.password);
+  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: SLOW });
+  await expect(page.locator('[data-role="unlock"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="type-chip"]')).toContainText("Type: Login");
+  expect(await page.evaluate(() => location.hash)).toBe("#/items?type=login");
+  await expect(await findRows(page, name)).toHaveCount(1);
+  expect((await memory(page)).engine).toBe(true);
   await context.close();
 });
 

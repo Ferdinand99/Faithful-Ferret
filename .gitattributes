@@ -37,3 +37,10 @@ LICENSE text eol=lf
 /web/test/fixtures/import/** text eol=lf
 /web/test/fixtures/import/**/*.avux binary
 /LICENSES/** text eol=lf
+
+# The extension sources (the build compares and hashes them byte for byte)
+/extension/**/*.html text eol=lf
+/extension/**/*.css text eol=lf
+/extension/**/*.mts text eol=lf
+/extension/**/*.wasm binary
+/extension/**/*.png binary

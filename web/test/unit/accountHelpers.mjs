@@ -3,7 +3,7 @@
 // a fresh in-memory IndexedDB, and a few DOM helpers for the pages.
 import { createApi } from "../../src/api.mjs";
 import { b64u, hex16 } from "../../src/b64.mjs";
-import { createCryptoSession } from "../../src/crypto/session.mjs";
+import { createVaultSession } from "../../src/crypto/vaultSession.mjs";
 import storeDef from "../../src/services/store.service.mjs";
 import { STORES, run, req } from "../../src/store/idb.mjs";
 import { ACCOUNT, SERVER, VAULT, freshStore, pinnedRecord } from "./idbHelpers.mjs";
@@ -173,7 +173,7 @@ export async function scenario({ skBit = true, skHint = true, handlers = {}, ove
   const api = createApi({ fetchImpl: server.fetchImpl });
   const base = storeDef.create({});
   const store = { ...base, open: async () => db.store };
-  const session = createCryptoSession({
+  const session = createVaultSession({
     client,
     api,
     store,

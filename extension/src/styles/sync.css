@@ -1,0 +1,56 @@
+/* What the sync shows in the popup: its state, a stop with its two ways on, the warnings, and "Forget this server". */
+
+.ff-sync {
+  margin-block: var(--sp-3);
+}
+
+.ff-sync-stop {
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bad-fill);
+  color: var(--text);
+}
+
+.ff-sync-stop h2,
+.ff-forget h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.ff-sync-stop h2 {
+  color: var(--bad-text);
+}
+
+.ff-sync-warnings {
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.ff-sync-warnings li {
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--info-fill);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.ff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.ff-forget {
+  margin-top: var(--sp-3);
+}
+
+.ff-danger {
+  background: var(--bad-text);
+  color: var(--on-inverse);
+  border-color: transparent;
+}

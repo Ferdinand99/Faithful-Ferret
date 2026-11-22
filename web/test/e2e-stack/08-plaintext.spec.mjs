@@ -18,6 +18,8 @@ function needles() {
     item_notes: secrets.itemNotes,
     item_url: secrets.itemUrl,
   };
+  // The folder names of scenario 03: labels inside the encrypted items.
+  for (const [name, value] of Object.entries(secrets.needles)) if (name.includes("folder")) list[name.replaceAll(" ", "_")] = value;
   return Object.entries(list).filter(([, value]) => value.length >= 8);
 }
 

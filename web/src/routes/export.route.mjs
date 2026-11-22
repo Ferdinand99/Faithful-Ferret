@@ -11,6 +11,7 @@ export default {
   title: "export.title",
   menu: "account",
   menuOrder: 50,
+  sidebar: { section: "tools", order: 30, icon: "transfer", role: "nav-transfer", title: "shell.nav.transfer", activeFor: ["/import"] },
   load: async (ctx) => {
     const vault = await enterVault(ctx);
     if (vault.locked) return vault.locked;
@@ -42,6 +43,7 @@ export default {
       lastExportAt,
       locale: ctx.i18n.lang,
       scope: vault.scope,
+      hasFolders: vault.engine.list().some((/** @type {{ folders?: string[] }} */ item) => Array.isArray(item.folders) && item.folders.length > 0),
     }));
   },
 };

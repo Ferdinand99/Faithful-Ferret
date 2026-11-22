@@ -1,0 +1,86 @@
+# Firefox test harness
+
+Short probes of the extension's test build in real Firefox, through geckodriver,
+in the runner image `docker/ext-runner.Dockerfile`.
+
+```
+scripts/lanbox-ext.sh firefox [--channel release|esr] [--manifest mv3|mv2] [--grep <name>] [--headed]
+scripts/lanbox-ext.sh e2e     [--channel ...] [--manifest ...] [--grep <name>] [--no-up]
+scripts/lanbox-ext.sh gate    [--channel ...] [--manifest ...]
+```
+
+Both run on the build host. The Firefox step has no network (`e2e`: only the
+end-to-end stack's network). The WASM package is fetched and checked in a step of
+its own. A skipped spec, or a run in which no test passed, fails the run.
+
+`e2e` starts an end-to-end stack of its own for every run (compose project, network,
+host names and volumes named `ferret-x<8 hex>`), so two runs never remove each
+other's stack, and removes it when the run ends. It also starts the stack's Chromium
+browser server (`lanbox-ferret-test.sh e2e-chromium`), which the end-to-end spec
+drives with Playwright for the web vault's part. `gate` runs the `firefox` step and
+then the `e2e` step (MV2 by default) and unpacks the screenshots the e2e specs take
+into `test-results/out/gate-shots/<channel>/`.
+
+At most two `e2e` runs at a time, counted inside the limit of two Firefox runs on the
+build host (each also builds the server image, with at most four cargo jobs, and
+runs a Chromium). The stack with the default names (`ferret-e2e`: `--no-up`, the web
+vault's `lanbox-ferret-test.sh e2e-run`) stays for one user at a time. A run that is
+killed hard (no exit trap) leaves its `ferret-x<8 hex>` stack; the next `e2e` run
+removes any such stack older than six hours, and one can be removed at once with
+`FERRET_E2E_SUFFIX=x<8 hex> scripts/lanbox-ferret-test.sh e2e-down` (find them with
+`docker ps -a --format '{{.Label "owner"}}' | grep '^ferret-x'`).
+
+The adversarial specs (`70-phishing`, `71-clickjacking`) and the end-to-end spec
+(`80-end-to-end`) share `adversary.mjs`: a signed-in Firefox with the test sites'
+entries, the real popup about a page's tab, a UI port that stays open across steps,
+and a walk through every frame of a page to see where a password went.
+
+## The runner image
+
+Every download in `docker/ext-runner.Dockerfile` is pinned by version and
+SHA-256. The header of the file says where each checksum comes from.
+
+- **The unbranded Release build expires.** Mozilla keeps the artifacts of the
+  pinned CI task until `RELEASE_EXPIRES` (2027-11-02). `runner.test.mjs` fails 30
+  days before that day. To renew the pin: take the Taskcluster task that built
+  the new release revision (index `gecko.v2.mozilla-release.revision.<rev>.firefox.linux64-add-on-devel`),
+  and move `RELEASE_TASK`, `RELEASE_VERSION`, `RELEASE_SHA256`, `RELEASE_SHA512`,
+  `RELEASE_EXPIRES` and the `FERRET_FIREFOX_RELEASE` line together.
+- Dependabot does not see these pins. They move by hand, with their checksums.
+- The content sandboxes of Firefox are switched off in the image (Docker's
+  seccomp profile blocks the user namespaces they need). Anything measured here
+  was measured with the sandboxes off.
+- Old image tags of the runner are removed one by one when a new one is built;
+  nothing is pruned.
+
+## The test sites
+
+`extension/test/fixtures/sites/` holds the adversarial pages the fill engine and
+the frame rules are tested against: look-alike hosts (a dash, a foreign suffix,
+another top-level domain, three kinds of homograph), the same host over http
+and on another port, insecure ancestors and the loopback exception, same-site,
+cross-site and foreign frames, frames without a usable origin (about:blank,
+srcdoc, sandboxes, data:, blob:, javascript:, nested), a
+private suffix (`a.github.io`, `b.github.io`), overlays, hidden and off-screen
+fields, CSS on a parent (opacity, filter, transform, clip-path, mask,
+mix-blend-mode, visibility, also through a shadow root), popover and modal
+dialog covers, tiny and below-the-fold fields, pages that turn hostile on blur,
+a page of forged events, a frame that moves to a foreign
+origin on request, and a page that imitates Ferret's title and icon. `pages.mjs`
+lists each site with its expected outcome; `origins.mjs` names the origins.
+
+The example family is under `example.net` and `example.org`, which the core's
+Public Suffix List knows (a name under `.test` has no registrable domain, so
+same-site and `domain` matches would never hold there).
+
+The fixture server serves them on three listeners (https on 443, a second https
+port 8443 and http on 80 in the runner; the container allows unprivileged
+processes to bind them), so `https://login.example.net/` is an ordinary origin
+without a port. `server.siteUrl(id)` and `server.origin(name)` give the
+addresses of a run. Every host is in `test/fixtures/hosts.json`, so the runner
+maps it to the server and the release check refuses it in a release. Nothing
+under `test/` is ever packaged.
+
+A password field whose verdict does not depend on the page carries
+`data-fixture-expect="fill"` (a clear control field) or `"reject"` (a hidden,
+covered or off-screen one that must never be filled).

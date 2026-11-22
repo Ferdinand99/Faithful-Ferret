@@ -16,6 +16,7 @@
 // so a device name is shown as it is and never read as markup.
 import { el, mount } from "../dom.mjs";
 import { askConfirm, codeOf, formatMoment } from "./common.mjs";
+import { emptyState } from "./emptyState.mjs";
 
 /** @typedef {import("./form.mjs").Translate} Translate */
 
@@ -157,7 +158,12 @@ export function devicesView({ t, load, revoke, revokeAll, forgetOld, reauth, loc
     rowButtons = [];
     const ownId = answer.devices.find((row) => row.current)?.id ?? null;
     mount(list, ...answer.devices.map((row) => rowView(row, ownId)));
-    if (answer.devices.length === 0) list.appendChild(el("li", { class: "help", "data-role": "devices-empty" }, t("devices.empty")));
+    if (answer.devices.length === 0) {
+      list.appendChild(el("li", { "data-role": "devices-empty" }, emptyState({
+        role: "devices-empty-state", icon: "account", text: t("devices.empty"),
+        actions: [{ label: t("devices.refresh"), role: "devices-refresh", onClick: () => void refresh() }],
+      })));
+    }
     if (typeof answer.more === "number" && answer.more > 0) {
       mount(more, document.createTextNode(t("devices.more", { count: answer.more })));
       more.hidden = false;

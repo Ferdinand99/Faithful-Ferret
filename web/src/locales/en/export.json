@@ -32,6 +32,7 @@
   "export.last.never": "You have not made an encrypted export on this device yet.",
   "export.plain.busy": "Checking your master password and reading the items...",
   "export.plain.confirm": "I understand that the file is not encrypted and that anyone who gets it can read all my passwords",
+  "export.plain.csv_no_folders": "The CSV file does not include folders. The JSON file and the encrypted export keep them.",
   "export.plain.dialog_body": "The file will hold all your passwords and notes in plain text. Make it only if you are about to move to another service, and delete it for good afterwards.",
   "export.plain.dialog_confirm": "Make the plain file",
   "export.plain.dialog_title": "Save an unencrypted copy of your vault?",

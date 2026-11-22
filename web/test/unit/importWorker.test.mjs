@@ -46,7 +46,8 @@ test("the_worker_sends_drafts_only_over_the_vault_port_and_answers_with_envelope
     assert.equal(now, NOW);
     assert.ok(draft && typeof draft === "object" && !Array.isArray(draft));
     assert.equal("passkey" in draft, false);
-    for (const key of Object.keys(draft)) assert.ok(["item_type", "name", "favorite", "fields", "urls", "totp", "notes"].includes(key), key);
+    for (const key of Object.keys(draft)) assert.ok(["item_type", "name", "favorite", "fields", "urls", "totp", "notes", "folders"].includes(key), key);
+    if ("folders" in draft) assert.ok(Array.isArray(draft.folders) && draft.folders.every((name) => typeof name === "string"), "folders is a list of names");
     ids.add(Buffer.from(itemId).toString("hex"));
   }
   assert.equal(ids.size, 8, "every item has its own id");

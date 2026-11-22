@@ -1,0 +1,384 @@
+/* The session pages (the sign-in tab and the popup) in the Hedgerow design
+   language. The tokens are those of the web vault's base styles
+   (web/src/styles/base.css): the same surfaces, text, brand and status colours,
+   radii and the Ferret mark, so the later pages of the extension build on them.
+   The first value of light-dark() is the light theme, the second the dark one. */
+:root {
+  color-scheme: light dark;
+
+  --bg: light-dark(#f5f5f7, #0b0b0d);
+  --card: light-dark(#ffffff, #161618);
+  --card-raised: light-dark(#ffffff, #1c1c1f);
+  --field: light-dark(#ffffff, #1b1b1e);
+  --hover: light-dark(rgba(0, 0, 0, 0.035), rgba(255, 255, 255, 0.045));
+  --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+  --line-strong: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.14));
+  /* The border of every field (inputs, the select, the text area): at least 3:1
+     against the field and the page in both themes (WCAG 1.4.11). */
+  --field-border: light-dark(#86868b, #6e6e73);
+
+  --text: light-dark(#1d1d1f, #f5f5f7);
+  --muted: light-dark(#6e6e73, #a1a1a6);
+  --placeholder: light-dark(#737378, #8a8a8f);
+  --on-inverse: light-dark(#ffffff, #0b0b0d);
+
+  --brand: light-dark(#6656e8, #8b7dff);
+  --brand-fill: light-dark(rgba(102, 86, 232, 0.1), rgba(139, 125, 255, 0.16));
+
+  --bad-text: light-dark(#c20012, #ff6961);
+  --bad-fill: light-dark(rgba(255, 59, 48, 0.11), rgba(255, 69, 58, 0.16));
+  --info-text: light-dark(#0062cc, #409cff);
+  --info-fill: light-dark(rgba(0, 122, 255, 0.1), rgba(10, 132, 255, 0.18));
+
+  --shadow-card: 0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0));
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+  --sp-8: 2rem;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-full: 999px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 120ms;
+
+  /* The Ferret mark (a data: image). */
+  --mark: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDI0IDEwMjQiPg0KICA8ZGVmcz4NCiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMmEyYTJmIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTExMTEzIi8+PC9saW5lYXJHcmFkaWVudD4NCiAgICA8ZmlsdGVyIGlkPSJnbG93IiB4PSItMzAlIiB5PSItMzAlIiB3aWR0aD0iMTYwJSIgaGVpZ2h0PSIxNjAlIj48ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIyNiIvPjwvZmlsdGVyPg0KICAgIDxjbGlwUGF0aCBpZD0idGlsZSI+PHBhdGggZD0iTTk5Mi4wIDUxMi4wTDk5MS45IDYyMy44TDk5MS43IDY1OS41TDk5MS40IDY4NS40TDk5MC45IDcwNi41TDk5MC40IDcyNC42TDk4OS42IDc0MC41TDk4OC44IDc1NC45TDk4Ny44IDc2OC4xTDk4Ni43IDc4MC4yTDk4NS40IDc5MS41TDk4NC4wIDgwMi4xTDk4Mi41IDgxMi4xTDk4MC44IDgyMS41TDk3OS4wIDgzMC40TDk3Ny4wIDgzOC45TDk3NC45IDg0Ni45TDk3Mi43IDg1NC42TDk3MC4zIDg2Mi4wTDk2Ny44IDg2OS4wTDk2NS4yIDg3NS44TDk2Mi4zIDg4Mi4yTDk1OS40IDg4OC40TDk1Ni4zIDg5NC40TDk1My4wIDkwMC4xTDk0OS42IDkwNS42TDk0Ni4wIDkxMC44TDk0Mi4yIDkxNS45TDkzOC4zIDkyMC43TDkzNC4xIDkyNS40TDkyOS45IDkyOS45TDkyNS40IDkzNC4xTDkyMC43IDkzOC4zTDkxNS45IDk0Mi4yTDkxMC44IDk0Ni4wTDkwNS42IDk0OS42TDkwMC4xIDk1My4wTDg5NC40IDk1Ni4zTDg4OC40IDk1OS40TDg4Mi4yIDk2Mi4zTDg3NS44IDk2NS4yTDg2OS4wIDk2Ny44TDg2Mi4wIDk3MC4zTDg1NC42IDk3Mi43TDg0Ni45IDk3NC45TDgzOC45IDk3Ny4wTDgzMC40IDk3OS4wTDgyMS41IDk4MC44TDgxMi4xIDk4Mi41TDgwMi4xIDk4NC4wTDc5MS41IDk4NS40TDc4MC4yIDk4Ni43TDc2OC4xIDk4Ny44TDc1NC45IDk4OC44TDc0MC41IDk4OS42TDcyNC42IDk5MC40TDcwNi41IDk5MC45TDY4NS40IDk5MS40TDY1OS41IDk5MS43TDYyMy44IDk5MS45TDUxMi4wIDk5Mi4wTDQwMC4yIDk5MS45TDM2NC41IDk5MS43TDMzOC42IDk5MS40TDMxNy41IDk5MC45TDI5OS40IDk5MC40TDI4My41IDk4OS42TDI2OS4xIDk4OC44TDI1NS45IDk4Ny44TDI0My44IDk4Ni43TDIzMi41IDk4NS40TDIyMS45IDk4NC4wTDIxMS45IDk4Mi41TDIwMi41IDk4MC44TDE5My42IDk3OS4wTDE4NS4xIDk3Ny4wTDE3Ny4xIDk3NC45TDE2OS40IDk3Mi43TDE2Mi4wIDk3MC4zTDE1NS4wIDk2Ny44TDE0OC4yIDk2NS4yTDE0MS44IDk2Mi4zTDEzNS42IDk1OS40TDEyOS42IDk1Ni4zTDEyMy45IDk1My4wTDExOC40IDk0OS42TDExMy4yIDk0Ni4wTDEwOC4xIDk0Mi4yTDEwMy4zIDkzOC4zTDk4LjYgOTM0LjFMOTQuMSA5MjkuOUw4OS45IDkyNS40TDg1LjcgOTIwLjdMODEuOCA5MTUuOUw3OC4wIDkxMC44TDc0LjQgOTA1LjZMNzEuMCA5MDAuMUw2Ny43IDg5NC40TDY0LjYgODg4LjRMNjEuNyA4ODIuMkw1OC44IDg3NS44TDU2LjIgODY5LjBMNTMuNyA4NjIuMEw1MS4zIDg1NC42TDQ5LjEgODQ2LjlMNDcuMCA4MzguOUw0NS4wIDgzMC40TDQzLjIgODIxLjVMNDEuNSA4MTIuMUw0MC4wIDgwMi4xTDM4LjYgNzkxLjVMMzcuMyA3ODAuMkwzNi4yIDc2OC4xTDM1LjIgNzU0LjlMMzQuNCA3NDAuNUwzMy42IDcyNC42TDMzLjEgNzA2LjVMMzIuNiA2ODUuNEwzMi4zIDY1OS41TDMyLjEgNjIzLjhMMzIuMCA1MTIuMEwzMi4xIDQwMC4yTDMyLjMgMzY0LjVMMzIuNiAzMzguNkwzMy4xIDMxNy41TDMzLjYgMjk5LjRMMzQuNCAyODMuNUwzNS4yIDI2OS4xTDM2LjIgMjU1LjlMMzcuMyAyNDMuOEwzOC42IDIzMi41TDQwLjAgMjIxLjlMNDEuNSAyMTEuOUw0My4yIDIwMi41TDQ1LjAgMTkzLjZMNDcuMCAxODUuMUw0OS4xIDE3Ny4xTDUxLjMgMTY5LjRMNTMuNyAxNjIuMEw1Ni4yIDE1NS4wTDU4LjggMTQ4LjJMNjEuNyAxNDEuOEw2NC42IDEzNS42TDY3LjcgMTI5LjZMNzEuMCAxMjMuOUw3NC40IDExOC40TDc4LjAgMTEzLjJMODEuOCAxMDguMUw4NS43IDEwMy4zTDg5LjkgOTguNkw5NC4xIDk0LjFMOTguNiA4OS45TDEwMy4zIDg1LjdMMTA4LjEgODEuOEwxMTMuMiA3OC4wTDExOC40IDc0LjRMMTIzLjkgNzEuMEwxMjkuNiA2Ny43TDEzNS42IDY0LjZMMTQxLjggNjEuN0wxNDguMiA1OC44TDE1NS4wIDU2LjJMMTYyLjAgNTMuN0wxNjkuNCA1MS4zTDE3Ny4xIDQ5LjFMMTg1LjEgNDcuMEwxOTMuNiA0NS4wTDIwMi41IDQzLjJMMjExLjkgNDEuNUwyMjEuOSA0MC4wTDIzMi41IDM4LjZMMjQzLjggMzcuM0wyNTUuOSAzNi4yTDI2OS4xIDM1LjJMMjgzLjUgMzQuNEwyOTkuNCAzMy42TDMxNy41IDMzLjFMMzM4LjYgMzIuNkwzNjQuNSAzMi4zTDQwMC4yIDMyLjFMNTEyLjAgMzIuMEw2MjMuOCAzMi4xTDY1OS41IDMyLjNMNjg1LjQgMzIuNkw3MDYuNSAzMy4xTDcyNC42IDMzLjZMNzQwLjUgMzQuNEw3NTQuOSAzNS4yTDc2OC4xIDM2LjJMNzgwLjIgMzcuM0w3OTEuNSAzOC42TDgwMi4xIDQwLjBMODEyLjEgNDEuNUw4MjEuNSA0My4yTDgzMC40IDQ1LjBMODM4LjkgNDcuMEw4NDYuOSA0OS4xTDg1NC42IDUxLjNMODYyLjAgNTMuN0w4NjkuMCA1Ni4yTDg3NS44IDU4LjhMODgyLjIgNjEuN0w4ODguNCA2NC42TDg5NC40IDY3LjdMOTAwLjEgNzEuMEw5MDUuNiA3NC40TDkxMC44IDc4LjBMOTE1LjkgODEuOEw5MjAuNyA4NS43TDkyNS40IDg5LjlMOTI5LjkgOTQuMUw5MzQuMSA5OC42TDkzOC4zIDEwMy4zTDk0Mi4yIDEwOC4xTDk0Ni4wIDExMy4yTDk0OS42IDExOC40TDk1My4wIDEyMy45TDk1Ni4zIDEyOS42TDk1OS40IDEzNS42TDk2Mi4zIDE0MS44TDk2NS4yIDE0OC4yTDk2Ny44IDE1NS4wTDk3MC4zIDE2Mi4wTDk3Mi43IDE2OS40TDk3NC45IDE3Ny4xTDk3Ny4wIDE4NS4xTDk3OS4wIDE5My42TDk4MC44IDIwMi41TDk4Mi41IDIxMS45TDk4NC4wIDIyMS45TDk4NS40IDIzMi41TDk4Ni43IDI0My44TDk4Ny44IDI1NS45TDk4OC44IDI2OS4xTDk4OS42IDI4My41TDk5MC40IDI5OS40TDk5MC45IDMxNy41TDk5MS40IDMzOC42TDk5MS43IDM2NC41TDk5MS45IDQwMC4yWiIvPjwvY2xpcFBhdGg+DQogIDwvZGVmcz4NCiAgPHBhdGggZD0iTTk5Mi4wIDUxMi4wTDk5MS45IDYyMy44TDk5MS43IDY1OS41TDk5MS40IDY4NS40TDk5MC45IDcwNi41TDk5MC40IDcyNC42TDk4OS42IDc0MC41TDk4OC44IDc1NC45TDk4Ny44IDc2OC4xTDk4Ni43IDc4MC4yTDk4NS40IDc5MS41TDk4NC4wIDgwMi4xTDk4Mi41IDgxMi4xTDk4MC44IDgyMS41TDk3OS4wIDgzMC40TDk3Ny4wIDgzOC45TDk3NC45IDg0Ni45TDk3Mi43IDg1NC42TDk3MC4zIDg2Mi4wTDk2Ny44IDg2OS4wTDk2NS4yIDg3NS44TDk2Mi4zIDg4Mi4yTDk1OS40IDg4OC40TDk1Ni4zIDg5NC40TDk1My4wIDkwMC4xTDk0OS42IDkwNS42TDk0Ni4wIDkxMC44TDk0Mi4yIDkxNS45TDkzOC4zIDkyMC43TDkzNC4xIDkyNS40TDkyOS45IDkyOS45TDkyNS40IDkzNC4xTDkyMC43IDkzOC4zTDkxNS45IDk0Mi4yTDkxMC44IDk0Ni4wTDkwNS42IDk0OS42TDkwMC4xIDk1My4wTDg5NC40IDk1Ni4zTDg4OC40IDk1OS40TDg4Mi4yIDk2Mi4zTDg3NS44IDk2NS4yTDg2OS4wIDk2Ny44TDg2Mi4wIDk3MC4zTDg1NC42IDk3Mi43TDg0Ni45IDk3NC45TDgzOC45IDk3Ny4wTDgzMC40IDk3OS4wTDgyMS41IDk4MC44TDgxMi4xIDk4Mi41TDgwMi4xIDk4NC4wTDc5MS41IDk4NS40TDc4MC4yIDk4Ni43TDc2OC4xIDk4Ny44TDc1NC45IDk4OC44TDc0MC41IDk4OS42TDcyNC42IDk5MC40TDcwNi41IDk5MC45TDY4NS40IDk5MS40TDY1OS41IDk5MS43TDYyMy44IDk5MS45TDUxMi4wIDk5Mi4wTDQwMC4yIDk5MS45TDM2NC41IDk5MS43TDMzOC42IDk5MS40TDMxNy41IDk5MC45TDI5OS40IDk5MC40TDI4My41IDk4OS42TDI2OS4xIDk4OC44TDI1NS45IDk4Ny44TDI0My44IDk4Ni43TDIzMi41IDk4NS40TDIyMS45IDk4NC4wTDIxMS45IDk4Mi41TDIwMi41IDk4MC44TDE5My42IDk3OS4wTDE4NS4xIDk3Ny4wTDE3Ny4xIDk3NC45TDE2OS40IDk3Mi43TDE2Mi4wIDk3MC4zTDE1NS4wIDk2Ny44TDE0OC4yIDk2NS4yTDE0MS44IDk2Mi4zTDEzNS42IDk1OS40TDEyOS42IDk1Ni4zTDEyMy45IDk1My4wTDExOC40IDk0OS42TDExMy4yIDk0Ni4wTDEwOC4xIDk0Mi4yTDEwMy4zIDkzOC4zTDk4LjYgOTM0LjFMOTQuMSA5MjkuOUw4OS45IDkyNS40TDg1LjcgOTIwLjdMODEuOCA5MTUuOUw3OC4wIDkxMC44TDc0LjQgOTA1LjZMNzEuMCA5MDAuMUw2Ny43IDg5NC40TDY0LjYgODg4LjRMNjEuNyA4ODIuMkw1OC44IDg3NS44TDU2LjIgODY5LjBMNTMuNyA4NjIuMEw1MS4zIDg1NC42TDQ5LjEgODQ2LjlMNDcuMCA4MzguOUw0NS4wIDgzMC40TDQzLjIgODIxLjVMNDEuNSA4MTIuMUw0MC4wIDgwMi4xTDM4LjYgNzkxLjVMMzcuMyA3ODAuMkwzNi4yIDc2OC4xTDM1LjIgNzU0LjlMMzQuNCA3NDAuNUwzMy42IDcyNC42TDMzLjEgNzA2LjVMMzIuNiA2ODUuNEwzMi4zIDY1OS41TDMyLjEgNjIzLjhMMzIuMCA1MTIuMEwzMi4xIDQwMC4yTDMyLjMgMzY0LjVMMzIuNiAzMzguNkwzMy4xIDMxNy41TDMzLjYgMjk5LjRMMzQuNCAyODMuNUwzNS4yIDI2OS4xTDM2LjIgMjU1LjlMMzcuMyAyNDMuOEwzOC42IDIzMi41TDQwLjAgMjIxLjlMNDEuNSAyMTEuOUw0My4yIDIwMi41TDQ1LjAgMTkzLjZMNDcuMCAxODUuMUw0OS4xIDE3Ny4xTDUxLjMgMTY5LjRMNTMuNyAxNjIuMEw1Ni4yIDE1NS4wTDU4LjggMTQ4LjJMNjEuNyAxNDEuOEw2NC42IDEzNS42TDY3LjcgMTI5LjZMNzEuMCAxMjMuOUw3NC40IDExOC40TDc4LjAgMTEzLjJMODEuOCAxMDguMUw4NS43IDEwMy4zTDg5LjkgOTguNkw5NC4xIDk0LjFMOTguNiA4OS45TDEwMy4zIDg1LjdMMTA4LjEgODEuOEwxMTMuMiA3OC4wTDExOC40IDc0LjRMMTIzLjkgNzEuMEwxMjkuNiA2Ny43TDEzNS42IDY0LjZMMTQxLjggNjEuN0wxNDguMiA1OC44TDE1NS4wIDU2LjJMMTYyLjAgNTMuN0wxNjkuNCA1MS4zTDE3Ny4xIDQ5LjFMMTg1LjEgNDcuMEwxOTMuNiA0NS4wTDIwMi41IDQzLjJMMjExLjkgNDEuNUwyMjEuOSA0MC4wTDIzMi41IDM4LjZMMjQzLjggMzcuM0wyNTUuOSAzNi4yTDI2OS4xIDM1LjJMMjgzLjUgMzQuNEwyOTkuNCAzMy42TDMxNy41IDMzLjFMMzM4LjYgMzIuNkwzNjQuNSAzMi4zTDQwMC4yIDMyLjFMNTEyLjAgMzIuMEw2MjMuOCAzMi4xTDY1OS41IDMyLjNMNjg1LjQgMzIuNkw3MDYuNSAzMy4xTDcyNC42IDMzLjZMNzQwLjUgMzQuNEw3NTQuOSAzNS4yTDc2OC4xIDM2LjJMNzgwLjIgMzcuM0w3OTEuNSAzOC42TDgwMi4xIDQwLjBMODEyLjEgNDEuNUw4MjEuNSA0My4yTDgzMC40IDQ1LjBMODM4LjkgNDcuMEw4NDYuOSA0OS4xTDg1NC42IDUxLjNMODYyLjAgNTMuN0w4NjkuMCA1Ni4yTDg3NS44IDU4LjhMODgyLjIgNjEuN0w4ODguNCA2NC42TDg5NC40IDY3LjdMOTAwLjEgNzEuMEw5MDUuNiA3NC40TDkxMC44IDc4LjBMOTE1LjkgODEuOEw5MjAuNyA4NS43TDkyNS40IDg5LjlMOTI5LjkgOTQuMUw5MzQuMSA5OC42TDkzOC4zIDEwMy4zTDk0Mi4yIDEwOC4xTDk0Ni4wIDExMy4yTDk0OS42IDExOC40TDk1My4wIDEyMy45TDk1Ni4zIDEyOS42TDk1OS40IDEzNS42TDk2Mi4zIDE0MS44TDk2NS4yIDE0OC4yTDk2Ny44IDE1NS4wTDk3MC4zIDE2Mi4wTDk3Mi43IDE2OS40TDk3NC45IDE3Ny4xTDk3Ny4wIDE4NS4xTDk3OS4wIDE5My42TDk4MC44IDIwMi41TDk4Mi41IDIxMS45TDk4NC4wIDIyMS45TDk4NS40IDIzMi41TDk4Ni43IDI0My44TDk4Ny44IDI1NS45TDk4OC44IDI2OS4xTDk4OS42IDI4My41TDk5MC40IDI5OS40TDk5MC45IDMxNy41TDk5MS40IDMzOC42TDk5MS43IDM2NC41TDk5MS45IDQwMC4yWiIgZmlsbD0idXJsKCNiZykiLz4NCiAgDQogIDxwYXRoIGZpbGw9IiM1OWQ5YzciIGQ9Ik03ODkuOSAzMTQuMEw3OTQuNyAzMTUuMEw4MDEuOCAzMTkuMEw4MDUuMCAzMjIuMEw4MTAuMCAzMjguOEw4MTcuMCAzMzAuOEw4MjQuMCAzMzMuN0w4NDEuMCAzNDIuOUw4NTEuNyAzNTEuMEw4NjEuMiAzNjIuMEw4NjQuMCAzNjQuNUw4NzQuMCAzNzEuNEw4ODguNCAzNzkuMEw4OTAuMiAzODEuMEw4OTAuNCAzODQuMEw4ODkuMSAzODkuMEw4ODMuNyAzOTYuMEw4ODEuMCA0MDEuNUw4NzYuNiA0MDYuMEw4NjQuMCA0MTUuMEw4NTUuMCA0MTguNEw4NDcuMCA0MjAuMkw4MjUuMCA0MjIuMEw4MjEuMCA0MjIuNkw4MTQuMCA0MjQuOEw4MDcuMCA0MjguN0w4MDIuMCA0MzIuN0w3OTYuNSA0MzkuMEw3OTQuNSA0NDMuMEw3OTEuOCA0NTMuMEw3ODUuMiA0OTQuMEw3NzkuMiA1MTUuMEw3NjkuMiA1MzYuMEw3NjEuMiA1NDguMEw3NDYuNSA1NjcuMEw3MzguNiA1ODEuMEw3MzQuNSA1OTAuMEw3MzAuNyA2MDEuMEw3MjIuNyA2MzMuMEw3MjEuNiA2NDIuMEw3MjIuNyA2NTAuMEw3MjQuNSA2NTYuMEw3MjguMCA2NjEuN0w3MzEuMCA2NjQuNUw3MzQuMCA2NjUuN0w3NDYuMCA2NjYuMEw3NTMuMCA2NjcuOUw3NTQuMSA2NjkuMEw3NTIuNiA2NzEuMEw3NTcuMCA2NzMuOEw3NjAuMiA2NzcuMEw3NjEuMCA2NzkuMkw3NTkuNyA2ODAuMEw3NTguMCA2NzkuM0w3NTQuMCA2NzkuMkw3NTAuMCA2NzkuNEw3NDkuMSA2ODAuMEw3NDkuNCA2ODEuMEw3NTMuMSA2ODUuMEw3NTMuNSA2ODguMEw3NTMuMCA2OTAuNEw3NTIuMCA2OTEuMkw3NTEuMyA2OTEuMEw3NTAuMCA2ODguMUw3NDguMCA2ODYuN0w3NDEuMCA2ODUuOEw3NDAuNyA2OTMuMEw3NDAuMCA2OTQuMUw3MzguMCA2OTQuNUw3MzcuMSA2OTIuMEw3MzUuMCA2OTAuNkw3MDYuMCA2OTEuMkw2OTkuNyA2OTAuMEw2OTUuMCA2ODcuMUw2ODYuMCA2NzQuMEw2ODEuOCA2NjUuMEw2NzQuOCA2NDYuMEw2NjAuNSA2MDEuMEw2NTYuNCA1OTQuMEw2NTIuMCA1ODkuOEw2NDguMCA1ODcuN0w2NDIuMCA1ODUuN0w2MTcuMCA1ODAuNUw1OTcuMCA1NzcuNkw1ODUuMCA1NzYuNkw1NzAuMCA1NzYuMkw1NDkuMCA1NzcuNUw1MzUuMCA1NzkuNkw1MjEuMCA1ODIuNkw1MDUuMCA1ODguNUw0OTUuMCA1OTMuN0w0ODYuMCA1OTkuNkw0NTguMCA2MjMuMUw0NDQuMCA2MzIuOEw0MzUuNyA2NDAuMEw0MzQuOCA2NDMuMEw0MzYuNiA2NTEuMEw0MzkuNCA2NTYuMEw0NDQuMCA2NjAuNEw0NDYuMCA2NjEuNEw0NTIuMCA2NjIuM0w0NjMuMCA2NTkuN0w0NzAuMCA2NTkuN0w0NzQuMCA2NjAuOUw0NzcuMyA2NjMuMEw0NzcuNiA2NjUuMEw0NzkuMCA2NjYuNUw0ODMuMCA2NjguN0w0ODUuMyA2NzEuMEw0ODYuMiA2NzMuMEw0ODYuMiA2NzUuMEw0ODUuMCA2NzcuNUw0ODMuMCA2NzUuMkw0NzguMCA2NzQuNkw0NzEuMCA2NzUuM0w0NzAuMyA2NzYuMEw0NzAuMiA2NzguMEw0NjkuMCA2NzguNEw0NjYuMCA2NzcuNEw0NTguMCA2NzcuMUw0NDAuMCA2NzguMEw0MjkuMCA2NzcuNUw0MjYuNiA2NzYuMEw0MTQuMCA2NjMuNkw0MDguNSA2NTcuMEw0MDUuNCA2NTIuMEw0MDAuMCA2NTMuM0wzOTkuNCA2NTQuMEw0MDEuNiA2NTkuMEw0MDguNyA2NzEuMEw0MTMuMCA2NzYuMkw0MTYuMCA2NzguNUw0MjIuMCA2ODAuN0w0MzQuMCA2ODEuMkw0NDIuOSA2ODMuMEw0NDQuNCA2ODQuMEw0NDUuMCA2ODUuNUw0NTAuNyA2ODguMEw0NTMuMCA2ODkuOEw0NTQuNCA2OTMuMEw0NTQuMCA2OTUuNUw0NTMuMCA2OTUuNkw0NTEuMCA2OTMuM0w0NDcuMCA2OTMuMUw0NDIuNyA2OTQuMEw0NDQuMCA2OTkuMEw0NDMuMyA3MDEuMEw0NDIuMCA3MDIuNEw0NDAuMCA2OTguN0w0MzcuMCA2OTguNEw0MDUuMCA3MDAuMEwzOTkuMCA2OTguMkwzOTIuMiA2OTMuMEwzODIuOCA2ODMuMEwzNzQuMCA2NzEuOUwzNjMuOCA2NTYuMEwzNTcuOCA2NDUuMEwzNTQuNyA2MzYuMEwzNTQuNSA2MzEuMEwzNTUuMyA2MjUuMEwzNTQuNCA2MTkuMEwzNTMuMiA2MTYuMEwzNTIuMCA2MTQuN0wzNDcuNCA2MjMuMEwzMzguMyA2MzYuMEwzMjUuMCA2NDkuNUwzMTUuMCA2NTcuM0wzMDcuMCA2NjIuM0wyOTEuMCA2NzAuMEwyNjcuMCA2NzcuMUwyNDMuMCA2ODEuMkwyMjkuMCA2ODIuM0wyMDUuMCA2ODIuNkwxODAuMCA2ODEuMUwxNTYuMCA2NzcuMkwxNDAuMCA2NzIuMUwxMzYuMCA2NjkuN0wxMzQuMCA2NjcuMEwxMzQuMCA2NjQuMEwxMzUuNCA2NjIuMEwxMzguMCA2NTkuOUwxNDIuMCA2NTcuOUwxNTguMCA2NTMuN0wxNzMuMCA2NTEuOEwyMjkuMCA2NDcuNUwyNTEuMCA2NDMuNEwyNjkuMCA2MzcuNEwyODEuMCA2MzEuMkwyOTEuMCA2MjQuNEwzMDAuMyA2MTUuMEwzMDUuMyA2MDguMEwzMTAuNCA1OTguMEwzMTYuNCA1ODEuMEwzMjUuMCA1NDUuMEwzMzAuOCA1MjYuMEwzMzkuMCA1MDYuMEwzNDguOSA0ODguMEwzNjEuNiA0NzAuMEwzNjkuNiA0NjEuMEwzNzkuOCA0NTEuMEwzOTkuMCA0MzUuOUw0MTkuMCA0MjMuOEw0MjkuMCA0MTguOUw0NDIuMCA0MTMuN0w0NTUuMCA0MDkuOEw0NjguMCA0MDYuOEw0OTAuMCA0MDMuN0w1MDYuMCA0MDMuMEw1MjQuMCA0MDMuOEw1NTAuMCA0MDcuOEw1NjYuMCA0MTEuOEw1NzUuMCA0MTQuN0w1OTUuMCA0MjIuN0w2MjIuMCA0MzYuNUw2MzkuMCA0NDMuNEw2NDYuMCA0NDUuM0w2NTQuMCA0NDYuNUw2NjEuMCA0NDYuNEw2NjguMCA0NDUuMkw2NzYuMCA0NDIuMkw2ODYuMCA0MzYuMkw2OTAuMCA0MzIuOUw2OTYuMiA0MjUuMEw3MDEuNSA0MTQuMEw3MDcuOSAzOTYuMEw3MTMuNyAzODMuMEw3MjIuOCAzNjcuMEw3MjguOSAzNTkuMEw3MzQuNCAzNTMuMEw3MzUuMSAzNDYuMEw3MzYuOSAzMzkuMEw3MzkuOSAzMzMuMEw3NDMuMCAzMjkuM0w3NTAuMyAzMjMuMEw3NTQuNSAzMjEuMEw3NTguMCAzMjAuNEw3NjIuMCAzMjAuN0w3NjYuMCAzMjEuOEw3NzQuMCAzMjUuM0w3ODMuMCAzMTYuOEw3ODcuMCAzMTQuN1oiLz4NCjwvc3ZnPg0K);
+}
+
+body.ff-page {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ff-page h1 {
+  margin: 0 0 var(--sp-2);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ff-page p {
+  margin: 0 0 var(--sp-3);
+}
+
+.ff-mark {
+  display: inline-block;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  background: var(--mark) center / contain no-repeat;
+}
+
+/* The host is a name the user checks: it is written left to right whatever the text around it. */
+.ff-host {
+  unicode-bidi: isolate;
+  direction: ltr;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The sign-in tab: a card in the middle of the page. */
+.ff-signin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: var(--sp-8) var(--sp-4);
+  box-sizing: border-box;
+}
+
+.ff-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-5);
+  font-weight: 700;
+  font-size: 1.0625rem;
+}
+
+.ff-card {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  padding: var(--sp-6);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.ff-lead {
+  color: var(--muted);
+}
+
+.ff-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ff-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.ff-field[hidden],
+.ff-check[hidden],
+.ff-error[hidden],
+.ff-checked[hidden] {
+  display: none;
+}
+
+.ff-label {
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.ff-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--field-border);
+  border-radius: var(--r-sm);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+
+.ff-input::placeholder {
+  color: var(--placeholder);
+}
+
+.ff-input:focus-visible,
+.ff-button:focus-visible,
+.ff-icon-button:focus-visible,
+.ff-sheet summary:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.ff-qr {
+  min-height: 72px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  resize: vertical;
+}
+
+.ff-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.ff-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+}
+
+.ff-fieldset legend {
+  padding: 0 var(--sp-1);
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.ff-choice,
+.ff-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ff-check .ff-hint {
+  flex-basis: 100%;
+}
+
+.ff-sheet summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.ff-sheet[open] summary {
+  margin-bottom: var(--sp-2);
+}
+
+.ff-notice {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--info-fill);
+  color: var(--info-text);
+  font-size: 0.8125rem;
+}
+
+.ff-checked {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+
+.ff-button {
+  min-height: 40px;
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  background: var(--card-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.ff-button:active {
+  transform: scale(0.97);
+}
+
+.ff-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ff-primary {
+  border-color: transparent;
+  background: var(--brand);
+  color: var(--on-inverse);
+}
+
+.ff-status {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.ff-error {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--bad-fill);
+  color: var(--bad-text);
+}
+
+/* The popup: the header of the approved layout (mark, pop-out, lock, account). */
+body.ff-popup {
+  width: 380px;
+  min-height: 300px;
+}
+
+.ff-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.ff-bar-title {
+  margin-left: 4px;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.ff-bar-first {
+  margin-left: auto;
+}
+
+.ff-icon-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ff-icon-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ff-icon-button[hidden],
+.ff-avatar[hidden] {
+  display: none;
+}
+
+.ff-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: 2px;
+  border-radius: var(--r-full);
+  background: var(--brand);
+  color: var(--on-inverse);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.ff-popup-body {
+  padding: 14px;
+}
+
+.ff-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ff-panel h1 {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.ff-where {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.ff-where-account {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ff-where-host {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-button {
+    transition: none;
+  }
+}

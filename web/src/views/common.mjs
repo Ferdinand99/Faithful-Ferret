@@ -94,6 +94,9 @@ const VAULT_ERRORS = new Set([
   "clipboard", "item_changed", "name_required", "read_only_schema", "reveal_failed", "stopped", "unknown", "worker_failed",
 ]);
 
+/** The core's refusals of folder names, with a text under `folders.error.` (the most a list may have is 20). */
+const FOLDER_ERRORS = new Set(["folder_empty", "folder_too_long", "folder_bad_character", "folder_too_many", "folder_duplicate"]);
+
 /**
  * The text for an error. Codes are matched against a fixed list; the message
  * of an error is never shown, because it can quote what the user typed.
@@ -109,6 +112,7 @@ export function describeError(t, error) {
   }
   if (SYNC_ERRORS.has(code)) return t(`sync.error.${code}`);
   if (VAULT_ERRORS.has(code)) return t(`vault.error.${code}`);
+  if (FOLDER_ERRORS.has(code)) return code === "folder_too_many" ? t(`folders.error.${code}`, { max: 20 }) : t(`folders.error.${code}`);
   return t("vault.error.unknown");
 }
 

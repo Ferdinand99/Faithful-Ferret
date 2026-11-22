@@ -1,0 +1,4 @@
+{
+  "permissions": ["clipboardWrite"],
+  "optional_host_permissions": ["https://*/*"]
+}

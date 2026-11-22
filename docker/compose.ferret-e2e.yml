@@ -54,6 +54,9 @@ services:
       args:
         # The test clock (FERRET_E2E_CLOCK_FILE below). Only this image has it.
         FEATURES: e2e-clock
+        # At most 4 parallel jobs in the build: the build host is shared
+        # (scripts/lanbox-ferret-test.sh checks FERRET_E2E_CARGO_JOBS).
+        CARGO_JOBS: ${FERRET_E2E_CARGO_JOBS:-4}
       labels:
         owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     container_name: ferret-${FERRET_E2E_SUFFIX:-e2e}-app
