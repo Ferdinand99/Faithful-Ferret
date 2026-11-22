@@ -87,3 +87,27 @@ export async function aimFill({ scripting, tabId, frameId, documentId, targetEle
     throw new Error("inject: the engine found no clicked field");
   }
 }
+
+/**
+ * Takes back an aim that no request used (the fill ended before it began): the
+ * engine of that document, if it is there, forgets the clicked field. Nothing
+ * is loaded into a document that has no engine.
+ *
+ * @param {{
+ *   scripting: { executeScript: (injection: any) => Promise<unknown> },
+ *   tabId: number,
+ *   documentId: string,
+ * }} request
+ * @returns {Promise<void>}
+ */
+export async function disarmFill({ scripting, tabId, documentId }) {
+  if (!isIndex(tabId) || typeof documentId !== "string" || documentId === "") throw new TypeError("inject: bad target");
+  await scripting.executeScript({
+    target: { tabId, documentIds: [documentId] },
+    func: () => {
+      const api = /** @type {any} */ (globalThis).__ferretFill;
+      if (api !== undefined && typeof api.aim === "function") api.aim(null);
+      return true;
+    },
+  });
+}

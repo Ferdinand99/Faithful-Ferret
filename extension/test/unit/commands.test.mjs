@@ -110,6 +110,23 @@ test("the_command_fills_one_candidate_and_opens_the_popup_for_zero_or_several", 
   assert.deepEqual(world.ops(), []);
   assert.deepEqual(world.lockCalls, { checks: [], touches: 0 });
 
+  // The page matching fails (here the fill flow's offer rejects): the popup, nothing put into the page, and the
+  // action's session ends.
+  world = await createWorld({ frames: [{ frameId: 0, url: PAGE, build: addLoginForm }] });
+  const realCall = world.coreHost.call;
+  world.coreHost.call = async (op, args) => {
+    if (op === "fill_offer") {
+      world.log.push({ op, args });
+      throw Object.assign(new Error("sync_not_running"), { code: "sync_not_running" });
+    }
+    return realCall(op, args);
+  };
+  assert.equal(await pressable(quickFillOf(world)).press(FILL_COMMAND, { id: TAB }), "popup");
+  assert.deepEqual(world.ops(), ["fill_offer"]);
+  assert.equal(world.injections.length, 0);
+  assert.equal(world.sessionsEnded.length, 1);
+  assert.equal(valueOf(world.pass), "");
+
   // A deadline that has passed (the lock check locks and says no): the popup, no page matching.
   world = await createWorld({ frames: [{ frameId: 0, url: PAGE, build: addLoginForm }], allowed: false });
   assert.equal(await pressable(quickFillOf(world)).press(FILL_COMMAND, { id: TAB }), "popup");

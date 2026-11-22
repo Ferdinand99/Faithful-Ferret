@@ -50,11 +50,12 @@
 // (`menus.getTargetElement`). The extension aims the engine at it before the
 // request begins, and that request fills the group of the clicked field
 // instead of the first one of the page. The clicked field gets the value of its
-// own kind, so a password goes into it only when it is a password input. A
-// field the engine would not fill (hidden, covered, one that sets a new
-// password, or no sign-in input at all) gives an empty report: an aimed request
-// never falls back to another field of the page. An aim is good for the next
-// request only, and for AIM_MS at most.
+// own kind, so a password goes into it only when it is a password input. An
+// element that is no text or password input is refused at the aim. An input the
+// engine would not fill (hidden, covered, one that sets a new password) gives
+// an empty report: an aimed request never falls back to another field of the
+// page. An aim is good for the next request only, and for AIM_MS at most;
+// `aim(null)` takes it back.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 
@@ -68,7 +69,7 @@ const MAX_DEPTH = 1_000;
 /** The name under which the injected script offers `begin` and `aim` to the extension (not reachable by the page). */
 export const FILL_GLOBAL = "__ferretFill";
 /** How long an aim at a clicked field waits for its request, in milliseconds. */
-export const AIM_MS = 10_000;
+export const AIM_MS = 3_000;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TEXT_TYPES = new Set(["text", "email", "tel", "number", "search", "url"]);
@@ -450,7 +451,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
   /**
    * Aims the next request at the field of a context menu click. False, and no
-   * aim, when the browser names no element of this document.
+   * aim, when the browser names no element of this document or no input the
+   * engine fills. `aim(null)` takes an aim back.
    * @param {unknown} targetElementId
    * @returns {boolean}
    */
@@ -465,6 +467,10 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       return false;
     }
     if (!isElement(element) || element.ownerDocument !== document) return false;
+    // Only an input the engine could ever fill: anything else (a text area, an editable block, a checkbox) is
+    // refused here, so the menu says so instead of doing nothing.
+    const type = String(element.type ?? "").toLowerCase();
+    if (element.localName !== "input" || !(type === "password" || TEXT_TYPES.has(type))) return false;
     aimed = { element, until: clock() + AIM_MS };
     return true;
   }

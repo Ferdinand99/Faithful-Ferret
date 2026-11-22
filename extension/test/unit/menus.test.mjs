@@ -243,6 +243,14 @@ test("the_menu_applies_the_frame_rules_to_its_frame", async () => {
   assert.equal(world.injections.length, 0);
   assert.equal(valueOf(world.pass), "");
 
+  // The frame the browser resolves names no document: the aim and the fill could not be tied to one, so nothing is
+  // filled.
+  world = await createWorld({ frames: [TOP] });
+  world.nav.set(0, { frameId: 0, parentFrameId: -1, url: PAGE, documentId: /** @type {any} */ (undefined) });
+  menu = await menuOn(world);
+  assert.equal(await menu.click(world.pass), "popup");
+  assert.equal(world.injections.length, 0);
+
   // The frame is gone: nothing is filled.
   world = await createWorld({ frames: [TOP, { frameId: 5, url: LOGIN_FRAME, build: addLoginForm }], items: [{ urls: ["https://login.example.com/"] }] });
   world.nav.delete(5);
@@ -290,9 +298,9 @@ test("a_password_is_never_filled_into_a_non_password_field_from_the_menu", async
   assert.equal(valueOf(other.pass2), ITEM.password);
   assert.equal(valueOf(other.user2), ITEM.username);
 
-  // Fields the engine never fills: one that sets a new password, a hidden one, a checkbox. The report is empty, so
-  // nothing at all is filled (an aimed request never falls back to the page's first form).
-  for (const attributes of [{ type: "password", autocomplete: "new-password" }, { type: "text", "aria-hidden": "true" }, { type: "checkbox" }]) {
+  // Inputs the engine never fills: one that sets a new password, a hidden one. The report is empty, so nothing at
+  // all is filled (an aimed request never falls back to the page's first form).
+  for (const attributes of [{ type: "password", autocomplete: "new-password" }, { type: "text", "aria-hidden": "true" }]) {
     other = await createWorld({
       frames: [{ frameId: 0, url: PAGE, build: (document) => ({ ...addLoginForm(document), odd: addInput(document, document.body, attributes, { top: 300 }) }) }],
     });
@@ -301,6 +309,24 @@ test("a_password_is_never_filled_into_a_non_password_field_from_the_menu", async
     assert.equal(valueOf(other.odd), "");
     assert.equal(valueOf(other.user), "");
     assert.equal(valueOf(other.pass), "");
+  }
+  // Editable elements that are no text or password input (a checkbox, a text area): the aim refuses them, so the
+  // popup opens, and nothing is filled.
+  for (const build of [
+    (/** @type {any} */ document) => ({ ...addLoginForm(document), odd: addInput(document, document.body, { type: "checkbox" }, { top: 300 }) }),
+    (/** @type {any} */ document) => {
+      const area = document.body.append(document.createElement("textarea", { name: "comment" }));
+      area.rect = { left: 100, top: 300, width: 240, height: 64 };
+      return { ...addLoginForm(document), odd: area };
+    },
+  ]) {
+    other = await createWorld({ frames: [{ frameId: 0, url: PAGE, build }] });
+    menu = await menuOn(other);
+    assert.equal(await menu.click(other.odd), "popup");
+    assert.equal(other.popups.count, 1);
+    assert.equal(valueOf(other.user), "");
+    assert.equal(valueOf(other.pass), "");
+    assert.equal(other.ops().includes("fill"), false, "no fill was asked for");
   }
 });
 
@@ -326,6 +352,21 @@ test("an_aim_is_for_the_next_request_of_its_document_only", async () => {
   assert.equal(await quickFillOf(world).fillOrOpen(TAB), "filled");
   assert.equal(valueOf(world.pass), ITEM.password, "not aimed: the page's first form");
   assert.equal(valueOf(world.pass2), "");
+
+  // A menu fill that ended before its request began (here: the fill flow was busy) takes its aim back, so the
+  // shortcut right after it fills the page's first form, not the clicked one.
+  const busy = await createWorld({ frames: [TOP] });
+  const plainCall = busy.coreHost.call;
+  busy.coreHost.call = async (op, args) => (op === "fill" ? { ok: false, reason: "busy" } : plainCall(op, args));
+  const busyMenu = await menuOn(busy);
+  assert.equal(await busyMenu.click(busy.pass2), "not_filled");
+  const disarm = busy.injections.at(-1);
+  assert.deepEqual(disarm.target, { tabId: TAB, documentIds: ["doc-0"] });
+  assert.match(String(disarm.func), /\.aim\(null\)/);
+  busy.coreHost.call = plainCall;
+  assert.equal(await quickFillOf(busy).fillOrOpen(TAB), "filled");
+  assert.equal(valueOf(busy.pass), ITEM.password, "the aim was taken back");
+  assert.equal(valueOf(busy.pass2), "");
 
   // An aim that waited longer than AIM_MS is gone.
   const late = await createWorld({ frames: [TOP] });

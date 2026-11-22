@@ -24,7 +24,7 @@
 // back are references and frame numbers. A name or user name in a reply is
 // never used.
 
-import { aimFill } from "./inject.mjs";
+import { aimFill, disarmFill } from "./inject.mjs";
 
 /** The command of the manifest (manifest/parts/commands.json). */
 export const FILL_COMMAND = "fill-login";
@@ -62,7 +62,7 @@ const framesOf = (handle) => {
 };
 
 /** @param {Uint8Array} bytes */
-const hex =(bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /**
  * The step the shortcut and the menu share.
@@ -125,28 +125,29 @@ export function createQuickFill({
       if (framesOf(one).length === 0) return open();
       // An http item is offered with a warning and one more click, in the popup only.
       if (one.insecure === true) return open();
+      /** The document the menu's aim went to. @type {string | null} */
+      let aimedAt = null;
       if (click !== null) {
         // The frame the browser resolves for `info.frameId` must still show `info.frameUrl`: when the two disagree
-        // (the frame moved on, or the id names another document now) nothing is filled. Then the engine there must
-        // hold the clicked field.
+        // (the frame moved on, or the id names another document now) nothing is filled. The frame must name its
+        // document, so the aim and the fill land in the same one. Then the engine there must hold the clicked field.
         const frame = await webNavigation.getFrame({ tabId, frameId: click.frameId }).catch(() => null);
         if (typeof frame?.url !== "string" || frame.url !== click.frameUrl) return open();
+        if (typeof frame.documentId !== "string" || frame.documentId === "") return open();
         try {
-          await aimFill({
-            scripting,
-            tabId,
-            frameId: click.frameId,
-            ...(typeof frame.documentId === "string" && frame.documentId !== "" ? { documentId: frame.documentId } : {}),
-            targetElementId: click.targetElementId,
-          });
+          await aimFill({ scripting, tabId, frameId: click.frameId, documentId: frame.documentId, targetElementId: click.targetElementId });
         } catch {
           return open();
         }
+        aimedAt = frame.documentId;
       }
       // The menu fills in the clicked frame only. The shortcut lets the fill flow take the first of the reference's
       // frames (top first) whose fill script reports sign-in fields.
       const result = await coreHost.call("fill", { session, ref: one.ref, tab_id: tabId, ...(click === null ? {} : { frame_id: click.frameId }) }).catch(() => null);
-      return result?.ok === true ? "filled" : "not_filled";
+      if (result?.ok === true) return "filled";
+      // A fill that ended before its request began left the aim armed: it must not steer the next fill there.
+      if (aimedAt !== null) await disarmFill({ scripting, tabId, documentId: aimedAt }).catch(() => {});
+      return "not_filled";
     } finally {
       try {
         sessions?.endSession(session);
