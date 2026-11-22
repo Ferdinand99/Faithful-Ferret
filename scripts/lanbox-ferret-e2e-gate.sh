@@ -21,10 +21,10 @@
 # a single run; the table says how to remove them.
 #
 # Steps:
-#  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
+#  1. For each browser: a fresh stack, the main scenarios (setup, sign-in,
 #     items, folders, two browsers, lock, unlock after the session has ended,
 #     hand-over to the admin origin, transport, no
-#     plaintext in the traffic, no policy violation), then the search for the
+#     plaintext in the traffic, no policy violation, previous passwords), then the search for the
 #     secrets of the run in the data directory and the server log.
 #  2. On the first browser's stack: restart the container and sign in again; then
 #     remove opaque_setup and check that the server refuses to start.
@@ -138,7 +138,7 @@ browsers_phase() {
   for browser in $browsers; do
     say "scenarios in $browser on a fresh stack"
     e2e_up >&2
-    if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: scenarios 01 to 09 passed"; else bad "$browser: the scenarios failed"; fi
+    if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: main scenarios passed"; else bad "$browser: the scenarios failed"; fi
     state="$(left "$phase_out" state)"
     needles="$(left "$phase_out" needles)"
     if [ -z "$state" ] || [ -z "$needles" ]; then
