@@ -13,6 +13,9 @@ const LOGIN_FIELDS = Object.freeze(["username", "password"]);
 /** More labels than this are not drawn as chips; the rest are one "+N" chip. */
 export const MAX_FOLDER_CHIPS = 12;
 
+/** The most earlier passwords an item keeps, and so the most the screen lists. */
+export const MAX_PASSWORD_HISTORY = 5;
+
 /**
  * The type of an item as the tile's colour knows it.
  * @param {unknown} type
@@ -72,6 +75,22 @@ export function folderLabels(view, locale) {
   const list = /** @type {any} */ (view)?.folders;
   if (!Array.isArray(list)) return [];
   return sortFolders(list.filter((label) => checkFolderName(label) === null), locale);
+}
+
+/**
+ * The earlier passwords an item has, for the list under "Previous passwords": the place of each in the core's list
+ * (which a reveal asks for) and the date it stopped being the password, newest first, at most five. Only the dates
+ * come from the view; the values never pass through here. An entry whose date is not a number is still listed (its
+ * date shows as unknown, `until: null`): it holds a password the user may need. Everything after the fifth is left out.
+ * @param {unknown} view
+ * @returns {{ index: number, until: number | null }[]}
+ */
+export function historyEntries(view) {
+  const list = /** @type {any} */ (view)?.password_history;
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, MAX_PASSWORD_HISTORY).map((entry, index) => ({
+    index, until: typeof entry?.until === "number" && Number.isFinite(entry.until) ? entry.until : null,
+  }));
 }
 
 /**

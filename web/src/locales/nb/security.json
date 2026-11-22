@@ -1,4 +1,8 @@
 {
+  "security.account.credits_eff": "Passordfrase-generatoren i hvelvets kjerne henter ordene fra EFFs store ordliste fra Electronic Frontier Foundation, brukt under lisensen CC BY 3.0 US. Terningtallene er fjernet fra listen; ordene er uendret.",
+  "security.account.credits_eff_licence": "Lisens: CC BY 3.0 US, https://creativecommons.org/licenses/by/3.0/us/",
+  "security.account.credits_eff_source": "Ordliste: https://www.eff.org/dice",
+  "security.account.credits_heading": "Krediteringer",
   "security.account.heading": "Konto",
   "security.account.intro": "Innstillinger som endrer hvordan hvelvet åpnes, ber først om hovedpassordet ditt på nytt.",
   "security.account.menu_empty": "Denne versjonen har ingen kontosider.",

@@ -8,9 +8,14 @@
 // reveal or copy, so a handle lives for the length of one call. Because the
 // item can change between the two, a reveal checks that the field it asks for
 // still has the same id and stops with `item_changed` if not.
+//
+// "Previous passwords" lists the passwords the item had before (the core keeps up to five inside the item). The view
+// carries their dates only. Each value is hidden like any secret field, is fetched on its own click with
+// `reveal_password_history(handle, index)` (after checking that the entry still has the same date), shows one at a
+// time together with every other secret on the page, and goes with the same wipes: a lock, leaving the page, a rebuild.
 import { el, mount } from "../dom.mjs";
-import { askConfirm, canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
-import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, tileLetter, tileType } from "./itemModel.mjs";
+import { askConfirm, canChange, describeError, formatMoment, listenWhileShown, markBadges } from "./common.mjs";
+import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, historyEntries, tileLetter, tileType } from "./itemModel.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
 
 /** What a hidden value looks like. */
@@ -120,6 +125,19 @@ export async function itemView({
     });
   }
 
+  /**
+   * One earlier password, checked against the date the page saw: another device may have changed the item since, and a value
+   * that is now at that place is not shown as the one the user clicked.
+   * @param {number} index @param {number | null} until
+   */
+  function historyValue(index, until) {
+    return withOpen(async ({ handle, view }) => {
+      const entry = historyEntries(view).find((e) => e.index === index);
+      if (entry === undefined || entry.until !== until) throw Object.assign(new Error("item_changed"), { code: "item_changed" });
+      return client.vault.reveal_password_history(handle, index);
+    });
+  }
+
   /** @param {string} text */
   async function toClipboard(text) {
     if (!clipboard?.writeText) throw Object.assign(new Error("clipboard"), { code: "clipboard" });
@@ -133,21 +151,22 @@ export async function itemView({
   /**
    * One value that may be secret: its label, the value (dots when it is secret) and the buttons. The buttons name the
    * field they act on ("Copy Password"), so a screen reader hears more than "Copy" and "Show" over and over.
-   * @param {{ key: string, label: string, plain: string | null, get(): Promise<string> }} spec
-   *   `plain` is the value when the core shows it, else null; `get` asks the worker.
+   * @param {{ key: string, label: string, speak?: string, plain: string | null, get(): Promise<string> }} spec
+   *   `plain` is the value when the core shows it, else null; `get` asks the worker; `speak` is the name the buttons give
+   *   the value when the visible label is not enough alone (default: the label)
    */
-  function valueRow({ key, label, plain, get }) {
+  function valueRow({ key, label, speak = label, plain, get }) {
     const slot = el("span", { class: "value", "data-role": "value", "data-key": key }, plain ?? DOTS);
     const copy = el("button", {
-      type: "button", class: "btn btn-secondary btn-sm i-copy", "aria-label": t("vault.item.copy_label", { label }), "data-role": "copy", "data-key": key,
+      type: "button", class: "btn btn-secondary btn-sm i-copy", "aria-label": t("vault.item.copy_label", { label: speak }), "data-role": "copy", "data-key": key,
     }, t("vault.item.copy"));
     /** @type {HTMLButtonElement | null} */
     let toggle = null;
     if (plain === null) {
       toggle = /** @type {HTMLButtonElement} */ (el("button", {
-        type: "button", class: "btn btn-secondary btn-sm", "aria-label": t("vault.item.show_label", { label }), "data-role": "reveal", "data-key": key,
+        type: "button", class: "btn btn-secondary btn-sm", "aria-label": t("vault.item.show_label", { label: speak }), "data-role": "reveal", "data-key": key,
       }, t("vault.item.show")));
-      slots.set(key, { slot, toggle, label });
+      slots.set(key, { slot, toggle, label: speak });
       toggle.addEventListener("click", async () => {
         if (!touch()) return;
         if (revealedKey === key) {
@@ -161,7 +180,7 @@ export async function itemView({
           revealedKey = key;
           mount(slot, document.createTextNode(value));
           mount(/** @type {HTMLButtonElement} */ (toggle), document.createTextNode(t("vault.item.hide")));
-          /** @type {HTMLButtonElement} */ (toggle).setAttribute("aria-label", t("vault.item.hide_label", { label }));
+          /** @type {HTMLButtonElement} */ (toggle).setAttribute("aria-label", t("vault.item.hide_label", { label: speak }));
         } catch (error) {
           hideAll();
           say(describeError(t, error));
@@ -172,7 +191,7 @@ export async function itemView({
       if (!touch()) return;
       try {
         await toClipboard(plain ?? (await get()));
-        say(t("vault.item.copied", { label }));
+        say(t("vault.item.copied", { label: speak }));
       } catch (error) {
         say(describeError(t, error));
       }
@@ -271,6 +290,20 @@ export async function itemView({
     /** @type {HTMLElement[]} */
     const cards = [];
     if (groups.login.length > 0) cards.push(card(t("vault.item.card_login"), "login", groups.login.map(fieldRow)));
+    // The passwords the item had before, newest first; a card is drawn only for an item that has some.
+    const earlier = historyEntries(view);
+    if (earlier.length > 0) {
+      cards.push(card(t("vault.item.history_heading", { count: earlier.length }), "history", earlier.map(({ index, until }) => {
+        const when = until === null ? null : formatMoment(until, locale);
+        return valueRow({
+          key: `h${index}`,
+          label: t(when === null ? "vault.item.history_unknown" : "vault.item.history_replaced", { date: when ?? "" }),
+          speak: t(when === null ? "vault.item.history_speak_unknown" : "vault.item.history_speak", { date: when ?? "" }),
+          plain: null,
+          get: () => historyValue(index, until),
+        });
+      })));
+    }
     if (groups.custom.length > 0) cards.push(card(t(groups.login.length > 0 ? "vault.item.card_fields" : "vault.item.card_details"), "fields", groups.custom.map(fieldRow)));
     if (urls.length > 0) {
       cards.push(el("section", { class: "card item-section urls", "data-role": "urls", "data-card": "urls" },

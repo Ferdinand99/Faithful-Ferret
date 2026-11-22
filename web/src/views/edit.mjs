@@ -38,6 +38,7 @@ const TYPES = Object.freeze(["login", "note"]);
  * @typedef {{
  *   item_type?: string, name: string, favorite: boolean, fields?: FieldDraft[],
  *   urls?: { url: string, matching: string }[], notes?: string, remove_notes?: boolean, folders?: string[],
+ *   keep_password_history?: boolean,
  * }} Draft
  */
 
@@ -129,7 +130,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   const username = field({ id: "edit-username", label: t("vault.edit.username"), role: "username", autocomplete: "off" });
   const password = field({
     id: "edit-password", label: t("vault.edit.password"), type: "password", autocomplete: "new-password", role: "password",
-    help: oldPassword ? t("vault.edit.password_keep") : undefined,
+    help: oldPassword ? `${t("vault.edit.password_keep")} ${t("vault.edit.password_history")}` : undefined,
   });
   const url = field({ id: "edit-url", label: t("vault.edit.url"), role: "url" });
   const notes = field({ id: "edit-notes", label: t("vault.edit.notes"), role: "notes", rows: 6 });
@@ -267,7 +268,12 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       if (oldUsername ? typedName !== (oldUsername.value ?? "") : typedName !== "") {
         set("username", t("vault.edit.username"), "text", typedName);
       }
-      if (password.input.value !== "") set("password", t("vault.edit.password"), "password", password.input.value);
+      if (password.input.value !== "") {
+        set("password", t("vault.edit.password"), "password", password.input.value);
+        // A new password on an item that is being changed: the core moves the old one into the item's previous passwords
+        // (it does nothing when the item had none, or when the value is the same). No old value passes through this form.
+        if (id !== null) draft.keep_password_history = true;
+      }
       if (fields.length > 0) draft.fields = fields;
       const first = url.input.value.trim();
       const urls = [

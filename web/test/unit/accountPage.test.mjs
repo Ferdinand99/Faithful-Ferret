@@ -535,3 +535,19 @@ test("the_new_sources_never_keep_a_secret_in_storage_the_console_or_the_address"
     assert.doesNotMatch(source, /location\s*[.=]|history\.|window\.open|navigator\.clipboard|fetch\(/, `${file} never writes the address or leaves the API client`);
   }
 });
+
+test("the_account_page_credits_the_word_list_the_generator_uses", async () => {
+  for (const lang of ["en", "nb"]) {
+    await withDom(async () => {
+      const text = i18n(lang).t;
+      const page = accountView({ t: text, routes: [] });
+      const credits = find(page, "credits");
+      assert.ok(credits, "a credits section");
+      const said = textOf(credits);
+      for (const needle of ["EFF", "Electronic Frontier Foundation", "CC BY 3.0 US", "https://www.eff.org/dice", "https://creativecommons.org/licenses/by/3.0/us/"]) {
+        assert.ok(said.includes(needle), `${lang}: names ${needle}`);
+      }
+      assert.equal(all(page, "credits").length, 1);
+    });
+  }
+});
