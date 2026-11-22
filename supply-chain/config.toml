@@ -589,9 +589,9 @@ criteria = "safe-to-deploy"
 notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.syn]]
-version = "3.0.9"
+version = "3.0.10"
 criteria = "safe-to-deploy"
-notes = "Exempted 2026-10-30; review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
+notes = "Exempted 2026-10-30 as 3.0.9, moved to 3.0.10 on 2026-11-22 (Dependabot bump); review by 2027-04-30. No audit from the imported sets (Mozilla, Google, Bytecode Alliance) covers this version."
 
 [[exemptions.synstructure]]
 version = "0.14.0"
