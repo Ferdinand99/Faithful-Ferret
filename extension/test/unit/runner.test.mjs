@@ -266,10 +266,22 @@ test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_
   // The input reaches the shell through the environment only, never spliced into a command line.
   const shellLines = code.split("\n").filter((line) => !/^\s*(?:name|path|description):/.test(line) && !/^\s*[A-Z][A-Z0-9_]*:/.test(line));
   assert.equal(shellLines.some((line) => /\$\{\{\s*inputs\./.test(line)), false, "an input is used outside an env value or a name or path");
-  // It signs a copy and checks the signed files against the untouched source: only META-INF/ may differ.
+  // It signs a copy and checks the signed files against the untouched source: META-INF/ may differ,
+  // manifest.json is compared as parsed JSON (Mozilla rewrites it), every other file byte for byte.
   assert.match(holders[0], /cp -a "\$RUNNER_TEMP\/source" "\$RUNNER_TEMP\/sign-src"/);
   assert.match(holders[0], /--source-dir "\$RUNNER_TEMP\/sign-src"/);
-  assert.match(code, /rm -r "\$RUNNER_TEMP\/signed-files\/META-INF"\n\s+diff -r "\$RUNNER_TEMP\/source" "\$RUNNER_TEMP\/signed-files"/);
+  const verify = steps.filter((step) => step.includes("name: Check and name the signed file"));
+  assert.equal(verify.length, 1);
+  assert.equal(verify[0].includes("secrets."), false);
+  assert.match(verify[0], /rm -r "\$RUNNER_TEMP\/signed-files\/META-INF"\n/);
+  const metaAt = verify[0].indexOf('rm -r "$RUNNER_TEMP/signed-files/META-INF"');
+  const jsonAt = verify[0].indexOf("isDeepStrictEqual(built, signed)");
+  const dropAt = verify[0].indexOf('rm "$RUNNER_TEMP/source/manifest.json" "$RUNNER_TEMP/signed-files/manifest.json"');
+  const diffAt = verify[0].indexOf('diff -r "$RUNNER_TEMP/source" "$RUNNER_TEMP/signed-files"');
+  assert.ok(metaAt >= 0 && metaAt < jsonAt && jsonAt < dropAt && dropAt < diffAt, "META-INF removed, then manifest.json compared as JSON and set aside, then everything else diffed");
+  assert.match(verify[0], /JSON\.parse\(fs\.readFileSync\(file, "utf8"\)\)/);
+  assert.match(verify[0], /' "\$RUNNER_TEMP\/source\/manifest\.json" "\$RUNNER_TEMP\/signed-files\/manifest\.json"/);
+  assert.equal(/diff [^\n]*(-x|--exclude)/.test(verify[0]), false, "no file is excluded from the byte comparison");
   // The build job builds the release variant twice, compares the SHA-256 and runs the release check.
   assert.match(code, /for n in 1 2; do\n\s+node scripts\/build\.mjs [^\n]*--variant release /);
   assert.match(code, /if \[ "\$first" != "\$second" \]; then/);
