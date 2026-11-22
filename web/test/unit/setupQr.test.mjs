@@ -75,7 +75,7 @@ test("the_reader_ignores_white_space_in_the_text_as_the_pdf_wraps_it", async () 
   };
   /** The text broken into lines of `size` characters, joined by `join`. */
   const wrapped = (size, join) => text.match(new RegExp(`.{1,${size}}`, "gu")).join(join);
-  // The PDF prints 8 characters a line; a browser turns the line breaks into spaces (Firefox) or drops them (Chromium).
+  // The PDF prints the text with a short line width; a browser turns the line breaks into spaces (Firefox) or drops them (Chromium).
   await expectRead(wrapped(8, " "), "spaces");
   await expectRead(wrapped(8, "\n"), "line feeds");
   await expectRead(wrapped(8, ""), "line breaks dropped");
