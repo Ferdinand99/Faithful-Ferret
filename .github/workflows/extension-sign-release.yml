@@ -6,14 +6,11 @@
 #
 # Manual only: `workflow_dispatch`, never on a push, a tag or a pull request. The
 # input `ref` names the code to build: a full 40-character commit SHA that is
-# reachable from `ext` or `main`, or the branch name `ext` or `main` (resolved to
+# reachable from `main`, or the branch name `main` (resolved to
 # its commit, which the run prints). Anything else is refused before anything is
 # built. Start it on `main`, with the commit on `main` as the input:
 #
 #   gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>
-#
-# GitHub lists and dispatches the copy of this file on the branch it is started on,
-# so the copies on `main` and `ext` must be the same file.
 #
 # Four jobs:
 #
@@ -27,7 +24,7 @@
 #    an artifact.
 # 2. `sign` belongs to the environment `amo-signing`, which has a required reviewer
 #    (every signing waits for an approval click) and allows deployments from the
-#    `ext` and `main` branches only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
+#    `main` branch only. AMO_JWT_ISSUER and AMO_JWT_SECRET are secrets of that
 #    environment. The job downloads the artifact of job 1, checks its SHA-256
 #    against the one job 1 reported, unpacks it and signs exactly those files. It
 #    runs no code from the repository: it checks out only extension/package.json
@@ -56,7 +53,7 @@
 #    unless the new file is the live one plus one entry (or the same file, on a
 #    re-run). Approving the signing therefore also publishes the version to every
 #    installed release build. Jobs 3 and 4 run only when the run was started on
-#    `main` and the commit is on `main`: a run from `ext` signs but never publishes.
+#    `main` and the commit is on `main`.
 #    See docs/EXTENSION-FIREFOX.md.
 #
 # The input reaches the shell through the environment, never spliced into a command
@@ -74,7 +71,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Commit to build and sign (a full 40-character SHA reachable from ext or main, or the branch name ext or main)
+        description: Commit to build and sign (a full 40-character SHA reachable from main, or the branch name main)
         type: string
         required: true
 
@@ -97,32 +94,31 @@ jobs:
       sha256: ${{ steps.reproducible.outputs.sha256 }}
     steps:
       # Full history of every branch, so that the input can be checked against
-      # ext and main before anything of the commit runs.
+      # main before anything of the commit runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve the input to a commit on ext or main
+      - name: Resolve the input to a commit on main
         id: resolve
         env:
           REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          if [ "$REF" = ext ] || [ "$REF" = main ]; then
+          if [ "$REF" = main ]; then
             commit="$(git rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}")"
           elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
             if ! git cat-file -e "${REF}^{commit}" 2>/dev/null; then
               echo "::error::The input is not a commit of this repository."
               exit 1
             fi
-            if ! git merge-base --is-ancestor "$REF" refs/remotes/origin/ext \
-              && ! git merge-base --is-ancestor "$REF" refs/remotes/origin/main; then
-              echo "::error::The commit is not reachable from ext or main."
+            if ! git merge-base --is-ancestor "$REF" refs/remotes/origin/main; then
+              echo "::error::The commit is not reachable from main."
               exit 1
             fi
             commit="$REF"
           else
-            echo "::error::The input must be a full 40-character commit SHA (lower case) or the branch name ext or main."
+            echo "::error::The input must be a full 40-character commit SHA (lower case) or the branch name main."
             exit 1
           fi
           git checkout --quiet --detach "$commit"
@@ -343,7 +339,7 @@ jobs:
   manifest:
     name: Write the update manifest
     needs: [build, sign]
-    # Only a run started on main, for a commit on main, publishes; a run from ext signs and stops.
+    # Only a run started on main, for a commit on main, publishes.
     if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
