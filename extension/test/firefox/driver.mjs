@@ -414,12 +414,30 @@ ${this.log.slice(-4000)}`);
   }
 
   /**
-   * Opens the context menu on the element that `target` (a CSS selector) names, in
-   * the selected tab, and clicks the item with `label` (chrome context).
-   * @param {string} label
+   * Opens the context menu on the element that `target` names, as `clickContextMenuItem`
+   * does, and returns the label and id of every item in it (also in a submenu), then
+   * closes it again without a click.
    * @param {string} target
+   * @returns {Promise<Array<{ label: string | null, id: string | null, nested: boolean }>>}
    */
-  async clickContextMenuItem(label, target) {
+  async contextMenuItems(target) {
+    await this.#rightClick(target);
+    return this.chrome(async () => {
+      const win = Services.wm.getMostRecentWindow("navigator:browser");
+      const popup = win.document.getElementById("contentAreaContextMenu");
+      for (let i = 0; popup.state !== "open"; i++) {
+        if (i > 100) throw new Error("the context menu did not open");
+        await new Promise((resolve) => win.setTimeout(resolve, 100));
+      }
+      const items = [...popup.querySelectorAll("menuitem, menu")].filter((i) => !i.hidden && !i.collapsed);
+      const out = items.map((i) => ({ label: i.getAttribute("label"), id: i.id || null, nested: i.parentNode !== popup }));
+      popup.hidePopup();
+      return out;
+    });
+  }
+
+  /** A trusted right click on the element that `target` (a CSS selector) names, in the selected tab. @param {string} target */
+  async #rightClick(target) {
     const before = this.context;
     if (before !== "content") await this.setContext("content");
     try {
@@ -443,18 +461,39 @@ ${this.log.slice(-4000)}`);
     } finally {
       if (before !== "content") await this.setContext(before);
     }
+  }
+
+  /**
+   * Opens the context menu on the element that `target` (a CSS selector) names, in
+   * the selected tab, and clicks the item with `label` (chrome context).
+   * @param {string} label
+   * @param {string} target
+   */
+  async clickContextMenuItem(label, target) {
+    await this.#rightClick(target);
     await this.chrome(async (/** @type {string} */ wanted) => {
       const win = Services.wm.getMostRecentWindow("navigator:browser");
       const popup = win.document.getElementById("contentAreaContextMenu");
-      for (let i = 0; popup.state !== "open"; i++) {
-        if (i > 100) throw new Error("the context menu did not open");
-        await new Promise((resolve) => win.setTimeout(resolve, 100));
-      }
+      const opened = async (/** @type {any} */ menu, /** @type {string} */ what) => {
+        for (let i = 0; menu.state !== "open"; i++) {
+          if (i > 100) throw new Error(`${what} did not open`);
+          await new Promise((resolve) => win.setTimeout(resolve, 100));
+        }
+      };
+      await opened(popup, "the context menu");
       const items = [...popup.querySelectorAll("menuitem")];
       const item = items.find((i) => i.getAttribute("label") === wanted);
       if (!item) {
         popup.hidePopup();
         throw new Error(`no menu item ${wanted}; there are: ${items.map((i) => i.getAttribute("label")).join(" | ")}`);
+      }
+      // With more than one item of an add-on, Firefox puts them in a submenu named after it: open that first.
+      const parent = item.parentNode;
+      if (parent !== popup) {
+        parent.parentNode.openMenu(true);
+        await opened(parent, "the add-on's submenu");
+        parent.activateItem(item);
+        return;
       }
       popup.activateItem(item);
     }, label);

@@ -105,7 +105,7 @@ const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
  * check even when it was added after the build.
  */
 const COMMON_RELEASE_KEYS = [
-  "background", "browser_specific_settings", "content_security_policy", "description",
+  "background", "browser_specific_settings", "commands", "content_security_policy", "description",
   "manifest_version", "name", "optional_permissions", "options_ui", "permissions", "version",
 ];
 /** The one options page: the settings, opened in a tab. */
@@ -115,6 +115,9 @@ const RELEASE_OPTIONS_PAGE = "pages/settings.html";
 function isReleaseOptionsUi(value) {
   return isPlainObject(value) && Object.keys(value).length === 2 && value.page === RELEASE_OPTIONS_PAGE && value.open_in_tab === true;
 }
+
+/** The commands a release may declare: the fill shortcut (manifest/parts/commands.json), nothing else. */
+export const RELEASE_COMMANDS = Object.freeze(["fill-login"]);
 export const RELEASE_MANIFEST_KEYS = Object.freeze({
   2: Object.freeze([...COMMON_RELEASE_KEYS, "browser_action"].sort()),
   3: Object.freeze([...COMMON_RELEASE_KEYS, "action", "host_permissions", "optional_host_permissions"].sort()),
@@ -447,6 +450,15 @@ function manifestProblems(text, allow) {
   for (const key of Object.keys(manifest)) {
     if (FORBIDDEN_KEYS.includes(key)) continue;
     if (keys !== undefined && !keys.includes(key)) problems.push(`manifest.json: the key ${key} is not in the release key list`);
+  }
+
+  if ("commands" in manifest) {
+    if (!isPlainObject(manifest.commands)) problems.push("manifest.json: commands is not an object");
+    else {
+      for (const name of Object.keys(manifest.commands)) {
+        if (!RELEASE_COMMANDS.includes(name)) problems.push(`manifest.json: the command ${name} is not a release command`);
+      }
+    }
   }
 
   // The settings page opens in a tab of its own, so it is an ordinary top-level page of the extension.

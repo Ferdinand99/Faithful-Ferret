@@ -3,7 +3,9 @@
 // It wires the modules and puts nothing on `globalThis`: the core host (the
 // only holder of the WASM client, and so of any key), the account session, the
 // sync, the matching and the popup's item operations that run in it (their
-// operations are the core host's), the clipboard, the lock and the router.
+// operations are the core host's), the clipboard, the lock and the router; and
+// the keyboard shortcut and the context menu, which reach the vault only
+// through the core host's fill operations.
 // Every listener is registered while the module loads, so the event that woke
 // the page reaches it.
 //
@@ -11,6 +13,8 @@
 // the keys lived in the page and went with it.
 
 import { createClipboard } from "./clipboard.mjs";
+import { createQuickFill, listenForCommands } from "./commands.mjs";
+import { action } from "./compat.mjs";
 import { createCoreHost, defaultCreateClient } from "./coreHost.mjs";
 import { createFillHost } from "./fillFlow.mjs";
 import { createCandidateSource } from "./frames.mjs";
@@ -18,6 +22,7 @@ import { createCandidateSource } from "./frames.mjs";
 import { HANDLERS } from "./handlers.gen.mjs";
 import { createLock } from "./lock.mjs";
 import { createMatchHost } from "./match.mjs";
+import { listenForMenus, menuTitle } from "./menus.mjs";
 import { createRouter } from "./router.mjs";
 import { createSessionHost } from "./session.mjs";
 import { createSyncHost } from "./sync.mjs";
@@ -113,6 +118,28 @@ const router = createRouter({
 
 runtime.onConnect.addListener(router.onConnect);
 runtime.onMessage.addListener(router.onMessage);
+
+// The shortcut and the context menu: one match fills, anything else opens the popup. They reach the vault only
+// through the core host's fill operations.
+const quickFill = createQuickFill({
+  coreHost,
+  lock,
+  // The fill flow's references of each action end with it.
+  sessions: fillHost,
+  openPopup: () => action.openPopup(),
+  scripting: browser.scripting,
+  webNavigation: browser.webNavigation,
+});
+listenForCommands({ commands: browser.commands, quickFill });
+listenForMenus({
+  menus: browser.menus,
+  quickFill,
+  title: menuTitle({
+    fetch: (url) => fetch(url),
+    getURL: (path) => runtime.getURL(path),
+    languages: navigator.languages ?? [navigator.language],
+  }),
+});
 
 // Only the test build has hooks, and they are set up here, in the first turn of the
 // page, so a port or an alarm that woke the page reaches them. `variantHooks` is null

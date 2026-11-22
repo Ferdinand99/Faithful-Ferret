@@ -50,3 +50,64 @@ export async function injectFill({ scripting, tabId, frameId, documentId, reques
     throw new Error("inject: the engine did not begin");
   }
 }
+
+/**
+ * Aims the fill script of one frame at the field of a context menu click
+ * (`menus.getTargetElement` in that frame), so the next request of that frame
+ * fills the clicked field's group and nothing else. The same two calls as
+ * `injectFill`: the file (the engine starts once), then a function that hands
+ * the engine the click's `targetElementId`.
+ *
+ * @param {{
+ *   scripting: { executeScript: (injection: any) => Promise<Array<{ frameId?: number, result?: unknown, error?: unknown }>> },
+ *   tabId: number,
+ *   frameId: number,
+ *   documentId?: string,
+ *   targetElementId: number,
+ * }} request
+ * @returns {Promise<void>} resolves when the engine holds the clicked field
+ */
+export async function aimFill({ scripting, tabId, frameId, documentId, targetElementId }) {
+  if (!isIndex(tabId) || !isIndex(frameId)) throw new TypeError("inject: bad target");
+  if (typeof targetElementId !== "number" || !Number.isSafeInteger(targetElementId)) throw new TypeError("inject: bad element id");
+  const target = typeof documentId === "string" && documentId !== ""
+    ? { tabId, documentIds: [documentId] }
+    : { tabId, frameIds: [frameId] };
+  const loaded = await scripting.executeScript({ target, files: [ENTRY] });
+  if (!Array.isArray(loaded) || loaded.length !== 1 || loaded[0]?.error !== undefined) throw new Error("inject: the script did not load");
+  const results = await scripting.executeScript({
+    target,
+    func: (/** @type {number} */ id) => {
+      const api = /** @type {any} */ (globalThis).__ferretFill;
+      return api !== undefined && typeof api.aim === "function" && api.aim(id) === true;
+    },
+    args: [targetElementId],
+  });
+  if (!Array.isArray(results) || results.length !== 1 || results[0]?.result !== true) {
+    throw new Error("inject: the engine found no clicked field");
+  }
+}
+
+/**
+ * Takes back an aim that no request used (the fill ended before it began): the
+ * engine of that document, if it is there, forgets the clicked field. Nothing
+ * is loaded into a document that has no engine.
+ *
+ * @param {{
+ *   scripting: { executeScript: (injection: any) => Promise<unknown> },
+ *   tabId: number,
+ *   documentId: string,
+ * }} request
+ * @returns {Promise<void>}
+ */
+export async function disarmFill({ scripting, tabId, documentId }) {
+  if (!isIndex(tabId) || typeof documentId !== "string" || documentId === "") throw new TypeError("inject: bad target");
+  await scripting.executeScript({
+    target: { tabId, documentIds: [documentId] },
+    func: () => {
+      const api = /** @type {any} */ (globalThis).__ferretFill;
+      if (api !== undefined && typeof api.aim === "function") api.aim(null);
+      return true;
+    },
+  });
+}

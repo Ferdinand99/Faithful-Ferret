@@ -45,6 +45,17 @@
 // report. A `fill_field` names the kind, and the engine fills the field of that
 // kind in the group. The engine answers only to a message that the extension
 // itself sent.
+//
+// The context menu (`aim`): a click on Ferret's menu item names one field
+// (`menus.getTargetElement`). The extension aims the engine at it before the
+// request begins, and that request fills the group of the clicked field
+// instead of the first one of the page. The clicked field gets the value of its
+// own kind, so a password goes into it only when it is a password input. An
+// element that is no text or password input is refused at the aim. An input the
+// engine would not fill (hidden, covered, one that sets a new password) gives
+// an empty report: an aimed request never falls back to another field of the
+// page. An aim is good for the next request only, and for AIM_MS at most;
+// `aim(null)` takes it back.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 
@@ -55,8 +66,10 @@ const MIN_VISIBLE_SHARE = 0.5;
 /** Bounds that stop a hostile page from making the walks run long. */
 const MAX_NODES = 20_000;
 const MAX_DEPTH = 1_000;
-/** The name under which the injected script offers `begin` to the extension (not reachable by the page). */
+/** The name under which the injected script offers `begin` and `aim` to the extension (not reachable by the page). */
 export const FILL_GLOBAL = "__ferretFill";
+/** How long an aim at a clicked field waits for its request, in milliseconds. */
+export const AIM_MS = 3_000;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TEXT_TYPES = new Set(["text", "email", "tel", "number", "search", "url"]);
@@ -232,9 +245,12 @@ function groupOf(anchor, candidates) {
  *   send: (raw: string) => unknown,
  *   runtimeId: string,
  *   extensionBase: string,
- * }} deps `send` delivers a message to the extension; `runtimeId` and `extensionBase` (`moz-extension://<uuid>/`) say who may talk to the engine
+ *   targetOf?: (targetElementId: number) => any,
+ *   clock?: () => number,
+ * }} deps `send` delivers a message to the extension; `runtimeId` and `extensionBase` (`moz-extension://<uuid>/`) say who may talk to the engine;
+ *   `targetOf` is `menus.getTargetElement` (the element of a context menu click) and `clock` the time in milliseconds
  */
-export function createFillEngine({ window, document, send, runtimeId, extensionBase }) {
+export function createFillEngine({ window, document, send, runtimeId, extensionBase, targetOf = () => null, clock = () => Date.now() }) {
   // The native setter. In Firefox the content script reads the page through
   // Xray wrappers, so this is the browser's own setter whatever the page has
   // replaced; taking it once here is only a second line of defence.
@@ -243,6 +259,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
   /** @type {{ requestId: string, fields: Field[] } | null} */
   let pending = null;
+  /** The field of a context menu click, for the next request only. @type {{ element: any, until: number } | null} */
+  let aimed = null;
 
   /**
    * Whether `element` may be filled, and if not, why. This is the whole list.
@@ -342,9 +360,16 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    * Nothing outside the group is reported, so no kind can land in another form
    * than the one that gets the password.
    *
+   * With `target` (the field of a context menu click), that field is the anchor
+   * instead, and it must be a candidate itself, or nothing is reported. A
+   * password field anchors as in step 2. A user name field gets the user name,
+   * and its group gives the password field after it (else the last one before
+   * it) and the one-time code. A one-time-code field gets the code only.
+   *
+   * @param {any} [target]
    * @returns {Field[]}
    */
-  function scan() {
+  function scan(target) {
     /** @type {Candidate[]} */
     const candidates = [];
     allInputs().forEach((element, order) => {
@@ -365,7 +390,13 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       candidates.push({ element, role: named ? "username" : "text", order });
     });
 
+    if (target !== undefined) {
+      const clicked = candidates.find((c) => c.element === target);
+      if (!clicked) return [];
+      if (clicked.role !== "password") return fieldsOf(aimedGroup(clicked, candidates));
+    }
     const anchor =
+      (target !== undefined ? candidates.find((c) => c.element === target) : undefined) ??
       candidates.find((c) => c.role === "password") ??
       candidates.find((c) => c.role === "username" && autocompleteTokens(c.element).includes("username")) ??
       candidates.find((c) => c.role === "username") ??
@@ -384,12 +415,64 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       const code = group.find((c) => c.role === "totp");
       if (code) chosen.push(code);
     }
-    chosen.sort((x, y) => x.order - y.order);
-    return chosen.map(({ element, role }) => ({
+    return fieldsOf(chosen);
+  }
+
+  /**
+   * The group of a clicked field that is not a password field: the field
+   * itself, and for a user name field the password field and the one-time code
+   * of its group.
+   * @param {Candidate} clicked
+   * @param {Candidate[]} candidates
+   * @returns {Candidate[]}
+   */
+  function aimedGroup(clicked, candidates) {
+    if (clicked.role === "totp") return [clicked];
+    const group = groupOf(clicked, candidates);
+    const passwords = group.filter((c) => c.role === "password");
+    const password = passwords.find((c) => c.order > clicked.order) ?? passwords.at(-1);
+    const code = group.find((c) => c.role === "totp");
+    return [clicked, ...(password ? [password] : []), ...(code ? [code] : [])];
+  }
+
+  /**
+   * The report entries of the chosen candidates, in document order, each with
+   * a new random id.
+   * @param {Candidate[]} chosen
+   * @returns {Field[]}
+   */
+  function fieldsOf(chosen) {
+    return [...chosen].sort((x, y) => x.order - y.order).map(({ element, role }) => ({
       kind: /** @type {Kind} */ (role === "text" ? "username" : role),
       id: newFieldId(random),
       element,
     }));
+  }
+
+  /**
+   * Aims the next request at the field of a context menu click. False, and no
+   * aim, when the browser names no element of this document or no input the
+   * engine fills. `aim(null)` takes an aim back.
+   * @param {unknown} targetElementId
+   * @returns {boolean}
+   */
+  function aim(targetElementId) {
+    aimed = null;
+    if (typeof targetElementId !== "number" || !Number.isSafeInteger(targetElementId)) return false;
+    /** @type {any} */
+    let element = null;
+    try {
+      element = targetOf(targetElementId);
+    } catch {
+      return false;
+    }
+    if (!isElement(element) || element.ownerDocument !== document) return false;
+    // Only an input the engine could ever fill: anything else (a text area, an editable block, a checkbox) is
+    // refused here, so the menu says so instead of doing nothing.
+    const type = String(element.type ?? "").toLowerCase();
+    if (element.localName !== "input" || !(type === "password" || TEXT_TYPES.has(type))) return false;
+    aimed = { element, until: clock() + AIM_MS };
+    return true;
   }
 
   /** @returns {string} */
@@ -405,8 +488,11 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    */
   function begin(requestId) {
     pending = null;
+    // An aim counts for this request only, whatever becomes of it.
+    const target = aimed !== null && clock() <= aimed.until ? aimed.element : undefined;
+    aimed = null;
     if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) return false;
-    const fields = scan();
+    const fields = scan(target);
     pending = { requestId, fields };
     const raw = encode("frame_report", {
       request_id: requestId,
@@ -501,18 +587,19 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     else answer(requestId, false, result.reason);
   }
 
-  return Object.freeze({ begin, onMessage });
+  return Object.freeze({ begin, aim, onMessage });
 }
 
 /**
  * Starts the engine once per page: a second injection finds the first and
  * changes nothing. The extension asks for a report through
- * `globalThis.__ferretFill.begin(id)`, a property of the isolated world that
- * the page cannot see.
+ * `globalThis.__ferretFill.begin(id)`, and aims it at a clicked field through
+ * `aim(targetElementId)`: properties of the isolated world that the page
+ * cannot see.
  *
  * @param {any} [api] the `browser` object
  * @param {any} [scope] the global object of the script (the page window)
- * @returns {{ begin: (requestId: string) => boolean }}
+ * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean }}
  */
 export function start(api = /** @type {any} */ (globalThis).browser, scope = globalThis) {
   const existing = Object.getOwnPropertyDescriptor(scope, FILL_GLOBAL);
@@ -524,11 +611,12 @@ export function start(api = /** @type {any} */ (globalThis).browser, scope = glo
     send: (raw) => runtime.sendMessage(raw),
     runtimeId: runtime.id,
     extensionBase: runtime.getURL(""),
+    targetOf: (id) => api.menus?.getTargetElement?.(id) ?? null,
   });
   runtime.onMessage.addListener((/** @type {unknown} */ raw, /** @type {unknown} */ sender) => {
     engine.onMessage(raw, sender);
   });
-  const offer = Object.freeze({ begin: engine.begin });
+  const offer = Object.freeze({ begin: engine.begin, aim: engine.aim });
   Object.defineProperty(scope, FILL_GLOBAL, { value: offer, configurable: false, enumerable: false, writable: false });
   return offer;
 }

@@ -288,10 +288,21 @@ async function boot(dir) {
   const onConnect = [];
   /** @type {Array<(message: unknown, sender: unknown) => unknown>} */
   const onMessage = [];
-  const counts = { alarm: 0, idle: 0 };
+  const counts = { alarm: 0, idle: 0, command: 0, menuClick: 0 };
+  /** @type {any[]} */
+  const menuItems = [];
   /** @type {Map<string, unknown>} */
   const session = new Map([["lock_at", Date.now() + 600_000]]);
   /** @type {any} */ (globalThis).browser = {
+    action: { openPopup: async () => {} },
+    commands: { onCommand: { addListener: () => { counts.command += 1; } } },
+    menus: {
+      create: (/** @type {any} */ item) => { menuItems.push(item); },
+      remove: async () => {},
+      onClicked: { addListener: () => { counts.menuClick += 1; } },
+    },
+    scripting: { executeScript: async () => [] },
+    webNavigation: { getFrame: async () => null, getAllFrames: async () => [] },
     runtime: {
       ...fake.runtime,
       getManifest: () => ({ manifest_version: 3, browser_specific_settings: { gecko: { id: fake.runtime.id } } }),
@@ -311,17 +322,20 @@ async function boot(dir) {
       },
     },
   };
+  // Node's own fetch puts its dispatcher on globalThis on first use; the page reads its catalogs with fetch, so
+  // that happens here first and is not counted as the background's.
+  await fetch(fake.runtime.getURL("locales.en.json")).catch(() => {});
   const before = Reflect.ownKeys(globalThis);
   await import(pathToFileURL(join(dir, "background", "main.mjs")).href);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  return { fake, onConnect, onMessage, counts, session, before };
+  return { fake, onConnect, onMessage, counts, menuItems, session, before };
 }
 
 test("background_exposes_nothing_on_globalThis", async () => {
   for (const variant of VARIANTS) {
     const { env, result } = await built({ variant });
     try {
-      const { fake, onConnect, onMessage, counts, session, before } = await boot(result.dir);
+      const { fake, onConnect, onMessage, counts, menuItems, session, before } = await boot(result.dir);
       assert.deepEqual(Reflect.ownKeys(globalThis), before, `${variant}: the background added a name to globalThis`);
 
       // It is wired: every listener is registered, and the start locked the vault.
@@ -330,7 +344,9 @@ test("background_exposes_nothing_on_globalThis", async () => {
       // content-script probe, and the lifetime log listens for the heartbeat.
       assert.equal(onMessage.length, variant === "test" ? 3 : 1);
       // The lock and the clipboard listen for their alarms (and the test build's lifetime log for its heartbeat).
-      assert.deepEqual(counts, { alarm: variant === "test" ? 3 : 2, idle: 1 });
+      assert.deepEqual(counts, { alarm: variant === "test" ? 3 : 2, idle: 1, command: 1, menuClick: 1 });
+      // The one menu item, with the English title (no catalog can be fetched here).
+      assert.deepEqual(menuItems, [{ id: "ferret-fill", title: "Fill with Ferret", contexts: ["editable"] }]);
       assert.equal(session.has("lock_at"), false, "a new page starts locked");
 
       // And it routes: the UI port is accepted from an extension page, with no handler yet.

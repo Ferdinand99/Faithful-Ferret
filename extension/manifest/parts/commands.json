@@ -1,0 +1,8 @@
+{
+  "commands": {
+    "fill-login": {
+      "description": "Fill in the login for this page",
+      "suggested_key": { "default": "Alt+Shift+L" }
+    }
+  }
+}
