@@ -33,7 +33,7 @@ export const IMPORT_PHASES = Object.freeze(["checking", "stretching", "opening",
 
 /** What is left out of a file, counted by the worker (`import.skipped.<key>`), in the order the page lists it. */
 export const SKIPPED_KEYS = Object.freeze([
-  "passkeys", "folders", "collections", "tags", "attachments", "fieldHistory", "linked", "unknownKeys", "otherTypes", "trashed", "tooLarge",
+  "passkeys", "folders", "tags", "attachments", "fieldHistory", "linked", "unknownKeys", "otherTypes", "trashed", "tooLarge",
   "passwordHistory", "reprompt",
 ]);
 

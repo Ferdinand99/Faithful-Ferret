@@ -268,3 +268,65 @@ test("the_side_menu_shows_the_pinned_folders_the_items_have_and_follows_a_rename
     assert.deepEqual(prefs.pinned(), []);
   });
 });
+
+test("a_lock_in_the_middle_of_a_rename_is_told_on_the_next_folders_page", async () => {
+  await withDom(async () => {
+    const engine = liveEngine([item(1, ["Secret project"]), item(2, ["Secret project"]), item(3, ["Home"])]);
+    const scope = createWipeScope();
+    let open = true;
+    const touch = () => open;
+    // The vault locks while the first item is being written.
+    const update = engine.update;
+    engine.update = async (id, draft, rev) => {
+      await update(id, draft, rev);
+      open = false;
+      scope.run();
+    };
+    const root = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, touch, scope });
+    await click(all(root, "folder-rename").find((b) => b.getAttribute("data-key") === "secret project"));
+    find(root, "folder-new-name").value = "Jobb";
+    await submit(find(root, "folder-rename-form"));
+    await settle();
+    assert.equal(updates(engine).length, 1, "the run stopped after the lock");
+    assert.equal(textOf(root).includes("Secret project"), false, "the page was wiped first");
+
+    // After the unlock, the Folders page says what happened, once, with counts and no name.
+    open = true;
+    engine.update = update;
+    const next = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, touch });
+    const said = textOf(find(next, "message"));
+    assert.ok(said.includes("folders.done_rename"), said);
+    assert.ok(said.includes("folders.done_stopped"), said);
+    for (const name of ["Secret project", "Jobb"]) assert.equal(said.includes(name), false, `${name} is not in the line`);
+    const third = foldersPage({ engine, t, prefs: prefsFor(), folderLink: folderHref, touch });
+    assert.equal(textOf(find(third, "message")).trim(), "", "only once");
+  });
+});
+
+test("a_side_menu_whose_frame_left_the_page_lets_go_of_its_pin_watcher", async () => {
+  await withDom(async () => {
+    clearFolderLinks();
+    const engine = liveEngine([item(1, ["Work"]), item(2, ["Bank"])]);
+    const prefs = prefsFor();
+    const scope = createWipeScope();
+    const root = shellView({
+      t, engine, session: { onLock() {} }, content: el("p", null, "x"), lock: async () => {}, touch: () => true, scope, onLocked: () => el("div"),
+      routes: [], prefs, win: {},
+    });
+    const pinned = () => all(root, "nav-folder").map((link) => textOf(link).trim());
+    const side = find(root, "side");
+    side.isConnected = true;
+    prefs.pin("Work");
+    assert.deepEqual(pinned(), ["Work"], "on the page, the menu follows a pin");
+    // The next screen built a new frame: this one is off the page.
+    side.isConnected = false;
+    prefs.pin("Bank");
+    assert.deepEqual(pinned(), ["Work"], "a menu off the page is not drawn again");
+    // It let go of the watcher: even back on the page (it never comes back) it is not told any more.
+    side.isConnected = true;
+    prefs.unpin("Work");
+    assert.deepEqual(pinned(), ["Work"]);
+    scope.run();
+    prefs.clearPins();
+  });
+});

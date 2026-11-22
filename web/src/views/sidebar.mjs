@@ -311,10 +311,16 @@ export function sidebarView({
   }
 
   render();
-  // A pin made on another screen (the Folders page) shows here at once.
+  // A pin made on another screen (the Folders page) shows here at once. A menu whose frame has left the page lets go
+  // of its watcher at the next change, so it is not drawn again and its nodes (with folder names) are not kept.
   let disposed = false;
   const offPins = watchPins(() => {
-    if (!disposed) render();
+    if (disposed) return;
+    if (side.isConnected === false) {
+      offPins();
+      return;
+    }
+    render();
   });
 
   return {

@@ -246,3 +246,54 @@ test("no_folder_name_is_written_in_clear_by_the_preferences", () => {
   assert.ok(/encrypt_item/.test(store), "the pins are sealed by the core");
   assert.ok(!/localStorage/.test(store));
 });
+
+test("a_record_of_an_older_vault_key_epoch_is_removed_when_it_is_read", async () => {
+  const { store, settings } = await settingsOver();
+  const client = createFakeClient();
+  await createPinStore({ vault: client.vault, settings, accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 }).save(["Secret project"]);
+  assert.ok(await getSetting(store, pinsKey(ACCOUNT, VAULT)));
+  // After a rekey the old key may be exposed: the ciphertext under it does not stay.
+  assert.deepEqual(await createPinStore({ vault: client.vault, settings, accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 2 }).load(), []);
+  assert.equal(await getSetting(store, pinsKey(ACCOUNT, VAULT)), undefined);
+  assert.equal(client.vault.calls.filter((call) => call[0] === "open_item").length, 0, "it is not opened");
+  // A store that cannot remove it still gives no pins.
+  const failing = { ...settings, get: async () => ({ v: 1, epoch: 1, id: "ab".repeat(16), envelope: new Uint8Array(8), tag: new Uint8Array(32) }), remove: async () => { throw new Error("store"); } };
+  assert.deepEqual(await createPinStore({ vault: client.vault, settings: failing, accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 2 }).load(), []);
+});
+
+test("two_quick_pin_changes_are_kept_in_the_order_they_were_made", async () => {
+  const started = [];
+  const finished = [];
+  /** The first save is slow; the second must wait for it. */
+  let releaseFirst = () => {};
+  const firstHeld = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const saver = {
+    save: async (names) => {
+      started.push([...names]);
+      if (started.length === 1) await firstHeld;
+      finished.push([...names]);
+    },
+  };
+  const prefs = createUiPrefs(null, [], saver);
+  prefs.pin("A");
+  prefs.pin("B");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, [["A"]], "the second save waits for the first");
+  releaseFirst();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(finished, [["A"], ["A", "B"]], "the newest list is the last one kept");
+  // A failed save does not stop the next.
+  const failing = { save: async (names) => {
+    if (names.length === 1) throw new Error("store");
+    finished.push([...names]);
+  } };
+  const other = createUiPrefs(null, [], failing);
+  other.pin("X");
+  other.pin("Y");
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(finished.at(-1), ["X", "Y"]);
+});

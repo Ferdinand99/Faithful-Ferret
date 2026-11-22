@@ -196,3 +196,35 @@ test("a_second_device_sees_a_rename_after_it_syncs", async () => {
   d.engine.stop();
   other.engine.stop();
 });
+
+test("a_lock_in_the_middle_of_a_rename_stops_it_and_the_queued_write_goes_out_after_the_next_unlock", async () => {
+  const d = await world();
+  // The server cannot be reached for now: the write stays in the outbox.
+  for (let i = 0; i < 20; i += 1) {
+    d.api.faults.push({ kind: "network" });
+    d.api.batchFaults.push({ kind: "network" });
+  }
+  let touches = 0;
+  // The vault locks after the first write: `touch` answers false from then on.
+  const result = await renameFolder({ engine: d.engine, from: "Work", to: "Jobb", touch: () => (touches += 1) === 1 });
+  assert.equal(result.stopped, true);
+  assert.deepEqual([result.done, result.failed, result.skipped, result.total], [1, 0, 0, 2]);
+  d.engine.stop();
+  assert.deepEqual(sentRevs(d), [1, 1, 1], "nothing reached the server before the lock");
+
+  // The next unlock starts an engine over the same store: the queued write goes, and only that one.
+  d.api.faults.length = 0;
+  d.api.batchFaults.length = 0;
+  const again = await syncDevice({ model: d.model, client: d.client, db: d.store.database, locks: d.locks });
+  await again.engine.start();
+  await until(() => d.model.items.get(ID_A).rev === 2 || d.model.items.get(ID_B).rev === 2, "the queued write is on the server");
+  await settle();
+  const revs = sentRevs(d);
+  assert.equal(revs.filter((rev) => rev === 2).length, 1, "one item was written");
+  assert.equal(revs[2], 1, "the item in no folder is not written");
+  const written = revs[0] === 2 ? ID_A : ID_B;
+  const untouched = written === ID_A ? ID_B : ID_A;
+  assert.ok((await serverBody(d, written)).folders.includes("Jobb"));
+  assert.equal((await serverBody(d, untouched)).folders.includes("Jobb"), false, "the rest keep the old name");
+  again.engine.stop();
+});

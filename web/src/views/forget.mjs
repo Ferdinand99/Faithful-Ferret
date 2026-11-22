@@ -100,6 +100,13 @@ export function forgetView({ t, session, store, api, serverUrl, accountId, email
       if (outcome === "cancelled") {
         say(noteBox, "syncwarnings.forget.cancelled");
         back();
+      } else {
+        // This browser no longer remembers the account either: the next visit is the full sign-in page.
+        try {
+          await session.forgetRemembered?.(id);
+        } catch {
+          // Without its pinned record the marker leads nowhere, and it removes itself at the next visit.
+        }
       }
     } catch {
       busy(false);

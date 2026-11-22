@@ -15,6 +15,14 @@ import { focusNode } from "./popMenu.mjs";
 let sequence = 0;
 
 /**
+ * The line of a run whose page was wiped before it could say it (the vault locked, or the page was left, in the middle of
+ * a rename or delete): the next Folders page shows it once. It holds counts and an error text only, never a folder name,
+ * and lives in memory only.
+ * @type {string | null}
+ */
+let heldLine = null;
+
+/**
  * @param {{
  *   engine: any,
  *   t: import("./common.mjs").Translate,
@@ -186,7 +194,9 @@ export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () =
     } finally {
       busy = false;
       render();
-      say(text);
+      // A page that was wiped meanwhile cannot say it: the next Folders page does.
+      if (wiped) heldLine = text;
+      else say(text);
     }
   }
 
@@ -202,6 +212,11 @@ export function foldersPage({ engine, t, prefs, folderLink, locale, touch = () =
     el("p", { class: "help" }, t("folders.intro")),
     body, message, host);
   render();
+  // What a run that the lock cut short did (see `heldLine`).
+  if (heldLine !== null) {
+    say(heldLine);
+    heldLine = null;
+  }
   const off = listenWhileShown(root, engine, "changed", () => {
     if (!busy && renaming === null) render();
   });

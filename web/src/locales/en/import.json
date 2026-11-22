@@ -138,7 +138,6 @@
   "import.sending.keep_open": "The items are stored on this device. If you close this page, the sending goes on the next time Ferret is open, and nothing is sent twice.",
   "import.sending.text": "{sent} of {total} item(s) are on the server; {queued} are still waiting.",
   "import.skipped.attachments": "Attachments are not imported: {count} attachment(s) in the file were left out.",
-  "import.skipped.collections": "Collections are not imported: {count} collection(s) in the file were left out.",
   "import.skipped.fieldHistory": "The earlier values of {count} field(s) are not imported.",
   "import.skipped.folders": "{count} folder name(s) could not be used and were left out: a name that is longer than 64 characters or holds a character that is not allowed, or more than 20 folders on one item.",
   "import.skipped.linked": "{count} linked custom field(s) were left out. A linked field points to another field and holds no value of its own.",

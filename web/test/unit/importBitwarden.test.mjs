@@ -70,7 +70,7 @@ test("bitwarden_json_maps_every_type_and_field_kind", () => {
     items: 8, login: 5, note: 1, card: 1, identity: 1,
     urls: 7, totp: 2, customFields: 4, matchNull: 2, http: 1, textAddresses: 2, sealed: 0,
   });
-  assert.deepEqual(report.skipped, { passkeys: 1, folders: 0, collections: 0, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 });
+  assert.deepEqual(report.skipped, { passkeys: 1, folders: 0, linked: 1, unknownKeys: 2, otherTypes: 2, trashed: 1, tooLarge: 0, passwordHistory: 1, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 });
   // The folder of the first item is its folder; the others are in none.
   assert.deepEqual(login.folders, ["Synthetic folder A"]);
   assert.deepEqual(drafts.slice(1).map((d) => d.folders), drafts.slice(1).map(() => undefined));
@@ -80,7 +80,7 @@ test("passkeys_linked_fields_and_unknown_keys_are_counted_and_skipped", () => {
   const { drafts, report } = json("every-type.json");
   assert.equal(report.skipped.passkeys, 1);
   assert.equal(report.skipped.folders, 0, "folders are imported now");
-  assert.equal(report.skipped.collections, 0, "collections become folders");
+  assert.equal("collections" in report.skipped, false, "collections become folders: nothing of them is left out");
   assert.equal(report.skipped.linked, 1);
   assert.equal(report.skipped.unknownKeys, 2); // httpAuthenticationEnabled and archivedDate
   assert.deepEqual(warnings(report, "passkey_skipped"), [0]);

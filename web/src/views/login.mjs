@@ -2,7 +2,11 @@
 // same page serves `/vault/login` and `/vault/reauth` (the hand-over to the
 // admin pages starts there, Spec: Fase 1 § 2.4):
 //
-//   * not signed in: e-mail, the text of the sheet's QR code (optional), master password and
+//   * not signed in, and this browser remembers the account it signed in to last (it was not
+//     signed out, the server was not forgotten, and the secret key is kept when the account
+//     has one): "Unlock", the remembered e-mail read only and the master password, which runs
+//     a full sign-in (views/unlock.mjs, flows/rememberedAccount.mjs);
+//   * not signed in otherwise: e-mail, the text of the sheet's QR code (optional), master password and
 //     the secret key questions;
 //   * signed in but locked (a reload ends the worker): the master password;
 //   * signed in and open: what the user can do next.
@@ -28,10 +32,12 @@
 import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { forgetServer } from "../flows/forgetServer.mjs";
+import { entryPage, takeRefusal } from "../flows/rememberedAccount.mjs";
 import { checkQrBeforeKe3 } from "../flows/setupQr.mjs";
 import { el, mount } from "../dom.mjs";
 import { askConfirm } from "./common.mjs";
 import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, trustNotice } from "./form.mjs";
+import { unlockView } from "./unlock.mjs";
 
 /**
  * @typedef {object} LoginDeps
@@ -49,12 +55,29 @@ import { busyState, choice, describeError, field, OLDER_METHOD_ERRORS, setText, 
  * @property {import("./unlock.mjs").FindRestoreNote} [restoreNote] finds the local note about an accepted restore; asked only after a refusal about an older unlock method, and it only picks the text
  * @property {import("./unlock.mjs").ClearRestoreNote} [clearRestoreNote] removes that note after a successful sign-in or unlock
  * @property {string} [locale] the language, for the date in the restore text
+ * @property {import("../flows/rememberedAccount.mjs").Remembered | null} [remembered] with no session: the account this browser remembers (the page is then "Unlock")
  */
 
 /** @param {LoginDeps} deps */
 export function loginView(deps) {
   const { t, session, entry, adminUrl, api, go, handoff, info } = deps;
   const reauthPage = deps.reauth === true;
+  const remembered = deps.remembered ?? null;
+
+  // No session, and this browser remembers the account it signed in to: the page is "Unlock", the password only, with
+  // a full sign-in behind it (flows/rememberedAccount.mjs). A refusal of the pinned checks there comes back to this
+  // page as a sign-in page, with the refusal shown (`takeRefusal` below).
+  if (!reauthPage && info === null && remembered !== null && entryPage({ info, remembered }) === "unlock_remembered") {
+    return unlockView({
+      session, t, go, email: remembered.email, accountId: remembered.accountId, skRequired: false, remembered: true,
+      onUnlocked: async () => {
+        if (entry.handoff !== null) await continueHandoff();
+        else go("/");
+      },
+      restoreNote: deps.restoreNote, clearRestoreNote: deps.clearRestoreNote, locale: deps.locale,
+    });
+  }
+
   const root = el("section", { class: "auth-card account", "data-role": "account-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
@@ -456,5 +479,8 @@ export function loginView(deps) {
     trust,
   ].filter((n) => n !== null);
   mount(root, ...parts);
+  // The refusal the Unlock page gave way with (a pinned check, a missing secret key): the sign-in page says it.
+  const handed = reauthPage ? null : takeRefusal();
+  if (handed !== null) void showError(handed);
   return root;
 }

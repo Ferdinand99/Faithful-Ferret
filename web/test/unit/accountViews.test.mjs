@@ -738,3 +738,65 @@ test("a_secret_key_code_typed_for_another_address_is_not_sent_for_a_device_that_
     assert.equal(known.calls[0][1].skCode, "");
   });
 });
+
+test("with_no_session_a_remembered_account_makes_the_sign_in_page_unlock", async () => {
+  await withDom(async () => {
+    const remembered = { accountId: ACCOUNT, email: EMAIL, skBit: true, skStored: true };
+    const session = fakeSession();
+    const { deps, went } = loginDeps({ session, remembered });
+    const root = loginView(deps);
+    assert.equal(root.getAttribute("data-role"), "unlock");
+    assert.equal(byRole(root, "remembered-email").value, EMAIL);
+    assert.equal(byRole(root, "email"), null, "no e-mail field to type in");
+    assert.equal(byRole(root, "credentials"), null);
+    assert.ok(byRole(root, "not-you"));
+    byRole(root, "password").value = PASSWORD;
+    await fire(byRole(root, "unlock-form"), "submit");
+    await settle();
+    assert.deepEqual(session.calls, [["unlock", { password: PASSWORD, email: EMAIL }]], "a full sign-in with the remembered e-mail");
+    assert.deepEqual(went, ["/"]);
+
+    // A hand-over continues after the unlock, as after a sign-in.
+    const handed = loginDeps({ session: fakeSession(), remembered, entry: { page: "login", handoff: { purpose: "login", challenge: CHALLENGE, next: "/admin/" }, brokenHandoff: false, setupToken: null } });
+    const withHandoff = loginView(handed.deps);
+    byRole(withHandoff, "password").value = PASSWORD;
+    await fire(byRole(withHandoff, "unlock-form"), "submit");
+    await settle();
+    assert.equal(handed.handoffs.length, 1);
+    assert.deepEqual(handed.went, []);
+  });
+});
+
+test("the_sign_in_page_stays_the_full_one_when_the_memory_cannot_be_used", async () => {
+  await withDom(async () => {
+    // The account has a secret key and the device holds none.
+    const missing = loginView(loginDeps({ remembered: { accountId: ACCOUNT, email: EMAIL, skBit: true, skStored: false } }).deps);
+    assert.ok(byRole(missing, "credentials"));
+    assert.ok(byRole(missing, "email"));
+    assert.equal(byRole(missing, "remembered-email"), null);
+    // Nothing remembered.
+    assert.ok(byRole(loginView(loginDeps({ remembered: null }).deps), "email"));
+    // The confirmation page for the admin pages never turns into a sign-in.
+    const reauth = loginView(loginDeps({ reauth: true, remembered: { accountId: ACCOUNT, email: EMAIL, skBit: false, skStored: false } }).deps);
+    assert.ok(byRole(reauth, "ended"));
+    assert.equal(byRole(reauth, "remembered-email"), null);
+  });
+});
+
+test("the_sign_in_page_shows_the_refusal_the_unlock_page_gave_way_with", async () => {
+  const { holdRefusal, takeRefusal } = await import("../../src/flows/rememberedAccount.mjs");
+  await withDom(async () => {
+    holdRefusal(coded("pinned_server_key"));
+    const root = loginView(loginDeps().deps);
+    await settle();
+    assert.ok(byRole(root, "email"), "the full sign-in page");
+    const error = byRole(root, "error");
+    assert.equal(error.hidden, false);
+    assert.equal(textOf(error).trim(), i18n().t("account.error.pinned_server_key"));
+    assert.equal(takeRefusal(), null, "read once");
+    // The next page has nothing to say.
+    const next = loginView(loginDeps().deps);
+    await settle();
+    assert.equal(byRole(next, "error").hidden, true);
+  });
+});

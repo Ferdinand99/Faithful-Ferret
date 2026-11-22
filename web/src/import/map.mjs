@@ -99,7 +99,7 @@ export function resolveLabels(custom) {
  *     matchNull: number, http: number, textAddresses: number, sealed: number,
  *   },
  *   skipped: {
- *     passkeys: number, folders: number, collections: number, linked: number,
+ *     passkeys: number, folders: number, linked: number,
  *     unknownKeys: number, otherTypes: number, trashed: number, tooLarge: number,
  *     passwordHistory: number, reprompt: number, attachments: number, fieldHistory: number, tags: number,
  *   },
@@ -115,7 +115,7 @@ export function resolveLabels(custom) {
 export function createReport() {
   return {
     counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0 },
-    skipped: { passkeys: 0, folders: 0, collections: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
+    skipped: { passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
     warnings: [],
     warningsDropped: 0,
   };
