@@ -121,9 +121,11 @@ function viewOf(item) {
  *   source?: boolean,
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
- * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`)
+ *   fillContext?: any,
+ * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`);
+ *   `fillContext` is given to the fill flow
  */
-export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200 } = {}) {
+export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null } = {}) {
   const { load } = await pkg();
   const [
     { createCoreHost, CORE_OPS },
@@ -394,6 +396,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     now: clock.now,
     reportTimeoutMs,
     resultTimeoutMs,
+    fillContext,
   });
   const probes = {
     unlock_probe: {
