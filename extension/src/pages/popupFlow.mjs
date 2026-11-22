@@ -184,6 +184,7 @@ export const ACTION_ERRORS = Object.freeze([
   "value_too_long",
   "wrong_kind",
   "covered",
+  "frame_hidden",
   "vault_locked",
   "not_filled",
   "no_site",

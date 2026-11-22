@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { build } from "../../scripts/build.mjs";
-import { injectFill } from "../../src/background/inject.mjs";
+import { frameChainShown, frameShownIn, injectFill } from "../../src/background/inject.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 
 /** A `scripting` that records its calls and answers with `results` for the function call. */
@@ -75,6 +75,92 @@ test("an_engine_that_did_not_begin_is_an_error", async () => {
   // A failed injection call is not hidden.
   const failing = { executeScript: async () => { throw new Error("Missing host permission for the tab"); } };
   await assert.rejects(() => injectFill({ scripting: failing, tabId: 1, frameId: 0, requestId: "req-1" }), /Missing host permission/);
+});
+
+/**
+ * A `scripting` for the frame checks: each document answers the question about a frame of it from `verdicts`
+ * (`"<documentId>:<frameId>"` → verdict), as its fill script would; every call is recorded.
+ * @param {Record<string, unknown>} verdicts
+ * @param {{ fail?: string[] }} [options] documents into which nothing can be injected
+ */
+function frameScripting(verdicts, { fail = [] } = {}) {
+  /** @type {any[]} */
+  const calls = [];
+  return {
+    calls,
+    executeScript: async (/** @type {any} */ injection) => {
+      calls.push(injection);
+      const doc = injection.target.documentIds?.[0] ?? `frame-${injection.target.frameIds?.[0]}`;
+      if (fail.includes(doc)) throw new Error("Missing host permission for the tab or frames");
+      if (!("func" in injection)) return [{ frameId: 0, result: null }];
+      // The serialised function, run against the engine of that document.
+      const run = new Function("globalThis", "args", `return (${String(injection.func)})(...args);`);
+      const engine = { frameShown: (/** @type {number} */ id) => verdicts[`${doc}:${id}`] ?? "gone" };
+      return [{ frameId: 0, result: run({ __ferretFill: engine }, injection.args) }];
+    },
+  };
+}
+
+const NESTED = { frameId: 9, ancestors: [{ frameId: 5, documentId: "doc-5" }, { frameId: 0, documentId: "doc-0" }] };
+
+test("the_frame_check_asks_every_document_above_the_frame_up_to_the_top", async () => {
+  // A frame inside a frame inside the top: the frame's holder is checked in its parent, the parent's in the top.
+  const shown = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" });
+  assert.equal(await frameChainShown({ scripting: shown, tabId: 7, frame: NESTED }), null);
+  assert.deepEqual(shown.calls.map((c) => [c.target, c.files ?? c.args]), [
+    [{ tabId: 7, documentIds: ["doc-5"] }, ["/content/fill.inject.js"]],
+    [{ tabId: 7, documentIds: ["doc-5"] }, [9]],
+    [{ tabId: 7, documentIds: ["doc-0"] }, ["/content/fill.inject.js"]],
+    [{ tabId: 7, documentIds: ["doc-0"] }, [5]],
+  ]);
+  // The function is serialised by the browser: it names nothing outside itself.
+  const text = String(shown.calls[1].func);
+  assert.match(text, /__ferretFill/);
+  const run = new Function("globalThis", `return (${text})(9);`);
+  assert.equal(run({}), "unchecked", "no engine, no answer");
+
+  // The top has nothing above it: nothing is asked.
+  const top = frameScripting({});
+  assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: { frameId: 0, ancestors: [] } }), null);
+  assert.deepEqual(top.calls, []);
+
+  // Without a document id the frame is the target.
+  const byFrame = frameScripting({ "frame-0:3": "shown" });
+  assert.equal(await frameChainShown({ scripting: byFrame, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), null);
+  assert.deepEqual(byFrame.calls[1].target, { tabId: 7, frameIds: [0] });
+});
+
+test("a_frame_hidden_or_covered_in_any_document_above_it_is_refused_with_frame_hidden", async () => {
+  for (const verdict of ["hidden", "covered", "gone", "unchecked", "", "shown ", 1, null, true]) {
+    // In the parent.
+    const parent = frameScripting({ "doc-5:9": verdict, "doc-0:5": "shown" });
+    assert.equal(await frameChainShown({ scripting: parent, tabId: 7, frame: NESTED }), "frame_hidden", `parent ${String(verdict)}`);
+    // In the top, above a parent that shows it: the walk does not stop at the parent.
+    const top = frameScripting({ "doc-5:9": "shown", "doc-0:5": verdict });
+    assert.equal(await frameChainShown({ scripting: top, tabId: 7, frame: NESTED }), "frame_hidden", `top ${String(verdict)}`);
+    assert.equal(top.calls.length, 4);
+  }
+  // A document that cannot be asked (no host permission, gone, the script did not load) refuses.
+  const blocked = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" }, { fail: ["doc-0"] });
+  assert.equal(await frameChainShown({ scripting: blocked, tabId: 7, frame: NESTED }), "frame_hidden");
+  const notLoaded = { executeScript: async (/** @type {any} */ i) => ("func" in i ? [{ frameId: 0, result: "shown" }] : [{ frameId: 0, error: "Unable to load script" }]) };
+  assert.equal(await frameChainShown({ scripting: notLoaded, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
+  const thrown = { executeScript: async (/** @type {any} */ i) => ("func" in i ? [{ frameId: 0, error: "page threw" }] : [{ frameId: 0 }]) };
+  assert.equal(await frameChainShown({ scripting: thrown, tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
+  const two = { executeScript: async () => [{ frameId: 0, result: "shown" }, { frameId: 1, result: "shown" }] };
+  assert.equal(await frameChainShown({ scripting: /** @type {any} */ (two), tabId: 7, frame: { frameId: 3, ancestors: [{ frameId: 0 }] } }), "frame_hidden");
+  // A chain that does not reach the top, or is missing, refuses before asking anything.
+  for (const frame of [{ frameId: 9, ancestors: [{ frameId: 5, documentId: "doc-5" }] }, { frameId: 9, ancestors: [] }, { frameId: 9 }, { frameId: -1, ancestors: [{ frameId: 0 }] }, null]) {
+    const none = frameScripting({ "doc-5:9": "shown" });
+    assert.equal(await frameChainShown({ scripting: none, tabId: 7, frame: /** @type {any} */ (frame) }), "frame_hidden", JSON.stringify(frame));
+    assert.deepEqual(none.calls, []);
+  }
+  // A bad question is never sent.
+  const bad = frameScripting({});
+  for (const request of [{ tabId: -1, parent: { frameId: 0 }, childFrameId: 3 }, { tabId: 7, parent: { frameId: 3 }, childFrameId: 3 }, { tabId: 7, parent: null, childFrameId: 3 }, { tabId: 7, parent: { frameId: 0 }, childFrameId: "3" }]) {
+    assert.equal(await frameShownIn({ scripting: bad, .../** @type {any} */ (request) }), "unchecked");
+  }
+  assert.deepEqual(bad.calls, []);
 });
 
 test("the_build_has_the_fill_permissions_the_scripts_and_no_content_script", async () => {

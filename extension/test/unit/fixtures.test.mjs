@@ -86,6 +86,8 @@ test("the_site_table_covers_every_case_and_is_well_formed", () => {
     "http-framed-same-site", "http-top-https-frame", "loopback", "loopback-framed", "other-port",
     "lookalike-dash", "lookalike-suffix", "lookalike-tld", "lookalike-homograph", "lookalike-confusable", "lookalike-digit",
     "github-a", "github-b", "frames-opaque", "frames-special", "nested-login", "framed-nested",
+    "framed-hidden-opacity", "framed-hidden-visibility", "framed-hidden-offscreen", "framed-covered", "framed-visible",
+    "framed-late-hide", "late-hide-login",
     "overlay", "overlay-popover", "overlay-dialog", "opacity-html", "offscreen", "below-fold", "hidden-fields", "tiny-fields",
     "css-shadow", "css-visibility", "css-visibility-collapse",
     "blur-opacity", "blur-overlay", "blur-swap", "blur-navigate", "forged-events", "navigate-frame", "ferret-lookalike",
@@ -224,6 +226,33 @@ test("the_pages_that_change_after_the_choice_turn_hostile_on_request_and_on_blur
   assert.match(forged, /new CustomEvent\("ferret-fill"/);
   assert.match(forged, /type: "fill_field"/);
   assert.match(forged, /window\.fixtureState/);
+});
+
+test("the_frame_tricks_frame_the_entrys_page_on_the_same_site_and_differ_only_in_the_trick", () => {
+  const tricks = SITES.filter((s) => s.expect.outcome === "frame_hidden");
+  assert.deepEqual(tricks.map((s) => s.id), ["framed-hidden-opacity", "framed-hidden-visibility", "framed-hidden-offscreen", "framed-covered"]);
+  const control = siteById("framed-visible");
+  assert.equal(control.expect.outcome, "fill_in_frame");
+  for (const site of [...tricks, control]) {
+    assert.equal(site.origin, "www", `${site.id}: a page of the entry's site`);
+    assert.equal(site.expect.frame, "login-frame");
+    assert.equal(site.expect.frameOrigin, "login");
+    const html = site.render(context);
+    assert.ok(html.includes('<iframe id="login-frame" title="Sign in" src="https://login.example.net/"'), `${site.id}: the entry's page in the frame`);
+  }
+  // Each trick has the one thing that hides or covers the frame; the control has none of them.
+  const marks = { "framed-hidden-opacity": /style="opacity: 0"/, "framed-hidden-visibility": /visibility: hidden/, "framed-hidden-offscreen": /left: -10000px/, "framed-covered": /id="cover"/ };
+  for (const [id, mark] of Object.entries(marks)) {
+    assert.match(siteById(id).render(context), mark, id);
+    assert.doesNotMatch(control.render(context), mark, `framed-visible has no ${mark}`);
+  }
+  // The late hide: the frame tells the page when the user name gets a value, and the page then hides the frame.
+  const late = siteById("framed-late-hide");
+  assert.equal(late.expect.outcome, "frame_hidden_after_report");
+  assert.equal(late.expect.user, "login-user");
+  assert.match(late.render(context), /src="https:\/\/login\.example\.net\/t\/late-hide-login\.html"/);
+  assert.match(late.render(context), /frame\.style\.opacity = "0"/);
+  assert.match(siteById("late-hide-login").render(context), /window\.parent\.postMessage\("fixture-user-filled"/);
 });
 
 test("the_release_check_matches_host_names_at_label_boundaries", () => {

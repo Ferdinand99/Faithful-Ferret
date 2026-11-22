@@ -217,7 +217,16 @@ test("the_menu_applies_the_frame_rules_to_its_frame", async () => {
   assert.equal(await menu.click(world.frame(5).pass, { frameId: 5, frameUrl: LOGIN_FRAME }), "filled");
   assert.equal(valueOf(world.frame(5).pass), ITEM.password);
   assert.equal(valueOf(world.pass), "");
-  for (const injection of world.injections) assert.deepEqual(injection.target, { tabId: TAB, documentIds: ["doc-5"] });
+  // Everything went to the frame's document, apart from the questions to the top whether the frame is shown there
+  // (the fill script, then the question about frame 5).
+  const asks = (/** @type {any} */ i) => typeof i.func === "function" && String(i.func).includes("frameShown");
+  for (const injection of world.injections) {
+    const toTop = injection.target.documentIds?.[0] === "doc-0";
+    assert.deepEqual(injection.target, { tabId: TAB, documentIds: [toTop ? "doc-0" : "doc-5"] });
+    if (toTop) assert.ok(asks(injection) ? injection.args[0] === 5 : injection.files !== undefined, "only the frame check goes to the top");
+    else assert.equal(asks(injection), false);
+  }
+  assert.ok(world.injections.some(asks), "the top was asked");
 
   // One item tied to the top and a frame of the same origin: a click in the top fills the top only, even though
   // the frame has a form too.
@@ -263,6 +272,29 @@ test("the_menu_applies_the_frame_rules_to_its_frame", async () => {
   menu = await menuOn(world);
   assert.equal(await menu.click(world.pass, { frameUrl: "http://example.com/login" }), "popup");
   assert.equal(world.injections.length, 0);
+});
+
+test("the_menu_fills_nothing_into_a_frame_that_its_parent_hides_or_covers", async () => {
+  // A click on the password field of a same-site frame whose iframe the top makes invisible, or covers.
+  for (const [label, trick] of /** @type {Array<[string, (iframe: any) => void]>} */ ([
+    ["opacity 0 on the iframe", (iframe) => { iframe.style.opacity = "0"; }],
+    ["a cover over the iframe", (iframe) => {
+      const cover = iframe.ownerDocument.body.append(iframe.ownerDocument.createElement("div", { id: "cover" }));
+      cover.rect = { ...iframe.rect };
+      cover.z = 10;
+    }],
+  ])) {
+    const world = await createWorld({
+      frames: [TOP, { frameId: 5, url: LOGIN_FRAME, build: addLoginForm, holder: trick }],
+      items: [{ urls: ["https://login.example.com/"] }],
+    });
+    const menu = await menuOn(world);
+    assert.equal(await menu.click(world.frame(5).pass, { frameId: 5, frameUrl: LOGIN_FRAME }), "not_filled", label);
+    assert.equal(valueOf(world.frame(5).pass), "", `${label}: no password`);
+    assert.equal(valueOf(world.frame(5).user), "", `${label}: no user name`);
+    // The aim that no value used is taken back.
+    assert.deepEqual(world.injections.at(-1).target, { tabId: TAB, documentIds: ["doc-5"] }, `${label}: disarmed`);
+  }
 });
 
 test("a_password_is_never_filled_into_a_non_password_field_from_the_menu", async () => {

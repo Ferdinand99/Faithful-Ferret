@@ -56,6 +56,16 @@
 // an empty report: an aimed request never falls back to another field of the
 // page. An aim is good for the next request only, and for AIM_MS at most;
 // `aim(null)` takes it back.
+//
+// A frame (`frameShown`): the checks above see only the frame's own document.
+// Before a value goes into a frame below the top, the extension asks the engine
+// of each document above it whether the element that holds the frame below
+// (an `iframe`, `frame`, `object` or `embed`, found by the browser's own
+// `runtime.getFrameId`) is shown there. That element must pass the same checks
+// as a field, apart from those only an input has (disabled, read-only): the
+// ancestor chain, the size, the viewport and the hit test, in that document's
+// own coordinates. The answer goes back as the result of the extension's own
+// call, never as a message a page or a frame could send.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 
@@ -72,6 +82,8 @@ export const FILL_GLOBAL = "__ferretFill";
 export const AIM_MS = 3_000;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** The elements that can hold a frame. */
+const FRAME_HOLDERS = new Set(["iframe", "frame", "object", "embed"]);
 const TEXT_TYPES = new Set(["text", "email", "tel", "number", "search", "url"]);
 const USERNAME_TYPES = new Set(["text", "email", "tel"]);
 const TOTP_HINT = /(?:^|[^a-z])(?:otp|totp|2fa|mfa|tfa)(?:[^a-z]|$)|one.?time|verification.?code|authenticator|auth.?code|two.?factor/;
@@ -246,11 +258,13 @@ function groupOf(anchor, candidates) {
  *   runtimeId: string,
  *   extensionBase: string,
  *   targetOf?: (targetElementId: number) => any,
+ *   frameIdOf?: (element: any) => number,
  *   clock?: () => number,
  * }} deps `send` delivers a message to the extension; `runtimeId` and `extensionBase` (`moz-extension://<uuid>/`) say who may talk to the engine;
- *   `targetOf` is `menus.getTargetElement` (the element of a context menu click) and `clock` the time in milliseconds
+ *   `targetOf` is `menus.getTargetElement` (the element of a context menu click), `frameIdOf` is `runtime.getFrameId`
+ *   (the frame id of the frame an element holds) and `clock` the time in milliseconds
  */
-export function createFillEngine({ window, document, send, runtimeId, extensionBase, targetOf = () => null, clock = () => Date.now() }) {
+export function createFillEngine({ window, document, send, runtimeId, extensionBase, targetOf = () => null, frameIdOf = () => -1, clock = () => Date.now() }) {
   // The native setter. In Firefox the content script reads the page through
   // Xray wrappers, so this is the browser's own setter whatever the page has
   // replaced; taking it once here is only a second line of defence.
@@ -272,8 +286,20 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (element.ownerDocument !== document || element.isConnected !== true) return "gone";
     // :disabled also covers an input inside a disabled fieldset.
     if (element.matches(":disabled") || element.readOnly === true) return "hidden";
+    return shown(element);
+  }
 
-    // From the field up to the root, through shadow roots and slots.
+  /**
+   * Whether the user sees `element` (a field, or the element that holds a
+   * frame) in this document, and if not, why: the ancestor chain, the size, the
+   * viewport and the hit test. Everything but what only an input has.
+   * @param {any} element
+   * @returns {"gone" | "hidden" | "covered" | null}
+   */
+  function shown(element) {
+    if (!isElement(element) || element.ownerDocument !== document || element.isConnected !== true) return "gone";
+
+    // From the element up to the root, through shadow roots and slots.
     /** @type {any} */
     let node = element;
     for (let depth = 0; node !== null; depth += 1) {
@@ -321,10 +347,12 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
-   * Every input of the frame in document order, through shadow roots.
+   * Every element of the frame whose local name `wanted` accepts, in document
+   * order, through shadow roots.
+   * @param {(name: string) => boolean} wanted
    * @returns {any[]}
    */
-  function allInputs() {
+  function allElements(wanted) {
     /** @type {any[]} */
     const out = [];
     let seen = 0;
@@ -333,13 +361,38 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       for (const node of root.querySelectorAll("*")) {
         seen += 1;
         if (seen > MAX_NODES) return;
-        if (node.localName === "input") out.push(node);
+        if (wanted(node.localName)) out.push(node);
         const inner = shadowOf(node);
         if (inner) visit(inner);
       }
     };
     visit(document);
     return out;
+  }
+
+  /** Every input of the frame in document order, through shadow roots. */
+  const allInputs = () => allElements((name) => name === "input");
+
+  /**
+   * Whether the frame `frameId`, a frame of this document, is shown here: the
+   * one element that holds it (the browser names the frame each element holds)
+   * must pass `shown`. "shown", or why not ("gone" when no element, or more
+   * than one, holds it).
+   * @param {unknown} frameId
+   * @returns {"shown" | "gone" | "hidden" | "covered"}
+   */
+  function frameShown(frameId) {
+    if (typeof frameId !== "number" || !Number.isSafeInteger(frameId) || frameId <= 0) return "gone";
+    const holders = allElements((name) => FRAME_HOLDERS.has(name)).filter((element) => {
+      try {
+        return frameIdOf(element) === frameId;
+      } catch {
+        // An element that holds no frame (an object showing an image, say).
+        return false;
+      }
+    });
+    if (holders.length !== 1) return "gone";
+    return shown(holders[0]) ?? "shown";
   }
 
   /**
@@ -587,19 +640,20 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     else answer(requestId, false, result.reason);
   }
 
-  return Object.freeze({ begin, aim, onMessage });
+  return Object.freeze({ begin, aim, frameShown, onMessage });
 }
 
 /**
  * Starts the engine once per page: a second injection finds the first and
  * changes nothing. The extension asks for a report through
- * `globalThis.__ferretFill.begin(id)`, and aims it at a clicked field through
- * `aim(targetElementId)`: properties of the isolated world that the page
- * cannot see.
+ * `globalThis.__ferretFill.begin(id)`, aims it at a clicked field through
+ * `aim(targetElementId)` and asks whether a frame of the page is shown through
+ * `frameShown(frameId)`: properties of the isolated world that the page cannot
+ * see.
  *
  * @param {any} [api] the `browser` object
  * @param {any} [scope] the global object of the script (the page window)
- * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean }}
+ * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean, frameShown: (frameId: number) => string }}
  */
 export function start(api = /** @type {any} */ (globalThis).browser, scope = globalThis) {
   const existing = Object.getOwnPropertyDescriptor(scope, FILL_GLOBAL);
@@ -612,11 +666,12 @@ export function start(api = /** @type {any} */ (globalThis).browser, scope = glo
     runtimeId: runtime.id,
     extensionBase: runtime.getURL(""),
     targetOf: (id) => api.menus?.getTargetElement?.(id) ?? null,
+    frameIdOf: (element) => runtime.getFrameId(element),
   });
   runtime.onMessage.addListener((/** @type {unknown} */ raw, /** @type {unknown} */ sender) => {
     engine.onMessage(raw, sender);
   });
-  const offer = Object.freeze({ begin: engine.begin, aim: engine.aim });
+  const offer = Object.freeze({ begin: engine.begin, aim: engine.aim, frameShown: engine.frameShown });
   Object.defineProperty(scope, FILL_GLOBAL, { value: offer, configurable: false, enumerable: false, writable: false });
   return offer;
 }

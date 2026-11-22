@@ -9,6 +9,9 @@
 // starts once and waits for messages) and then a function that asks the engine
 // to begin the request and report the fields. The function is serialised by the
 // browser, so it cannot name anything outside itself.
+//
+// The same two calls ask the documents above a frame whether that frame is
+// shown in them (`frameChainShown`), before a value goes into it.
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 // The script the build writes from content/entry.mjs and what it imports (scripts/lib/classic.mjs).
@@ -86,6 +89,78 @@ export async function aimFill({ scripting, tabId, frameId, documentId, targetEle
   if (!Array.isArray(results) || results.length !== 1 || results[0]?.result !== true) {
     throw new Error("inject: the engine found no clicked field");
   }
+}
+
+/** What the engine of a parent document can say about a frame of it (content/fill.mjs `frameShown`). */
+const FRAME_VERDICTS = new Set(["shown", "gone", "hidden", "covered"]);
+
+/**
+ * Asks the fill script of one document whether the element that holds the
+ * frame `childFrameId` is shown there (the field checks, in that document's
+ * own coordinates). The question is the extension's own call into that
+ * document, and the answer is its result: no message a page or a frame could
+ * send counts. Any failure (no permission, the document is gone, the script did
+ * not load) is "unchecked".
+ *
+ * @param {{
+ *   scripting: { executeScript: (injection: any) => Promise<Array<{ frameId?: number, result?: unknown, error?: unknown }>> },
+ *   tabId: number,
+ *   parent: { frameId: number, documentId?: string },
+ *   childFrameId: number,
+ * }} request
+ * @returns {Promise<"shown" | "gone" | "hidden" | "covered" | "unchecked">}
+ */
+export async function frameShownIn({ scripting, tabId, parent, childFrameId }) {
+  if (!isIndex(tabId) || !isIndex(parent?.frameId) || !isIndex(childFrameId) || childFrameId === parent.frameId) return "unchecked";
+  const target = typeof parent.documentId === "string" && parent.documentId !== ""
+    ? { tabId, documentIds: [parent.documentId] }
+    : { tabId, frameIds: [parent.frameId] };
+  try {
+    const loaded = await scripting.executeScript({ target, files: [ENTRY] });
+    if (!Array.isArray(loaded) || loaded.length !== 1 || loaded[0]?.error !== undefined) return "unchecked";
+    const results = await scripting.executeScript({
+      target,
+      func: (/** @type {number} */ id) => {
+        const api = /** @type {any} */ (globalThis).__ferretFill;
+        return api !== undefined && typeof api.frameShown === "function" ? api.frameShown(id) : "unchecked";
+      },
+      args: [childFrameId],
+    });
+    if (!Array.isArray(results) || results.length !== 1 || results[0]?.error !== undefined) return "unchecked";
+    const verdict = results[0]?.result;
+    return typeof verdict === "string" && FRAME_VERDICTS.has(verdict) ? /** @type {any} */ (verdict) : "unchecked";
+  } catch {
+    return "unchecked";
+  }
+}
+
+/**
+ * Whether a frame is shown in every document above it, up to the top: in the
+ * frame's parent, the element that holds the frame must be shown; in the
+ * grandparent, the element that holds the parent; and so on. The top frame
+ * (0) has nothing above it. `ancestors` is the chain from the browser
+ * (`webNavigation`), parent first, the top last; a chain that does not end at
+ * the top is refused. Resolves to null when the frame is shown everywhere,
+ * else to the refusal `frame_hidden` (also when a document could not be
+ * asked).
+ *
+ * @param {{
+ *   scripting: { executeScript: (injection: any) => Promise<Array<{ frameId?: number, result?: unknown, error?: unknown }>> },
+ *   tabId: number,
+ *   frame: { frameId: number, ancestors?: Array<{ frameId: number, documentId?: string }> },
+ * }} request
+ * @returns {Promise<null | "frame_hidden">}
+ */
+export async function frameChainShown({ scripting, tabId, frame }) {
+  if (frame?.frameId === 0) return null;
+  const chain = Array.isArray(frame?.ancestors) ? frame.ancestors : [];
+  if (!isIndex(frame?.frameId) || chain.length === 0 || chain.at(-1)?.frameId !== 0) return "frame_hidden";
+  let child = frame.frameId;
+  for (const parent of chain) {
+    if ((await frameShownIn({ scripting, tabId, parent, childFrameId: child })) !== "shown") return "frame_hidden";
+    child = parent.frameId;
+  }
+  return null;
 }
 
 /**

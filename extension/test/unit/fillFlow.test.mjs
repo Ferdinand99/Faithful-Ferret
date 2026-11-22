@@ -356,7 +356,9 @@ test("an_item_that_ties_in_two_frames_is_listed_once_and_fills_the_first_frame_w
   assert.equal(rows[0].frameId, 0, "the top first");
   assert.deepEqual(await popup.list.fill(rows[0], TAB), { ok: true });
   // The script went into both frames; only the frame with the form got the values.
-  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }, { tabId: TAB, documentIds: ["doc-3"] }]);
+  assert.deepEqual(world.begins().map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }, { tabId: TAB, documentIds: ["doc-3"] }]);
+  // The frame's holder was checked in the top's document: when it was chosen and before each value.
+  assert.deepEqual(world.frameShown.asked, [1, 2, 3].map(() => ({ frameId: 3, documentId: "doc-1" })));
   assert.deepEqual(world.page.filled, {});
   assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
   assert.deepEqual(world.pushed.map((p) => p.options), [{ documentId: "doc-3" }, { documentId: "doc-3" }]);
@@ -402,7 +404,7 @@ test("a_fill_that_names_a_frame_fills_only_that_frame", async () => {
   const popup = world.popup();
   const [row] = await suggestions(popup);
   assert.deepEqual(await popup.request("fill", { ref: row.ref, tab_id: TAB, frame_id: 3 }), { ok: true });
-  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-3"] }]);
+  assert.deepEqual(world.begins().map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-3"] }]);
   assert.deepEqual(world.page.filled, {});
   assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
   // The frame was checked again on its own.
@@ -420,7 +422,74 @@ test("a_tied_frame_that_changed_is_left_out_and_the_others_are_still_tried", asy
   // The frame got a new document after the list: it is not the frame that was offered.
   world.matching.frames = [tied()[0], { ...tied()[1], documentId: "doc-7" }];
   assert.deepEqual(await popup.list.fill(row, TAB), { ok: true });
-  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }]);
+  assert.deepEqual(world.begins().map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }]);
+  // The top has nothing above it: no frame was asked about.
+  assert.deepEqual(world.frameShown.asked, []);
+});
+
+test("a_frame_hidden_or_covered_in_a_document_above_it_gets_no_value_and_the_answer_is_frame_hidden", async () => {
+  // The form is in the frame only, and the top's document says the frame's iframe is hidden.
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.page.fields = [];
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  world.frameShown.verdict = () => "hidden";
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill((await suggestions(popup))[0], TAB), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(world.pushed, [], "no value went anywhere");
+  assert.deepEqual(frame.filled, {});
+  assert.deepEqual(reveals(world), [], "no value was even read");
+  assert.deepEqual(world.frameShown.asked, [{ frameId: 3, documentId: "doc-1" }]);
+  assert.equal(world.handles.size, 0);
+
+  // Hidden after the report: the frame was shown when it was chosen and when the user name went in, then the page
+  // covered it. The password is not sent.
+  const late = await itemWorld({ frames: tied() });
+  await late.open();
+  late.page.fields = [];
+  const lateFrame = late.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  let asked = 0;
+  late.frameShown.verdict = () => ((asked += 1) <= 2 ? "shown" : "covered");
+  const p2 = late.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(lateFrame.filled, { username: "ola@example.net" });
+  assert.deepEqual(late.pushed.map((p) => p.message.body.field), ["username"], "the password never left the background");
+  assert.equal(late.handles.size, 0);
+
+  // When the top has the form as well, the top is filled and no frame is asked about.
+  const both = await itemWorld({ frames: tied() });
+  await both.open();
+  both.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  both.frameShown.verdict = () => "hidden";
+  const p3 = both.popup();
+  assert.deepEqual(await p3.list.fill((await suggestions(p3))[0], TAB), { ok: true });
+  assert.deepEqual(both.page.filled, { username: "ola@example.net", password: PASSWORD });
+  assert.deepEqual(both.frameShown.asked, []);
+});
+
+test("a_frame_inside_a_frame_is_checked_in_every_document_up_to_the_top", async () => {
+  const NESTED_URL = "https://login.example.net/nested/login";
+  const nested = () => [
+    { frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [] },
+    {
+      frameId: 9, documentId: "doc-9", url: NESTED_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)],
+      ancestors: [{ frameId: 3, documentId: "doc-3" }, { frameId: 0, documentId: "doc-1" }],
+    },
+  ];
+  for (const [hiddenIn, expected] of /** @type {Array<[string | null, any]>} */ ([[null, { ok: true }], ["doc-3", { ok: false, reason: "frame_hidden" }], ["doc-1", { ok: false, reason: "frame_hidden" }]])) {
+    const world = await itemWorld({ frames: nested() });
+    await world.open();
+    world.page.fields = [];
+    world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN }, []);
+    const inner = world.addFrame({ url: NESTED_URL, frameId: 9, documentId: "doc-9", selfOrigin: LOGIN_ORIGIN });
+    world.frameShown.verdict = (_frameId, documentId) => (documentId === hiddenIn ? "covered" : "shown");
+    const popup = world.popup();
+    const [row] = await suggestions(popup);
+    assert.deepEqual(await popup.list.fill(row, TAB), expected, `hidden in ${hiddenIn}`);
+    // The inner frame's holder is asked about in its parent, the parent's holder in the top.
+    assert.deepEqual(world.frameShown.asked.slice(0, 2), hiddenIn === "doc-3" ? [{ frameId: 9, documentId: "doc-3" }] : [{ frameId: 9, documentId: "doc-3" }, { frameId: 3, documentId: "doc-1" }]);
+    assert.deepEqual(inner.filled, hiddenIn === null ? { username: "ola@example.net", password: PASSWORD } : {});
+  }
 });
 
 test("the_candidates_reply_carries_the_host_the_insecure_mark_and_the_grant_list", async () => {

@@ -52,6 +52,7 @@
   "popup.error.value_too_long": "The value is too long to fill in. Copy it instead.",
   "popup.error.wrong_kind": "The field on the page is not the kind of field Ferret fills with this value.",
   "popup.error.covered": "The field is hidden or covered, so Ferret did not fill it.",
+  "popup.error.frame_hidden": "The sign-in form is in a frame that is hidden or covered on this page, so Ferret did not fill it.",
   "popup.error.vault_locked": "The vault is locked. Unlock it and try again.",
   "popup.error.not_filled": "Nothing was filled in.",
   "popup.error.no_site": "This item has no web address to open.",

@@ -29,6 +29,9 @@ export const ITEMS = Object.freeze([
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** Whether an injection asks a document whether a frame of it is shown (inject.mjs `frameShownIn`). @param {any} injection */
+export const isFrameCheck = (injection) => typeof injection?.func === "function" && String(injection.func).includes("frameShown");
+
 /**
  * A port between a page and the background whose background end also has
  * `onDisconnect`, as the browser's: the page closing ends the session.
@@ -109,7 +112,10 @@ function viewOf(item) {
  * The world of the popup's item operations.
  * @param {{
  *   items?: ReadonlyArray<typeof ITEMS[number]>,
- *   frames?: Array<{ frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[] }>,
+ *   frames?: Array<{
+ *     frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[],
+ *     ancestors?: Array<{ frameId: number, documentId?: string }>,
+ *   }>,
  *   source?: boolean,
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
@@ -228,6 +234,15 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   const injections = [];
   /** Every message the background sent to a tab: tab, the decoded message, and where it went. @type {Array<{ tabId: number, message: any, options: any }>} */
   const pushed = [];
+  /**
+   * Whether a frame is shown in its parent document, as the fill script there answers (content/fill.mjs `frameShown`):
+   * a test changes `verdict` to play a page that hides or covers a frame. Every question is in `asked`.
+   */
+  const frameShown = {
+    verdict: (/** @type {number} */ _frameId, /** @type {string} */ _parentDocumentId) => "shown",
+    /** @type {Array<{ frameId: number, documentId: string }>} */
+    asked: /** @type {Array<{ frameId: number, documentId: string }>} */ ([]),
+  };
 
   /** A content script's message from a frame (the top's by default). @param {string} type @param {any} body @param {ReturnType<typeof frameSim>} [from] */
   const fromPage = (type, body, from = page) =>
@@ -242,6 +257,11 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       const sim = simOf(injection.target);
       if (sim === null) return [{ error: "no frame" }];
       if (injection.files) return [{ frameId: sim.sender.frameId }];
+      if (isFrameCheck(injection)) {
+        const [frameId] = injection.args;
+        frameShown.asked.push({ frameId, documentId: sim.sender.documentId });
+        return [{ frameId: sim.sender.frameId, result: frameShown.verdict(frameId, sim.sender.documentId) }];
+      }
       const [requestId] = injection.args;
       if (sim.reports) {
         setTimeout(() => {
@@ -331,7 +351,14 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
                 name: item.name,
                 username: item.username === "" ? null : item.username,
                 how: "host",
-                frames: shown.filter((f) => f.itemIds.includes(item.id)).slice(0, 4).map((f) => ({ frameId: f.frameId, ...(f.documentId ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin })),
+                frames: shown.filter((f) => f.itemIds.includes(item.id)).slice(0, 4).map((f) => ({
+                  frameId: f.frameId,
+                  ...(f.documentId ? { documentId: f.documentId } : {}),
+                  url: f.url,
+                  origin: f.origin,
+                  // The documents above the frame (a frame of the top by default).
+                  ancestors: f.ancestors ?? (f.frameId === 0 ? [] : [{ frameId: 0, documentId: "doc-1" }]),
+                })),
               }))
               .filter((i) => i.frames.length > 0);
             return {
@@ -410,6 +437,9 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       return sim;
     },
     injections,
+    /** The injections that began a fill request (not the questions about a frame). */
+    begins: () => injections.filter((i) => i.func && !isFrameCheck(i)),
+    frameShown,
     pushed,
     opened,
     written,

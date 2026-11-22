@@ -134,6 +134,44 @@ test("the_command_fills_one_candidate_and_opens_the_popup_for_zero_or_several", 
   assert.equal(world.lockCalls.touches, 0);
 });
 
+test("the_shortcut_fills_nothing_into_a_frame_that_its_parent_hides_or_covers", async () => {
+  // The real fill engine in the top answers about the iframe that holds the same-site login frame.
+  /** @type {Array<[string, (iframe: any, document: any) => void]>} */
+  const tricks = [
+    ["opacity 0 on the iframe", (iframe) => { iframe.style.opacity = "0"; }],
+    ["visibility hidden on the iframe", (iframe) => { iframe.style.visibility = "hidden"; }],
+    ["the iframe far off the page", (iframe) => { iframe.rect = { left: -10_000, top: 60, width: 400, height: 300 }; }],
+    ["a transparent cover over the iframe", (iframe, document) => {
+      const cover = document.body.append(document.createElement("div", { id: "cover" }));
+      cover.rect = { ...iframe.rect };
+      cover.z = 10;
+    }],
+  ];
+  for (const [label, trick] of tricks) {
+    /** @type {any} */
+    let top = null;
+    const world = await createWorld({
+      frames: [
+        { frameId: 0, url: PAGE, build: (document) => { top = document; return {}; } },
+        { frameId: 5, url: LOGIN_FRAME, build: addLoginForm, holder: (iframe) => trick(iframe, top) },
+      ],
+      items: [{ urls: ["https://login.example.com/"] }],
+    });
+    assert.equal(await pressable(quickFillOf(world)).press(FILL_COMMAND, { id: TAB }), "not_filled", `${label}: shortcut`);
+    assert.equal(valueOf(world.frame(5).user), "", `${label}: no user name`);
+    assert.equal(valueOf(world.frame(5).pass), "", `${label}: no password`);
+    assert.equal(world.openHandles(), 0);
+  }
+
+  // The same frame, shown: the shortcut fills it (the control).
+  const shown = await createWorld({
+    frames: [{ frameId: 0, url: PAGE }, { frameId: 5, url: LOGIN_FRAME, build: addLoginForm }],
+    items: [{ urls: ["https://login.example.com/"] }],
+  });
+  assert.equal(await pressable(quickFillOf(shown)).press(FILL_COMMAND, { id: TAB }), "filled");
+  assert.equal(valueOf(shown.frame(5).pass), ITEM.password);
+});
+
 test("the_shortcut_ignores_other_commands_bad_tabs_and_a_second_press_while_the_first_runs", async () => {
   const world = await createWorld({ frames: [{ frameId: 0, url: PAGE, build: addLoginForm }] });
   const quick = quickFillOf(world);

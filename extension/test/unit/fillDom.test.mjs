@@ -843,3 +843,122 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.notDeepEqual(plant("export const s = () => indexedDB.open('x');"), [], "IndexedDB");
   assert.notDeepEqual(plant('import "lodash";'), [], "a package");
 });
+
+// ------------------------------------------------------------ the element that holds a frame
+
+/**
+ * A parent page with its own form and an iframe that holds frame `FRAME` (as `runtime.getFrameId` says), beside the form.
+ * @param {(page: ReturnType<typeof createPage> & { iframe: any }) => void} [arrange] changes the page before the question
+ */
+function framePage(arrange = () => {}) {
+  const FRAME = 17179869185;
+  const page = createPage({ url: "https://www.example.net/" });
+  addLoginForm(page.document);
+  const iframe = page.document.body.append(page.document.createElement("iframe", { id: "login-frame" }));
+  iframe.rect = { left: 400, top: 100, width: 400, height: 300 };
+  /** @type {Map<any, number>} */
+  const holds = new Map([[iframe, FRAME]]);
+  const asked = /** @type {any[]} */ ([]);
+  const engine = createFillEngine({
+    window: page.window,
+    document: page.document,
+    send: () => {},
+    runtimeId: RUNTIME_ID,
+    extensionBase: EXTENSION_BASE,
+    frameIdOf: (element) => {
+      asked.push(element);
+      const id = holds.get(element);
+      if (id === undefined) throw new Error("not a frame");
+      return id;
+    },
+  });
+  arrange({ ...page, iframe });
+  return { ...page, iframe, holds, asked, engine, FRAME, shown: () => engine.frameShown(FRAME) };
+}
+
+test("a_frame_is_shown_only_when_its_holder_passes_the_field_checks_in_the_parent", () => {
+  // A plain iframe beside the form: shown. Only elements that can hold a frame are asked about.
+  const plain = framePage();
+  assert.equal(plain.shown(), "shown");
+  assert.deepEqual(plain.asked, [plain.iframe]);
+
+  // The ancestor rules, on the iframe itself and on a parent of it.
+  const cases = /** @type {Array<[string, (p: any) => void, string]>} */ ([
+    ["opacity 0 on the iframe", (p) => { p.iframe.style.opacity = "0"; }, "hidden"],
+    ["opacity 0.99 on the iframe", (p) => { p.iframe.style.opacity = "0.99"; }, "hidden"],
+    ["visibility hidden on the iframe", (p) => { p.iframe.style.visibility = "hidden"; }, "hidden"],
+    ["display none on the iframe", (p) => { p.iframe.style.display = "none"; }, "hidden"],
+    ["a filter on the body", (p) => { p.document.body.style.filter = "opacity(0.02)"; }, "hidden"],
+    ["a transform on the iframe", (p) => { p.iframe.style.transform = "scale(0.01)"; }, "hidden"],
+    ["a clip path on the iframe", (p) => { p.iframe.style["clip-path"] = "inset(100%)"; }, "hidden"],
+    ["a mask on the html element", (p) => { p.document.documentElement.style["mask-image"] = "linear-gradient(transparent, transparent)"; }, "hidden"],
+    ["mix-blend-mode on the iframe", (p) => { p.iframe.style["mix-blend-mode"] = "screen"; }, "hidden"],
+    ["aria-hidden on the body", (p) => { p.document.body.setAttribute("aria-hidden", "true"); }, "hidden"],
+    ["an inert iframe", (p) => { p.iframe.inert = true; }, "hidden"],
+    ["a 4 px iframe", (p) => { p.iframe.rect = { left: 400, top: 100, width: 4, height: 4 }; }, "hidden"],
+    ["far to the left", (p) => { p.iframe.rect = { left: -10_000, top: 100, width: 400, height: 300 }; }, "hidden"],
+    ["below the fold", (p) => { p.iframe.rect = { left: 400, top: 3000, width: 400, height: 300 }; }, "hidden"],
+  ]);
+  for (const [label, arrange, verdict] of cases) assert.equal(framePage(arrange).shown(), verdict, label);
+
+  // A cover over the iframe in the parent (the frame cannot see it from inside).
+  const covered = framePage((p) => {
+    const cover = p.document.body.append(p.document.createElement("div", { id: "cover" }));
+    cover.rect = { left: 400, top: 100, width: 400, height: 300 };
+    cover.z = 10;
+  });
+  assert.equal(covered.shown(), "covered");
+  // A small cover over one of the sample points only (a quarter across, half down) is enough.
+  const corner = framePage((p) => {
+    const cover = p.document.body.append(p.document.createElement("div", { id: "cover" }));
+    cover.rect = { left: 480, top: 230, width: 40, height: 40 };
+    cover.z = 10;
+  });
+  assert.equal(corner.shown(), "covered");
+});
+
+test("a_frame_is_found_by_the_browsers_frame_id_and_nothing_else", () => {
+  // No element holds the frame: gone. Two elements that claim it: gone (the browser never names two).
+  const none = framePage((p) => { p.iframe.localName = "div"; });
+  assert.equal(none.shown(), "gone");
+  const twice = framePage();
+  const second = twice.document.body.append(twice.document.createElement("frame"));
+  second.rect = { left: 400, top: 420, width: 400, height: 300 };
+  twice.holds.set(second, twice.FRAME);
+  assert.equal(twice.shown(), "gone");
+  // Another frame id, the top, and ids that are not frame ids name nothing.
+  const page = framePage();
+  for (const id of [page.FRAME + 1, 0, -1, 1.5, "17179869185", null, undefined, Number.MAX_SAFE_INTEGER + 2]) {
+    assert.equal(page.engine.frameShown(/** @type {any} */ (id)), "gone", String(id));
+  }
+  // An element whose frame id the browser cannot give (an object showing an image) is passed over.
+  const object = framePage((p) => {
+    const img = p.document.body.append(p.document.createElement("object"));
+    img.rect = { left: 0, top: 500, width: 100, height: 100 };
+  });
+  assert.equal(object.shown(), "shown");
+  // A holder inside a shadow root (closed too) is found, and an overlay above its host covers it.
+  for (const mode of /** @type {const} */ (["open", "closed"])) {
+    const shadow = framePage((p) => {
+      p.document.body.remove(p.iframe);
+      const host = p.document.body.append(p.document.createElement("div", { id: "host" }));
+      host.rect = { left: 400, top: 100, width: 400, height: 300 };
+      host.attachShadow({ mode }).append(p.iframe);
+    });
+    assert.equal(shadow.shown(), "shown", mode);
+    const over = framePage((p) => {
+      p.document.body.remove(p.iframe);
+      const host = p.document.body.append(p.document.createElement("div", { id: "host" }));
+      host.rect = { left: 400, top: 100, width: 400, height: 300 };
+      host.attachShadow({ mode }).append(p.iframe);
+      host.style.opacity = "0";
+    });
+    assert.equal(over.shown(), "hidden", `${mode}: the host is transparent`);
+  }
+  // Without the browser's frame ids (the default), no element holds a frame, and the question sends nothing.
+  const quiet = framePage();
+  const sent = /** @type {string[]} */ ([]);
+  const engine = createFillEngine({ window: quiet.window, document: quiet.document, send: (raw) => { sent.push(raw); }, runtimeId: RUNTIME_ID, extensionBase: EXTENSION_BASE });
+  assert.equal(engine.frameShown(quiet.FRAME), "gone", "without the browser's frame ids nothing holds a frame");
+  assert.deepEqual(sent, []);
+});

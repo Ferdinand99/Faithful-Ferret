@@ -16,6 +16,7 @@ export const REASONS = Object.freeze([
   "value_too_long",
   "wrong_kind",
   "covered",
+  "frame_hidden",
   "vault_locked",
   "sync_not_running",
   "not_filled",
