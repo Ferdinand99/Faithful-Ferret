@@ -12,15 +12,16 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.6.1).** The cryptographic core, the OPAQUE server library, the server and the
+> **Status: in development, pre-1.0 (v0.7.0).** The cryptographic core, the OPAQUE server library, the server and the
 > web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
-> backups with an encrypted copy off the machine. v0.6.0 adds devices: clients other than the web vault sign in with
-> tokens that are bound to a key on the device, there is a device list with revoke in the web vault, and the core and
-> the WebAssembly binding can keep folder labels inside an encrypted item (see [What works today](#what-works-today)).
-> The Firefox extension with autofill and a new web vault layout, which will also bring folders to the interface, are
-> in progress and not released. After them come a password generator and a health check. Ferret is a single-author
-> project and is **not for real passwords yet**. There is no external audit, and none is planned.
+> backups with an encrypted copy off the machine. v0.6.0 added devices: clients other than the web vault sign in with
+> tokens that are bound to a key on the device, and there is a device list with revoke in the web vault. v0.7.0 brings
+> the first Firefox extension, a new web vault layout with folders, and unlock with the master password after the
+> session has ended (see [What works today](#what-works-today)). The extension fills logins from its popup but cannot
+> save new passwords yet, and it is not on the Firefox add-ons store. Next come saving passwords and a password
+> generator in the extension, then a health check. Ferret is a single-author project and is **not for real passwords
+> yet**. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -29,7 +30,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.6.1 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.7.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -45,7 +46,7 @@ These are in v0.6.1 and are tested on a test instance. All of it is pre-1.0, and
   it does not open with the master password. For moving to another service, the web vault can also export plain
   CSV or JSON. That file is not encrypted, and it needs the master password again and two separate confirmations.
 - **Import.** From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted `.avux`
-  and CSV). Duplicates are not removed, and passkeys, folders, tags and attachments are not imported.
+  and CSV). Duplicates are not removed. Folders and collections become folders, and passkeys, tags and attachments are not imported.
 - **Tabs.** The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the
   first tab instead of dropping them.
 - **Backups.** The server writes a checked backup set every 24 hours and after every change to the unlock methods.
@@ -53,23 +54,63 @@ These are in v0.6.1 and are tested on a test instance. All of it is pre-1.0, and
   `age` to a public key you own and copies it to an SFTP target, then reads it back to check it. A set is restored
   with `ferret backup restore`, which is safe to cut off and run again. A restore ends every session and raises
   the restore epoch so that devices notice an older state.
-- **Devices and bound tokens.** A client that is not the web vault, such as the browser extension will be, signs in
+- **Devices and bound tokens.** A client that is not the web vault, such as the Firefox extension, signs in
   as a device: it makes its own key, signs in with the master password, and gets an access token and a refresh token
   that only that key can use. Every request carries a proof of that key (DPoP, RFC 9449, ES256). An access token
   lives 15 minutes, a refresh token is used once and replaced at every renewal, and using an old one after a short grace
   period revokes the device. An account can have 20 devices with tokens. The web vault is not a device and keeps its cookie session.
-  No released client uses device sign-in yet; the Firefox extension will be the first.
+  The Firefox extension is the first client that signs in this way.
 - **Device list and revoke.** The Devices page of the web vault lists the devices with tokens and the browsers that
   are signed in, with name, platform and last seen. You can revoke one device, revoke every device and every other
   session (this asks for the master password again), or forget the devices not seen for 7 days. Revoking makes the
   tokens invalid at once and closes the device's live event stream. A change of master password, a recovery, a
   redeemed sign-in code and a restore sign every device out. The database holds only token hashes, never a token.
-- **Folder labels in the core.** An item can carry folder names (up to 20, each 1 to 64 characters) inside its
-  encrypted body, through `ferret-core` and the WebAssembly binding, so the server never sees a name. There is no
-  folder interface in the web vault yet, and import still leaves folders out.
+- **New web vault layout.** The web vault has a side menu (all items, favourites, folders, trash, import and export,
+  and pinned folders), an account menu with a light, dark or system theme, and a drawer on a phone. The item list has
+  search, filter chips, sortable columns and bulk actions (favourite, move to a folder, move to the trash), and an item
+  opens in its own view with an edit form. The generator and the health check are in the menu as "Coming soon".
+- **Folders.** A folder is a label inside each item, encrypted with it, so the server never sees a name. An item can be
+  in up to 20 folders (names of 1 to 64 characters). The web vault can put items in folders, and rename, merge, delete
+  and pin folders to the menu. Import from Bitwarden and AliasVault turns folders and collections into folders.
+- **Unlock after the session has ended.** When the server session has ended but the browser still remembers the
+  account, the web vault shows the remembered e-mail and asks for the master password (and for the secret key, if the
+  device does not hold it) instead of a full sign-in form. The same checks of the server run as at any sign-in.
+- **Firefox extension.** See [below](#firefox-extension).
 - **Deployment.** The stack for real data publishes its two ports on the loopback address only and trusts exactly one
   proxy. Server images are built for amd64 and arm64 and signed with cosign, and the deploy script verifies the
   signature before it runs an image. The admin address is the entry point to the admin pages.
+
+### Firefox extension
+
+The first version of the Firefox extension is in v0.7.0. It needs Firefox 153 or newer and is early: it fills logins
+from its popup, but it cannot save new passwords, make passwords or handle passkeys yet. It is **not on the Firefox
+add-ons store**. A build that Mozilla has signed as an unlisted add-on is made by a manually started workflow, and the
+release downloads of v0.7.0 do not include it. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how
+that build is made, and [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the checks.
+
+- **Sign-in and unlock.** You sign in once, in a tab, with the address of your server (https only), your e-mail, the
+  master password and, if the account has one, the secret key. Pasting the text of the emergency sheet's QR code lets
+  the extension check your server before it signs in. After that the vault is unlocked with the master password
+  alone; only a secret key that you chose not to keep on the device is asked for again. An account with two-factor
+  sign-in cannot sign in yet.
+- **Live sync.** The extension is a device with tokens bound to a key. It keeps the vault in step with the server, and
+  an item changed in the web vault shows up in the popup.
+- **Suggestions and fill.** The popup lists the items that match the current page first, and has search and a type
+  filter for the whole vault. "Fill" puts the login into the page, and a value goes straight from the vault to the
+  frame, never through the popup. The shortcut Alt+Shift+L (Firefox lets you change it) and the context menu entry
+  "Fill with Ferret" do the same.
+- **Copy.** Copy the user name, e-mail, password or one-time code from a row. Ferret clears the clipboard 30 seconds
+  after its last copy.
+- **Auto-lock.** The vault locks after 15 seconds to 24 hours without use of Ferret's own pages (15 minutes by
+  default). Activity in a web page does not count, and the vault also locks when the browser closes.
+- **Frame and phishing rules.** The extension fills only a frame that matches the item's saved address and that is
+  shown on the page. A frame that its page hides or covers is refused, and so is a field that is covered. On a page that
+  only looks like a saved site, nothing is suggested or filled; an item found by search there can be copied but never
+  filled.
+- **Forget this server.** The extension can forget a server: it revokes its device and removes what it keeps locally.
+- **A lying server.** The extension pins the server's identity, your account and the unlock methods. If a server later
+  shows something else, the sign-in stops with a warning, as in the web vault. The first sign-in without the sheet's QR
+  text trusts the server on first use.
 
 How to run and operate a server is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md), and the hand test for recovery, export and
 backup, which has to pass before real data goes in, is in [`docs/TESTING-M3.md`](docs/TESTING-M3.md).
@@ -108,7 +149,7 @@ Security is the top priority of the project, and this is how the design handles 
 - **Zero-knowledge.** The vault is encrypted and decrypted only on your devices. A valid server session does not
   unlock the vault, and nothing on the server, including administration, can decrypt it. The web vault is the
   exception to trust: it trusts the server that delivers its code, so a malicious operator could serve a tampered
-  page. The browser extension and the apps are the real protection against that (see
+  page. The browser extension (Firefox, first version) and, later, the apps are the real protection against that (see
   [Honest limits](#honest-limits)).
 - **Master password and an optional secret key.** The master password unlocks the vault on a new device. A
   separate secret key can be added to protect against offline guessing if someone copies the server's database.
@@ -130,10 +171,12 @@ Security is the top priority of the project, and this is how the design handles 
   cryptographic core.
 - **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. The
   server always serves the web vault, and there is no switch to turn it off. If you do not want to trust the server
-  that delivers the code, use the browser extension and the apps.
+  that delivers the code, use the browser extension (Firefox, first version) and, later, the apps.
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
+- **The extension is early.** It is a first version for Firefox only, outside the add-ons store, and it cannot save new
+  passwords yet. It has had no external review either.
 - **Recovery has limits in this version.** A new browser needs both pages of the sheet, and the secret key cannot be
   changed. After a new recovery key, the old one works again only if the server is restored from a backup made before
   the renewal. An export or backup made before a master password change still opens with the old password. The
@@ -175,11 +218,11 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 3. The web vault (first version done, work continues).
 4. Safe sync, recovery and daily use. Safe sync is done (v0.3.0). Recovery with the emergency sheet, master password
    change, encrypted export, import and backups are done (v0.5.0). Devices with tokens bound to a device key, and a
-   device list with revoke, are done (v0.6.0). Folder labels are in the core; the folder interface comes with the new
-   web vault layout, which is in progress.
-5. The browser extension and the iOS and Android apps. The extension has started, Firefox first, and is not usable
-   yet; autofill is in progress. After that come the password generator and a health check, then the rest of
-   the 1.0 list. The apps are later.
+   device list with revoke, are done (v0.6.0). The new web vault layout with folders, and unlock after the session has
+   ended, are done (v0.7.0).
+5. The browser extension and the iOS and Android apps. The first Firefox extension is done (v0.7.0): sign-in, sync,
+   suggestions and fill from the popup, copy, and auto-lock. Next in the extension are saving new and changed
+   passwords and the password generator, then a health check and the rest of the 1.0 list. The apps are later.
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).
