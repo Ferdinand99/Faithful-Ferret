@@ -33,7 +33,7 @@
   "recover.offer.recover": "The server says it was restored from a backup made before you last changed your master password. This device refuses the older password to protect you. If you restored the server yourself, use your recovery key: recover the account and type your newest master password as the new one. If you did not, this can be an attack: contact the person who runs the server.",
   "recover.offer.use_key": "Use the recovery key",
   "recover.password_help": "At least 12 characters with a secret key, 15 without. Use it from now on; the recovery key is the only way back if you forget it.",
-  "recover.qr_help": "The line under the QR code on page 1 of the emergency sheet. A device that remembers this account may leave it empty.",
+  "recover.qr_help": "The text under the QR code on page 1 of the emergency sheet. It may span several lines there: copy it whole, in one go. Spaces and line breaks are ignored. A device that remembers this account may leave it empty.",
   "recover.qr_label": "Text of the sheet's QR code (page 1)",
   "recover.reset_open": "A recovery session for this browser is still open (it lasts 30 minutes), so the code you already used is not needed again for the same e-mail address.",
   "recover.rk": "Recovery key (page 2)",
