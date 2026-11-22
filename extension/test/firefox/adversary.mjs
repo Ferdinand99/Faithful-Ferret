@@ -254,6 +254,9 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
     await session.pressShortcut(TEST_SHORTCUT);
     const command = await session.waitFor(async () => (await fromBridge(() => bridge.events())).find((e) => e.kind === "command"), 15_000, "the command event");
+    // The shortcut gives activeTab: the command's tab then carries its address. Without it the extension cannot see
+    // the page at all, and every row would read as "nothing offered"; that is a failure of the run, said here.
+    assert.ok(typeof command.tabUrl === "string" && /^https?:/.test(command.tabUrl), `${channel}: the shortcut on ${url} gave no activeTab (${JSON.stringify(command)})`);
     return /** @type {number} */ (command.tabId);
   };
 
