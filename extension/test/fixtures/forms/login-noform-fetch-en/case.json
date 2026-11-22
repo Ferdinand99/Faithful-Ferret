@@ -1,0 +1,41 @@
+{
+  "id": "login-noform-fetch-en",
+  "class": "positive",
+  "category": "login-noform",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/login-noform-fetch-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!loginnofor-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

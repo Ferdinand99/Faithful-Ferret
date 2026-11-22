@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset password</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 440px; color: #111; background: #fff; }
+label { display: block; margin: 8px 0 2px; }
+input, select, textarea, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+input[type=checkbox], input[type=radio] { width: auto; }
+button { width: auto; padding: 6px 14px; }
+fieldset { border: 1px solid #bbb; margin: 8px 0; }
+.row { margin: 8px 0; }
+.small { font-size: 13px; color: #555; }
+</style>
+</head>
+<body>
+<h1>Reset password</h1>
+<form id="f" method="post" action="/static/login-done.html">
+<input type="hidden" name="token" value="7c1d9e52b0a4">
+<label for="new">New password</label>
+<input id="new" name="password" type="password" autocomplete="new-password">
+<label for="new2">Confirm password</label>
+<input id="new2" name="password_confirmation" type="password" autocomplete="new-password">
+<div class="row"><button id="go" type="submit">Reset password</button></div>
+</form>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "id": "tamper-show-password-fr",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/tamper-show-password-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!tampershow-Vm4$"
+    },
+    {
+      "click": "#show"
+    },
+    {
+      "wait": 3500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

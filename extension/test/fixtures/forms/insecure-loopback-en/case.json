@@ -1,0 +1,32 @@
+{
+  "id": "insecure-loopback-en",
+  "class": "negative",
+  "category": "insecure",
+  "lang": "en",
+  "host": "127.0.0.1",
+  "scheme": "http",
+  "path": "/insecure-loopback-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!insecurelo-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

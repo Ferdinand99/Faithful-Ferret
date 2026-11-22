@@ -1,0 +1,30 @@
+{
+  "id": "reauth-same-password-en",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/reauth-same-password-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#p",
+      "text": "{{password:forms}}"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

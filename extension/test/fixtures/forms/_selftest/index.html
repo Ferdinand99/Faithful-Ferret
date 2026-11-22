@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trusted input self-test</title>
+</head>
+<body>
+<h1>Trusted input</h1>
+<input id="plain" type="text" aria-label="plain">
+<div id="host"></div>
+<button id="btn" type="button">Click</button>
+<iframe id="inner" src="inner.html" title="inner"></iframe>
+<script>
+// Records, for every key and click event on the page, which element it was for and whether the browser made it
+// (isTrusted). The document sees the events of the shadow root too (they are composed).
+var log = [];
+["keydown", "keypress", "input", "click"].forEach(function (type) {
+  document.addEventListener(type, function (e) {
+    log.push({ where: e.composedPath()[0].id, type: type, trusted: e.isTrusted });
+    document.documentElement.setAttribute("data-seen", JSON.stringify(log));
+  }, true);
+});
+document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = '<input id="deep" type="text" aria-label="deep">';
+</script>
+</body>
+</html>

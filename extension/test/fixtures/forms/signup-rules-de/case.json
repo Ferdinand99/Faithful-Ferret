@@ -1,0 +1,51 @@
+{
+  "id": "signup-rules-de",
+  "class": "positive",
+  "category": "signup",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/signup-rules-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mail",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#pw",
+      "text": "Zq7!signuprule-Vm4$"
+    },
+    {
+      "type": "#pw2",
+      "text": "Zq7!signuprule-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#mail"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": "#pw2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw",
+    "#pw2"
+  ],
+  "fields": {
+    "#pw": "new_password",
+    "#pw2": "confirm_password"
+  },
+  "source": "own"
+}

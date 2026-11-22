@@ -1,0 +1,27 @@
+{
+  "id": "harmless-language-nb",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/harmless-language-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#nick",
+      "text": "anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,39 @@
+{
+  "id": "foreign-frame-nested-nl",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/foreign-frame-nested-nl/",
+  "frame": {
+    "id": "#mid-frame",
+    "host": "www.forms.example.net",
+    "path": "/foreign-frame-nested-nl/mid.html",
+    "kind": "foreign"
+  },
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!foreign-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#u",
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,36 @@
+{
+  "id": "flood-submits-en",
+  "class": "negative",
+  "category": "flood",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/flood-submits-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!floodsubmi-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": false,
+    "max_offers": 1
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

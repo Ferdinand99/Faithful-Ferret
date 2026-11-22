@@ -1,0 +1,38 @@
+{
+  "id": "reauth-failed-late-nl",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/reauth-failed-late-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "wrong-password-2"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 3500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

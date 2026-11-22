@@ -1,0 +1,63 @@
+{
+  "id": "otp-split6-en",
+  "class": "positive",
+  "category": "otp",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/otp-split6-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#d1",
+      "text": "1"
+    },
+    {
+      "type": "#d2",
+      "text": "4"
+    },
+    {
+      "type": "#d3",
+      "text": "7"
+    },
+    {
+      "type": "#d4",
+      "text": "0"
+    },
+    {
+      "type": "#d5",
+      "text": "3"
+    },
+    {
+      "type": "#d6",
+      "text": "6"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#d1": "totp:0",
+        "#d2": "totp:1",
+        "#d3": "totp:2",
+        "#d4": "totp:3",
+        "#d5": "totp:4",
+        "#d6": "totp:5"
+      }
+    },
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#d1": "otp_digit",
+    "#d2": "otp_digit",
+    "#d3": "otp_digit",
+    "#d4": "otp_digit",
+    "#d5": "otp_digit",
+    "#d6": "otp_digit"
+  },
+  "source": "own"
+}

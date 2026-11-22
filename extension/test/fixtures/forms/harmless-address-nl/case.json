@@ -1,0 +1,35 @@
+{
+  "id": "harmless-address-nl",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/harmless-address-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#street",
+      "text": "Dorpsstraat 1"
+    },
+    {
+      "type": "#zip",
+      "text": "1234 AB"
+    },
+    {
+      "type": "#city",
+      "text": "Utrecht"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

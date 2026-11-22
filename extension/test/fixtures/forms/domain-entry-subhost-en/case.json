@@ -1,0 +1,40 @@
+{
+  "id": "domain-entry-subhost-en",
+  "class": "special",
+  "category": "domain-entry",
+  "lang": "en",
+  "host": "www.forms.example.org",
+  "path": "/domain-entry-subhost-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!domainentr-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://www.forms.example.org",
+      "info": "domain_hit"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

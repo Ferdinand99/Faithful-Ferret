@@ -14,6 +14,11 @@
 # A spec that is skipped, or a run in which no test ran, is a failure: a missing
 # piece of the environment must never pass as green.
 #
+# matrix: only 95-matrix.e2e.spec.mjs, on the end-to-end stack like e2e (the stack's CA and setup token come
+# from the caller). FERRET_MATRIX_PART, FERRET_MATRIX_SET and FERRET_MATRIX_GREP choose what it runs. The reports
+# it writes (FERRET_MATRIX_OUT, /work/test-results/out/u2-matrix) leave the container as a tar archive on stdout,
+# as the measure reports do.
+#
 # measure: only the *.measure.spec.mjs files (the lifetime matrix, hours long). The
 # reports they write (FERRET_MEASURE_OUT, /work/test-results/out/ext-measure) leave
 # the container as a tar archive on stdout; everything else of this script goes to
@@ -36,7 +41,8 @@ done
 
 case "$mode" in
   firefox) specs=$(ls test/firefox/*.spec.mjs | grep -v '\.e2e\.spec\.mjs$' | grep -v '\.measure\.spec\.mjs$') ;;
-  e2e) specs=$(ls test/firefox/*.e2e.spec.mjs) ;;
+  e2e) specs=$(ls test/firefox/*.e2e.spec.mjs | grep -v '/95-matrix\.e2e\.spec\.mjs$') ;;
+  matrix) specs=test/firefox/95-matrix.e2e.spec.mjs ;;
   measure) specs=$(ls test/firefox/*.measure.spec.mjs) ;;
   *) echo "run.sh: unknown mode $mode" >&2; exit 2 ;;
 esac
@@ -61,6 +67,14 @@ done
 # A limit for the whole run of one channel, so a stuck browser cannot hold the container.
 step_timeout="${FERRET_STEP_TIMEOUT:-1500}"
 test_timeout=600000
+if [ "$mode" = matrix ]; then
+  # Every case in two channels takes a while; the limit is for one channel.
+  step_timeout="${FERRET_STEP_TIMEOUT:-5400}"
+  test_timeout=5400000
+  FERRET_MATRIX_OUT="${FERRET_MATRIX_OUT:-/work/test-results/out/u2-matrix}"
+  export FERRET_MATRIX_OUT
+  mkdir -p "$FERRET_MATRIX_OUT"
+fi
 if [ "$mode" = measure ]; then
   # Hours, not minutes: every cell waits for its window.
   step_timeout="${FERRET_STEP_TIMEOUT:-21600}"
@@ -107,6 +121,10 @@ for channel in $channel_list; do
 done
 if [ -n "${FERRET_SHOTS_DIR:-}" ]; then
   tar -c -C "$(dirname "$FERRET_SHOTS_DIR")" "$(basename "$FERRET_SHOTS_DIR")"
+fi
+if [ "$mode" = matrix ]; then
+  # The reports, also of a run that failed.
+  tar -c -C "$(dirname "$FERRET_MATRIX_OUT")" "$(basename "$FERRET_MATRIX_OUT")"
 fi
 if [ "$mode" = measure ]; then
   # The reports, also of a run that failed: what was measured is still worth having.

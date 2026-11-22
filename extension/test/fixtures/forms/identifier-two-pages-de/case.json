@@ -1,0 +1,44 @@
+{
+  "id": "identifier-two-pages-de",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/identifier-two-pages-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!identifier-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "update",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

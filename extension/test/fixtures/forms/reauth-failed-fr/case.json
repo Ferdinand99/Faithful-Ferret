@@ -1,0 +1,38 @@
+{
+  "id": "reauth-failed-fr",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/reauth-failed-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "wrong-password-1"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 3500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,39 @@
+{
+  "id": "foreign-frame-blank-fr",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/foreign-frame-blank-fr/",
+  "frame": {
+    "id": "#login-frame",
+    "host": "forms.example.net",
+    "path": "about:blank",
+    "kind": "blank"
+  },
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!foreign-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#u",
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}
