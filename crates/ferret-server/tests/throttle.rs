@@ -268,7 +268,7 @@ fn caller_from_reads_the_forwarded_address_or_the_peer() {
     let mut headers = HeaderMap::new();
     assert_eq!(
         caller_from(&headers, Some(peer)).ip,
-        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 3, 26)))
+        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 26)))
     );
     // `proxy_guard` has already removed these from untrusted peers, so what is
     // left is believed: the right-most entry, which the last proxy wrote.
