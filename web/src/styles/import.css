@@ -22,8 +22,46 @@
   padding-left: var(--sp-5);
 }
 
-.import-page [data-role="file"] {
+/* The file picker: a button (the label of the hidden input), the name of the chosen file and a line about dropping one. The zone
+   takes a file that is dropped on it. The colours are base.css tokens, so both themes and the high-contrast mode follow. */
+.import-page .file-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px dashed var(--field-line);
+  border-radius: var(--r-md);
+  transition: background-color var(--dur-ui) ease, border-color var(--dur-ui) ease;
+}
+
+.import-page .file-drop[data-over="true"] {
+  border-color: var(--brand);
+  background: var(--brand-fill);
+}
+
+/* The hidden input keeps the focus: the button shows it. */
+.import-page .file-drop [data-role="file"]:focus-visible + .btn {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.import-page .file-drop [data-role="file"]:disabled + .btn {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.import-page .file-name {
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.import-page .file-drop-hint {
+  flex-basis: 100%;
 }
 
 .import-page [data-role="import-again"] {
