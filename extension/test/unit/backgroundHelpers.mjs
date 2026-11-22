@@ -2,10 +2,25 @@
 // modules use, for the unit tests. Not a test file (the runner picks up
 // *.test.mjs only).
 
-/** A clock the tests move by hand. */
+/**
+ * A clock the tests move by hand. `advance` is time that passes while the browser runs. `jump` is the wall clock going
+ * ahead while the machine sleeps: the timers of a fake timer set (made over this clock) are delays on a clock that did
+ * not run, so they do not become due by it, as in a browser after a suspend.
+ */
 export function createClock(start = 1_000_000) {
   let t = start;
-  return { now: () => t, set: (/** @type {number} */ n) => { t = n; }, advance: (/** @type {number} */ ms) => { t += ms; } };
+  /** @type {Array<(ms: number) => void>} */
+  const jumpListeners = [];
+  return {
+    now: () => t,
+    set: (/** @type {number} */ n) => { t = n; },
+    advance: (/** @type {number} */ ms) => { t += ms; },
+    jump: (/** @type {number} */ ms) => {
+      t += ms;
+      for (const shift of jumpListeners) shift(ms);
+    },
+    onJump: (/** @type {(ms: number) => void} */ fn) => { jumpListeners.push(fn); },
+  };
 }
 
 /** `storage.session` over a Map, with a switch to make it fail. */
@@ -40,6 +55,10 @@ export function createFakeTimers(clock) {
   let next = 1;
   /** @type {Map<number, { at: number, fn: () => unknown }>} */
   const pending = new Map();
+  // A sleep of the machine: what was still to wait is still to wait after it.
+  /** @type {any} */ (clock).onJump?.((/** @type {number} */ ms) => {
+    for (const timer of pending.values()) timer.at += ms;
+  });
   return {
     pending,
     setTimeout: (/** @type {() => unknown} */ fn, /** @type {number} */ ms) => {

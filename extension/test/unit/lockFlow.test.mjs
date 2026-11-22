@@ -12,7 +12,7 @@ import lockHandler from "../../src/background/handlers/lock.handler.mjs";
 import sessionHandler from "../../src/background/handlers/session.handler.mjs";
 import settingsHandler from "../../src/background/handlers/settings.handler.mjs";
 import syncHandler from "../../src/background/handlers/sync.handler.mjs";
-import { ALARM_NAME, DEFAULT_LOCK_SECONDS, LOCK_AT_KEY, LOCK_CHOICES, SETTING_KEY, createLock } from "../../src/background/lock.mjs";
+import { ALARM_NAME, DEFAULT_LOCK_SECONDS, LOCK_AT_KEY, LOCK_CHOICES, RECHECK_MS, SETTING_KEY, createLock } from "../../src/background/lock.mjs";
 import { createRouter } from "../../src/background/router.mjs";
 import { UI_PORT, UI_TYPES, decode, encode } from "../../src/shared/protocol.mjs";
 import { createAlarmsAndIdle, createClock, createFakeClient, createFakeTimers, createPort, createSessionStorage } from "./backgroundHelpers.mjs";
@@ -76,6 +76,8 @@ async function setup({ unlocked = true, stored = {} } = {}) {
     record("frame_report", undefined),
     record("fill_result", undefined),
   ];
+  // As in the background (main.mjs): the deadline is also checked before every use of the vault outside the messages.
+  coreHost.setGuard(() => lock.isDue());
   const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers });
   if (unlocked) {
     await coreHost.call("unlock_probe");
@@ -160,13 +162,18 @@ test("fifteen_seconds_locks_after_fifteen_seconds_without_activity_in_ferrets_ui
   assert.equal(await deadline(), undefined);
 });
 
-test("the_timer_of_a_longer_choice_is_set_for_its_own_deadline", async () => {
+test("the_alarm_of_a_longer_choice_is_set_for_its_own_deadline_and_the_timer_looks_again_every_15_seconds", async () => {
   const { clock, timers, events, ask } = await setup({ unlocked: false });
   await ask("settings", { lock_seconds: 86_400 });
   await ask("unlock", { mp: "typed" });
   const [only] = [...timers.pending.values()];
-  assert.equal(only.at, clock.now() + 86_400 * SECOND);
+  assert.equal(only.at, clock.now() + RECHECK_MS, "the timer never waits longer than 15 s");
   assert.equal(events.alarmList.get(ALARM_NAME)?.when, clock.now() + 86_400 * SECOND);
+  // A short choice: the timer waits for the deadline itself.
+  const short = await setup({ unlocked: false });
+  await short.ask("settings", { lock_seconds: 15 });
+  await short.ask("unlock", { mp: "typed" });
+  assert.equal([...short.timers.pending.values()][0].at, short.clock.now() + 15 * SECOND);
 });
 
 test("activity_in_a_web_page_does_not_move_lock_at", async () => {
@@ -229,6 +236,82 @@ test("sleep_longer_than_the_setting_locks_on_wake", async () => {
   events.fireIdle("active");
   await turn();
   assert.equal(coreHost.state(), "unlocked");
+});
+
+test("a_sleep_does_not_stretch_the_time_the_vault_stays_open", async () => {
+  // The machine sleeps for eight hours with the vault open. The timers are delays on a clock that did not run, so
+  // none is due when it wakes. The page's timer is never set for longer than RECHECK_MS, so the first one fires
+  // within 15 s of the wake and finds the deadline passed.
+  const { clock, client, coreHost, timers, events } = await setup();
+  const [first] = [...timers.pending.values()];
+  assert.ok(first.at <= clock.now() + RECHECK_MS, "the timer waits 15 s at most, not the 15 minutes of the setting");
+  clock.jump(8 * 60 * 60 * SECOND);
+  await timers.runDue();
+  assert.equal(coreHost.state(), "unlocked", "nothing is due the moment the machine wakes");
+  clock.advance(RECHECK_MS);
+  await timers.runDue();
+  assert.equal(coreHost.state(), "locked", "locked within 15 s of the wake, with no message");
+  assert.equal(client.locks, 1);
+  assert.equal(events.alarmList.has(ALARM_NAME), false);
+  assert.equal(timers.pending.size, 0);
+  // And while the deadline is still ahead the timer only looks again: it does not touch it.
+  const again = await setup();
+  const before = await again.deadline();
+  for (let i = 0; i < 10; i += 1) {
+    again.clock.advance(RECHECK_MS);
+    await again.timers.runDue();
+  }
+  assert.equal(again.coreHost.state(), "unlocked");
+  assert.equal(await again.deadline(), before);
+  assert.equal(again.timers.pending.size, 1, "one timer, set again each time");
+});
+
+test("a_call_of_the_sync_after_the_deadline_never_reaches_the_worker", async () => {
+  const { clock, client, coreHost } = await setup();
+  const live = coreHost.liveClient({ open: true });
+  assert.equal((await live.vault.ferret_aaguid()).length, 16, "while the vault is open it reaches the worker");
+  const calls = client.calls.length;
+  // The machine slept past the deadline: no timer, alarm or message has run yet.
+  clock.jump(8 * 60 * 60 * SECOND);
+  assert.equal(coreHost.state(), "unlocked");
+  await assert.rejects(live.vault.ferret_aaguid(), { code: "vault_locked" });
+  assert.equal(client.calls.length, calls, "the call never reached the worker");
+  assert.equal(coreHost.state(), "locked", "the guard locked the host");
+  assert.equal(client.locks, 1);
+  await assert.rejects(live.vault.ferret_aaguid(), { code: "vault_locked" });
+  // A client of the account session (not `open`) is not held by the deadline: it runs while the host is locked.
+  const session = coreHost.liveClient();
+  assert.equal((await session.vault.ferret_aaguid()).length, 16);
+  assert.equal(coreHost.state(), "locked");
+});
+
+test("a_value_written_outside_the_list_by_another_context_reads_as_fifteen_minutes", async () => {
+  // storage.local can be written by a content-script context too: the value is checked against the list on every read.
+  const first = await setup({ unlocked: false });
+  await first.ask("settings", { lock_seconds: 300 });
+  for (const bad of [86_401, 7777, 1, "300", null]) {
+    first.local.data.set(SETTING_KEY, bad);
+    const next = await setup({ unlocked: false, stored: { [SETTING_KEY]: first.local.data.get(SETTING_KEY) } });
+    assert.deepEqual((await next.ask("settings", {})).body, { lock_seconds: 900 }, String(bad));
+  }
+});
+
+test("the_setting_is_used_only_once_it_is_saved", async () => {
+  const { local, lock } = await setup({ unlocked: false });
+  /** @type {() => void} */
+  let release = () => {};
+  const held = new Promise((resolve) => { release = () => resolve(undefined); });
+  const realSet = local.set.bind(local);
+  local.set = async (items) => { await held; return realSet(items); };
+  const saving = lock.setSeconds(86_400);
+  await turn();
+  assert.equal(await lock.getSeconds(), 900, "while the save is pending the old value is still the one in use");
+  release();
+  await saving;
+  assert.equal(await lock.getSeconds(), 86_400);
+  local.set = async () => { throw new Error("full"); };
+  await assert.rejects(lock.setSeconds(60), /full/);
+  assert.equal(await lock.getSeconds(), 86_400, "a failed save leaves the value alone");
 });
 
 test("a_call_after_lock_at_never_reaches_the_worker", async () => {

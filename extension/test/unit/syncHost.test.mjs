@@ -185,6 +185,21 @@ test("engine_starts_on_unlock_and_stops_on_lock", async () => {
   assert.equal(engines.made[1].stopped, true);
 });
 
+test("a_sync_call_after_the_deadline_is_refused_and_locks_the_vault_before_any_timer_runs", async () => {
+  const { world, engines, signIn } = await syncWorld();
+  await signIn();
+  const [engine] = engines.made;
+  assert.deepEqual(await engine.options.client.vault.display_host(SERVER), { unicode: "vault.example.com", a_label: "vault.example.com" });
+  const before = world.client.calls.length;
+  // The machine slept past the deadline: no timer, alarm or message has run, and the engine reconnects and asks the worker.
+  world.clock.jump(8 * 60 * 60 * 1000);
+  assert.equal(world.coreHost.state(), "unlocked");
+  await assert.rejects(engine.options.client.vault.display_host(SERVER), { code: "vault_locked" });
+  assert.equal(world.client.calls.length, before, "the call never reached the worker");
+  assert.equal(world.coreHost.state(), "locked", "the deadline locked it");
+  assert.equal(engine.stopped, true, "and the sync stopped with it");
+});
+
 test("a_worker_that_fails_under_the_engine_locks_the_vault", async () => {
   const client = coreClient({ sync_memory_new: () => Promise.reject(Object.assign(new Error("gone"), { code: "worker_failed" })) });
   const { world, engines, signIn } = await syncWorld({ client });

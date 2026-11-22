@@ -261,7 +261,8 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
 
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;
-  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_server(), "junk", 5, undefined]) {
+  // The setting and the lock button are for the extension's own pages: a content script can neither change the setting nor lock.
+  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(), "junk", 5, undefined]) {
     assert.equal(await router.onMessage(raw, sender), undefined);
   }
   assert.deepEqual(log, []);

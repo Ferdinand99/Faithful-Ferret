@@ -632,6 +632,8 @@ export async function sessionWorld({ createSession, client = coreClient(), store
   const events = createAlarmsAndIdle();
   const timers = createFakeTimers(clock);
   const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal: local, timers, now: clock.now, coreHost });
+  // As in the background: the deadline is checked before every use of the vault, also by the modules beside the messages.
+  coreHost.setGuard(() => lock.isDue());
   const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default] : [])] });
   /** Every port a page opened. @type {ReturnType<typeof portPair>[]} */
   const ports = [];

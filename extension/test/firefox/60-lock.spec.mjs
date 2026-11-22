@@ -3,12 +3,12 @@
 // in a tab and keeps "Lock after" over a restart. These need no server: the
 // test build can open the vault without a password (the lifetime measurement's
 // `idle` scenario does), which starts the vault worker and the deadline as a
-// real unlock does. That the popup then asks for the password is a test against
-// the end-to-end stack (60-lock.e2e.spec.mjs).
+// real unlock does. That the popup then asks for the password is shown by the
+// end-to-end stack (the lock button test of 20-signin.e2e.spec.mjs).
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, openBridge, stopFixtures } from "./harness.mjs";
-import { openMeasurePage, portCommand, startScenario } from "./measure.mjs";
+import { openMeasurePage, portCommand, readLog, sleep, startScenario } from "./measure.mjs";
 
 after(() => stopFixtures());
 
@@ -106,6 +106,48 @@ test("killed_background_comes_back_locked_and_asks_for_the_password", async () =
             }),
         );
         assert.deepEqual([reply.type, reply.body], ["refused", { reason: "vault_locked" }], `${where}: a call after the kill never reaches a worker`);
+      } finally {
+        await session.quit();
+      }
+    }
+  }
+});
+
+test("fifteen_seconds_locks_with_no_message", async () => {
+  // The shortest choice, in a real browser (where an alarm is only as fine as the browser makes it): nothing asks the
+  // background after the vault opened, and the page timer still locks it. The state is read straight from the host, which
+  // is not a message to the lock (no check, no touch).
+  for (const channel of channels()) {
+    for (const manifest of MANIFESTS) {
+      const where = `${channel} ${manifest}`;
+      const session = await launch({ channel, manifest });
+      try {
+        await session.waitFor(async () => (await session.backgroundState(TEST_ADDON_ID)) === "running", 30_000, "a running background");
+        const tab = await session.newTab();
+        await session.switchTo(tab);
+        await openMeasurePage(session);
+        // The setting, over the real UI port from an extension page.
+        const reply = await session.content(
+          () =>
+            new Promise((resolve) => {
+              const port = browser.runtime.connect({ name: "ferret-ui" });
+              port.onMessage.addListener((raw) => {
+                port.disconnect();
+                resolve(JSON.parse(raw));
+              });
+              port.postMessage(JSON.stringify({ v: 1, id: "s15", type: "settings", body: { lock_seconds: 15 } }));
+            }),
+        );
+        assert.deepEqual([reply.type, reply.body], ["settings", { lock_seconds: 15 }], where);
+        await startScenario(session, "idle");
+        const log = await readLog(session);
+        await session.switchTo(tab);
+        assert.equal(log.entries.find((e) => e.kind === "scenario_start")?.core, "unlocked", `${where}: the vault was open`);
+        // Well past 15 s, and no message to the background meanwhile.
+        await sleep(25_000);
+        const state = await readState(session);
+        assert.equal(state.core, "locked", `${where}: locked by itself`);
+        assert.equal(state.lockAt, null, `${where}: no deadline left`);
       } finally {
         await session.quit();
       }

@@ -43,6 +43,12 @@ export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";
 export const SETTING_KEY = "lock_seconds";
 const MS_PER_SECOND = 1000;
+/**
+ * The longest the page's timer waits before it reads the wall clock again (it reads no storage and calls no API). A timer is a delay on the browser's own
+ * clock, which may stand still while the machine sleeps, so a timer set for the whole deadline could fire long after it.
+ * With this cap a deadline that passed in a sleep is seen at most this long after the machine wakes.
+ */
+export const RECHECK_MS = 15_000;
 
 /**
  * @typedef {{
@@ -136,7 +142,30 @@ export function createLock({ alarms, idle, storageSession, storageLocal = null, 
     }
   };
 
-  /** @param {number} when */
+  /**
+   * The page's timer, for at most RECHECK_MS: when it fires, `expire` reads the wall clock and either locks or sets it again.
+   * @param {number} when
+   */
+  const armTimer = (when) => {
+    clearTimer();
+    try {
+      timer = timers.setTimeout(() => {
+        timer = null;
+        if (coreHost.state() === "locked") return;
+        // The copy of the deadline and the clock: no call of the extension API, so this check does not keep a
+        // background page alive that the browser would end. A deadline that is not known is read from the storage.
+        if (knownLockAt === null) expire(armTimer).catch(() => coreHost.lock("timeout").catch(() => {}));
+        else if (now() >= knownLockAt) coreHost.lock("timeout").catch(() => {});
+        else armTimer(knownLockAt);
+      }, Math.min(Math.max(0, when - now()), RECHECK_MS));
+      // A node test run must not wait for it; a browser's handle is a number.
+      /** @type {any} */ (timer)?.unref?.();
+    } catch {
+      // No timer: the alarm and the check on every message still lock.
+    }
+  };
+
+  /** The alarm and the timer. @param {number} when */
   const arm = (when) => {
     try {
       const result = /** @type {any} */ (alarms.create(ALARM_NAME, { when }));
@@ -144,18 +173,15 @@ export function createLock({ alarms, idle, storageSession, storageLocal = null, 
     } catch {
       // No alarm: the timer and the check on every message still lock.
     }
-    clearTimer();
-    try {
-      timer = timers.setTimeout(() => {
-        timer = null;
-        expire().catch(() => coreHost.lock("timeout").catch(() => {}));
-      }, Math.max(0, when - now()));
-      // A node test run must not wait for it; a browser's handle is a number.
-      /** @type {any} */ (timer)?.unref?.();
-    } catch {
-      // No timer: the alarm and the check on every message still lock.
-    }
+    armTimer(when);
   };
+
+  /**
+   * The deadline as this page knows it, for the guard of the core host. It is only a copy of what is in the session
+   * storage, kept here so a check needs no await: a call that needs the vault must not wait for a read.
+   * @type {number | null}
+   */
+  let knownLockAt = null;
 
   const disarm = () => {
     clearTimer();
@@ -169,17 +195,22 @@ export function createLock({ alarms, idle, storageSession, storageLocal = null, 
 
   // Whatever locks the vault also drops the deadline.
   coreHost.onLocked(() => {
+    knownLockAt = null;
     disarm();
     queue(() => storageSession.remove(LOCK_AT_KEY));
   });
 
-  /** Locks when the deadline has passed or is missing; otherwise arms the alarm for it. */
-  const expire = async () => {
+  /**
+   * Locks when the deadline has passed or is missing; otherwise arms the alarm and the timer for it (or only what
+   * `rearm` says).
+   * @param {(when: number) => void} [rearm]
+   */
+  const expire = async (rearm = arm) => {
     if (coreHost.state() === "locked") return;
     const at = await readLockAt();
     if (at === null) await coreHost.lock("restart");
     else if (now() >= at) await coreHost.lock("timeout");
-    else arm(at);
+    else rearm(at);
   };
 
   alarms.onAlarm.addListener((alarm) => {
@@ -198,6 +229,7 @@ export function createLock({ alarms, idle, storageSession, storageLocal = null, 
 
   const touch = () => {
     const at = now() + lockSeconds * MS_PER_SECOND;
+    knownLockAt = at;
     queue(() => storageSession.set({ [LOCK_AT_KEY]: at }));
     arm(at);
   };
@@ -245,30 +277,33 @@ export function createLock({ alarms, idle, storageSession, storageLocal = null, 
     },
 
     /**
+     * True when the vault may not be used now: the deadline this page knows has passed, or there is none. It reads
+     * the clock and a copy of the deadline and awaits nothing, so the core host can ask it before every call that
+     * uses the vault, whoever makes the call.
+     */
+    isDue() {
+      return knownLockAt === null || now() >= knownLockAt;
+    },
+
+    /**
      * Sets "Lock after" to one of LOCK_CHOICES (seconds) and keeps it in `storage.local`. Anything else is a
-     * RangeError and changes nothing. A shorter time shortens the deadline of an open vault at once; a longer
-     * one applies from the next touch. If the setting cannot be saved the old one stays.
+     * RangeError and changes nothing. The new value is used only once it is saved, so a touch while the save is
+     * pending (or a save that fails) never uses a value that is not kept. A shorter time shortens the deadline of
+     * an open vault at once; a longer one applies from the next touch.
      *
      * @param {number} n
      */
     async setSeconds(n) {
       if (!isChoice(n)) throw new RangeError("seconds must be one of the lock choices");
       await ready;
-      const before = lockSeconds;
+      if (storageLocal !== null) await storageLocal.set({ [SETTING_KEY]: n });
       lockSeconds = n;
-      if (storageLocal !== null) {
-        try {
-          await storageLocal.set({ [SETTING_KEY]: n });
-        } catch (error) {
-          lockSeconds = before;
-          throw error;
-        }
-      }
       applyIdleInterval();
       if (coreHost.state() === "unlocked") {
         const current = await readLockAt();
         const shorter = now() + n * MS_PER_SECOND;
         if (current !== null && shorter < current) {
+          knownLockAt = shorter;
           queue(() => storageSession.set({ [LOCK_AT_KEY]: shorter }));
           arm(shorter);
         }
