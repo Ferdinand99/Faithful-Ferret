@@ -92,6 +92,43 @@ test("a_new_browser_with_the_sheet_text_pins_the_server_key", async ({ browser }
   await context.close();
 });
 
+test("the_sheet_text_pasted_as_the_pdf_lays_it_out_signs_in", async ({ browser }) => {
+  test.setTimeout(300_000);
+  // The PDF prints the text over several lines (63 characters a line on page 1), so what a user copies out of it holds line
+  // breaks. A single-line field turns them into spaces (Firefox) or drops them (Chromium); the page ignores white space either way.
+  const lines = secrets.qrText.match(/.{1,63}/g) ?? [];
+  expect(lines.length, "the text spans several lines on the sheet").toBeGreaterThan(2);
+  const pasted = lines.join("\n");
+
+  const context = await freshContext(browser);
+  const page = await context.newPage();
+  await page.goto(`${vaultUrl}/vault/login`);
+  await expect(page.locator('[data-role="credentials"]')).toBeVisible({ timeout: 20_000 });
+  await page.locator('[data-role="email"]').fill(secrets.email);
+  await page.locator('[data-role="email"]').blur();
+  await page.locator('[data-role="password"]').fill(secrets.password);
+  // A paste, not `fill`: the text goes in the way the browser takes it from the clipboard, line breaks and all.
+  await page.locator('[data-role="qr-text"]').focus();
+  await page.keyboard.insertText(pasted);
+  const held = await page.locator('[data-role="qr-text"]').inputValue();
+  expect(held.replace(/\s/g, ""), "the field kept every character of the text").toBe(secrets.qrText);
+  await page.locator('[data-role="qr-read"]').click();
+  await expect(page.locator('[data-role="qr-shown"]')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-role="error"]')).toBeHidden();
+  await expect(page.locator('[data-role="qr-summary"]')).toContainText(new URL(vaultUrl).host);
+  await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+  await page.locator('[data-role="qr-confirm"]').check();
+  await pace();
+  await page.locator('[data-role="credentials"] [data-role="submit"]').click();
+  await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: SLOW });
+
+  // The sign-in went through the sheet's checks: the server key this browser pinned is the one on the sheet.
+  const stores = await readStores(page);
+  expect(stores.pinned.count).toBe(1);
+  expect(stores.pinned.values[0].record.server_public_key, "the pinned server key is the one on the sheet").toBe(keyHex(secrets.qrText));
+  await context.close();
+});
+
 test("a_sheet_text_with_another_server_key_is_refused_before_sign_in", async ({ browser }) => {
   test.setTimeout(300_000);
   const original = keyHex(secrets.qrText);

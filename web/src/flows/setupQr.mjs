@@ -30,8 +30,14 @@ export class SetupQrError extends Error {
   }
 }
 
-/** The longest text the reader looks at (the core's own limit). */
+/** The longest text the reader looks at (the core's own limit), counted without white space. */
 export const MAX_QR_TEXT = 1700;
+
+/**
+ * Every white-space character that JavaScript knows: spaces, tabs, line breaks, the no-break space, the other Unicode
+ * spaces and the byte order mark.
+ */
+const WHITE_SPACE = /\s/gu;
 
 /**
  * What the core says about a text of its own, as the codes the pages translate.
@@ -103,6 +109,11 @@ function originOf(address) {
  * Reads the text of the sheet's QR code with the core and checks the form of
  * the answer. Nothing is sent anywhere. Show `host` and `port` to the user and
  * have them confirm before the sign-in goes on.
+ *
+ * The text never holds white space (the address and the key are URL-encoded), but
+ * the sheet prints it over several lines and a copy out of the PDF carries the line
+ * breaks, which a single-line field turns into spaces or drops. So every white-space
+ * character is removed before the text is looked at; the length limit is on what is left.
  * @param {{ vault: { setup_qr_parse(text: string): Promise<unknown> | unknown } }} client the crypto client
  * @param {unknown} text the text the user pasted
  * @returns {Promise<Readonly<SetupQr>>}
@@ -110,7 +121,9 @@ function originOf(address) {
  */
 export async function readSetupQr(client, text) {
   if (typeof text !== "string") throw new SetupQrError("malformed_setup_qr");
-  const clean = text.trim();
+  // A paste of more than twice the limit is refused before it is cleaned, so that the cleaning never works on a huge text.
+  if (text.length > 2 * MAX_QR_TEXT) throw new SetupQrError("qr_too_large");
+  const clean = text.replace(WHITE_SPACE, "");
   if (clean === "") throw new SetupQrError("malformed_setup_qr");
   if (clean.length > MAX_QR_TEXT) throw new SetupQrError("qr_too_large");
   /** @type {any} */
