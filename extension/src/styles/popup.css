@@ -4,15 +4,6 @@
    and one item's view. Sizes and colours are those of the layout, through the
    Hedgerow tokens of session.css. The icons are masks in the text colour. */
 
-/* The border of the popup's fields: at least 3:1 against the field and the page (WCAG 1.4.11). */
-body.ff-popup {
-  --field-border: light-dark(#86868b, #6e6e73);
-}
-
-body.ff-popup .ff-input {
-  border-color: var(--field-border);
-}
-
 body.ff-popup[data-view="unlocked"] {
   height: 620px;
   display: flex;

@@ -9,7 +9,7 @@ scripts/lanbox-ext.sh e2e     [--channel ...] [--manifest ...] [--grep <name>] [
 scripts/lanbox-ext.sh gate    [--channel ...] [--manifest ...]
 ```
 
-Both run on the LANBox build VM. The Firefox step has no network (`e2e`: only the
+Both run on the build host. The Firefox step has no network (`e2e`: only the
 end-to-end stack's network). The WASM package is fetched and checked in a step of
 its own. A skipped spec, or a run in which no test passed, fails the run.
 

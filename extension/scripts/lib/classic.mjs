@@ -18,7 +18,12 @@
 // - `import { a, b } from "./x.mjs"` and `import "./x.mjs"`: named, no `as`,
 //   and every name must be exported by that module;
 // - `export function|const|class ...` and `export { a, b }` (no `as`, no
-//   `export let`, because the importer gets a copy of the value);
+//   `export let`, because the importer gets a copy of the value); a name in an
+//   export list must be declared at the top of its module by `function`,
+//   `const` or `class`, or be imported (so no `let a; export { a }` and no name
+//   that does not exist);
+// - no identifier of the form `__m<number>`, the names the joined script gives
+//   the modules;
 // - a closure of at most the files `allowed` names, and no cycle.
 //
 // Not allowed: `import()`, `import.meta`, default or namespace imports,
@@ -78,6 +83,7 @@ export function classicScript(entry, files, allowed = contentMayInclude) {
     const bytes = files.get(path);
     if (!bytes) throw new Error(`content script: ${path} is not in the package`);
     const source = bytes.toString("utf8");
+    if (/\b__m\d+\b/.test(source)) throw new Error(`content script: ${path} uses a name of the form __m<number>, which the joined script keeps for its modules`);
     const reader = importsOf(source);
     if (reader.hidden > 0) throw new Error(`content script: ${path} has an import() with no string literal`);
     stack.push(path);
@@ -106,10 +112,21 @@ export function classicScript(entry, files, allowed = contentMayInclude) {
       exported.push(name);
       return all.replace(/^export\s+/, "");
     });
+    /** @type {string[]} */
+    const listed = [];
     code = code.replace(EXPORT_LIST, (_, list) => {
-      exported.push(...names(list, path));
+      listed.push(...names(list, path));
       return "";
     });
+    // A listed name is a copy for the importer, so it must be a binding that never changes.
+    const imported = new Set(wanted.flatMap((w) => w.wanted));
+    for (const name of listed) {
+      const declared = new RegExp(String.raw`^(?:async\s+function|function|const|class)\s+${name.replaceAll("$", "\$")}(?![\w$])`, "m");
+      if (!imported.has(name) && !declared.test(code)) {
+        throw new Error(`content script: ${path}: export { ${name} } needs a top-level function, const or class of that name, or an import`);
+      }
+    }
+    exported.push(...listed);
     if (/^\s*(?:import|export)\b/m.test(code)) throw new Error(`content script: ${path} has an import or export form that is not supported`);
     if (/\bimport\s*\.\s*meta\b/.test(code)) throw new Error(`content script: ${path} uses import.meta`);
 

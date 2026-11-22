@@ -1,6 +1,6 @@
 // The lock end to end in the background, over a fake clock: the setting "Lock
 // after" (the fixed choices, kept in storage.local), the deadline that only
-// activity in Ferret's own pages moves, the three ways it is enforced (every
+// activity in Ferret's own UI moves, the three ways it is enforced (every
 // message, the alarm, the page's timer), the idle and wake-up events, and the
 // one handler of the lock button. The router, the lock, the core host and the
 // real handlers are the real modules; the worker is a fake that records what

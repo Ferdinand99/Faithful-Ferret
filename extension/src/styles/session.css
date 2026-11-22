@@ -13,7 +13,9 @@
   --hover: light-dark(rgba(0, 0, 0, 0.035), rgba(255, 255, 255, 0.045));
   --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   --line-strong: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.14));
-  --control-border: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.26));
+  /* The border of every field (inputs, the select, the text area): at least 3:1
+     against the field and the page in both themes (WCAG 1.4.11). */
+  --field-border: light-dark(#86868b, #6e6e73);
 
   --text: light-dark(#1d1d1f, #f5f5f7);
   --muted: light-dark(#6e6e73, #a1a1a6);
@@ -151,7 +153,7 @@ body.ff-page {
   width: 100%;
   min-height: 40px;
   padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--field-border);
   border-radius: var(--r-sm);
   background: var(--field);
   color: var(--text);

@@ -41,8 +41,9 @@
 //
 // Which field: one request fills one group (see `scan`): the password field of
 // a form, the user name before it and the one-time code in the same form, and
-// never a field that sets a new password. A field id is only a handle for the
-// report. A `fill_field` names the kind, and the engine fills the field of that
+// never a field that sets a new password or a site search field. At the fill
+// the field must still be in the form it had at the report and must not set a
+// new password. A field id is only a handle for the report. A `fill_field` names the kind, and the engine fills the field of that
 // kind in the group. The engine answers only to a message that the extension
 // itself sent.
 //
@@ -128,7 +129,7 @@ const OPTIONAL_DEFAULTS = Object.freeze([
 
 /**
  * @typedef {"username" | "password" | "totp"} Kind
- * @typedef {{ kind: Kind, id: string, element: any }} Field
+ * @typedef {{ kind: Kind, id: string, element: any, form: any }} Field
  * @typedef {"origin_changed" | "hidden" | "covered" | "gone" | "wrong_kind"} Reason
  */
 
@@ -230,6 +231,25 @@ function autocompleteTokens(element) {
 }
 
 /**
+ * Whether a text input is part of a site search rather than a sign-in: its
+ * type is `search`, its role is `searchbox`, its name is `q`, or it lies in a
+ * `<search>` element or an element (its form too) with `role="search"`. Such
+ * a field never gets a user name or a code.
+ * @param {any} element
+ */
+function isSearchField(element) {
+  if (String(element.type ?? "").toLowerCase() === "search") return true;
+  if ((element.getAttribute("role") ?? "").toLowerCase() === "searchbox") return true;
+  if ((element.getAttribute("name") ?? "").toLowerCase() === "q") return true;
+  const form = element.form;
+  if (isElement(form) && (form.getAttribute("role") ?? "").toLowerCase() === "search") return true;
+  for (let node = flatParent(element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
+    if (node.localName === "search" || (node.getAttribute("role") ?? "").toLowerCase() === "search") return true;
+  }
+  return false;
+}
+
+/**
  * @typedef {{ element: any, role: "password" | "totp" | "username" | "text", order: number }} Candidate
  */
 
@@ -249,18 +269,26 @@ function isInside(container, node) {
  * The candidates that belong with the anchor: those of its form, or, without a
  * form, those without a form inside the nearest container of the anchor that
  * holds a candidate of another kind (the anchor alone when there is none).
+ * When that container is the whole page (the body or the root element), an
+ * unnamed text field there is no user name field: only fields named for one
+ * (see `scan`) join the anchor, so a password-only step never sends the user
+ * name into some other text field of the page.
  *
  * @param {Candidate} anchor
  * @param {Candidate[]} candidates
+ * @param {any} document
  * @returns {Candidate[]}
  */
-function groupOf(anchor, candidates) {
+function groupOf(anchor, candidates, document) {
   const form = anchor.element.form;
   if (form) return candidates.filter((c) => c.element.form === form);
   const loose = candidates.filter((c) => !c.element.form);
   for (let node = flatParent(anchor.element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
     const inside = loose.filter((c) => isInside(node, c.element));
-    if (inside.some((c) => c.role !== anchor.role)) return inside;
+    if (inside.some((c) => c.role !== anchor.role)) {
+      const wholePage = node === document.body || node === document.documentElement;
+      return wholePage ? inside.filter((c) => c === anchor || c.role !== "text") : inside;
+    }
   }
   return [anchor];
 }
@@ -514,14 +542,16 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   /**
    * The group of fields that one request fills, found in four steps:
    *
-   * 1. Every input that passes `inspect` is a candidate. A password field with
+   * 1. Every input that passes `inspect` is a candidate. A field with
    *    autocomplete "new-password" is not (a stored password never goes into a
-   *    field that sets a new one).
+   *    field that sets a new one), and neither is a text field of a site search
+   *    (`isSearchField`).
    * 2. The anchor is the first candidate password field. A page with no password
    *    field (the first step of a two-step sign-in) anchors on the first user
    *    name field, then on the first one-time-code field.
    * 3. The group is the anchor's form. Without a form it is the nearest
-   *    container of the anchor that also holds a candidate of another kind.
+   *    container of the anchor that also holds a candidate of another kind;
+   *    when that is the whole page, only fields named for their purpose.
    * 4. The group gives at most one field per kind: the password, the user name
    *    (the last text field before the password, else the first user name field
    *    after it) and the first one-time-code field.
@@ -549,7 +579,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
         candidates.push({ element, role: "password", order });
         return;
       }
-      if (!TEXT_TYPES.has(type)) return;
+      if (!TEXT_TYPES.has(type) || tokens.includes("new-password") || isSearchField(element)) return;
       if (tokens.includes("one-time-code") || TOTP_HINT.test(hintsOf(element))) {
         if (inspect(element) === null) candidates.push({ element, role: "totp", order });
         return;
@@ -571,7 +601,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       candidates.find((c) => c.role === "username") ??
       candidates.find((c) => c.role === "totp");
     if (!anchor) return [];
-    const group = groupOf(anchor, candidates);
+    const group = groupOf(anchor, candidates, document);
 
     /** @type {Candidate[]} */
     const chosen = [anchor];
@@ -597,7 +627,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    */
   function aimedGroup(clicked, candidates) {
     if (clicked.role === "totp") return [clicked];
-    const group = groupOf(clicked, candidates);
+    const group = groupOf(clicked, candidates, document);
     const passwords = group.filter((c) => c.role === "password");
     const password = passwords.find((c) => c.order > clicked.order) ?? passwords.at(-1);
     const code = group.find((c) => c.role === "totp");
@@ -606,7 +636,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
   /**
    * The report entries of the chosen candidates, in document order, each with
-   * a new random id.
+   * a new random id and the form it belongs to now (checked again at fill).
    * @param {Candidate[]} chosen
    * @returns {Field[]}
    */
@@ -615,6 +645,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       kind: /** @type {Kind} */ (role === "text" ? "username" : role),
       id: newFieldId(random),
       element,
+      form: element.form ?? null,
     }));
   }
 
@@ -707,9 +738,15 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     const { element } = target;
     // The kind is checked again on the live element: a password goes only into
     // a password input, and nothing else goes into one.
+    // The group is checked again too: the field must still belong to the form
+    // it had at the report, and must not have become a field that sets a new
+    // password. Only the page's own script can change either.
     const type = isElement(element) ? String(element.type ?? "").toLowerCase() : "";
     if (isElement(element) && element.isConnected === true) {
       if (kind === "password" ? type !== "password" : type === "password" || !TEXT_TYPES.has(type)) {
+        return { ok: false, reason: "wrong_kind" };
+      }
+      if ((element.form ?? null) !== target.form || autocompleteTokens(element).includes("new-password")) {
         return { ok: false, reason: "wrong_kind" };
       }
     }

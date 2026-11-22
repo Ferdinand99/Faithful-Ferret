@@ -1,6 +1,6 @@
 # The runner of the Firefox tests of the extension (extension/test/firefox):
 # two Firefox builds, geckodriver and Node, every download pinned by version and
-# SHA-256. Built once on the LANBox by `scripts/lanbox-ext.sh firefox` (the tag
+# SHA-256. Built once on the build host by `scripts/lanbox-ext.sh firefox` (the tag
 # follows the content of this file) and run without any network.
 #
 # What is pinned and where each checksum comes from:

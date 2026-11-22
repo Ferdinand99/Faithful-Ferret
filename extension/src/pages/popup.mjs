@@ -17,7 +17,7 @@
 
 import { el, mount } from "../shared/dom.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
-import { createListFlow, createPopupFlow, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
+import { createListFlow, createPopupFlow, followStep, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
 import { createVaultList } from "./popupList.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
@@ -304,7 +304,8 @@ async function main() {
    * The sync's part follows the background while the popup is open: it is built again only when what the background
    * says has changed, and not while the user answers the question of "Forget this server". The list is read again
    * when the sync's state changes (the vault may hold new items), unless the user is in a menu or an item's view.
-   * A change of the view (a lock, another account) builds the popup again.
+   * A change of the view (a lock, another account) builds the popup again, also while that question is open. Reading
+   * the state never moves the auto-lock's deadline (`state` and `sync_state` are exempt).
    * @param {PopupView} view what is shown now
    * @param {string | null} note
    * @param {HTMLElement} syncSlot
@@ -317,17 +318,18 @@ async function main() {
       /** @type {PopupView | null} */
       let next = null;
       try {
-        if (root.querySelector('[data-role="forget-confirm"]') === null) next = await flow.load();
+        next = await flow.load();
       } catch {
         // The background is gone for a moment: look again later.
       }
       // Something else was shown meanwhile (an action of the user wins).
       if (refresh !== null || document.body.dataset.view !== "unlocked") return;
-      if (next === null || JSON.stringify(next) === JSON.stringify(view)) {
+      const step = followStep(view, next, root.querySelector('[data-role="forget-confirm"]') !== null);
+      if (step === "same" || next === null) {
         follow(view, note, syncSlot, vault);
         return;
       }
-      if (next.view !== "unlocked" || next.account !== view.account || next.server !== view.server) {
+      if (step === "rebuild") {
         show(next, note);
         return;
       }

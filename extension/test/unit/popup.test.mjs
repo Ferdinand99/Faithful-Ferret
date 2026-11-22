@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { ACTION_ERRORS, FILTER_TYPES, actionErrorKey, createListFlow, rowsOf } from "../../src/pages/popupFlow.mjs";
+import { ACTION_ERRORS, FILTER_TYPES, actionErrorKey, createListFlow, followStep, rowsOf } from "../../src/pages/popupFlow.mjs";
 import { REASONS as COPY_REASONS } from "../../src/background/handlers/copy.handler.mjs";
 import { REASONS as FILL_REASONS } from "../../src/background/handlers/fill.handler.mjs";
 import { ITEMS, OTHER_PASSWORD, PASSWORD, TAB, TOTP_CODE, idOf, itemWorld } from "./itemHelpers.mjs";
@@ -256,8 +256,10 @@ test("open_site_opens_only_the_items_own_web_address", async () => {
   assert.deepEqual(world.opened, ["https://example.net/"]);
 });
 
-test("the_popup_field_border_has_at_least_3_to_1_contrast", () => {
+test("the_field_border_has_at_least_3_to_1_contrast_in_the_popup_and_the_tabs", () => {
   // WCAG 1.4.11: the border of a field against the field and against the page, in both themes.
+  // The token lives in session.css, the styles of every page: the popup and the sign-in,
+  // settings and grant tabs (where the master password and the Secret Key are typed).
   const popup = readFileSync(join(src, "styles", "popup.css"), "utf8");
   const session = readFileSync(join(src, "styles", "session.css"), "utf8");
   /** @param {string} css @param {string} name @returns {[string, string]} the light and the dark value */
@@ -276,12 +278,54 @@ test("the_popup_field_border_has_at_least_3_to_1_contrast", () => {
     const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
     return (x + 0.05) / (y + 0.05);
   };
-  const border = token(popup, "--field-border");
-  for (const behind of ["--field", "--bg", "--card"]) {
+  const border = token(session, "--field-border");
+  for (const behind of ["--field", "--bg", "--card", "--card-raised"]) {
     const ground = token(session, behind);
     for (const theme of [0, 1]) assert.ok(contrast(border[theme], ground[theme]) >= 3, `${behind} ${theme ? "dark" : "light"}: ${contrast(border[theme], ground[theme]).toFixed(2)}`);
   }
-  // The search field and the popup's inputs use it.
+  // Every field of every page uses it (.ff-input is the class of the tabs' inputs, the
+  // settings select and the sign-in text area), and so does the popup's search field.
+  assert.match(session, /\.ff-input \{[^}]*border: 1px solid var\(--field-border\)/);
   assert.match(popup, /\.ff-search \{[^}]*border: 1px solid var\(--field-border\)/);
-  assert.match(popup, /body\.ff-popup \.ff-input \{\s*border-color: var\(--field-border\)/);
+  // No other rule gives a field a weaker border.
+  const sync = readFileSync(join(src, "styles", "sync.css"), "utf8");
+  const base = readFileSync(join(src, "styles", "base.css"), "utf8");
+  for (const [name, css] of [["session", session], ["popup", popup], ["sync", sync], ["base", base]]) {
+    assert.doesNotMatch(css, /--control-border/, name);
+    for (const rule of css.matchAll(/([^{}]*\.ff-(?:input|search)[^{}]*)\{([^}]*)\}/g)) {
+      const body = rule[2];
+      if (/border(?:-color)?\s*:/.test(body)) assert.match(body, /var\(--field-border\)|transparent|none|border:\s*0\b/, `${name}: ${rule[1].trim()}`);
+    }
+  }
+  for (const page of ["signin", "settings", "grant", "popup"]) {
+    const html = readFileSync(join(src, "pages", `${page}.html`), "utf8");
+    assert.match(html, /href="\.\.\/assets\/app\.css"/, `${page} loads the shared styles`);
+  }
+});
+
+test("an_open_forget_question_still_follows_a_lock", () => {
+  const sync = { running: true, status: "idle", live: "live", halted: "rollback_suspected", actions: ["try_again", "forget"], warnings: [] };
+  /** @type {import("../../src/pages/popupFlow.mjs").PopupView} */
+  const shown = { view: "unlocked", host: "vault.example.com", account: "ola@example.com", server: "https://vault.example.com", sync };
+  const changed = { ...shown, sync: { ...sync, status: "syncing" } };
+  // While the user answers "Forget this server", the sync's part (where the question is) stays as it is.
+  assert.equal(followStep(shown, changed, true), "same");
+  assert.equal(followStep(shown, changed, false), "sync");
+  assert.equal(followStep(shown, shown, false), "same");
+  assert.equal(followStep(shown, null, true), "same");
+  // A lock, a sign-out or another account ends the question, and the list with it.
+  for (const asking of [true, false]) {
+    assert.equal(followStep(shown, { ...shown, view: "locked", sync: null }, asking), "rebuild", `locked, asking ${asking}`);
+    assert.equal(followStep(shown, { view: "signed_out", host: "", account: "", server: "", sync: null }, asking), "rebuild", `signed out, asking ${asking}`);
+    assert.equal(followStep(shown, { ...shown, account: "kari@example.com" }, asking), "rebuild", `another account, asking ${asking}`);
+    assert.equal(followStep(shown, { ...shown, server: "https://other.example.com" }, asking), "rebuild", `another server, asking ${asking}`);
+  }
+
+  // The popup reads the state on every round, with the question open or not.
+  const code = readFileSync(join(src, "pages", "popup.mjs"), "utf8");
+  assert.match(code, /\n\s*next = await flow\.load\(\);\n/);
+  assert.match(code, /followStep\(view, next, root\.querySelector\('\[data-role="forget-confirm"\]'\) !== null\)/);
+
+  // Those reads (`state`, `sync_state`) never move the deadline, and `state` after the deadline says "locked": see
+  // a_message_that_needs_no_key_does_not_move_the_deadline and state_after_the_deadline_reports_locked (router tests).
 });
