@@ -43,6 +43,7 @@ export default {
       lastExportAt,
       locale: ctx.i18n.lang,
       scope: vault.scope,
+      hasFolders: vault.engine.list().some((/** @type {{ folders?: string[] }} */ item) => Array.isArray(item.folders) && item.folders.length > 0),
     }));
   },
 };

@@ -56,6 +56,7 @@
   "conflict.modified": "Sist endret",
   "conflict.more_rows": "{count} felt til vises ikke. Det er de som er like.",
   "conflict.next": "Gå til neste",
+  "conflict.no_folders": "I ingen mappe",
   "conflict.no_urls": "Ingen",
   "conflict.not_in_conflict": "Dette elementet er ikke lenger i konflikt.",
   "conflict.notice": "Dette elementet er endret her og et annet sted. Begge versjonene beholdes til du velger hvilken du vil beholde. Til da er det tjenerens versjon som brukes.",

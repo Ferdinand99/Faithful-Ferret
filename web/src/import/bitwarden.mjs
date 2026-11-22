@@ -16,12 +16,13 @@
 //
 // Not read: an encrypted export (`encrypted: true`, an account export, or `passwordProtected: true`, an
 // export password): `import_encrypted_export`, Ferret has no way to open another product's
-// cryptography. Counted and left out: passkeys, folders, collections, linked custom fields, keys that
+// cryptography. The folder of an item and the names of its collections become its folders (map.mjs
+// `addFolders`). Counted and left out: passkeys, linked custom fields, keys that
 // this reader does not know, and item types other than login, note, card and identity (SSH keys and
 // the newer bank account, driver's licence and passport items).
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
-import { cardDraft, createReport, identityDraft, loginDraft, noteDraft, resolveLabels, scalar, warn } from "./map.mjs";
+import { addFolders, cardDraft, createReport, identityDraft, loginDraft, noteDraft, resolveLabels, scalar, warn } from "./map.mjs";
 
 /**
  * @typedef {import("./map.mjs").ImportReport} ImportReport
@@ -98,8 +99,9 @@ export function fromBitwardenJson(data, options = {}) {
   const labels = resolveLabels(options.labels);
   const report = createReport();
   report.skipped.unknownKeys += unknownKeys(root, KNOWN_TOP);
-  report.skipped.folders += asArray(root.folders).length;
-  report.skipped.collections += asArray(root.collections).length;
+  // The names of the folders and collections, by id: an item names its folder and collections by id.
+  const folderNames = namesById(root.folders);
+  const collectionNames = namesById(root.collections);
 
   /** @type {ItemDraft[]} */
   const drafts = [];
@@ -137,6 +139,16 @@ export function fromBitwardenJson(data, options = {}) {
     report.skipped.passwordHistory += asArray(item.passwordHistory).length;
     if (item.reprompt === 1) report.skipped.reprompt++;
     const common = { name: item.name, notes: item.notes, favorite: item.favorite, fields };
+    // The folder and the collections of the item, as names; an id the file does not name is left out.
+    const names = [
+      ...(typeof item.folderId === "string" && folderNames.has(item.folderId) ? [folderNames.get(item.folderId)] : []),
+      ...asArray(item.collectionIds).filter((id) => typeof id === "string" && collectionNames.has(id)).map((id) => collectionNames.get(/** @type {string} */ (id))),
+    ];
+    /** @param {ItemDraft} draft */
+    const inFolders = (draft) => {
+      addFolders(draft, names, context);
+      return draft;
+    };
     switch (type) {
       case 1: {
         const login = asObject(item.login) ?? Object.create(null);
@@ -148,27 +160,43 @@ export function fromBitwardenJson(data, options = {}) {
         }
         const uris = asArray(login.uris).map(asObject).filter((u) => u !== null);
         for (const u of uris) report.skipped.unknownKeys += unknownKeys(u, KNOWN_URI);
-        drafts.push(loginDraft({ ...common, username: login.username, password: login.password, totp: login.totp, uris }, context));
+        drafts.push(inFolders(loginDraft({ ...common, username: login.username, password: login.password, totp: login.totp, uris }, context)));
         return;
       }
       case 2:
-        drafts.push(noteDraft(common, context));
+        drafts.push(inFolders(noteDraft(common, context)));
         return;
       case 3: {
         const card = asObject(item.card) ?? Object.create(null);
         report.skipped.unknownKeys += unknownKeys(card, KNOWN_CARD);
-        drafts.push(cardDraft({ ...common, card }, context));
+        drafts.push(inFolders(cardDraft({ ...common, card }, context)));
         return;
       }
       case 4: {
         const identity = asObject(item.identity) ?? Object.create(null);
         report.skipped.unknownKeys += unknownKeys(identity, KNOWN_IDENTITY);
-        drafts.push(identityDraft({ ...common, identity }, context));
+        drafts.push(inFolders(identityDraft({ ...common, identity }, context)));
         return;
       }
     }
   });
   return { drafts, report };
+}
+
+/**
+ * The names of a list of `{ id, name }` objects (Bitwarden's folders or collections), by id. A
+ * nested folder's name is its whole path (`Work/Projects`), as Bitwarden writes it.
+ * @param {unknown} list
+ * @returns {Map<string, string>}
+ */
+function namesById(list) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const entry of asArray(list)) {
+    const object = asObject(entry);
+    if (object !== null && typeof object.id === "string" && typeof object.name === "string") out.set(object.id, scalar(object.name));
+  }
+  return out;
 }
 
 /** The columns of a Bitwarden CSV export (and the short names an importer also takes). */
@@ -207,8 +235,6 @@ export function fromBitwardenCsv(rows, options = {}) {
   const labels = resolveLabels(options.labels);
   const report = createReport();
   report.skipped.unknownKeys += header.filter((h) => h !== "" && !CSV_COLUMNS.has(h)).length;
-  const folders = new Set();
-  const collections = new Set();
 
   /** @type {ItemDraft[]} */
   const drafts = [];
@@ -222,9 +248,8 @@ export function fromBitwardenCsv(rows, options = {}) {
     header.forEach((name, c) => {
       if (name !== "" && row[name] === undefined) row[name] = cells[c] ?? "";
     });
-    const folder = scalar(row.folder).trim();
-    if (folder !== "") folders.add(folder);
-    for (const name of scalar(row.collections).split(",")) if (name.trim() !== "") collections.add(name.trim());
+    // The folder of the row and its collections (a list split at commas) become the item's folders.
+    const names = [scalar(row.folder), ...scalar(row.collections).split(",")].filter((name) => name.trim() !== "");
 
     const type = scalar(row.type).trim().toLowerCase();
     const context = { report, index, labels };
@@ -242,25 +267,25 @@ export function fromBitwardenCsv(rows, options = {}) {
     if (scalar(row.reprompt).trim() === "1" && (type === "note" || type === "login" || type === "")) report.skipped.reprompt++;
     const common = { name: row.name, notes: row.notes, favorite: cell(row, "favorite") !== "" && row.favorite !== "0", fields };
     if (type === "note") {
-      drafts.push(noteDraft(common, context));
+      const draft = noteDraft(common, context);
+      addFolders(draft, names, context);
+      drafts.push(draft);
     } else if (type === "login" || type === "") {
       const uris = cell(row, "login_uri", "uri")
         .split(/\r\n|\n|\r|,/)
         .map((uri) => uri.trim())
         .filter((uri) => uri !== "")
         .map((uri) => ({ uri, match: null }));
-      drafts.push(
-        loginDraft(
-          { ...common, username: cell(row, "login_username", "username"), password: cell(row, "login_password", "password"), totp: cell(row, "login_totp", "totp"), uris },
-          context,
-        ),
+      const draft = loginDraft(
+        { ...common, username: cell(row, "login_username", "username"), password: cell(row, "login_password", "password"), totp: cell(row, "login_totp", "totp"), uris },
+        context,
       );
+      addFolders(draft, names, context);
+      drafts.push(draft);
     } else {
       report.skipped.otherTypes++;
       warn(report, "type_unknown", index);
     }
   }
-  report.skipped.folders += folders.size;
-  report.skipped.collections += collections.size;
   return { drafts, report };
 }

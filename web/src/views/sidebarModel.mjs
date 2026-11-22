@@ -2,8 +2,8 @@
 // from the routes (a route that says `sidebar: { section, order, ... }` is listed),
 // so there is no second list of pages here. Two things are not routes yet and
 // are listed as "coming soon" entries without a link (the generator and the
-// health check, and the folder page), and the folders the user pinned are
-// entries of their own. sidebar.mjs draws this.
+// health check), and the folders the user pinned are entries of their own.
+// sidebar.mjs draws this.
 
 /** The sections of the menu, in order. `primary` and `main` have no heading. */
 export const SECTIONS = Object.freeze(["primary", "main", "pinned", "tools", "manage"]);
@@ -51,7 +51,6 @@ export const ICONS = Object.freeze([
 const SOON = Object.freeze([
   { id: "generator", section: "tools", order: 10, icon: "generator", label: "shell.nav.generator", role: "nav-generator" },
   { id: "health", section: "tools", order: 20, icon: "health", label: "shell.nav.health", role: "nav-health" },
-  { id: "folders", section: "manage", order: 10, icon: "folder", label: "shell.nav.folders", role: "nav-folders" },
 ]);
 
 const ROLE = /^nav-[a-z][a-z-]{0,30}$/;

@@ -3,12 +3,15 @@
 // with its menu. On a phone it is a drawer that a button in the top bar opens.
 //
 // Nothing here holds a secret. The e-mail address is on the page only as text
-// and as two letters; folder names are text nodes; the only things kept on the
-// device are the folded flag and the names of the pinned folders (uiPrefs.mjs).
+// and as two letters; folder names are text nodes; the only thing kept on the
+// device in clear is the folded flag. The pinned folders are held in memory and
+// kept sealed under the vault key (uiPrefs.mjs, pinStore.mjs).
 //
 // The pieces the frame needs from outside (the sync and live pills, what Lock and
 // Sign out do) are handed in; the frame owns the rest of the page.
 import { el, mount } from "../dom.mjs";
+import { sameFolder } from "../folders.mjs";
+import { watchPins } from "../uiPrefs.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
 import { currentEntry, initialsOf, sidebarModel } from "./sidebarModel.mjs";
 
@@ -26,7 +29,7 @@ let folderMenus = 0;
  * @property {(key: string, vars?: Record<string, string | number>) => string} t
  * @property {readonly any[]} routes the routes of the page; those with `sidebar` are listed
  * @property {{ all: number, favorites: number }} counts
- * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders the vault has (none yet)
+ * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders the vault has (`id` is the token of the folder's address)
  * @property {ReturnType<typeof import("../uiPrefs.mjs").createUiPrefs>} prefs
  * @property {{ current(): string, set(theme: string): void }} [theme] the theme choice, shown in the account menu (without it the menu has none)
  * @property {string | null} [email]
@@ -266,11 +269,19 @@ export function sidebarView({
     return li;
   }
 
+  /** The pinned folders that the vault has now, in the spelling it shows (a pin of a folder with no item is kept, not shown). */
+  function pinnedNames() {
+    return prefs.pinned().flatMap((pin) => {
+      const folder = currentFolders.find((f) => sameFolder(f.name, pin));
+      return folder ? [folder.name] : [];
+    });
+  }
+
   function render() {
     // The folder menus built before are gone with their entries; the account menu stays.
     for (let i = menus.length - 1; i >= 1; i -= 1) menus.splice(i, 1);
     countNodes.clear();
-    const sections = sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: prefs.pinned() });
+    const sections = sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: pinnedNames() });
     mount(lists, ...sections.map((section) => {
       const heading = section.heading === null ? null : el("h2", { class: "side-heading", id: `${sideId}-${section.id}` }, t(section.heading));
       const list = el("ul", {
@@ -285,7 +296,7 @@ export function sidebarView({
   /** Marks the entry the page belongs to (aria-current) and the account menu when the page is one of its. @param {string} next @param {import("./sidebarModel.mjs").SidebarSection[]} [sections] */
   function markCurrent(next, sections) {
     path = next;
-    const model = sections ?? sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: prefs.pinned() });
+    const model = sections ?? sidebarModel({ routes, counts: currentCounts, folders: currentFolders, pinned: pinnedNames() });
     const id = currentEntry(model, next);
     const walk = (/** @type {any} */ node) => {
       if (node?.getAttribute?.("data-entry") !== null && node?.getAttribute?.("data-entry") !== undefined) {
@@ -300,6 +311,11 @@ export function sidebarView({
   }
 
   render();
+  // A pin made on another screen (the Folders page) shows here at once.
+  let disposed = false;
+  const offPins = watchPins(() => {
+    if (!disposed) render();
+  });
 
   return {
     top,
@@ -324,6 +340,8 @@ export function sidebarView({
       currentFolders = next;
       render();
     },
+    /** The folders the menu shows now. */
+    folders: () => currentFolders,
     markCurrent: (/** @type {string} */ next) => markCurrent(next),
     /** The theme choice was changed elsewhere (another tab): the checked entry follows. */
     refreshTheme: paintTheme,
@@ -373,6 +391,8 @@ export function sidebarView({
     closeDrawer: () => closeDrawer(false),
     /** Lets go of everything outside the menu that points into it: the window's media query and the parts of the page it holds. */
     dispose() {
+      disposed = true;
+      offPins();
       matcher?.removeEventListener?.("change", onResize);
       behind = [];
       countNodes.clear();

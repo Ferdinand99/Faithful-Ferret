@@ -26,7 +26,7 @@ test("the_entries_come_from_the_routes_in_sections_and_in_order", () => {
     ["primary", ["/items/new"]],
     ["main", ["/items", "/favorites"]],
     ["tools", ["generator", "health", "/export"]],
-    ["manage", ["folders", "/trash"]],
+    ["manage", ["/trash"]],
   ]);
   const by = Object.fromEntries(sections.flatMap((s) => s.entries).map((e) => [e.id, e]));
   assert.equal(by["/items"].count, 248);
@@ -42,7 +42,7 @@ test("a_route_that_does_not_ask_to_be_listed_is_not_listed", () => {
   const all = sidebarModel({ routes: ROUTES }).flatMap((s) => s.entries.map((e) => e.id));
   for (const unlisted of ["/account", "/password"]) assert.ok(!all.includes(unlisted), unlisted);
   // No routes at all: only the pages that are planned.
-  assert.deepEqual(ids(sidebarModel({ routes: [] })), [["tools", ["generator", "health"]], ["manage", ["folders"]]]);
+  assert.deepEqual(ids(sidebarModel({ routes: [] })), [["tools", ["generator", "health"]]]);
 });
 
 test("a_route_with_a_bad_menu_entry_is_left_out_and_never_breaks_the_menu", () => {
@@ -63,7 +63,9 @@ test("a_route_with_a_bad_menu_entry_is_left_out_and_never_breaks_the_menu", () =
 
 test("the_planned_pages_are_entries_that_are_not_links", () => {
   const soon = sidebarModel({ routes: [] }).flatMap((s) => s.entries);
-  assert.deepEqual(soon.map((e) => [e.id, e.kind, e.href]), [["generator", "soon", null], ["health", "soon", null], ["folders", "soon", null]]);
+  assert.deepEqual(soon.map((e) => [e.id, e.kind, e.href]), [["generator", "soon", null], ["health", "soon", null]]);
+  // The Folders page is a route now (routes/folders.route.mjs), not a planned page.
+  assert.ok(!soon.some((e) => e.id === "folders"));
 });
 
 test("the_counts_leave_out_the_unlock_manifest_and_count_the_favourites", () => {

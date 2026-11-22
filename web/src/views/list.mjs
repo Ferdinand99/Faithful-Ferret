@@ -12,6 +12,7 @@ import { el, mount } from "../dom.mjs";
 import { emptyBlock } from "./emptyState.mjs";
 import { createListPrefs } from "../listPrefs.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
+import { folderChips, folderIndex, foldKey, withShownNames } from "../folders.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges, marksOf } from "./common.mjs";
 import { typeLabel } from "./item.mjs";
 import {
@@ -52,12 +53,16 @@ const ROW_MENU_WIDTH = 208;
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
  *   now?: () => number,
- *   moveToFolder?: (items: any[]) => void,
+ *   moveToFolder?: (items: any[], where: { host: HTMLElement, say: (text: string) => void }) => void,
+ *   folder?: string,
+ *   folderLink?: (name: string) => string,
  *   win?: any,
- * }} options `moveToFolder` is the folder task's way in: with it a row's menu has "Move to folder", without it the entry is not there
+ * }} options `moveToFolder`: with it a row's menu has "Move to folder", without it the entry is not there. `folder`: the list
+ *   is the page of that folder (the folder filter starts with it, and the heading is its name). `folderLink`: where a folder
+ *   label of a row leads (none: the label is plain text)
  * @returns {HTMLElement}
  */
-export function listView({ engine, router, t, nav, locale, prefs = createListPrefs(), touch = () => true, scope, now = Date.now, moveToFolder, win = /** @type {any} */ (globalThis).window }) {
+export function listView({ engine, router, t, nav, locale, prefs = createListPrefs(), touch = () => true, scope, now = Date.now, moveToFolder, folder, folderLink, win = /** @type {any} */ (globalThis).window }) {
   const doc = /** @type {any} */ (globalThis).document;
   const root = el("section", { class: "list-view", "data-role": "list" });
   const matcher = createMatcher();
@@ -66,7 +71,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   /** The query the address has now: the list writes it only when it differs. */
   let lastQuery = nav?.query ?? "";
   /** The filters. The folder filter is in memory only: it is not in the address. */
-  let state = parseListQuery(lastQuery);
+  let state = typeof folder === "string" ? { ...parseListQuery(lastQuery), folders: [folder] } : parseListQuery(lastQuery);
   let query = "";
   /** @type {any[]} every item but the manifest */
   let source = [];
@@ -305,7 +310,15 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   }
 
   function readSource() {
-    source = engine.list().filter((item) => item.id !== MANIFEST_ID);
+    const items = engine.list().filter((item) => item.id !== MANIFEST_ID);
+    // One folder is one name here, whatever case each item writes it in (the spelling most items use is shown).
+    const index = items.some((item) => Array.isArray(item.folders) && item.folders.length > 0) ? folderIndex(items, locale) : [];
+    source = index.length > 0 ? withShownNames(items, index) : items;
+    // A folder chosen in the filter follows the spelling the vault shows for it now.
+    const shownName = new Map(index.map((entry) => [entry.key, entry.name]));
+    const follow = (/** @type {string} */ name) => shownName.get(foldKey(name)) ?? name;
+    if (state.folders.some((name) => follow(name) !== name)) state = { ...state, folders: [...new Set(state.folders.map(follow))] };
+    if (typeof folder === "string") folder = follow(folder);
     folderCounts = countByFolder(source);
     haveFolders = folderCounts.size > 0;
     ordered = { name: sortItems(source, "name", "asc"), changed: sortItems(source, "changed", "asc") };
@@ -357,7 +370,9 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     clearSearch.hidden = query === "";
 
     const onlyFavorites = eff.favorite && eff.types.length === 0 && eff.folders.length === 0;
-    mount(headingText, document.createTextNode(t(onlyFavorites ? "shell.nav.favorites" : "shell.nav.items")));
+    const onlyTheFolder = typeof folder === "string" && eff.folders.length === 1 && eff.folders[0] === folder;
+    mount(headingText, document.createTextNode(onlyTheFolder ? /** @type {string} */ (folder) : t(onlyFavorites ? "shell.nav.favorites" : "shell.nav.items")));
+    heading.setAttribute("data-folder-page", onlyTheFolder ? "true" : "false");
 
     mount(summary, document.createTextNode(
       total === 0 ? "" : shown.length === total ? t(total === 1 ? "list.count_one" : "list.count_all", { count: total }) : t("vault.list.count", { shown: shown.length, total })));
@@ -446,10 +461,15 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     const changed = el("div", { class: "cell c-changed", role: "cell", "data-role": "changed", ...(exact === null ? {} : { title: exact }) }, relativeTime(item.modified, now(), locale) ?? "—");
     const folderCell = el("div", { class: "cell c-folders", role: "cell", "data-role": "folders" });
     if (foldersOn()) {
-      const own = [...(item.folders ?? [])].sort((a, b) => a.localeCompare(b));
+      // The first folder (in display order) and "+N" for the rest, which are named in its title.
+      const { shown: first, more } = folderChips(item.folders, 1, locale);
+      const rest = folderChips(item.folders, 20, locale).shown.slice(1);
+      const label = first.length === 0 ? null : typeof folderLink === "function"
+        ? el("a", { class: "folder-label", href: folderLink(first[0]), "data-role": "folder-link" }, `▭ ${first[0]}`)
+        : el("span", { class: "folder-label" }, `▭ ${first[0]}`);
       mount(folderCell,
-        ...(own.length === 0 ? [el("span", { class: "none" }, "—")] : [el("span", { class: "folder-label" }, `▭ ${own[0]}`)]),
-        ...(own.length > 1 ? [el("span", { class: "folder-label" }, `+${own.length - 1}`)] : []));
+        ...(label === null ? [el("span", { class: "none" }, "—")] : [label]),
+        ...(more > 0 ? [el("span", { class: "folder-label folder-more", title: rest.join(", "), "aria-label": t("folders.more_label", { count: more, names: rest.join(", ") }) }, `+${more}`)] : []));
     }
     const more = el("button", {
       type: "button", class: "row-more", "aria-haspopup": "menu", "aria-expanded": "false", "data-role": "row-menu",
@@ -526,7 +546,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
         const move = entry("row-move", "folder", t("list.menu_move"), null);
         move.addEventListener("click", () => {
           close();
-          moveToFolder([item]);
+          moveToFolder([item], { host, say: (text) => say(text) });
         });
         out.push(move);
       }

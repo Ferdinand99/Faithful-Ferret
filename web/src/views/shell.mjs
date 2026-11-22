@@ -23,6 +23,9 @@ import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
 import { THEME_KEY, createThemeChoice } from "../theme.mjs";
 import { createUiPrefs } from "../uiPrefs.mjs";
+import { folderIndex } from "../folders.mjs";
+import { createPinStore } from "../pinStore.mjs";
+import { clearFolderLinks, tokenFor } from "./folderLinks.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
 
@@ -50,7 +53,7 @@ import { createUiPrefs } from "../uiPrefs.mjs";
  * @property {() => Promise<void> | void} [signOut] what "Sign out" does (it leaves for the sign-in page itself, and rejects when the server could not be asked); without it the menu has no such item
  * @property {ReturnType<typeof createUiPrefs>} [prefs] what this device remembers about the menu
  * @property {ReturnType<typeof createThemeChoice>} [theme] the theme choice of the account menu (Light, Dark, System)
- * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders of the vault, for the pinned ones (the vault has none yet)
+ * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders for the pinned ones; without it they are read from the engine's items (each with the token of its address as `id`)
  *
  * @typedef {object} LiveSource
  * @property {() => string} state
@@ -130,15 +133,21 @@ function trackLock(session, screen) {
  * takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders = [], win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, el("span", { class: "pill-text" }, t("sync.state.syncing")));
   const banners = el("div", { class: "banners", "data-role": "banners" });
   // The live-update field: a second pill beside the sync state, only when the page has the channel.
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
   const items = () => (typeof engine.list === "function" ? engine.list() : []);
+  // The folders of the vault, for the pinned ones in the menu: the names the items carry, each with the token of its page.
+  const folderEntries = () => (folders ?? folderIndex(items()).map((folder) => ({ id: tokenFor(folder.name), name: folder.name })));
+  let folderShape = "";
+  const shapeOf = (/** @type {readonly { name: string }[]} */ list) => list.map((folder) => folder.name).join("\u0000");
+  const firstFolders = folderEntries();
+  folderShape = shapeOf(firstFolders);
   const chrome = sidebarView({
-    t, routes, counts: countItems(items(), MANIFEST_ID), folders, prefs, theme, email, status, liveStatus, admin, accountPaths,
+    t, routes, counts: countItems(items(), MANIFEST_ID), folders: firstFolders, prefs, theme, email, status, liveStatus, admin, accountPaths,
     onLock: async () => {
       await lock();
     },
@@ -289,8 +298,17 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     win.addEventListener("storage", onStorage);
     scope.add(() => win.removeEventListener?.("storage", onStorage));
   }
-  // The numbers beside "All items" and "Favourites" follow the items.
-  scope.add(listenWhileShown(root, engine, "changed", () => chrome.setCounts(countItems(items(), MANIFEST_ID))));
+  // The numbers beside "All items" and "Favourites" follow the items, and so do the pinned folders (a folder renamed or
+  // emptied on any device); the menu is built again only when the set of folders changed.
+  scope.add(listenWhileShown(root, engine, "changed", () => {
+    chrome.setCounts(countItems(items(), MANIFEST_ID));
+    if (folders !== undefined) return;
+    const next = folderEntries();
+    const shape = shapeOf(next);
+    if (shape === folderShape) return;
+    folderShape = shape;
+    chrome.setFolders(next);
+  }));
 
   /** @param {unknown} state */
   function onLive(state) {
@@ -363,8 +381,10 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   root.addEventListener("pointerdown", (/** @type {any} */ event) => chrome.press(event.target));
 
   function wipe() {
-    // The pins are held in memory only: a lock forgets them (a folder's name is an encrypted label of the vault).
+    // The pins are held in memory only: a lock forgets them (a folder's name is an encrypted label of the vault), and the
+    // tokens of the folders' addresses with them.
     prefs.clearPins();
+    clearFolderLinks();
     scope.run();
     shown.clear();
     // A frame that has left the page only needs to be emptied; the one on it gets the unlock screen.
@@ -483,6 +503,9 @@ export async function enterVault(ctx) {
     return { locked: card };
   }
 
+  // The pinned folders of this device come back from their sealed record, once per unlock, before the first frame.
+  await restorePins(session, open, services.store, session.client ?? ctx.client);
+
   const scope = createWipeScope();
   const touch = () => autoLock.touch();
   return {
@@ -508,6 +531,45 @@ export async function enterVault(ctx) {
       });
     },
   };
+}
+
+/** The unlocks whose pins were read back already (each unlock is a new `current()` object). @type {WeakSet<object>} */
+const pinsRead = new WeakSet();
+
+/** The sessions whose lock forgets the pins and the folder tokens (every lock path, not only a frame's). @type {WeakSet<object>} */
+const lockForgets = new WeakSet();
+
+/**
+ * Reads the pinned folders back from their sealed record (pinStore.mjs) and lets later changes be kept there. A store or
+ * client that cannot do it (a stand-in) leaves the pins in memory only.
+ * @param {any} session @param {any} open the unlocked session's `current()` @param {any} store the store service @param {any} client
+ */
+async function restorePins(session, open, store, client) {
+  const prefs = createUiPrefs();
+  if (!lockForgets.has(session) && typeof session?.onLock === "function") {
+    lockForgets.add(session);
+    session.onLock(() => {
+      prefs.clearPins();
+      clearFolderLinks();
+    });
+  }
+  if (pinsRead.has(open)) return;
+  pinsRead.add(open);
+  const vault = client?.vault;
+  if (typeof store?.open !== "function" || typeof store.getSetting !== "function" || typeof vault?.encrypt_item !== "function"
+    || typeof open?.accountId !== "string" || typeof open?.vaultId !== "string" || !Number.isSafeInteger(open?.vkEpoch)) {
+    return;
+  }
+  const settings = {
+    get: async (/** @type {string} */ key) => store.getSetting(await store.open(), key),
+    set: async (/** @type {string} */ key, /** @type {unknown} */ value) => store.setSetting(await store.open(), key, value),
+    remove: async (/** @type {string} */ key) => store.deleteSetting(await store.open(), key),
+  };
+  const pins = createPinStore({ vault, settings, accountId: open.accountId, vaultId: open.vaultId, vkEpoch: open.vkEpoch });
+  const names = await pins.load();
+  // The vault may have locked while the record was read: then nothing comes back.
+  if (session.current?.() !== open) return;
+  prefs.restorePins(names, (list) => pins.save(list));
 }
 
 /** What the admin check found, per session and account: asked once, not on every page. @type {WeakMap<object, { accountId: string, admin: boolean }>} */

@@ -5,9 +5,10 @@
 import { expect, test } from "@playwright/test";
 
 const LONG_EMAIL = "a.very.long.user.name.that.keeps.going.and.going@a-very-long-domain-name-for-an-example.example.org";
-const LONG_FOLDER = "A folder with a very long name that keeps going and going until it has to be cut";
+// The longest a folder name may be is 64 characters.
+const LONG_FOLDER = "A folder with a very long name that keeps going until it is cut";
 
-/** Builds the frame in the page. `options`: admin, email, collapsed, pinned (folder ids), withFolders. */
+/** Builds the frame in the page. `options`: admin, email, collapsed, pinned (folder names), withFolders. */
 async function mountShell(page, options = {}) {
   await page.evaluate(async (opts) => {
     const { ready } = await import("/app/boot.mjs");
@@ -93,6 +94,7 @@ const ENTRIES = [
   ["nav-items", "#/items"],
   ["nav-favorites", "#/favorites"],
   ["nav-transfer", "#/export"],
+  ["nav-folders", "#/folders"],
   ["nav-trash", "#/trash"],
 ];
 
@@ -112,7 +114,7 @@ test.describe("the side menu on a desktop", () => {
       await expect(page.locator('#shell-test [aria-current="page"]')).toHaveCount(1);
     }
     // The pages that are planned are in the menu, say so, and are not links.
-    for (const role of ["nav-generator", "nav-health", "nav-folders"]) {
+    for (const role of ["nav-generator", "nav-health"]) {
       const entry = page.locator(`[data-role="${role}"]`);
       await expect(entry).toBeVisible();
       await expect(entry).toContainText(/coming soon/i);
@@ -190,7 +192,7 @@ test.describe("the side menu on a desktop", () => {
       await page.keyboard.press("Tab");
       seen.push(await page.evaluate(() => document.activeElement?.getAttribute("data-role") ?? document.activeElement?.tagName));
     }
-    expect(seen.slice(0, 8)).toEqual(["skip", "brand", "collapse", "nav-items", "nav-favorites", "nav-transfer", "nav-trash", "account-menu-button"]);
+    expect(seen.slice(0, 9)).toEqual(["skip", "brand", "collapse", "nav-items", "nav-favorites", "nav-transfer", "nav-folders", "nav-trash", "account-menu-button"]);
     // The skip link puts the focus on the screen.
     await page.locator('[data-role="skip"]').focus();
     await expect(page.locator('[data-role="skip"]')).toBeVisible();

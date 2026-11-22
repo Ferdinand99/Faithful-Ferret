@@ -32,6 +32,7 @@
   "export.last.never": "Du har ikke tatt en kryptert eksport på denne enheten ennå.",
   "export.plain.busy": "Sjekker hovedpassordet ditt og leser elementene...",
   "export.plain.confirm": "Jeg forstår at filen ikke er kryptert og at alle som får tak i den, kan lese alle passordene mine",
+  "export.plain.csv_no_folders": "CSV-filen tar ikke med mapper. JSON-filen og den krypterte eksporten tar dem med.",
   "export.plain.dialog_body": "Filen får alle passordene og notatene dine som ren tekst. Lag den bare hvis du skal flytte til en annen tjeneste, og slett den for godt etterpå.",
   "export.plain.dialog_confirm": "Lag den rene filen",
   "export.plain.dialog_title": "Lagre en ukryptert kopi av hvelvet?",

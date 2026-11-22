@@ -53,12 +53,14 @@ export function exportErrorText(t, error, nameOf = () => null) {
  *   lastExportAt?: number | null,
  *   locale?: string,
  *   scope?: { add(fn: () => void): () => void },
- * }} options `exportEncrypted` and `exportPlain` are the session's. `readiness` reads the feed once more and says what the
+ *   hasFolders?: boolean,
+ * }} options `exportEncrypted` and `exportPlain` are the session's. `hasFolders`: some item is in a folder (the page says that
+ * a CSV file leaves the folders out). `readiness` reads the feed once more and says what the
  * page warns about. `skRequired`: the account has a secret key that this device does not hold. `lastExportAt`: when the last
  * encrypted export was made here (ms since 1970), if known.
  * @returns {HTMLElement}
  */
-export function exportView({ t, exportEncrypted, exportPlain, readiness, nameOf = () => null, skRequired = false, lastExportAt = null, locale, scope }) {
+export function exportView({ t, exportEncrypted, exportPlain, readiness, nameOf = () => null, skRequired = false, lastExportAt = null, locale, scope, hasFolders = false }) {
   const root = el("section", { class: "card account export-page", "data-role": "export-page" });
 
   // ----------------------------------------------------------- readiness
@@ -302,7 +304,9 @@ export function exportView({ t, exportEncrypted, exportPlain, readiness, nameOf 
     },
   },
   plainMaster.row, plainSkRow,
-  el("fieldset", { class: "stack" }, el("legend", null, t("export.plain.format")), json.row, csv.row),
+  el("fieldset", { class: "stack" }, el("legend", null, t("export.plain.format")), json.row, csv.row,
+    // The CSV file has no column for folders; the JSON file and the encrypted export keep them.
+    hasFolders ? el("small", { class: "help", "data-role": "csv-no-folders" }, t("export.plain.csv_no_folders")) : null),
   el("div", { class: "field" }, passkeys.row, passkeysHelp),
   understood.row, plainStatus, plainError,
   el("div", { class: "actions" }, plainSubmit));

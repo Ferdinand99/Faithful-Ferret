@@ -10,7 +10,7 @@
 // still has the same id and stops with `item_changed` if not.
 import { el, mount } from "../dom.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
-import { favouriteDraft, folderLabels, groupFields, tileLetter, tileType } from "./itemModel.mjs";
+import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, tileLetter, tileType } from "./itemModel.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
 
 /** What a hidden value looks like. */
@@ -35,15 +35,16 @@ const isNotFound = (error) => /** @type {any} */ (error)?.code === "not_found";
  *   touch?: () => boolean,
  *   scope?: { add(fn: () => void): () => void },
  *   clipboard?: { writeText(text: string): Promise<void> } | null,
- *   moveToFolder?: (id: string) => void,
+ *   moveToFolder?: (id: string, where: { host: HTMLElement, say: (text: string) => void }) => void,
  *   folderChip?: (label: string) => Node,
+ *   locale?: string,
  * }} options `moveToFolder` and `folderChip` are the folder task's way in: with `moveToFolder` the ⋮ menu has "Move to folder",
  *   without it the entry is not there; `folderChip` makes the chip of one folder label (a plain label by default)
  * @returns {Promise<HTMLElement>}
  */
 export async function itemView({
   engine, sync, client, id, t, go = () => {}, touch = () => true, scope,
-  clipboard = globalThis.navigator?.clipboard ?? null, moveToFolder, folderChip,
+  clipboard = globalThis.navigator?.clipboard ?? null, moveToFolder, folderChip, locale,
 }) {
   const root = el("section", { class: "item-view", "data-role": "item" });
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
@@ -300,10 +301,17 @@ export async function itemView({
 
     // The header: the tile, the name with its star, the type and marks, the folder labels, and the actions.
     const editable = canChange(entry);
-    const labels = folderLabels(view);
-    // Hidden until the item carries folder labels (the vault has none before the folder task); the folder task makes the chips links.
+    const labels = folderLabels(view, locale);
+    // Hidden until the item is in a folder. The first labels are chips (links to the folder when the page gives `folderChip`);
+    // the rest are one "+N" chip that names them in its title.
+    const shownLabels = labels.slice(0, MAX_FOLDER_CHIPS);
+    const moreLabels = labels.slice(MAX_FOLDER_CHIPS);
     const chips = el("div", { class: "item-folders", role: "list", "aria-label": t("vault.item.folders"), "data-role": "folder-chips" },
-      ...labels.map((label) => el("span", { class: "folder-chip", role: "listitem", "data-role": "folder-chip" }, typeof folderChip === "function" ? folderChip(label) : label)));
+      ...shownLabels.map((label) => el("span", { class: "folder-chip", role: "listitem", "data-role": "folder-chip" }, typeof folderChip === "function" ? folderChip(label) : label)),
+      ...(moreLabels.length === 0 ? [] : [el("span", {
+        class: "folder-chip folder-chip-more", role: "listitem", "data-role": "folder-chip-more", title: moreLabels.join(", "),
+        "aria-label": t("folders.more_label", { count: moreLabels.length, names: moreLabels.join(", ") }),
+      }, `+${moreLabels.length}`)]));
     chips.hidden = labels.length === 0;
 
     const actions = el("div", { class: "actions item-actions", "data-role": "actions" });
@@ -336,7 +344,7 @@ export async function itemView({
           el("span", { class: "icon", "data-icon": "folder", "aria-hidden": "true" }), t("list.menu_move"));
         move.addEventListener("click", () => {
           moreMenu?.close(false);
-          moveToFolder(id);
+          moveToFolder(id, { host, say });
         });
         entries.push(move);
       }
