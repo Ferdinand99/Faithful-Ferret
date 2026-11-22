@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.6.0...v0.6.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** update url to 2.5.9 (RUSTSEC-2026-0592) ([#221](https://github.com/Ferdinand99/Faithful-Ferret/issues/221)) ([03532ab](https://github.com/Ferdinand99/Faithful-Ferret/commit/03532ab72497be2ac5d1c12273845f6f11cc948b))
+* **web:** ignore white space in the pasted setup text ([#217](https://github.com/Ferdinand99/Faithful-Ferret/issues/217)) ([3e3a079](https://github.com/Ferdinand99/Faithful-Ferret/commit/3e3a0795f7d55d3718ee8373753fb5d71d9a69b9))
+
 ## [0.6.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.5.0...v0.6.0) (2026-11-22)
 
 
