@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run `cargo "$@"` inside the Ferret builder image on the LANBox Docker host
-# (never locally, never Docker Desktop, never Tower).
+# Run `cargo "$@"` inside the Ferret builder image on the build host
+# (never locally, never Docker Desktop, never a production host).
 #
 # The repo is streamed over stdin as a tar archive (no bind mounts from the PC);
 # target/ and the cargo registry live in tmpfs inside the container. Everything
@@ -12,8 +12,8 @@
 #   scripts/lanbox.sh --rm-image               remove this tag's builder image
 #
 # Env overrides:
-#   FERRET_DOCKER_ARGS  replaces the default "--context unraid"
-#                       (e.g. "-H ssh://root@10.0.3.26" if the credential helper fails)
+#   FERRET_DOCKER_ARGS  replaces the default "--context lanbox"
+#                       (e.g. "-H ssh://user@host.example.test" if the credential helper fails)
 #   FERRET_CPUS         CPU limit and cargo jobs (default 4, at most 8)
 #   FERRET_MEMORY       container memory limit (default 12g)
 #   FERRET_PASS_ENV     space-separated names of environment variables that are
@@ -41,7 +41,7 @@ if [ "$cpus" -gt 8 ]; then
   exit 2
 fi
 # shellcheck disable=SC2206
-docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
+docker_args=(${FERRET_DOCKER_ARGS:---context lanbox})
 pass_env=()
 for name in ${FERRET_PASS_ENV:-}; do
   if ! printf '%s' "$name" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
@@ -71,7 +71,7 @@ image="ferret-core-builder:${hash}"
 have_image() { docker "${docker_args[@]}" image inspect "$image" >/dev/null 2>&1; }
 
 build_image() {
-  echo "lanbox.sh: building $image on the LANBox (this takes a while the first time)" >&2
+  echo "lanbox.sh: building $image on the build host (this takes a while the first time)" >&2
   docker "${docker_args[@]}" build \
     --label owner=ferret-core \
     -t "$image" \

@@ -245,7 +245,7 @@ test("passkey_signature_verifies_with_webcrypto", async ({ page }) => {
 // times that in Firefox. Pull requests run it only with the `browsers` label;
 // the nightly run and scripts/lanbox-browsers.sh always do.
 test("export_256mib_does_not_oom", async ({ page, browserName }) => {
-  test.skip(process.env.FERRET_EXPORT_256 !== "1", "set FERRET_EXPORT_256=1 (the `browsers` label, the nightly run, the LANBox script)");
+  test.skip(process.env.FERRET_EXPORT_256 !== "1", "set FERRET_EXPORT_256=1 (the `browsers` label, the nightly run, the build host script)");
   test.setTimeout(240_000);
   await openHarness(page);
   const r = await page.evaluate(() => window.ferret.exportRun());

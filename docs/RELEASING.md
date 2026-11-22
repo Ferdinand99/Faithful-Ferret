@@ -147,7 +147,7 @@ Actions and the base image of the builder. These are not tracked by it:
   `.github/workflows/audit.yml`, `.github/workflows/ct.yml`); change all of them.
 - **cargo-about** (`THIRD-PARTY-NOTICES`): version 0.9.3 in `scripts/notices.sh` and the `notices` job of
   `.github/workflows/ci.yml` (with its SHA-256). After any change to a Rust dependency (a lock file) run
-  `scripts/notices.sh` where cargo is (the LANBox) and commit the result; the job fails when the file is stale,
+  `scripts/notices.sh` where cargo is (the build host) and commit the result; the job fails when the file is stale,
   when a crate has a licence that is not on the allowlist in `about.toml`, or when a licence text has no
   copyright notice (clarify the crate in `about.toml` or add it to `notices-extra.json`).
 - **The base images of the builder** are pinned by digest. To move to a new one, look up the

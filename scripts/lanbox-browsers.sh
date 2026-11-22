@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Run the browser smoke tests (tests/browser) in Chromium, Firefox and WebKit
-# on the LANBox Docker host (never locally, never Docker Desktop, never Tower).
+# on the build host (never locally, never Docker Desktop, never a production host).
 #
 #   scripts/lanbox-browsers.sh                    all three browsers
 #   scripts/lanbox-browsers.sh --project=firefox  one browser (any Playwright option)
 #
-# 1. Builds the web packages on the LANBox (scripts/lanbox-wasm.sh): `pkg-web`
+# 1. Builds the web packages on the build host (scripts/lanbox-wasm.sh): `pkg-web`
 #    (the release build) and `pkg-web-test` (the build with `test-support`).
 #    FERRET_SKIP_BUILD=1 reuses the ones in bindings/wasm.
 # 2. Streams the tests, the workers, the two packages and the vectors as a tar
@@ -17,7 +17,7 @@
 # Everything created is labelled owner=ferret-core and removed on exit (--rm);
 # the work directory, npm's cache and /tmp are tmpfs.
 #
-# Env overrides: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_CPUS
+# Env overrides: FERRET_DOCKER_ARGS (default "--context lanbox"), FERRET_CPUS
 # (default 4, at most 8), FERRET_MEMORY (default 12g), FERRET_SKIP_BUILD.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -35,7 +35,7 @@ if [ "$cpus" -gt 8 ]; then
   exit 2
 fi
 # shellcheck disable=SC2206
-docker_args=(${FERRET_DOCKER_ARGS:---context unraid})
+docker_args=(${FERRET_DOCKER_ARGS:---context lanbox})
 
 if [ -z "${FERRET_SKIP_BUILD:-}" ]; then
   scripts/lanbox-wasm.sh

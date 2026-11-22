@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The constant-time checks of Fase 1 § 14 on the LANBox (never locally,
-# never Docker Desktop, never Tower). See ct/run.sh for what each mode does.
+# The constant-time checks on the build host (never locally,
+# never Docker Desktop, never a production host). See ct/run.sh for what each mode does.
 #
 #   scripts/lanbox-ct.sh                 all checks, 1 000 000 measurements per bench
 #   scripts/lanbox-ct.sh lock            ct/dudect agrees with the root lock and profile
@@ -34,7 +34,7 @@
 #   CT_ONLY         only the dudect benches whose name contains this
 #   CT_REPEAT       measure each selected bench this often (the spread of t)
 #
-# Timing tests are only meaningful on a quiet machine. The LANBox runs other
+# Timing tests are only meaningful on a quiet machine. The build host runs other
 # containers, so look at its load before you trust a failure, and repeat it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -79,9 +79,9 @@ if [ -f ct/results/dudect-native.txt ] || [ -f ct/results/dudect-wasm.txt ]; the
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then commit="$commit (with uncommitted changes)"; fi
   {
     if [ -n "$CT_ONLY" ]; then
-      echo "# Dudect run on the LANBox: only the benches with \"$CT_ONLY\" in the name"
+      echo "# Dudect run on the build host: only the benches with \"$CT_ONLY\" in the name"
     else
-      echo "# Decisive dudect run on the LANBox"
+      echo "# Decisive dudect run on the build host"
     fi
     echo
     echo "Written by \`scripts/lanbox-ct.sh $mode\` ($(date -u +%FT%TZ)). The limit is"

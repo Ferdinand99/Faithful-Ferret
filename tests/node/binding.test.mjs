@@ -529,8 +529,8 @@ test("the_host_shown_is_the_host_a_browser_connects_to", () => {
   const mixed = parse("https://Vault.EXAMPLE:8443/Path");
   assert.deepEqual([mixed.scheme, mixed.host, mixed.port], ["https", "vault.example", 8443]);
   assert.equal(mixed.server_url, "https://Vault.EXAMPLE:8443/Path", "the address is kept as written");
-  const lan = parse("http://10.0.3.26:3001");
-  assert.deepEqual([lan.scheme, lan.host, lan.port], ["http", "10.0.3.26", 3001]);
+  const lan = parse("http://192.0.2.26:3001");
+  assert.deepEqual([lan.scheme, lan.host, lan.port], ["http", "192.0.2.26", 3001]);
   assert.equal(parse("https://[2001:DB8::1]:8443/x").host, "[2001:db8::1]");
 });
 

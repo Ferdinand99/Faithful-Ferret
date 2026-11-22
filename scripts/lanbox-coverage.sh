@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Measure the line and branch coverage of ferret-core on the LANBox with
+# Measure the line and branch coverage of ferret-core on the build host with
 # cargo llvm-cov (the pinned nightly of fuzz/NIGHTLY, for --branch) and check
 # it against the thresholds (scripts/coverage-thresholds.json).
 #

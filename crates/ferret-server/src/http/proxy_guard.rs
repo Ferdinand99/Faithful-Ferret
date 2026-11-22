@@ -71,8 +71,8 @@ impl PeerLog {
 }
 
 impl ProxyList {
-    /// The list from the configured items: single addresses (`10.0.3.26`,
-    /// `fd00::1`) or CIDR networks (`10.0.3.0/24`). Empty items are skipped.
+    /// The list from the configured items: single addresses (`10.0.0.26`,
+    /// `fd00::1`) or CIDR networks (`10.0.0.0/24`). Empty items are skipped.
     ///
     /// `FERRET_LOG_PEERS` (`1`, `true`, `yes` or `on`) switches the peer log on;
     /// [`with_peer_log`](Self::with_peer_log) does it by hand.
@@ -145,7 +145,7 @@ impl ProxyList {
 fn parse_entry(item: &str) -> Result<IpNet, ConfigError> {
     let bad = |what: &str| {
         ConfigError(format!(
-            "FERRET_TRUSTED_PROXIES: {item:?} is not {what}; use an address like 10.0.3.26 or a network like 10.0.3.0/24"
+            "FERRET_TRUSTED_PROXIES: {item:?} is not {what}; use an address like 10.0.0.26 or a network like 10.0.0.0/24"
         ))
     };
     if item.contains('/') {

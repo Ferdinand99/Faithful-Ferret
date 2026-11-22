@@ -360,10 +360,10 @@ fn the_host_is_what_a_browser_connects_to() {
         (a.https, a.host.as_str(), a.port),
         (false, "localhost", Some(3001))
     );
-    let a = parse_server_address("http://10.0.3.26:3001").unwrap();
+    let a = parse_server_address("http://192.0.2.26:3001").unwrap();
     assert_eq!(
         (a.https, a.host.as_str(), a.port),
-        (false, "10.0.3.26", Some(3001))
+        (false, "192.0.2.26", Some(3001))
     );
     let a = parse_server_address("http://[::1]:8080/x").unwrap();
     assert_eq!(

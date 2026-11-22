@@ -1,4 +1,4 @@
-# Diagnosis 2 of the finish bench at opt-level 3 (LANBox)
+# Diagnosis 2 of the finish bench at opt-level 3 (build host)
 
 Written from the container log of a throwaway build (not committed) of the
 version of the bench that moves the missing-state case into a target of its own,

@@ -1,6 +1,6 @@
 // The rollback memory and the checkpoints at the size of a large vault, through
 // the real WASM build: how long they take and how big the memory gets. The
-// budgets are for a CI runner or the LANBox, not for a phone; the browser has
+// budgets are for a CI runner or the build host, not for a phone; the browser has
 // its own gate.
 // Run: node --test tests/node/scale.test.mjs
 import assert from "node:assert/strict";
