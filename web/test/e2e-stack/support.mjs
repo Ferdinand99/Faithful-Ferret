@@ -484,6 +484,15 @@ export async function signOutOn(page) {
 // -------------------------------------------------------------- items
 
 /**
+ * Locks the vault from the account menu in the side menu (it opens from the foot of the menu, and Lock now is in it).
+ * @param {import("@playwright/test").Page} page
+ */
+export async function lockNow(page) {
+  await page.locator('[data-role="account-menu-button"]').click();
+  await page.locator('[data-role="lock"]').click();
+}
+
+/**
  * Makes a login item through the form. Returns once the item page shows.
  * @param {import("@playwright/test").Page} page
  * @param {{ name: string, username?: string, password?: string, url?: string, notes?: string }} item

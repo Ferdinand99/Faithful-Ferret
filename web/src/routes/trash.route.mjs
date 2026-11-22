@@ -5,6 +5,7 @@ import { trashView } from "../views/trash.mjs";
 export default {
   path: "/trash",
   title: "conflict.trash.title",
+  sidebar: { section: "manage", order: 20, icon: "trash", role: "nav-trash", title: "shell.nav.trash" },
   load: async (ctx) => {
     const vault = await enterVault(ctx);
     if (vault.locked) return vault.locked;
