@@ -336,6 +336,11 @@ ${this.log.slice(-4000)}`);
     await wire("POST", `${this.#s()}/frame`, { id: null });
   }
 
+  /** Back to the document that holds the current frame. */
+  async switchToParentFrame() {
+    await wire("POST", `${this.#s()}/frame/parent`, {});
+  }
+
   /**
    * Polls `fn` (here, not in the browser) until it returns something truthy.
    * @template T

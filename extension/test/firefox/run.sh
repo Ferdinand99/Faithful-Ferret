@@ -69,6 +69,13 @@ if [ "$mode" = measure ]; then
   export FERRET_MEASURE_OUT
   mkdir -p "$FERRET_MEASURE_OUT"
 fi
+# The gate's e2e step: the screenshots the specs take (FERRET_SHOTS_DIR) leave the container as a
+# tar archive on stdout, as the measure reports do.
+if [ "$mode" = e2e ] && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
+  FERRET_SHOTS_DIR=/work/test-results/out/u1-shots
+  export FERRET_SHOTS_DIR
+  mkdir -p "$FERRET_SHOTS_DIR"
+fi
 failed=0
 for channel in $channel_list; do
   echo "run.sh: channel $channel" >&2
@@ -98,6 +105,9 @@ for channel in $channel_list; do
   fi
   rm -f "$report"
 done
+if [ -n "${FERRET_SHOTS_DIR:-}" ]; then
+  tar -c -C "$(dirname "$FERRET_SHOTS_DIR")" "$(basename "$FERRET_SHOTS_DIR")"
+fi
 if [ "$mode" = measure ]; then
   # The reports, also of a run that failed: what was measured is still worth having.
   tar -c -C "$(dirname "$FERRET_MEASURE_OUT")" "$(basename "$FERRET_MEASURE_OUT")"

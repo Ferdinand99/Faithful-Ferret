@@ -38,6 +38,9 @@ FROM ${RUST_IMAGE} AS build
 RUN apk add --no-cache build-base
 
 ARG FEATURES=""
+# At most this many parallel jobs in the server build (empty: cargo's default, one
+# per CPU). A test stack on a shared build host sets it.
+ARG CARGO_JOBS=""
 
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
     CARGO_TERM_COLOR=never
@@ -57,6 +60,7 @@ RUN --mount=type=cache,id=ferret-cargo-registry,target=/usr/local/cargo/registry
     --mount=type=cache,id=ferret-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=ferret-server-target,target=/src/crates/ferret-server/target,sharing=locked \
     cargo build --release --locked \
+        ${CARGO_JOBS:+--jobs "$CARGO_JOBS"} \
         --manifest-path crates/ferret-server/Cargo.toml \
         --features "$FEATURES" \
     && install -m 0755 crates/ferret-server/target/release/ferret /usr/local/bin/ferret

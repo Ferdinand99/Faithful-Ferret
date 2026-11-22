@@ -24,10 +24,21 @@ import { IP_HOSTS, originText } from "../fixtures/sites/origins.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** The host names in test/fixtures/hosts.json. @returns {{ fixture: string[], e2e: string[] }} */
+/**
+ * The host names in test/fixtures/hosts.json. A run against an end-to-end stack of its own
+ * (FERRET_E2E_SUFFIX, set by scripts/lanbox-ext.sh) has that stack's names in place of "e2e".
+ * @returns {{ fixture: string[], e2e: string[] }}
+ */
 export function readHosts() {
   const data = JSON.parse(readFileSync(resolve(here, "..", "fixtures", "hosts.json"), "utf8"));
-  return { fixture: data.fixture ?? [], e2e: data.e2e ?? [] };
+  /** @type {string[]} */
+  let e2e = data.e2e ?? [];
+  const suffix = process.env.FERRET_E2E_SUFFIX ?? "";
+  if (suffix !== "") {
+    if (!/^[a-z0-9]{1,12}$/.test(suffix)) throw new Error(`FERRET_E2E_SUFFIX is 1 to 12 lower-case letters and digits, not ${JSON.stringify(suffix)}`);
+    e2e = e2e.map((host) => host.replace(/-e2e\.test$/, `-${suffix}.test`));
+  }
+  return { fixture: data.fixture ?? [], e2e };
 }
 
 const LOGIN_HTML = `<!doctype html>

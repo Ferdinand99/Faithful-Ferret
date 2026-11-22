@@ -6,11 +6,25 @@ in the runner image `docker/ext-runner.Dockerfile`.
 ```
 scripts/lanbox-ext.sh firefox [--channel release|esr] [--manifest mv3|mv2] [--grep <name>] [--headed]
 scripts/lanbox-ext.sh e2e     [--channel ...] [--manifest ...] [--grep <name>] [--no-up]
+scripts/lanbox-ext.sh gate    [--channel ...] [--manifest ...]
 ```
 
 Both run on the LANBox build VM. The Firefox step has no network (`e2e`: only the
 end-to-end stack's network). The WASM package is fetched and checked in a step of
 its own. A skipped spec, or a run in which no test passed, fails the run.
+
+`e2e` starts an end-to-end stack of its own for every run (compose project, network,
+host names and volumes named `ferret-x<8 hex>`), so two runs never remove each
+other's stack, and removes it when the run ends. It also starts the stack's Chromium
+browser server (`lanbox-ferret-test.sh e2e-chromium`), which the end-to-end spec
+drives with Playwright for the web vault's part. `gate` runs the `firefox` step and
+then the `e2e` step (MV2 by default) and unpacks the screenshots the e2e specs take
+into `test-results/out/u1-shots/<channel>/`.
+
+The adversarial specs (`70-phishing`, `71-clickjacking`) and the end-to-end spec
+(`80-end-to-end`) share `adversary.mjs`: a signed-in Firefox with the test sites'
+entries, the real popup about a page's tab, a UI port that stays open across steps,
+and a walk through every frame of a page to see where a password went.
 
 ## The runner image
 

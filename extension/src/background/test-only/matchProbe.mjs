@@ -6,7 +6,8 @@
 //                 real `webNavigation` and the real core, and how many frames the
 //                 browser lists in all
 //   item_probe    makes one item with the sync engine (the extension writes no
-//                 items in this release; the tests need entries to match)
+//                 items in this release; the tests need entries to match), with
+//                 an optional user name and password the test made up
 //   match_bench   seals `n` items in the open vault (kept in memory here, never
 //                 stored or sent), then times the real `matchItems` over them for
 //                 one page: the items are opened and viewed as the sync engine
@@ -65,7 +66,12 @@ export function createMatchProbe({ engine, webNavigation = /** @type {any} */ (g
         if (!text(args?.name, 256) || !text(args?.url, 2048) || !["host", "domain", "exact"].includes(args?.matching)) throw fail("invalid_input");
         /** @type {Record<string, unknown>} */
         const draft = { item_type: "login", name: args.name, favorite: false, urls: [{ url: args.url, matching: args.matching }] };
-        if (text(args.username, 256)) draft.fields = [{ id: "username", label: "Username", kind: "text", value: args.username }];
+        /** @type {Array<Record<string, string>>} */
+        const fields = [];
+        if (text(args.username, 256)) fields.push({ id: "username", label: "Username", kind: "text", value: args.username });
+        // A password of the test's own making, so the adversarial specs can see where a fill puts it.
+        if (text(args.password, 256)) fields.push({ id: "password", label: "Password", kind: "password", value: args.password });
+        if (fields.length > 0) draft.fields = fields;
         return { id: await running.create(draft) };
       },
     },
