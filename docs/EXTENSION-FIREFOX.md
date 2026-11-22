@@ -139,6 +139,30 @@ The two AMO API values are secrets of a GitHub **environment** named `amo-signin
 5. The file must also be on `main` before GitHub lists the workflow (a copy of it on `main` is enough; it cannot do anything there, because `main` has no `extension/` folder). Start a run on the `ext` branch: `gh workflow run extension-sign-measure.yml --ref ext -f manifest=mv2` (and again with `mv3`). The run stops at "Waiting for review"; open it in the Actions tab, click "Review deployments", tick `amo-signing` and approve. Only then does the signing job start.
 6. Download the artifact `ferret-measure-<manifest>-signed` (the repository is public, so the artifact is kept for one day only) and install it as below.
 
+## Signing a release build
+
+The workflow `.github/workflows/extension-sign-release.yml` ("Extension sign release build") signs the release variant: the MV2 package with the add-on id `ferret@hedgerow.tools`, without the test hooks, the test pages or the test host names. It is the build to install for daily use. It runs only when started by hand and uses the same `amo-signing` environment as above, so every signing waits for your approval and only runs started on `ext` get the secrets.
+
+```
+gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>
+```
+
+The input `ref` is the code to sign: a full 40-character commit SHA that is reachable from `ext` or `main`, or the branch name `ext` or `main` (`main` has no `extension/` folder yet, so for now that means `ext`). Anything else is refused. The run prints the commit it resolved.
+
+Who approves: the required reviewer of `amo-signing` (you), in the Actions tab under "Review deployments", after the build job has passed. Look at the build job's summary first: commit, version and SHA-256.
+
+What is checked before the approval is asked for (the build job, which has no secrets):
+
+- the release package is built twice and both builds must have the same SHA-256;
+- `web-ext lint --warnings-as-errors`;
+- the release check (`scripts/check-ext-release.sh`): no test file, test page, test id, fixed UUID, internal host name or test-only permission, only the release manifest keys, and the shared web files unchanged;
+- the add-on id is the release id, the manifest version is 2, the name is not the test name;
+- the package is at most 8 MiB.
+
+What is checked after the approval (the sign job): the downloaded package has the SHA-256 the build job reported; it is signed unlisted with the locked web-ext; the signed package holds exactly the files of the unsigned one apart from Mozilla's `META-INF/` signature. The signed `.xpi` and its SHA-256 are kept as the artifact `ferret-release-mv2-signed` for seven days, and the SHA-256 is in the job summary.
+
+AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`. The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
+
 ## The measurement by hand
 
 The numbers above are headless, in a container. The same measurement is made by hand in an ordinary Firefox, with the signed, unlisted build of the test variant. About ten minutes of work and twenty minutes of waiting. Start with the MV2 build, which is the default now, and repeat with MV3 to confirm the 30 seconds.

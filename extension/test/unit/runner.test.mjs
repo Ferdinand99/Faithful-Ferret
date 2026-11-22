@@ -222,8 +222,59 @@ test("the_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_one_step
   assert.equal(shellLines.some((line) => /\$\{\{\s*inputs\./.test(line)), false, "an input is used outside an env value or a name or path");
   const names = readdirSync(join(repoRoot, ".github", "workflows")).filter((n) => /\.ya?ml$/.test(n));
   assert.ok(names.includes("extension.yml") && names.length >= 5);
-  for (const name of names.filter((n) => n !== "extension-sign-measure.yml")) {
+  // The two signing workflows are pinned by their own tests; no other workflow signs.
+  for (const name of names.filter((n) => n !== "extension-sign-measure.yml" && n !== "extension-sign-release.yml")) {
     const other = read(`.github/workflows/${name}`);
     assert.equal(/web-ext sign|AMO_JWT|WEB_EXT_API|amo-signing/.test(other), false, `${name} must not sign`);
   }
+});
+
+test("the_release_signing_workflow_is_manual_read_only_and_keeps_the_secrets_in_one_step", () => {
+  const text = read(".github/workflows/extension-sign-release.yml");
+  const code = text.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  // Only a manual run: no push, tag, pull request, schedule, workflow run or release.
+  assert.match(code, /^on:\n {2}workflow_dispatch:\n/m);
+  for (const trigger of ["push:", "pull_request", "schedule:", "tags:", "workflow_run", "release:"]) {
+    assert.equal(code.includes(trigger), false, trigger);
+  }
+  assert.match(code, /^permissions:\n {2}contents: read\n/m);
+  assert.equal(/contents: write|id-token|packages:/.test(code), false);
+  // Every third-party action is pinned by a full commit SHA.
+  const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+  assert.ok(uses.length >= 6);
+  for (const use of uses) assert.match(use, /@[0-9a-f]{40}$/, use);
+  // The secrets: two names, on the two WEB_EXT_API_* lines of the signing step only.
+  const secretUses = [...code.matchAll(/secrets\.(\w+)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(secretUses, ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]);
+  assert.deepEqual(code.split("\n").filter((line) => /\bsecrets\b/.test(line)).map((line) => line.trim()), [
+    "WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}",
+    "WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}",
+  ]);
+  const steps = code.split(/\n {6}- /);
+  const holders = steps.filter((step) => step.includes("secrets."));
+  assert.equal(holders.length, 1);
+  assert.match(holders[0], /name: Sign with Mozilla \(unlisted\)/);
+  assert.match(holders[0], /WEB_EXT_API_KEY: \$\{\{ secrets\.AMO_JWT_ISSUER \}\}/);
+  assert.match(holders[0], /WEB_EXT_API_SECRET: \$\{\{ secrets\.AMO_JWT_SECRET \}\}/);
+  assert.match(holders[0], /web-ext sign/);
+  assert.match(holders[0], /--channel unlisted/);
+  assert.match(holders[0], /--no-config-discovery/);
+  assert.equal(/--api-key|--api-secret/.test(code), false, "no secret as a flag");
+  assert.equal(/echo[^\n]*(WEB_EXT|AMO_JWT)/.test(code), false, "no secret echoed");
+  // The secrets are those of an environment that waits for a reviewer: exactly one job names it.
+  assert.deepEqual([...code.matchAll(/^ {4}environment: (\S+)$/gm)].map((m) => m[1]), ["amo-signing"]);
+  // The input reaches the shell through the environment only, never spliced into a command line.
+  const shellLines = code.split("\n").filter((line) => !/^\s*(?:name|path|description):/.test(line) && !/^\s*[A-Z][A-Z0-9_]*:/.test(line));
+  assert.equal(shellLines.some((line) => /\$\{\{\s*inputs\./.test(line)), false, "an input is used outside an env value or a name or path");
+  // It signs a copy and checks the signed files against the untouched source: only META-INF/ may differ.
+  assert.match(holders[0], /cp -a "\$RUNNER_TEMP\/source" "\$RUNNER_TEMP\/sign-src"/);
+  assert.match(holders[0], /--source-dir "\$RUNNER_TEMP\/sign-src"/);
+  assert.match(code, /rm -r "\$RUNNER_TEMP\/signed-files\/META-INF"\n\s+diff -r "\$RUNNER_TEMP\/source" "\$RUNNER_TEMP\/signed-files"/);
+  // The build job builds the release variant twice, compares the SHA-256 and runs the release check.
+  assert.match(code, /for n in 1 2; do\n\s+node scripts\/build\.mjs [^\n]*--variant release /);
+  assert.match(code, /if \[ "\$first" != "\$second" \]; then/);
+  assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-1\/[^"]+"/);
+  assert.match(code, /sha256sum "\$RUNNER_TEMP\/build-2\/[^"]+"/);
+  assert.match(code, /bash scripts\/check-ext-release\.sh /);
+  assert.equal(/--variant test/.test(code), false, "the test variant is signed by the measure workflow");
 });
