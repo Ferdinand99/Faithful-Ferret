@@ -3,7 +3,8 @@ import { exportView } from "../views/export.mjs";
 import { enterVault } from "../views/shell.mjs";
 
 /**
- * `#/export`: the encrypted export and the plain export. It is listed on the account page, and the reminder to take
+ * `#/export`: the encrypted export and the plain export. It is listed on the account page and offered by the "Import and export"
+ * page (`#/transfer`), which the side menu leads to, and the reminder to take
  * a new export leads here. @type {import("../app.mjs").Route}
  */
 export default {
@@ -11,7 +12,6 @@ export default {
   title: "export.title",
   menu: "account",
   menuOrder: 50,
-  sidebar: { section: "tools", order: 30, icon: "transfer", role: "nav-transfer", title: "shell.nav.transfer", activeFor: ["/import"] },
   load: async (ctx) => {
     const vault = await enterVault(ctx);
     if (vault.locked) return vault.locked;

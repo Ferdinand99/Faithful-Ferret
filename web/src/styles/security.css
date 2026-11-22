@@ -72,3 +72,13 @@
 .reauth-dialog .actions {
   margin-top: var(--sp-4);
 }
+
+/* The two choices of the import and export page: the name, and a line under it. */
+.transfer-page .account-menu a {
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.transfer-page .choice-help {
+  color: var(--muted);
+}

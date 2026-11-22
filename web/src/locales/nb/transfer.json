@@ -1,0 +1,9 @@
+{
+  "transfer.export": "Eksport",
+  "transfer.export_help": "Ta med deg en kopi av hvelvet: en kryptert backup, eller en ren fil til en annen tjeneste.",
+  "transfer.heading": "Importer og eksporter",
+  "transfer.import": "Import",
+  "transfer.import_help": "Legg elementer inn i hvelvet fra en fil fra Ferret selv, eller fra Bitwarden eller AliasVault.",
+  "transfer.intro": "Flytt elementer inn i hvelvet, eller ta en kopi ut.",
+  "transfer.title": "Importer og eksporter"
+}
