@@ -30,7 +30,9 @@ test("click_fills_the_fixture_login", async () => {
 
       // The login, made in the web vault.
       const account = await webVaultAccount(session, channel);
-      await page.click('[data-role="nav-new"]');
+      await page.click('[data-role="nav-items"]');
+      await page.waitVisible('[data-role="new-item"]');
+      await page.click('[data-role="new-item"]');
       await page.waitVisible('[data-role="edit-form"]');
       await page.type('[data-role="name"]', name);
       await page.type('[data-role="username"]', username);
