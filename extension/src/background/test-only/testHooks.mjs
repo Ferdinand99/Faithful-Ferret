@@ -7,7 +7,9 @@
 //    measurement (measureLog.mjs, measureScenario.mjs), with a port to start
 //    them from the measure page;
 //  * a port that tells a test page what the router would see of it, and a
-//    listener that tells a content script the same.
+//    listener that tells a content script the same;
+//  * a stand-in for the page matching of the popup (candidates.mjs), with the
+//    `candidates` handler that answers from it (handlers/test-only).
 //
 // None of the ports is the UI protocol and none carries a secret: a test page
 // sends `{ id, op, args }` (or `{ id, cmd, ... }`) and gets `{ id, ok: true, value }`
@@ -19,6 +21,9 @@ import { contentSender, isTopLevelExtensionPage, isUiPort } from "../../shared/o
 import * as fillProbe from "./fillProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
+import { createTestCandidates } from "./candidates.mjs";
+
+export { createTestCandidates };
 
 export const TEST_CORE_PORT = "ferret-test-core";
 export const TEST_MEASURE_PORT = "ferret-test-measure";

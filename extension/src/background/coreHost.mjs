@@ -16,7 +16,8 @@
 // Boundary: an op gets the raw client. Production ops therefore live in this
 // file or in a background module that only the entry (main.mjs) imports and
 // passes in as `ops`: the session's ops (session.mjs), which hold the account
-// session over the same client, and the sync's ops (sync.mjs). The only other
+// session over the same client, the sync's ops (sync.mjs), and the item ops of
+// the popup (fillFlow.mjs). The only other
 // code that passes ops in is the test build's hooks (the test build only),
 // which a release does not contain.
 //
@@ -46,6 +47,13 @@ export const CORE_OPS = Object.freeze([
   "sync_state",
   "sync_retry",
   "forget_server",
+  "fill_offer",
+  "fill",
+  "fill_report",
+  "search",
+  "item",
+  "copy",
+  "open_site",
 ]);
 
 /**

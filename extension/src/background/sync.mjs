@@ -392,7 +392,7 @@ export function createSyncHost({
       sessionHost.onOpen((opened) => start(opened));
     },
 
-    /** The engine that runs now, or null (for the tests). */
+    /** The engine that runs now, or null: the item list and the items of the open vault (fillFlow.mjs reads them). */
     engine: () => running?.engine ?? null,
   };
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CORE_OPS, createCoreHost } from "../../src/background/coreHost.mjs";
 import { LOCK_AT_KEY, LOCK_EXEMPT, createLock } from "../../src/background/lock.mjs";
-import { createRouter } from "../../src/background/router.mjs";
+import { REPORT_OP, createRouter } from "../../src/background/router.mjs";
 import { CONTENT_TYPES, REFUSAL_REASONS, UI_PORT, UI_TYPES, decode, encode, encodeRefusal } from "../../src/shared/protocol.mjs";
 import { contentScriptSender, createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 import { createAlarmsAndIdle, createClock, createFakeClient, createPort, createSessionStorage } from "./backgroundHelpers.mjs";
@@ -60,7 +60,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("sync_state", { running: false, live: "offline", warnings: [] }),
     record("forget_server", { ok: true }),
     record("candidates", { handles: [] }),
-    record("search", { handles: [] }),
+    record("search", { handles: [], total: 0 }),
     record("frame_report", undefined),
     record("fill_result", undefined),
   ];
@@ -241,8 +241,16 @@ test("the_handler_context_has_the_call_and_no_key_or_client", async () => {
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.candidates());
   const { ctx } = log[0];
-  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "lock", "sender", "setMinutes", "state", "touch", "type"]);
+  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "lock", "sender", "session", "setMinutes", "state", "touch", "type"]);
   assert.equal(ctx.type, "candidates");
+  // The session names this port, and a second port gets another one.
+  assert.match(ctx.session, /^[0-9a-f]{32}$/);
+  const other = connect(router, extensionPageSender(fake));
+  await other.send(requests.candidates());
+  assert.match(log[1].ctx.session, /^[0-9a-f]{32}$/);
+  assert.notEqual(log[1].ctx.session, ctx.session);
+  await port.send(requests.candidates());
+  assert.equal(log[2].ctx.session, ctx.session);
   assert.equal(Object.isFrozen(ctx), true);
   assert.equal(ctx.channel, "ui");
   // The host's list decides what it can call.
@@ -256,8 +264,23 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   const report = encode("frame_report", { request_id: "r1", self_origin: "https://example.com", fields: [] });
   assert.equal(await router.onMessage(report, sender), undefined);
   assert.deepEqual(log.map((e) => [e.type, e.ctx.channel, e.ctx.sender.tabId, e.ctx.sender.frameId]), [["frame_report", "content", 7, 2]]);
-  // A report handler reads the state and nothing else: no call, no lock, no touch.
-  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["channel", "sender", "state", "type"]);
+  // A report handler reads the state and hands the report on, and nothing else: no call, no lock, no touch.
+  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["channel", "report", "sender", "state", "type"]);
+  // The report reaches the one report operation and no other, and answers nothing.
+  /** @type {Array<[string, unknown]>} */
+  const reached = [];
+  /** @type {any} */
+  let seen = null;
+  const spy = createRouter({
+    runtime: fake.runtime,
+    lock: { checkOrLock: async () => true, touch: () => {}, setMinutes: () => {} },
+    coreHost: { call: async (op, args) => { reached.push([op, args]); return { secret: "never" }; }, lock: async () => {}, state: () => "unlocked" },
+    handlers: [{ types: ["frame_report"], channel: "content", handle: async (/** @type {any} */ _b, /** @type {any} */ ctx) => { seen = await ctx.report({ any: 1 }); } }],
+  });
+  await spy.onMessage(report, sender);
+  assert.deepEqual(reached, [[REPORT_OP, { any: 1 }]]);
+  assert.equal(REPORT_OP, "fill_report");
+  assert.equal(seen, undefined);
 
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;

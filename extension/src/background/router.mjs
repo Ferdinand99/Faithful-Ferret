@@ -38,17 +38,29 @@ import {
 import { LOCK_EXEMPT } from "./lock.mjs";
 
 /**
+ * The one core operation a content script's report may reach: it hands the
+ * report to the pending fill request it names and answers nothing. A report
+ * can never ask for a value.
+ */
+export const REPORT_OP = "fill_report";
+
+/**
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
  *   type: string,
  *   sender: any,
+ *   session?: string,
  *   lock?: (reason: import("./coreHost.mjs").LockReason) => Promise<void>,
  *   state: () => "locked" | "unlocked",
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
+ *   report?: (args: unknown) => Promise<void>,
  *   touch?: () => void,
  *   setMinutes?: (n: number) => void,
  * }} HandlerContext
+ *   `session` (UI only) names the page's port: it is new for every port, so a
+ *   reference the background gave one page is worth nothing on another.
+ *   `report` (content only) hands a report to `REPORT_OP`.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
 
@@ -99,11 +111,31 @@ function indexHandlers(handlers) {
  *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setMinutes: (n: number) => void },
  *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, lock: (reason: import("./coreHost.mjs").LockReason) => Promise<void>, state: () => "locked" | "unlocked" },
  *   handlers?: readonly Handler[],
+ *   onSessionEnd?: (session: string) => void,
+ *   random?: (bytes: Uint8Array) => Uint8Array,
  * }} options
+ *   `onSessionEnd` is called with the session of a UI port once the page has
+ *   gone (the port was disconnected); `random` fills the bytes of a new session
+ *   name (the tests pass their own).
  */
-export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
+export function createRouter({
+  runtime,
+  lock,
+  coreHost,
+  handlers = [],
+  onSessionEnd = () => {},
+  random = (bytes) => {
+    globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
+    return bytes;
+  },
+}) {
   const table = indexHandlers(handlers);
   const call = (/** @type {string} */ op, /** @type {unknown} */ args) => coreHost.call(op, args);
+  const report = async (/** @type {unknown} */ args) => {
+    await coreHost.call(REPORT_OP, args);
+  };
+  /** A new session name: 16 random bytes as hex. */
+  const newSession = () => Array.from(random(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
   const lockHost = (/** @type {import("./coreHost.mjs").LockReason} */ reason) => coreHost.lock(reason);
   const state = () => coreHost.state();
 
@@ -134,9 +166,10 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
    * One message on the UI port.
    *
    * @param {any} port
+   * @param {string} session the port's session
    * @param {unknown} raw
    */
-  async function onUiMessage(port, raw) {
+  async function onUiMessage(port, session, raw) {
     /** @type {{ id: string, type: string, body: any }} */
     let message;
     try {
@@ -165,6 +198,7 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       channel: "ui",
       type,
       sender: port.sender,
+      session,
       call,
       lock: lockHost,
       state,
@@ -202,8 +236,17 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
       }
       return;
     }
+    const session = newSession();
     port.onMessage.addListener((/** @type {unknown} */ raw) => {
-      onUiMessage(port, raw).catch(() => {});
+      onUiMessage(port, session, raw).catch(() => {});
+    });
+    // What the background gave this page (references to items) ends with it.
+    port.onDisconnect?.addListener(() => {
+      try {
+        onSessionEnd(session);
+      } catch {
+        // Nothing to undo.
+      }
     });
   }
 
@@ -230,8 +273,9 @@ export function createRouter({ runtime, lock, coreHost, handlers = [] }) {
     return (async () => {
       if (!(await allowed(message.type))) return undefined;
       /** @type {HandlerContext} */
-      // A report handler can read the state and nothing else: no call, no lock.
-      const ctx = Object.freeze({ channel: "content", type: message.type, sender: from, state });
+      // A report handler can read the state and hand the report on to the one report operation, and nothing else: no
+      // other call, no lock.
+      const ctx = Object.freeze({ channel: "content", type: message.type, sender: from, state, report });
       try {
         await handler.handle(message.body, ctx);
       } catch {

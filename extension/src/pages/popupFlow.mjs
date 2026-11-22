@@ -4,8 +4,11 @@
 //   signed_out   no device is signed in: a button opens the sign-in tab
 //   locked       the server and the account, and the unlock with the master
 //                password (and the secret key when this device does not keep it)
-//   unlocked     the server and the account, the lock button in the header,
-//                and what the sync shows: its state, a stop and the warnings
+//   unlocked     the lock button in the header, what the sync shows (its
+//                state, a stop and the warnings), and the list of the vault:
+//                the candidates of the page ("Suggestions for this page", with
+//                "Fill"), the favourites and all items, a search and a filter
+//                by type, and one item's view
 //
 // A stop of the sync offers exactly two ways on, "Try again" and "Forget this
 // server", and nothing else (accepting an older state of the server comes in
@@ -17,7 +20,12 @@
 // still names a server, so a device that cannot unlock any more, or that is to
 // be signed in at another server, has a way out.
 //
-// The list of the vault comes in a later version and builds on `unlocked`.
+// The list holds names, user names and marks, and a reference per item that is
+// good only in this popup's session. A password or a code never reaches the
+// popup: "Copy" asks the background, which writes the clipboard itself, and
+// "Fill" asks the background, which fills the frame itself. Only a candidate of
+// the page can be filled; an item found by a search can be copied, shown and
+// its site opened, never filled.
 
 import { shownHost } from "./ui.mjs";
 import { unlockWith } from "./signinFlow.mjs";
@@ -152,5 +160,137 @@ export function createPopupFlow(request) {
       const result = await request("forget_server", { server });
       return { result, view: await load() };
     },
+  };
+}
+
+// ------------------------------------------------------------------ the list
+
+/** The values an item may offer to copy, in the order the popup shows them. */
+export const COPY_FIELDS = Object.freeze(["username", "password", "totp"]);
+
+/** The item types of the filter, in the order the popup shows them. */
+export const FILTER_TYPES = Object.freeze(["login", "note", "card", "identity"]);
+
+/** The reasons of a refused action that the popup has a text for (`popup.error.<reason>`); any other gets `popup.error.unknown`. */
+export const ACTION_ERRORS = Object.freeze([
+  "not_offered",
+  "origin_changed",
+  "busy",
+  "frame_gone",
+  "no_report",
+  "no_fields",
+  "no_value",
+  "no_answer",
+  "value_too_long",
+  "wrong_kind",
+  "covered",
+  "vault_locked",
+  "not_filled",
+  "no_site",
+  "clipboard",
+  "not_found",
+]);
+
+/** The i18n key of the text of a refused action. @param {unknown} reason */
+export const actionErrorKey = (reason) => `popup.error.${typeof reason === "string" && ACTION_ERRORS.includes(reason) ? reason : "unknown"}`;
+
+/**
+ * @typedef {{
+ *   ref: string, name: string, username: string, favorite: boolean, type: string, site: boolean, insecure: boolean,
+ *   frameId: number | null,
+ * }} Row
+ * @typedef {{ rows: Row[], total: number }} Section
+ * @typedef {{ host: string, rows: Row[] }} PageSection
+ */
+
+/**
+ * The rows of an answer: what the popup shows of each item, and nothing else.
+ * @param {any} reply
+ * @returns {Row[]}
+ */
+export function rowsOf(reply) {
+  const handles = Array.isArray(reply?.handles) ? reply.handles : [];
+  return handles
+    .filter((/** @type {any} */ h) => typeof h?.ref === "string")
+    .map((/** @type {any} */ h) => ({
+      ref: h.ref,
+      name: typeof h.name === "string" ? h.name : "",
+      username: typeof h.username === "string" ? h.username : "",
+      favorite: h.favorite === true,
+      type: typeof h.type === "string" ? h.type : "other",
+      site: h.site === true,
+      insecure: h.insecure === true,
+      frameId: Number.isSafeInteger(h.frame_id) && h.frame_id >= 0 ? h.frame_id : null,
+    }));
+}
+
+/**
+ * The popup's part of the list of the vault.
+ * @param {import("./ui.mjs").Request} request
+ */
+export function createListFlow(request) {
+  /** @param {{ query?: string, favorites?: boolean, type?: string | null, offset?: number }} o @returns {Promise<Section>} */
+  const search = async ({ query = "", favorites = false, type = null, offset = 0 }) => {
+    const reply = await request("search", {
+      query: query.slice(0, 256),
+      ...(favorites ? { favorites: true } : {}),
+      ...(type !== null ? { type } : {}),
+      ...(offset > 0 ? { offset } : {}),
+    });
+    return { rows: rowsOf(reply), total: Number.isSafeInteger(reply?.total) ? reply.total : 0 };
+  };
+
+  return {
+    search,
+
+    /**
+     * The candidates of the page in the tab `tabId`: the items that may be filled there. Null when the background
+     * offers none for this page (no page, no matching yet, or a refusal).
+     * @param {number | null} tabId
+     * @returns {Promise<PageSection | null>}
+     */
+    async page(tabId) {
+      if (tabId === null) return null;
+      try {
+        const reply = await request("candidates", { tab_id: tabId, frame_id: 0 });
+        return { host: shownHost({ host: reply?.host, host_a_label: reply?.host_a_label }), rows: rowsOf(reply).filter((row) => row.frameId !== null) };
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * What the list shows: with no query, the favourites and all items; with a query, what it found.
+     * @param {{ query?: string, type?: string | null }} o
+     * @returns {Promise<{ favorites: Section | null, all: Section, count: number }>}
+     */
+    async list({ query = "", type = null }) {
+      const searching = query.trim() !== "";
+      const [favorites, all, everything] = await Promise.all([
+        searching ? Promise.resolve(null) : search({ favorites: true, type }),
+        search({ query, type }),
+        searching || type !== null ? search({ query: "" }) : Promise.resolve(null),
+      ]);
+      return { favorites, all, count: (everything ?? all).total };
+    },
+
+    /**
+     * "Fill" on a candidate of the page.
+     * @param {Row} row @param {number} tabId
+     * @returns {Promise<{ ok: boolean, reason?: string }>}
+     */
+    fill(row, tabId) {
+      if (row.frameId === null) return Promise.resolve({ ok: false, reason: "not_offered" });
+      return request("fill", { ref: row.ref, tab_id: tabId, frame_id: row.frameId });
+    },
+
+    /** @param {string} ref @param {string} field @returns {Promise<{ ok: boolean, reason?: string }>} */
+    copy: (ref, field) => request("copy", { ref, field }),
+
+    /** @param {string} ref @returns {Promise<{ ok: boolean, reason?: string }>} */
+    openSite: (ref) => request("open_site", { ref }),
+
+    /** @param {string} ref */
+    item: (ref) => request("item", { ref }),
   };
 }

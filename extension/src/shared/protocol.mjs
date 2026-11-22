@@ -102,16 +102,25 @@ const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
 // A host name as the extension shows it (the core's `display_host`): the Unicode form, and the A-label next to it.
 const host = string({ min: 1, max: 300 });
 const email = string({ min: 1, max: 254 });
+// The item types of the vault, as the core names them.
+const itemType = string({ max: 16, oneOf: ["login", "note", "card", "identity", "other"] });
+// One item as a page may see it: a name, a user name, marks, and a reference that is good only in the session of the
+// page that got it. Never a password, a code or any other value of the item.
 const handle = object(
   {
     ref,
     name: string({ max: 256 }),
     username: string({ max: 256 }),
     insecure: boolean(),
+    favorite: boolean(),
+    type: itemType,
+    // The item has a web address that "Open the site" can open.
+    site: boolean(),
+    // A candidate of a page: the frame it was matched in (the one "Fill" names).
+    frame_id: frameId,
   },
-  { optional: ["username", "insecure"] },
+  { optional: ["username", "insecure", "favorite", "type", "site", "frame_id"] },
 );
-const handles = object({ handles: array(handle, { max: 100 }) });
 const empty = object({});
 
 /**
@@ -178,12 +187,25 @@ export const UI_TYPES = defineTypes({
   },
   candidates: {
     request: object({ tab_id: tabId, frame_id: frameId }),
-    reply: handles,
+    reply: object(
+      {
+        handles: array(handle, { max: 100 }),
+        // The page's host as the core shows it (`display_host`), never the page's title.
+        host,
+        host_a_label: host,
+      },
+      { optional: ["host", "host_a_label"] },
+    ),
   },
-  // A search finds anything in the vault. Its handles are for copying only.
+  // A search finds anything in the vault. Its handles are for copying only: "Fill" takes a handle of `candidates`.
+  // `favorites` keeps the favourites only and `type` one item type; `offset` pages through a long answer, and `total`
+  // says how many items match in all.
   search: {
-    request: object({ query: string({ max: 256 }) }),
-    reply: handles,
+    request: object(
+      { query: string({ max: 256 }), favorites: boolean(), type: itemType, offset: integer({ min: 0, max: 1_000_000 }) },
+      { optional: ["favorites", "type", "offset"] },
+    ),
+    reply: object({ handles: array(handle, { max: 100 }), total: integer({ min: 0, max: 1_000_000 }) }),
   },
   fill: {
     request: object({ ref, tab_id: tabId, frame_id: frameId }),
@@ -191,6 +213,29 @@ export const UI_TYPES = defineTypes({
   },
   copy: {
     request: object({ ref, field }),
+    reply: okReply,
+  },
+  // What the popup shows of one item: the name, the user name, the addresses and which values can be copied. A
+  // password or a code is never part of it.
+  item: {
+    request: object({ ref }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        name: string({ max: 256 }),
+        username: string({ max: 256 }),
+        type: itemType,
+        favorite: boolean(),
+        urls: array(string({ max: 2048 }), { max: 16 }),
+        copyable: array(field, { max: 3 }),
+      },
+      { optional: ["reason", "name", "username", "type", "favorite", "urls", "copyable"] },
+    ),
+  },
+  // "Open the site": the background opens the item's first web address in a new tab.
+  open_site: {
+    request: object({ ref }),
     reply: okReply,
   },
   // What the sync shows in the popup: codes only (the state, a stop, the warnings), never an item or a name.
