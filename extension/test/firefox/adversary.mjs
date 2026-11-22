@@ -252,6 +252,14 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     await fromBridge(() => bridge.clearEvents());
     await session.navigate(url);
     await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
+    // The shortcut goes to the tab the browser window shows, which is not always the one WebDriver drives (closing a
+    // popup window selects another tab): make the page's tab the shown one of the front window first.
+    await session.switchTo(pageTab);
+    const address = await session.currentUrl();
+    await session.waitFor(() => session.chrome((/** @type {string} */ want) => {
+      const front = /** @type {any} */ (globalThis).Services.wm.getMostRecentWindow("navigator:browser");
+      return front?.gBrowser?.selectedBrowser?.currentURI?.spec === want;
+    }, address), 10_000, `the page's tab is the shown one (${address})`);
     await session.pressShortcut(TEST_SHORTCUT);
     const command = await session.waitFor(async () => (await fromBridge(() => bridge.events())).find((e) => e.kind === "command"), 15_000, "the command event");
     // The shortcut gives activeTab: the command's tab then carries its address. Without it the extension cannot see
