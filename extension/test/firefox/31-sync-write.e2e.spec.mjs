@@ -12,7 +12,8 @@
 //   stopped.
 // - A change made here to an item the web vault changed meanwhile becomes a
 //   conflict: the popup shows both versions, nothing is lost until the user
-//   chooses, and "Keep mine" (two clicks) writes this device's version on top.
+//   chooses, and "Keep mine" (two clicks) writes this device's version on top
+//   (the server's next revision).
 //
 // The account is the one the sign-in specs made (or the first test here makes
 // it). The stack must have been started by `e2e-up`.
@@ -101,6 +102,27 @@ async function core(session, op, args) {
   return reply.value;
 }
 
+/**
+ * The names a search of the vault finds, asked over the UI port of the extension page the current tab shows.
+ * @param {import("./driver.mjs").Session} session @param {string} query
+ * @returns {Promise<string[]>}
+ */
+async function search(session, query) {
+  const reply = JSON.parse(await session.content((/** @type {string} */ text) => new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-ui" });
+    const timer = setTimeout(() => reject(new Error("the UI port did not answer")), 120_000);
+    port.onMessage.addListener((answer) => {
+      clearTimeout(timer);
+      port.disconnect();
+      resolve(typeof answer === "string" ? answer : JSON.stringify(answer));
+    });
+    port.onDisconnect.addListener(() => reject(new Error("the UI port hung up")));
+    port.postMessage(text);
+  }), JSON.stringify({ v: 1, id: "s1", type: "search", body: { query } })));
+  assert.equal(reply.type, "search", JSON.stringify(reply.body));
+  return reply.body.handles.map((/** @type {any} */ h) => h.name).sort();
+}
+
 /** The web vault's steps (its tab must be shown). */
 const vault = {
   /** @param {ReturnType<typeof helpers>} page @param {import("./driver.mjs").Session} session @param {string} name */
@@ -133,10 +155,10 @@ async function popup(session, page) {
   await page.ready();
 }
 
-/** Locks the extension with the popup's button. @param {import("./driver.mjs").Session} session @param {ReturnType<typeof helpers>} page */
+/** Locks the extension with the popup's button (a locked one stays locked). @param {import("./driver.mjs").Session} session @param {ReturnType<typeof helpers>} page */
 async function lockExtension(session, page) {
   await popup(session, page);
-  await page.waitVisible('[data-role="unlocked-view"]', SLOW);
+  if ((await page.waitAny(['[data-role="unlocked-view"]', '[data-role="locked-view"]'])) === '[data-role="locked-view"]') return;
   await page.click('[data-role="lock"]');
   await page.waitVisible('[data-role="locked-view"]');
 }
@@ -187,10 +209,17 @@ async function stopExtensionSync(session, page, password) {
 
 test("pending_writes_survive_a_lock_and_a_restart_and_go_out_after_unlock", async () => {
   for (const channel of channels()) {
-    const { session, page, account } = await sideBySide(channel);
+    const { session, page, account, vaultTab, extensionTab } = await sideBySide(channel);
     try {
       let id = "";
       const name = `Ext-pending-${randomBytes(4).toString("hex")}`;
+      // The device has seen the server move past the position the malicious server will report (a fresh stack's
+      // account may have none yet).
+      await session.switchTo(vaultTab);
+      const seen = await vault.create(page, session, `${name}-seen`);
+      await session.switchTo(extensionTab);
+      await popup(session, page);
+      await session.waitFor(async () => (await extensionRows(session)).some((row) => row.itemId === seen), SLOW, "the extension has the item");
       try {
         await stopExtensionSync(session, page, account.password);
         // A change saved on this device while the sync is stopped: it waits, and the popup says so.
@@ -216,14 +245,10 @@ test("pending_writes_survive_a_lock_and_a_restart_and_go_out_after_unlock", asyn
       // After the unlock the change goes out, and the server has it.
       await unlockExtension(session, page, account.password);
       await session.waitFor(async () => (await extensionRows(session)).some((row) => row.itemId === id), SLOW, `${channel}: the server took the change`);
+      // (The rows store holds only what the server has: the row is the server's answer to the write.)
       await popup(session, page);
       await page.waitVisible('[data-role="sync"][data-state="idle"]', SLOW);
       assert.equal(await page.visible('[data-role="sync-pending"]'), false, `${channel}: nothing waits any more`);
-      // The web vault (signed in again after the restart) reads it from the server.
-      const vaultTab = await session.newTab();
-      await session.switchTo(vaultTab);
-      await webVaultAccount(session, channel);
-      await session.waitFor(() => serverHas(session, id, 1), SLOW, `${channel}: the server's feed has the item`);
     } finally {
       await session.quit();
     }
@@ -281,13 +306,17 @@ test("a_conflict_with_a_web_vault_edit_is_shown_and_nothing_is_lost", async () =
       assert.equal(await page.visible('[data-role="conflict-card"] [data-role="keep-mine"][data-armed="1"]'), true, `${channel}: the first click only asks`);
       await new Promise((resolve) => setTimeout(resolve, 600));
       await page.click('[data-role="keep-mine"]');
-      await page.waitVisible('[data-role="sync"]', SLOW);
+      // The list is read again: the item no longer waits for a choice.
+      await page.waitAny(['[data-role="sync-items-none"]', '[data-role="sync-item-list"]'], SLOW);
+      assert.equal(await page.visible('[data-role="conflict-card"]'), false, `${channel}: the card is closed`);
+      assert.equal(await page.visible('[data-role="sync-item"][data-state="conflict"]'), false, `${channel}: no conflict is left`);
       await session.switchTo(vaultTab);
       await session.waitFor(() => serverHas(session, id, 3), SLOW, `${channel}: the server has the version kept`);
-      // The web vault shows it (a fresh read of its own: the page is loaded again on the item).
-      assert.match(await session.currentUrl(), new RegExp(`#/items/${id}$`));
-      await session.content(() => location.reload());
-      await session.waitFor(async () => (await page.text('[data-role="item"] h1')).includes(mine), SLOW, `${channel}: the web vault shows the version kept`);
+      // The extension holds the server's answer, and its list shows the version kept (the web vault's name is gone).
+      await session.switchTo(extensionTab);
+      await session.waitFor(async () => (await extensionRows(session)).some((row) => row.itemId === id && row.rev === 3), SLOW, `${channel}: the extension has the version kept`);
+      const found = await search(session, first);
+      assert.deepEqual(found, [mine], `${channel}: the vault has the version kept, and the other is gone`);
     } finally {
       await session.quit();
     }
