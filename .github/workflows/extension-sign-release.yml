@@ -52,8 +52,12 @@
 #    the core releases, and never marked as the latest release), then replaces
 #    updates.json in the release `extension-updates`, and then downloads both over
 #    HTTPS as Firefox will and compares them with what was signed and written.
-#    Approving the signing therefore also publishes the version to every installed
-#    release build. See docs/EXTENSION-FIREFOX.md.
+#    Right before it replaces updates.json it reads the live file again and refuses
+#    unless the new file is the live one plus one entry (or the same file, on a
+#    re-run). Approving the signing therefore also publishes the version to every
+#    installed release build. Jobs 3 and 4 run only when the run was started on
+#    `main` and the commit is on `main`: a run from `ext` signs but never publishes.
+#    See docs/EXTENSION-FIREFOX.md.
 #
 # The input reaches the shell through the environment, never spliced into a command
 # line or into script text. The workflow has read access to the repository and
@@ -88,6 +92,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       commit: ${{ steps.resolve.outputs.commit }}
+      on_main: ${{ steps.resolve.outputs.on_main }}
       version: ${{ steps.check.outputs.version }}
       sha256: ${{ steps.reproducible.outputs.sha256 }}
     steps:
@@ -123,6 +128,13 @@ jobs:
           git checkout --quiet --detach "$commit"
           git clean -ffdxq
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          # Only a commit on main is ever published for the automatic updates (the manifest and publish jobs).
+          if git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "The commit is not on main: it is signed but not published for the automatic updates."
+          fi
           echo "Building commit $commit"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -331,6 +343,8 @@ jobs:
   manifest:
     name: Write the update manifest
     needs: [build, sign]
+    # Only a run started on main, for a commit on main, publishes; a run from ext signs and stops.
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -430,6 +444,7 @@ jobs:
   publish:
     name: Publish the signed package and the update manifest
     needs: [build, sign, manifest]
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -510,6 +525,18 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EXISTS" = true ]; then
+            # The file that is live right now must be the one the new file was written from: the
+            # new file is the live one plus one entry at the end, or the same file (a re-run).
+            # Anything else (an entry dropped or changed, another publication in between) stops here.
+            mkdir -p "$RUNNER_TEMP/live"
+            gh release download extension-updates --repo "$GITHUB_REPOSITORY" --pattern updates.json --dir "$RUNNER_TEMP/live"
+            # The jq program is in single quotes on purpose: the shell expands nothing in it.
+            # shellcheck disable=SC2016
+            if ! jq -e -n --slurpfile live "$RUNNER_TEMP/live/updates.json" --slurpfile new "$RUNNER_TEMP/updates/updates.json" \
+              '($live[0].addons["ferret@hedgerow.tools"].updates) as $l | ($new[0].addons["ferret@hedgerow.tools"].updates) as $n | ($l | type) == "array" and ($n | type) == "array" and ($n[:-1] == $l or $n == $l)' > /dev/null; then
+              echo "::error::The live updates.json is not the one the new file was written from; nothing was replaced."
+              exit 1
+            fi
             gh release upload extension-updates "$RUNNER_TEMP/updates/updates.json" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create extension-updates "$RUNNER_TEMP/updates/updates.json" \

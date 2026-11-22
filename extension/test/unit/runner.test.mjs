@@ -11,6 +11,9 @@ import { repoRoot } from "./buildHelpers.mjs";
 
 const read = (/** @type {string} */ path) => readFileSync(join(repoRoot, ...path.split("/")), "utf8");
 
+/** The rule the publish job checks the live update manifest with before it replaces it (jq). */
+const LIVE_RULE = '($live[0].addons["ferret@hedgerow.tools"].updates) as $l | ($new[0].addons["ferret@hedgerow.tools"].updates) as $n | ($l | type) == "array" and ($n | type) == "array" and ($n[:-1] == $l or $n == $l)';
+
 test("the_runner_container_is_named_and_labelled", () => {
   const result = spawnSync("bash", [join(repoRoot, "scripts", "check-lanbox-labels.sh"), "ext"], { encoding: "utf8" });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
@@ -320,6 +323,14 @@ test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signe
   // The order: publishing needs the signing (and so its approval) and the written manifest.
   assert.match(manifest, /^ {4}needs: \[build, sign\]\n/m);
   assert.match(publish, /^ {4}needs: \[build, sign, manifest\]\n/m);
+  // Only a run started on main, for a commit on main, publishes: a run from ext signs and stops.
+  const guard = "    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'\n";
+  for (const job of [manifest, publish]) assert.equal(job.split(guard).length, 2, "the main-only guard, once, on the job");
+  assert.equal([...code.matchAll(/^ {4}if:/gm)].length, 2, "no other job-level condition");
+  const build = /** @type {string} */ (jobs.get("build"));
+  assert.match(build, /^ {6}on_main: \$\{\{ steps\.resolve\.outputs\.on_main \}\}\n/m);
+  assert.match(build, /if git merge-base --is-ancestor "\$commit" refs\/remotes\/origin\/main; then\n\s+echo "on_main=true" >> "\$GITHUB_OUTPUT"\n\s+else\n\s+echo "on_main=false" >> "\$GITHUB_OUTPUT"/);
+  assert.equal([...code.matchAll(/on_main=true/g)].length, 1);
   // The sign job hands over the name and the SHA-256 of the signed file, nothing else.
   assert.match(sign, /^ {4}outputs:\n {6}name: \$\{\{ steps\.signed\.outputs\.name \}\}\n {6}sha256: \$\{\{ steps\.signed\.outputs\.sha256 \}\}\n {4}steps:/m);
   // Permissions: only the publish job widens them, to contents: write and nothing else; no environment, no secret.
@@ -370,6 +381,13 @@ test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signe
   // Only updates.json is ever replaced (--clobber), never a package.
   const clobbers = publish.split("\n").filter((line) => line.includes("--clobber"));
   assert.deepEqual(clobbers.map((line) => line.trim()), ['gh release upload extension-updates "$RUNNER_TEMP/updates/updates.json" --repo "$GITHUB_REPOSITORY" --clobber']);
+  // Right before the replacement the live file is read again and must be the one the new file was written from.
+  const liveAt = publish.indexOf('gh release download extension-updates --repo "$GITHUB_REPOSITORY" --pattern updates.json --dir "$RUNNER_TEMP/live"');
+  const ruleAt = publish.indexOf(`'${LIVE_RULE}'`);
+  const refuseAt = publish.indexOf('echo "::error::The live updates.json is not the one the new file was written from; nothing was replaced."\n              exit 1');
+  const clobberAt = publish.indexOf("--clobber");
+  assert.ok(liveAt > 0 && liveAt < ruleAt && ruleAt < refuseAt && refuseAt < clobberAt, "live file read, compared, refused on a mismatch, and only then replaced");
+  assert.match(publish, /if ! jq -e -n --slurpfile live "\$RUNNER_TEMP\/live\/updates\.json" --slurpfile new "\$RUNNER_TEMP\/updates\/updates\.json" \\\n/);
   // The newest entry is this version with this hash, and what is served afterwards is compared, over HTTPS only.
   assert.match(publish, /\.version == \$v and \.update_hash == \$h/);
   assert.match(publish, /--arg h "sha256:\$SHA256"/);
@@ -381,5 +399,52 @@ test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signe
     for (const block of job.matchAll(/run: \|\n((?: {10}.*\n?)+)/g)) {
       assert.equal(/\$\{\{/.test(block[1]), false, `an expression inside a run script: ${block[1].slice(0, 80)}`);
     }
+  }
+});
+
+test("the_live_update_manifest_rule_accepts_one_appended_entry_or_the_same_file_only", (t) => {
+  // The rule is the jq program of the publish job (pinned above); it runs here when jq is installed (the CI runners
+  // have it; the test container may not).
+  if (spawnSync("jq", ["--version"], { encoding: "utf8" }).status !== 0) {
+    t.skip("jq is not installed");
+    return;
+  }
+  const id = "ferret@hedgerow.tools";
+  /** @param {unknown} updates */
+  const file = (updates) => JSON.stringify({ addons: { [id]: { updates } } });
+  /** @param {string} version @param {string} hex */
+  const entry = (version, hex) => ({
+    version,
+    update_link: `https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-v${version}/ferret-firefox-mv2-release-${version}-signed.xpi`,
+    update_hash: `sha256:${hex.repeat(64)}`,
+  });
+  const a = entry("0.7.1", "a");
+  const b = entry("0.7.2", "b");
+  const c = entry("0.7.3", "c");
+  const dir = mkdtempSync(join(tmpdir(), "ferret-live-"));
+  try {
+    /** @param {string} live @param {string} next */
+    const passes = (live, next) => {
+      writeFileSync(join(dir, "live.json"), live);
+      writeFileSync(join(dir, "new.json"), next);
+      const result = spawnSync("jq", ["-e", "-n", "--slurpfile", "live", join(dir, "live.json"), "--slurpfile", "new", join(dir, "new.json"), LIVE_RULE], { encoding: "utf8" });
+      return result.status === 0;
+    };
+    // Accepted: one entry appended, or the same file (a re-run).
+    assert.equal(passes(file([a]), file([a, b])), true);
+    assert.equal(passes(file([]), file([a])), true);
+    assert.equal(passes(file([a, b]), file([a, b])), true);
+    // Refused: another publication in between, an entry dropped or changed, two entries at once, a broken live file.
+    assert.equal(passes(file([a, b]), file([a, c])), false, "the live file gained an entry the new one lacks");
+    assert.equal(passes(file([a, b]), file([b, c])), false, "an older entry was dropped");
+    assert.equal(passes(file([a]), file([{ ...a, update_hash: `sha256:${"f".repeat(64)}` }, b])), false, "an older entry was changed");
+    assert.equal(passes(file([a]), file([a, b, c])), false, "two entries at once");
+    assert.equal(passes(file([]), file([a, b])), false);
+    assert.equal(passes(JSON.stringify({ addons: {} }), file([a])), false, "no list in the live file");
+    assert.equal(passes(file({}), file([a])), false);
+    assert.equal(passes("{", file([a])), false, "not JSON");
+    assert.equal(passes(file([a]), JSON.stringify({ addons: { "other@example.com": { updates: [a] } } })), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
