@@ -202,7 +202,7 @@ fi'
     tar -c \
       --exclude='extension/node_modules' \
       --exclude='extension/dist' \
-      extension web/wasm.lock.json web/src scripts/check-ext-release.sh scripts/lanbox-ext.sh \
+      extension web/wasm.lock.json web/src crates/ferret-server/static/favicon.svg scripts/check-ext-release.sh scripts/lanbox-ext.sh \
       scripts/check-lanbox-labels.sh docker/ext-runner.Dockerfile \
       .github/workflows \
       docs/design/phase-1-security-design.md
