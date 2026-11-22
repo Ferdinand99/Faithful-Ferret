@@ -826,11 +826,6 @@ fieldset {
   :root {
     --bar: var(--bg);
   }
-
-  .vault-bar {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
 }
 
 @media (prefers-contrast: more) {

@@ -1,6 +1,6 @@
 // Locking removes every secret from the page and from memory, ends
 // the worker that held the keys, and a password alone opens the vault again.
-import { bodyText, createItem, expect, freshContext, memory, pace, recordWorkers, requireAccount, secrets, signInOn, signOutOn, SLOW, tamperPinnedServerKey, test, unlockWith, workers } from "./support.mjs";
+import { bodyText, createItem, expect, freshContext, lockNow, memory, pace, recordWorkers, requireAccount, secrets, signInOn, signOutOn, SLOW, tamperPinnedServerKey, test, unlockWith, workers } from "./support.mjs";
 
 test("lock_and_unlock_roundtrip", async ({ browser }) => {
   test.setTimeout(400_000);
@@ -23,7 +23,7 @@ test("lock_and_unlock_roundtrip", async ({ browser }) => {
   expect(open.items).toBeGreaterThan(0);
   expect((await workers(page)).filter((w) => !w.ended).length).toBeGreaterThan(0);
 
-  await page.locator('[data-role="lock"]').click();
+  await lockNow(page);
   await expect(page.locator('[data-role="unlock"]')).toBeVisible({ timeout: 20_000 });
 
   // No secret is left in the page: not the revealed password, not the name, not the user name.
