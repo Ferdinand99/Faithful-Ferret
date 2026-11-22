@@ -13,7 +13,11 @@
     "login.xn--80ak6aa92e.net",
     "login.xn--exmple-x9m.net",
     "a.github.io",
-    "b.github.io"
+    "b.github.io",
+    "forms.example.net",
+    "www.forms.example.net",
+    "forms-evil.test",
+    "www.forms.example.org"
   ],
   "e2e": ["vault-e2e.test", "admin-e2e.test"]
 }

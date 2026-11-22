@@ -1,0 +1,51 @@
+{
+  "id": "signup-confirm-en",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/signup-confirm-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#pw",
+      "text": "Zq7!signupconf-Vm4$"
+    },
+    {
+      "type": "#pw2",
+      "text": "Zq7!signupconf-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#email"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": "#pw2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw",
+    "#pw2"
+  ],
+  "fields": {
+    "#pw": "new_password",
+    "#pw2": "confirm_password"
+  },
+  "source": "own"
+}

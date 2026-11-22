@@ -127,8 +127,8 @@ export async function documentsHolding(session, value) {
 
 /**
  * A Firefox signed in to the stack, with the entries made (names tagged with the channel and the time).
- * `grant`: ids of test sites whose waiting frames get their host permission in the grant tab, as a person gives it
- * (a frame of another origin on the same site waits for it).
+ * `grant`: ids of test sites (or page addresses, `https://...`) whose waiting frames get their host permission in the
+ * grant tab, as a person gives it (a frame of another origin on the same site waits for it).
  * @param {"release" | "esr"} channel
  * @param {{ grant?: string[], entries?: Partial<typeof ENTRIES> }} [options]
  */
@@ -294,7 +294,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** @type {string[]} */
   const origins = [];
   for (const siteId of grant) {
-    const tabId = await visit(server.siteUrl(siteId));
+    const tabId = await visit(siteId.startsWith("https://") ? siteId : server.siteUrl(siteId));
     await ui.open();
     const waiting = await ui.body("candidates", { tab_id: tabId });
     await ui.close();

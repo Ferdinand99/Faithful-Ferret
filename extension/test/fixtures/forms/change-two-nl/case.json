@@ -1,0 +1,47 @@
+{
+  "id": "change-two-nl",
+  "class": "positive",
+  "category": "change",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/change-two-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#cur",
+      "text": "{{password:forms}}"
+    },
+    {
+      "type": "#new",
+      "text": "Zq7!changetwon-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#cur"
+    ],
+    "generated": {
+      "new": "#new",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "update",
+      "username": null,
+      "password_from": "#new",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [
+    "#new"
+  ],
+  "fields": {
+    "#new": "new_password",
+    "#cur": "current_password"
+  },
+  "source": "own"
+}

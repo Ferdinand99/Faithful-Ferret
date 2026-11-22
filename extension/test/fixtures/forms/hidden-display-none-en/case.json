@@ -1,0 +1,29 @@
+{
+  "id": "hidden-display-none-en",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/hidden-display-none-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#who",
+      "text": "Anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#trap"
+  ],
+  "fields": {},
+  "source": "own"
+}

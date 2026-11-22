@@ -1,0 +1,27 @@
+{
+  "id": "harmless-newsletter-nb",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/harmless-newsletter-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mail",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

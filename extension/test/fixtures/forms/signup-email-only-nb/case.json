@@ -1,0 +1,45 @@
+{
+  "id": "signup-email-only-nb",
+  "class": "positive",
+  "category": "signup",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/signup-email-only-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#epost",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#pw",
+      "text": "Zq7!signupemai-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#epost"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw"
+  ],
+  "fields": {
+    "#pw": "new_password"
+  },
+  "source": "own"
+}

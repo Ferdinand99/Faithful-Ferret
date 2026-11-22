@@ -1,0 +1,31 @@
+{
+  "id": "hidden-frame-same-site-en",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "en",
+  "host": "www.forms.example.net",
+  "path": "/hidden-frame-same-site-en/",
+  "frame": {
+    "id": "#login-frame",
+    "host": "forms.example.net",
+    "path": "/hidden-frame-same-site-en/inner.html",
+    "kind": "hidden"
+  },
+  "steps": [
+    {
+      "wait": 3500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#u",
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

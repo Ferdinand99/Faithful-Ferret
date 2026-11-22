@@ -1,0 +1,46 @@
+{
+  "id": "identifier-same-page-nb",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/identifier-same-page-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!identifier-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "update",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "flood-landing-de",
+  "class": "negative",
+  "category": "flood",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/flood-landing-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!floodlandi-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -84,3 +84,20 @@ under `test/` is ever packaged.
 A password field whose verdict does not depend on the page carries
 `data-fixture-expect="fill"` (a clear control field) or `"reject"` (a hidden,
 covered or off-screen one that must never be filled).
+
+## The detection matrix
+
+`scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>]`
+runs `95-matrix.e2e.spec.mjs` on the end-to-end stack: the extension signed in to it, a vault with a few
+entries, and every case of the corpus in `test/fixtures/forms/` (see its README). The fill phase opens each
+page with the real shortcut, asks the extension for the page's entries, fills them and reads every input of
+every document; the capture phase types what a person types and reads the extension's offers through the test
+bridge's `offers_peek`. Until the extension keeps offers, `offers_peek` says it has none to show and the capture
+phase counts every case as not run. The first test of the spec proves that WebDriver's key events are trusted
+(`isTrusted`) in both channels; the extension counts only trusted input, so the matrix means nothing without it.
+
+`matrixReport.mjs` turns the results into the numbers: the fill and capture rates over the positive cases,
+the rate per category (no positive category below 80 %), the unsafe fills and unsafe offers (any one fails the
+gate), the offers on harmless pages, and the cases that did not run (they count as failed). The reports
+`<channel>-<manifest>.json` and `matrix.md` are unpacked into `test-results/out/u2-matrix/`. The plain `e2e`
+run leaves the matrix out.

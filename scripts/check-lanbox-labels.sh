@@ -200,7 +200,8 @@ STUB
   # Options that do not exist stop the script before docker.
   for bad in "firefox --channel nightly" "firefox --manifest mv4" "firefox --nope" "unit --channel release" "lint --grep x" "firefox --no-up" "other" \
     "measure --scenario nope" "measure --scenario idle,nope" "measure --window-minutes 1" "measure --window-minutes x" "measure --grep x" "measure --headed" \
-    "firefox --scenario idle" "firefox --window-minutes 20" "gate --grep x" "gate --no-up" "gate --scenario idle" "gate --channel nightly"; do
+    "firefox --scenario idle" "firefox --window-minutes 20" "gate --grep x" "gate --no-up" "gate --scenario idle" "gate --channel nightly" \
+    "matrix --part some" "matrix --set other" "matrix --grep Bad_Id" "matrix --scenario idle" "firefox --part fill" "e2e --set holdout"; do
     # shellcheck disable=SC2086
     if run_ext scripts/lanbox-ext.sh $bad; then fail "ext: '$bad' was accepted"; fi
     [ "$(calls)" -eq 0 ] || fail "ext: '$bad' reached docker"
@@ -298,6 +299,26 @@ STUB
   [ -d "$ext/gate-out" ] || fail "ext: gate: the screenshot folder was not made"
   run_ext FERRET_EXT_OUT_DIR="$ext/gate-out" scripts/lanbox-ext.sh gate --manifest mv3 --channel esr || fail "ext: gate --manifest mv3 failed"
   grep -qx 'FERRET_MANIFEST=mv3' "$(grep -lx FERRET_EXT_STEP=e2e "$ext"/calls/call-*)" || fail "ext: gate: --manifest is not passed on"
+
+  # matrix: the e2e step on the run's own stack (not the firefox step), MV2 unless told otherwise, the choices of the
+  # run in the environment, and the reports unpacked into the folder named by FERRET_EXT_OUT_DIR.
+  run_ext FERRET_EXT_OUT_DIR="$ext/matrix-out" DEV_RUN=ext-probe-x scripts/lanbox-ext.sh matrix --channel release --part fill --set holdout --grep login-basic \
+    || { cat "$ext/out" >&2; fail "ext: matrix run failed"; }
+  [ "$(run_calls | wc -l)" -eq 2 ] || fail "ext: matrix: expected the fetch step and one test container"
+  mx="$(grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-*)" || fail "ext: matrix: no test step"
+  grep -qxE 'ferret-x[0-9a-f]{8}-net' "$mx" || fail "ext: matrix: not on the run's stack"
+  grep -qx 'FERRET_MANIFEST=mv2' "$mx" || fail "ext: matrix: not the MV2 build"
+  grep -qx 'FERRET_MATRIX_PART=fill' "$mx" || fail "ext: matrix: --part is not passed on"
+  grep -qx 'FERRET_MATRIX_SET=holdout' "$mx" || fail "ext: matrix: --set is not passed on"
+  grep -qx 'FERRET_MATRIX_GREP=login-basic' "$mx" || fail "ext: matrix: --grep is not passed on"
+  grep -qx 'FERRET_GREP=' "$mx" || fail "ext: matrix: the case filter must not become a test-name filter"
+  grep -qx 'FERRET_E2E_SETUP_TOKEN=TOKEN' "$mx" || fail "ext: matrix: no setup token"
+  grep -qx 'owner=ferret-core' "$mx" || fail "ext: matrix: owner label is missing"
+  grep -qxE 'ferret-ext-probe-x-matrix-[0-9]+' "$mx" || fail "ext: matrix: container name is wrong"
+  [ "$(awk 'END { print $1 }' "$ext/stack.log")" = e2e-down ] || fail "ext: matrix: the run's stack was not removed"
+  [ -d "$ext/matrix-out" ] || fail "ext: matrix: the report folder was not made"
+  run_ext FERRET_EXT_OUT_DIR="$ext/matrix-out" scripts/lanbox-ext.sh matrix --manifest mv3 --channel esr || { cat "$ext/out" >&2; fail "ext: matrix --manifest mv3 failed"; }
+  grep -qx 'FERRET_MANIFEST=mv3' "$(grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-*)" || fail "ext: matrix: --manifest is not passed on"
 
   # measure: the fetch step and one container per channel (two Firefox side by side),
   # each named for its channel, labelled and removed on exit; the options reach the

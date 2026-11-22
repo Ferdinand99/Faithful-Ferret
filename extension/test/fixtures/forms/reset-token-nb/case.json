@@ -1,0 +1,45 @@
+{
+  "id": "reset-token-nb",
+  "class": "positive",
+  "category": "reset",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/reset-token-nb/?token=7c1d9e52b0a4",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#new",
+      "text": "Zq7!resettoken-Vm4$"
+    },
+    {
+      "type": "#new2",
+      "text": "Zq7!resettoken-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#new",
+      "confirm": "#new2"
+    },
+    "capture": {
+      "offer": "update",
+      "username": null,
+      "password_from": "#new",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [
+    "#new",
+    "#new2"
+  ],
+  "fields": {
+    "#new": "new_password",
+    "#new2": "confirm_password"
+  },
+  "source": "own"
+}

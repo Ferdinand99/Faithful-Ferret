@@ -1,0 +1,45 @@
+{
+  "id": "card-cvc-password-en",
+  "class": "negative",
+  "category": "card",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/card-cvc-password-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#card",
+      "text": "4111111111111111"
+    },
+    {
+      "type": "#exp",
+      "text": "12/30"
+    },
+    {
+      "type": "#cvc",
+      "text": "123"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#cvc",
+    "#card"
+  ],
+  "fields": {
+    "#cvc": "card_cvc",
+    "#card": "card_number"
+  },
+  "source": "own"
+}

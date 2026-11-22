@@ -1,0 +1,31 @@
+{
+  "id": "harmless-feedback-de",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/harmless-feedback-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mail",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#msg",
+      "text": "Gut"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

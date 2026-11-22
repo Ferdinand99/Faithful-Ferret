@@ -38,6 +38,15 @@
 #                                 build), with the screenshots the e2e specs take
 #                                 unpacked into test-results/out/gate-shots/ (or
 #                                 $FERRET_EXT_OUT_DIR/gate-shots/). Fails if either fails.
+#   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>] [--headed] [--no-up]
+#                                 the detection matrix: the extension, signed in to the end-to-end
+#                                 stack (as for e2e), against the corpus of extension/test/fixtures/forms
+#                                 (--set holdout: forms-holdout/): the fill phase tries every case, the
+#                                 capture phase types what a person types and reads the offers. The default
+#                                 manifest is mv2, the Firefox build. --grep keeps the cases whose id
+#                                 contains the text. The reports (<channel>-<manifest>.json and matrix.md)
+#                                 are unpacked into test-results/out/u2-matrix/ (or $FERRET_EXT_OUT_DIR/u2-matrix/),
+#                                 also after a failure. Stack handling and limits are those of e2e.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
 #                                 the lifetime measurement of the background page: every
 #                                 scenario in both manifest versions, a window of 17
@@ -111,16 +120,17 @@ dev_args() {
 }
 
 usage() {
-  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | measure [options]" >&2
+  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | measure [options]" >&2
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  (e2e only: --no-up)" >&2
   echo "  options of gate: --channel release|esr  --manifest mv3|mv2" >&2
+  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout  --grep <case id>  --headed  --no-up" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N" >&2
   exit 2
 }
 
 mode="${1:-}"
 case "$mode" in
-  unit | lint | firefox | e2e | gate | measure) shift ;;
+  unit | lint | firefox | e2e | gate | matrix | measure) shift ;;
   *) usage ;;
 esac
 
@@ -128,17 +138,21 @@ channel=""
 manifest=mv3
 manifest_given=0
 grep_name=""
+matrix_part=all
+matrix_set=corpus
 headed=0
 no_up=0
 scenario_list=""
 window_minutes=""
 while [ "$#" -gt 0 ]; do
   case "$mode:$1" in
-    firefox:--channel | e2e:--channel | gate:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
-    firefox:--manifest | e2e:--manifest | gate:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
-    firefox:--grep | e2e:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
-    firefox:--headed | e2e:--headed) headed=1; shift ;;
-    e2e:--no-up) no_up=1; shift ;;
+    firefox:--channel | e2e:--channel | gate:--channel | matrix:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
+    firefox:--manifest | e2e:--manifest | gate:--manifest | matrix:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
+    firefox:--grep | e2e:--grep | matrix:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
+    matrix:--part) [ "$#" -ge 2 ] || usage; matrix_part="$2"; shift 2 ;;
+    matrix:--set) [ "$#" -ge 2 ] || usage; matrix_set="$2"; shift 2 ;;
+    firefox:--headed | e2e:--headed | matrix:--headed) headed=1; shift ;;
+    e2e:--no-up | matrix:--no-up) no_up=1; shift ;;
     measure:--scenario) [ "$#" -ge 2 ] || usage; scenario_list="$2"; shift 2 ;;
     measure:--window-minutes) [ "$#" -ge 2 ] || usage; window_minutes="$2"; shift 2 ;;
     *) usage ;;
@@ -146,8 +160,13 @@ while [ "$#" -gt 0 ]; do
 done
 case "$channel" in "" | release | esr) ;; *) usage ;; esac
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
-# The gate runs the Firefox build: MV2 with a persistent background, unless --manifest names another.
-if [ "$mode" = gate ] && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
+case "$matrix_part" in fill | capture | all) ;; *) usage ;; esac
+case "$matrix_set" in corpus | holdout) ;; *) usage ;; esac
+# A case id is lower case letters, digits and dashes; the text goes into the container's environment.
+case_re='^[a-z0-9-]{0,80}$'
+if [ "$mode" = matrix ] && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
+# The gate and the matrix run the Firefox build: MV2 with a persistent background, unless --manifest names another.
+if { [ "$mode" = gate ] || [ "$mode" = matrix ]; } && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
 # A measure run covers both manifest versions unless --manifest names one.
 measure_manifests="mv3,mv2"
 if [ "$mode" = measure ] && [ "$manifest_given" = 1 ]; then measure_manifests="$manifest"; fi
@@ -202,7 +221,7 @@ fi'
     tar -c \
       --exclude='extension/node_modules' \
       --exclude='extension/dist' \
-      extension web/wasm.lock.json web/src crates/ferret-server/static/favicon.svg scripts/check-ext-release.sh scripts/lanbox-ext.sh \
+      extension web/wasm.lock.json web/src crates/ferret-server/static/favicon.svg scripts/check-ext-release.sh scripts/lanbox-ext.sh notices-extra.json \
       scripts/check-lanbox-labels.sh docker/ext-runner.Dockerfile \
       .github/workflows \
       docs/design/phase-1-security-design.md
@@ -374,13 +393,16 @@ tar -rf "$work/in.tar" -C "$work" wasm.tar.gz
 # archive on stdout. Fills the array `run`.
 make_run() {
   local step="${3:-$mode}" shots="${4:-0}" net=none
-  if [ "$step" = e2e ]; then net="$network"; fi
+  if [ "$step" = e2e ] || [ "$step" = matrix ]; then net="$network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
     "${dev_args_out[@]}"
     --network "$net")
-  if [ "$step" = e2e ]; then run+=("${e2e_volume_args[@]}"); fi
+  if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
+  # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
+  local test_grep="$grep_name"
+  if [ "$step" = matrix ]; then test_grep=""; fi
   run+=(
     --cpus "$cpus"
     --memory "$memory"
@@ -391,7 +413,10 @@ make_run() {
     -e FERRET_EXT_STEP="$step"
     -e FERRET_CHANNELS="$1"
     -e FERRET_MANIFEST="$manifest"
-    -e FERRET_GREP="$grep_name"
+    -e FERRET_GREP="$test_grep"
+    -e FERRET_MATRIX_PART="$matrix_part"
+    -e FERRET_MATRIX_SET="$matrix_set"
+    -e FERRET_MATRIX_GREP="$grep_name"
     -e FERRET_HEADLESS="$((1 - headed))"
     -e FERRET_E2E_CA_PEM="$e2e_ca"
     -e FERRET_E2E_SETUP_TOKEN="$e2e_token"
@@ -422,6 +447,22 @@ if [ "$mode" = e2e ]; then
   make_run "${channel:-release,esr}" ""
   "${run[@]}" < "$work/in.tar"
   exit 0
+fi
+
+if [ "$mode" = matrix ]; then
+  # The e2e stack of this run, then the matrix in the Firefox runner on that stack's network. What the spec
+  # writes (FERRET_MATRIX_OUT) comes out as a tar archive on stdout and is unpacked, also after a failure.
+  out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
+  mkdir -p "$out_dir"
+  e2e_setup
+  make_run "${channel:-release,esr}" "matrix" matrix 0
+  rc=0
+  "${run[@]}" < "$work/in.tar" > "$work/matrix.tar" || rc=$?
+  if [ -s "$work/matrix.tar" ]; then
+    tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || rc=$?
+  fi
+  echo "lanbox-ext.sh: matrix: the reports are in $out_dir/u2-matrix/ (exit status $rc)" >&2
+  exit "$rc"
 fi
 
 if [ "$mode" = gate ]; then

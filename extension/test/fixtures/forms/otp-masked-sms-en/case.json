@@ -1,0 +1,31 @@
+{
+  "id": "otp-masked-sms-en",
+  "class": "negative",
+  "category": "otp-masked",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/otp-masked-sms-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#code",
+      "text": "582913"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#code"
+  ],
+  "fields": {
+    "#code": "otp"
+  },
+  "source": "own"
+}
