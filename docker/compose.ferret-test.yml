@@ -64,15 +64,12 @@ services:
     #
     # Residual risk, accepted for throwaway test data and not to be copied to a
     # stack with real data:
-    #  * The trusted address is Newt's fixed address (172.30.0.2) on its own
-    #    network newt-net, so a reboot or a recreate does not move it and no
-    #    other container on the default bridge can take it over. The network
-    #    only keeps that address as long as Docker is told to preserve
-    #    user-defined networks (Unraid: Settings > Docker, "Preserve user
-    #    defined networks"). scripts/lanbox-ferret-test.sh up refuses to start
-    #    when the address differs, but nothing checks it while the container
-    #    runs. Another container that is put on newt-net with a different
-    #    address is not believed; one that is given 172.30.0.2 would be.
+    #  * The trusted address is the fixed address of the tunnel client, which
+    #    must keep it across reboots and recreates (a static address or a
+    #    reservation). scripts/lanbox-ferret-test.sh up refuses to start when
+    #    the address differs from the tunnel client's, but nothing checks it
+    #    while the container runs. Anything else that is given the trusted
+    #    address would be believed.
     #  * A host that can send ARP on the bridges of the test host can pose as that
     #    address.
     #  * Everything Newt forwards counts as the proxy, including a Pangolin raw

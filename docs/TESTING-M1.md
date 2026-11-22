@@ -68,6 +68,11 @@ tunnel client's address from `FERRET_TRUSTED_PROXIES`. Deploy or update it with
 `scripts/lanbox-ferret-test.sh up`; print the first-administrator link with
 `scripts/lanbox-ferret-test.sh token`.
 
+Migration note: an existing `docker/.env` made before these variables existed must get
+the lines `FERRET_VAULT_URL=...` and `FERRET_ADMIN_URL=...`; without them compose
+refuses every command that reads the file (`up`, `down`, `status`, `reset`, the
+snapshot commands). `FERRET_TEST_HOST` (shell environment) is needed for `up` and `smoke`.
+
 1. Open the setup link, make the account, print or copy the emergency sheet, type
    the recovery key and the secret key back, and open the vault.
 2. Make, change and delete an item; reload the page and unlock with the password.

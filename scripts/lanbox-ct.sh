@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The constant-time checks of Fase 1 § 14 on the build host (never locally,
+# The constant-time checks on the build host (never locally,
 # never Docker Desktop, never a production host). See ct/run.sh for what each mode does.
 #
 #   scripts/lanbox-ct.sh                 all checks, 1 000 000 measurements per bench
