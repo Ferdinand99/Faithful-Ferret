@@ -52,7 +52,7 @@ One line per finding. Severity is in parentheses. All fixes are included as the 
 | F-31 (low) | TOTP: allowlist for `otpauth://`. The Ferret account's own 2FA secret must not be stored in the vault (§ 5.2). |
 | F-32 (low) | Zeroize feature in `argon2`, a dedicated worker that is terminated, `mlock` on mobile, constant time also on WASM output (§ 2.3 L6, 3). |
 | F-33 (low) | `account_id` is on the emergency sheet and in the QR. A separate flow for moving to a new server (§ 4.1, 6.1). |
-| F-34 (low) | Rate limiting on (account, IP) plus a soft limit per account, no hard lockout (§ 11). |
+| F-34 (low) | Rate limiting on (account, IP), no hard lockout; a soft limit per account is planned and not built (§ 11, § 8.8). |
 | F-35 (note) | iOS: `WhenPasscodeSetThisDeviceOnly` and no passcode fallback on biometrics. Android: per-operation authentication with `CryptoObject`, StrongBox, strong biometrics only (§ 7.4, 7.5). |
 | F-36 (note) | Rule for the mobile passkey provider: trust only the origin the operating system supplies (§ 9.7). |
 | F-37 (note) | The README says there is no external audit. A paid review or a bug bounty before 1.0 is a maintainer's decision (E15) (§ 2.3 L7, 14). |
@@ -121,9 +121,9 @@ One principle governs the numbers below: **whoever has the server's database and
 - **SRI and CSP do not protect against this.** The HTML with the integrity hashes comes from the same server as the scripts. They help against injected code (XSS) and against third-party CDNs, and we have no external origins.
 - Countermeasures that do work against XSS and misconfiguration:
   - the web vault lives on its **own origin** (its own hostname), separate from the admin panel and other vole-kit pages (XSS in the admin panel would otherwise be XSS in the vault);
-  - a full header list (§ 12);
-  - the administrator can turn off the web vault.
+  - a full header list (§ 12).
 - The **real** protection for those who fear the operator is the browser extension and the apps. They are recommended.
+- **Planned, not yet available:** a switch that lets the administrator turn the web vault off, so that the server delivers no web vault code and only the API remains. No such switch exists in this release. Today the web vault is always served, and setup, recovery, the device list and export are done in it, so the trust caveat above applies to every deployment (§ 8.8).
 - **After v1:** an installable PWA with a service worker that pins the release by hash and requires confirmation for new code, and a hash check in the browser extension against the signed release list.
 
 ### 2.5 Metadata the server sees
@@ -846,6 +846,8 @@ These are written down on purpose. None of them loses a stored item silently. Wh
 - An import that sends batches does not meet the 120 operations per minute of one device: it runs in an import window (§ 8.2). Ordinary changes made at the same time do.
 - The calm notice about a failed checkpoint upload goes away when a later upload goes through. It does not tell a failure that keeps coming (an upload the server always refuses, for example when the entries are too large) from a passing one, so checkpoints could stay unstored while the notice comes and goes. Escalating after several failures in a row comes later.
 - A vault that keeps failing in the retention job turns the daily pass into one every ten minutes, each with a warning in the log. With one vault this is acceptable; backing off (for example doubling up to a day) comes later.
+- **No switch to turn the web vault off** *(written down 2026-11-22)*. § 2.4 plans a switch that makes the server deliver no web vault code. It does not exist: the server always serves the web vault, and setup, recovery, the device list and export are done only there. Every deployment therefore has the web vault's trust caveat (§ 2.4), and the browser extension and the apps are the protection against a malicious operator.
+- **No per-account soft limit on sign-in** *(written down 2026-11-22)*. Only `login/start` is limited: 10 per minute per address and 5 per minute per account and address together (§ 11). `login/finish` is not counted, and nothing counts failed sign-ins per account across addresses, so guesses spread over many addresses (an IPv6 /64 holds countless ones) are not slowed. The secret key, which is on by default, and the master password rules are what stop online guessing. The planned soft limit with exponential backoff and no hard lockout is not built.
 - Outside this release: 10 000 items in the browser, one unlock page, clearing the clipboard, hiding revealed values; full rekey; a leader and follower model for tabs; the password-guess cost estimate (§ 6.4). A trusted proxy address on the default Docker bridge is refused by the server (it would be the address of every direct client of a published port).
 
 **Recovery, export and backup** *(known limits, written down 2026-11-21)*
@@ -985,7 +987,8 @@ This is the rule, even though the implementation is step B:
   - **With:** users and roles, invitation (*default choice*), 2FA and passkey for the **account**, notifications (new sign-in, failed backup, and the list in § 4.6; no e-mail is sent in this release, § 8.8, and a failed backup is told by the monitor, below). Phase 2 needs an **OPAQUE module**.
   - **Without:** API tokens, API documentation and MCP (maintainer's decision).
 - **Request limiting (F-34):**
-  - Sign-in: 10 per minute per IP, and limiting per `(account, IP)`. In addition a soft limit per account with exponential backoff, **without hard lockout** (otherwise anyone could lock out a known user). Unknown accounts get the same response.
+  - Sign-in, as built: `login/start` is limited to 10 per minute per address (`LOGIN_PER_ADDRESS`) and 5 per minute per account and address together (`LOGIN_PER_ACCOUNT_ADDRESS`), in a sliding window of 60 seconds (`WINDOW_SECS`), in `crates/ferret-server/src/auth/throttle.rs`. `register/start` is limited to 5 per minute per address. `login/finish` is not counted yet. A refused attempt is not counted, and a full table never refuses a caller, so there is no hard lockout (otherwise anyone could lock out a known user). Unknown accounts get the same response.
+  - **Planned, not built:** a soft limit per account across all addresses, with exponential backoff and still without hard lockout, so that guesses spread over many addresses against one account are slowed too. The auth library already has a key for it, but the server does not count it (§ 8.8).
   - Sync: operation-based (§ 8.2).
   - *Clarified 2026-11-21, device tokens:* the used `jti` values are limited per key, per account and in all (§ 7.6), and the quota is 20 live devices per account (§ 8.2).
   - *Clarified 2026-11-21, clocks:* a proof is accepted within 60 seconds of the server's clock. A device uses its own clock until the server refuses a proof with `dpop_invalid`, and then takes the `Date` of that answer once and retries once. A proxy that writes its own `Date` (nginx does) gives it the proxy's time then, while the server checks against its own, so one resync repairs a device whose clock is off, but a proxy and a server that differ by close to the 60 second window leave devices failing with `dpop_invalid`. The host of the proxy and the host of the server therefore both need a synchronised clock (NTP; `docs/OPERATIONS.md`).
