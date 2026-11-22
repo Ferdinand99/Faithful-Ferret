@@ -99,8 +99,8 @@ reason = "Building an item body from the JS draft: matches on the item type and 
 [[allow]]
 function = "^ferret_core_wasm::item::build_body$"
 instruction = "i32\\.div_u"
-max = 3
-reason = "Building an item body from the JS draft: matches on the item type and the field kind, and element-size divisions of the lists of fields and URLs; the field values are copied."
+max = 5
+reason = "APPROVED: Building an item body from the JS draft: matches on the item type and the field kind, and element-size divisions of the lists of fields, URLs and folder names, whose lengths are public counters. Field values and folder names are only copied and compared as text; none of them is used as an address or a divisor."
 
 [[allow]]
 function = "^ferret_core_wasm::item::normalize_otpauth$"
@@ -667,24 +667,6 @@ max = 1
 reason = "A match on whether a password policy was checked and which one, and whether a secret key is present: public flags. The password bytes are copied into the wiped buffer."
 
 [[allow]]
-function = "^ferret_core::text::unicode::normalize_password$"
-instruction = "br_table"
-max = 1
-reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations."
-
-[[allow]]
-function = "^ferret_core::text::unicode::normalize_password$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 2
-reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations."
-
-[[allow]]
-function = "^ferret_core::text::unicode::normalize_password$"
-instruction = "i32\\.load\\(static-table\\)"
-max = 1
-reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R1). The master password is normalized to NFKD and checked for assigned code points with the tables of unicode-normalization and unicode-general-category: lookups and branches keyed by the characters of the password, not constant time. Once per unlock, in the user's own worker. No table-free NFKD exists, and the result has to be byte-identical to other implementations."
-
-[[allow]]
 function = "^ferret_core::tlv::Tlv>::label$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3
@@ -831,8 +813,8 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 [[allow]]
 function = "^vault_encrypt_item externref shim multivalue shim$"
 instruction = "br_table"
-max = 7
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+max = 10
+reason = "APPROVED: The export shim of encrypt_item with the glue of the call inlined. The hits are serde-wasm-bindgen matching the field names and value kinds of the draft (now including the folders list) and the matches of the code it calls, whose entries are above. This is the structure of the call from JavaScript; no key byte decides a branch."
 
 [[allow]]
 function = "^vault_make_checkpoint externref shim multivalue shim$"

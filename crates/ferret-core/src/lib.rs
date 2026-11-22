@@ -74,7 +74,8 @@ pub use envelope::{
     parse_envelope, verify_item_tag,
 };
 pub use error::{
-    CheckpointFailure, Error, InputError, MalformedKind, MethodListFailure, PinnedField,
+    CheckpointFailure, Error, FolderError, InputError, MalformedKind, MethodListFailure,
+    PinnedField,
 };
 pub use export::{
     EXPORT_KDF, ExportDraft, ExportHeader, ExportItem, PlainExportOptions, export_begin,
