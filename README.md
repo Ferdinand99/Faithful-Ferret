@@ -12,13 +12,15 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.5.0).** The cryptographic core, the OPAQUE server library, the server and the
-> web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0. v0.5.0 adds
+> **Status: in development, pre-1.0 (v0.6.1).** The cryptographic core, the OPAQUE server library, the server and the
+> web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
-> backups with an encrypted copy off the machine (see [What works today](#what-works-today)). Next are devices with
-> bound tokens, then the Firefox extension with autofill, then a password generator and a health check. The browser
-> extension has started but is not usable yet. Ferret is a single-author project and is **not for real passwords
-> yet**. There is no external audit, and none is planned.
+> backups with an encrypted copy off the machine. v0.6.0 adds devices: clients other than the web vault sign in with
+> tokens that are bound to a key on the device, there is a device list with revoke in the web vault, and the core and
+> the WebAssembly binding can keep folder labels inside an encrypted item (see [What works today](#what-works-today)).
+> The Firefox extension with autofill and a new web vault layout, which will also bring folders to the interface, are
+> in progress and not released. After them come a password generator and a health check. Ferret is a single-author
+> project and is **not for real passwords yet**. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -27,7 +29,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.5.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.6.1 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -40,7 +42,8 @@ These are in v0.5.0 and are tested on a test instance. All of it is pre-1.0, and
 - **One-time sign-in code.** An administrator can issue a code that is good once, for 24 hours. It resets a sign-in
   only. It never opens a vault, and recovery still needs the recovery key and the sheet.
 - **Encrypted export.** Signing in again is required, and the file is encrypted with a separate export password, so
-  it does not open with the master password.
+  it does not open with the master password. For moving to another service, the web vault can also export plain
+  CSV or JSON. That file is not encrypted, and it needs the master password again and two separate confirmations.
 - **Import.** From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted `.avux`
   and CSV). Duplicates are not removed, and passkeys, folders, tags and attachments are not imported.
 - **Tabs.** The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the
@@ -50,6 +53,20 @@ These are in v0.5.0 and are tested on a test instance. All of it is pre-1.0, and
   `age` to a public key you own and copies it to an SFTP target, then reads it back to check it. A set is restored
   with `ferret backup restore`, which is safe to cut off and run again. A restore ends every session and raises
   the restore epoch so that devices notice an older state.
+- **Devices and bound tokens.** A client that is not the web vault, such as the browser extension will be, signs in
+  as a device: it makes its own key, signs in with the master password, and gets an access token and a refresh token
+  that only that key can use. Every request carries a proof of that key (DPoP, RFC 9449, ES256). An access token
+  lives 15 minutes, a refresh token is used once and replaced at every renewal, and using an old one after a short grace
+  period revokes the device. An account can have 20 devices with tokens. The web vault is not a device and keeps its cookie session.
+  No released client uses device sign-in yet; the Firefox extension will be the first.
+- **Device list and revoke.** The Devices page of the web vault lists the devices with tokens and the browsers that
+  are signed in, with name, platform and last seen. You can revoke one device, revoke every device and every other
+  session (this asks for the master password again), or forget the devices not seen for 7 days. Revoking makes the
+  tokens invalid at once and closes the device's live event stream. A change of master password, a recovery, a
+  redeemed sign-in code and a restore sign every device out. The database holds only token hashes, never a token.
+- **Folder labels in the core.** An item can carry folder names (up to 20, each 1 to 64 characters) inside its
+  encrypted body, through `ferret-core` and the WebAssembly binding, so the server never sees a name. There is no
+  folder interface in the web vault yet, and import still leaves folders out.
 - **Deployment.** The stack for real data publishes its two ports on the loopback address only and trusts exactly one
   proxy. Server images are built for amd64 and arm64 and signed with cosign, and the deploy script verifies the
   signature before it runs an image. The admin address is the entry point to the admin pages.
@@ -89,7 +106,10 @@ Wi-Fi and custom item types, sharing, and e-mail aliases as an optional add-on. 
 Security is the top priority of the project, and this is how the design handles it:
 
 - **Zero-knowledge.** The vault is encrypted and decrypted only on your devices. A valid server session does not
-  unlock the vault, and nothing on the server, including administration, can decrypt it.
+  unlock the vault, and nothing on the server, including administration, can decrypt it. The web vault is the
+  exception to trust: it trusts the server that delivers its code, so a malicious operator could serve a tampered
+  page. The browser extension and the apps are the real protection against that (see
+  [Honest limits](#honest-limits)).
 - **Master password and an optional secret key.** The master password unlocks the vault on a new device. A
   separate secret key can be added to protect against offline guessing if someone copies the server's database.
 - **Recovery you control.** Recovery uses a recovery key on an emergency sheet and an encrypted export that you keep.
@@ -108,9 +128,9 @@ Security is the top priority of the project, and this is how the design handles 
   not been independently audited by anyone. Making the design and code public is how others can check it, and
   [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a scoped starting point for anyone who wants to review the
   cryptographic core.
-- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. This
-  limitation will be documented, and administrators will be able to turn the web vault off and use the extension
-  and apps only.
+- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. The
+  server always serves the web vault, and there is no switch to turn it off. If you do not want to trust the server
+  that delivers the code, use the browser extension and the apps.
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
@@ -154,10 +174,11 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 2. The server and the shared Rust cryptographic core (first version done).
 3. The web vault (first version done, work continues).
 4. Safe sync, recovery and daily use. Safe sync is done (v0.3.0). Recovery with the emergency sheet, master password
-   change, encrypted export, import and backups are done (v0.5.0). Coming next: devices and tokens that are bound
-   to a device key.
+   change, encrypted export, import and backups are done (v0.5.0). Devices with tokens bound to a device key, and a
+   device list with revoke, are done (v0.6.0). Folder labels are in the core; the folder interface comes with the new
+   web vault layout, which is in progress.
 5. The browser extension and the iOS and Android apps. The extension has started, Firefox first, and is not usable
-   yet; autofill is the next step there. After that come the password generator and a health check, then the rest of
+   yet; autofill is in progress. After that come the password generator and a health check, then the rest of
    the 1.0 list. The apps are later.
 6. Hardening and 1.0 (later).
 

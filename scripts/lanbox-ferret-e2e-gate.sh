@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The end-to-end gate of the web vault milestone, on the LANBox. It drives the
+# The end-to-end gate of the web vault milestone, on the build host. It drives the
 # separate end-to-end stack (compose project ferret-e2e, scripts/lanbox-ferret-test.sh
 # e2e-up) with the Playwright scenarios of web/test/e2e-stack, and does the parts
 # that only the Docker host can do: search the server's data files, restart the
@@ -47,7 +47,7 @@
 #     formats and a thousand items, 25 backup, wipe and restore, 26 two tabs. Afterwards the data
 #     directory, the backup sets and the server log are searched for the secrets of the run.
 #
-# Env: FERRET_DOCKER_ARGS (default "--context unraid"), FERRET_E2E_SUFFIX and FERRET_E2E_SUBNET (another stack name
+# Env: FERRET_DOCKER_ARGS (default "--context lanbox"), FERRET_E2E_SUFFIX and FERRET_E2E_SUBNET (another stack name
 # and network, see scripts/lanbox-ferret-test.sh), FERRET_E2E_BROWSERS (default "chromium firefox webkit"),
 # DEV_RUN and DEV_TITLE (labels for the containers, see scripts/lanbox-ferret-test.sh).
 # For --parallel: FERRET_E2E_PARALLEL_SUBNETS (the first three octets of one network for each browser, in the

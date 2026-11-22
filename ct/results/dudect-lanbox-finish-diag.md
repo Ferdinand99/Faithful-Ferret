@@ -1,4 +1,4 @@
-# Diagnosis of the finish bench at opt-level 3 (LANBox)
+# Diagnosis of the finish bench at opt-level 3 (build host)
 
 Written from the container log of a throwaway build of `b7f2c54` plus four information benches (not committed), run once, 10^7
 measurements per bench, five rounds with the benches interleaved, `taskset -c 1`,

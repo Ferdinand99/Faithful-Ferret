@@ -3,7 +3,7 @@
 # nightly of fuzz/NIGHTLY, checked by scripts/coverage-check.mjs. It runs on
 # pull requests that touch the core, the server library or the code they
 # include from ct/harness, and once a week. The same measurement runs on the
-# LANBox with scripts/lanbox-coverage.sh.
+# build host with scripts/lanbox-coverage.sh.
 # Third-party actions are pinned by commit SHA.
 name: Coverage
 

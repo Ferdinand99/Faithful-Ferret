@@ -264,11 +264,11 @@ fn all_keys_must_admit_and_nothing_is_counted_for_a_refusal() {
 
 #[test]
 fn caller_from_reads_the_forwarded_address_or_the_peer() {
-    let peer: SocketAddr = "10.0.3.26:4000".parse().unwrap();
+    let peer: SocketAddr = "10.0.0.26:4000".parse().unwrap();
     let mut headers = HeaderMap::new();
     assert_eq!(
         caller_from(&headers, Some(peer)).ip,
-        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 3, 26)))
+        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 26)))
     );
     // `proxy_guard` has already removed these from untrusted peers, so what is
     // left is believed: the right-most entry, which the last proxy wrote.
@@ -405,7 +405,7 @@ fn a_key_in_use_is_kept_by_the_sweep() {
 
 #[test]
 fn only_the_last_forwarded_for_line_counts() {
-    let peer: SocketAddr = "10.0.3.26:4000".parse().unwrap();
+    let peer: SocketAddr = "10.0.0.26:4000".parse().unwrap();
     let mut headers = HeaderMap::new();
     // A proxy that adds a line of its own instead of appending to the client's.
     headers.append("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
@@ -417,7 +417,7 @@ fn only_the_last_forwarded_for_line_counts() {
 fn the_kit_is_shown_only_the_last_forwarded_for_line() {
     use ferret_server::auth::throttle::last_forwarded_line;
 
-    let peer: SocketAddr = "10.0.3.26:4000".parse().unwrap();
+    let peer: SocketAddr = "10.0.0.26:4000".parse().unwrap();
     let mut headers = HeaderMap::new();
     headers.append("x-real-ip", HeaderValue::from_static("203.0.113.8"));
     headers.append("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));

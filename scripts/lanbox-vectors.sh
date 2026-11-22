@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every test vector twice on the LANBox: through the Rust core (native)
+# Run every test vector twice on the build host: through the Rust core (native)
 # and through the WASM build in Node (the build with the `test-support`
 # feature, which exports the vector operations). Also checks that the
 # vectors are up to date (`vectorgen check`).

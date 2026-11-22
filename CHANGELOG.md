@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.6.0...v0.6.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** update url to 2.5.9 (RUSTSEC-2026-0592) ([#221](https://github.com/Ferdinand99/Faithful-Ferret/issues/221)) ([03532ab](https://github.com/Ferdinand99/Faithful-Ferret/commit/03532ab72497be2ac5d1c12273845f6f11cc948b))
+* **web:** ignore white space in the pasted setup text ([#217](https://github.com/Ferdinand99/Faithful-Ferret/issues/217)) ([3e3a079](https://github.com/Ferdinand99/Faithful-Ferret/commit/3e3a0795f7d55d3718ee8373753fb5d71d9a69b9))
+
 ## [0.6.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.5.0...v0.6.0) (2026-11-22)
 
 
@@ -99,7 +107,7 @@
 * **server-auth:** add the server library crate with shared types and errors ([#29](https://github.com/Ferdinand99/Faithful-Ferret/issues/29)) ([6dda678](https://github.com/Ferdinand99/Faithful-Ferret/commit/6dda678b38b8346a1268ca3ecacb1f6defc63f60))
 * **server-auth:** login name normalisation and made-up pre-login answers ([#35](https://github.com/Ferdinand99/Faithful-Ferret/issues/35)) ([ea12ed7](https://github.com/Ferdinand99/Faithful-Ferret/commit/ea12ed7601626503890c61dec1919b017c6bccbd))
 * **server:** add sessions, session extractors, rate limits, proxy trust and the architecture test ([#52](https://github.com/Ferdinand99/Faithful-Ferret/issues/52)) ([d3ff581](https://github.com/Ferdinand99/Faithful-Ferret/commit/d3ff581a2a930cf17406c35f0189c8899dad3d03))
-* **server:** add the Docker image, compose file and LANBox test deploy ([#57](https://github.com/Ferdinand99/Faithful-Ferret/issues/57)) ([7aa567f](https://github.com/Ferdinand99/Faithful-Ferret/commit/7aa567fc356231299173d2779217d6fe8504a812))
+* **server:** add the Docker image, compose file and build host test deploy ([#57](https://github.com/Ferdinand99/Faithful-Ferret/issues/57)) ([7aa567f](https://github.com/Ferdinand99/Faithful-Ferret/commit/7aa567fc356231299173d2779217d6fe8504a812))
 * **server:** add the end-to-end test stack with a test clock ([#61](https://github.com/Ferdinand99/Faithful-Ferret/issues/61)) ([4e6fc7c](https://github.com/Ferdinand99/Faithful-Ferret/commit/4e6fc7ce1f9c22e09a9cf840c7419ba554ac1fd8))
 * **server:** add the registration endpoints of the first administrator ([#56](https://github.com/Ferdinand99/Faithful-Ferret/issues/56)) ([cd31fe7](https://github.com/Ferdinand99/Faithful-Ferret/commit/cd31fe7d3eea6dbdd8205028ee492b2983f70ec1))
 * **server:** add the server skeleton, migrations and test harness ([#44](https://github.com/Ferdinand99/Faithful-Ferret/issues/44)) ([11eaccb](https://github.com/Ferdinand99/Faithful-Ferret/commit/11eaccb6edf97ab158bd43ea99791f78cc639654))

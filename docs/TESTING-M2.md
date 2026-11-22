@@ -6,7 +6,7 @@ restored from an older backup. This file lists what is tested automatically, how
 hand on the test deployment, and what is known not to be done. `docs/TESTING-M1.md` still describes the end-to-end
 stack and the first milestone's checks.
 
-Everything runs on the LANBox through the Docker context `lanbox`; nothing here starts Docker on a workstation. All data
+Everything runs on the build host through the Docker context `lanbox`; nothing here starts Docker on a workstation. All data
 on the test stacks is throwaway test data.
 
 ## Automated tests
@@ -63,7 +63,7 @@ are saved in `test-results/out/m2-shots/`. The rig's modes are covered without a
 
 ## Checks by hand on the test deployment
 
-The test deployment is `https://vault-test.opland.net` behind Pangolin. Use two different browsers, a made-up account
+The test deployment is `https://vault.example.test` (a placeholder for the private test address, see `docs/TESTING-M1.md`) behind Pangolin. Use two different browsers, a made-up account
 and no real passwords. Reload every open vault tab after a deploy: a tab loaded before it still runs the old scripts.
 
 1. **Live updates.** The status field shows "Live" in both browsers. A new item appears in the other browser within one
