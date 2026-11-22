@@ -2,7 +2,8 @@
 //!
 //! Spec: Fase 1 § 5.2: what crosses into the interface
 //! holds no private key, no PRF seed, no TOTP address and no value of a
-//! hidden field. The secrets are fetched one at a time on request.
+//! hidden field and no earlier password (only its date). The secrets are
+//! fetched one at a time on request.
 
 use super::body::{ItemBody, ItemType};
 
@@ -73,6 +74,16 @@ pub struct ItemView {
     /// The folder names, in the order they are stored (empty for an item
     /// in no folder). See [`ItemBody::folders`].
     pub folders: Vec<String>,
+    /// The earlier passwords, newest first: when each stopped being the
+    /// password, never the value. See [`ItemBody::password_history`].
+    pub password_history: Vec<PasswordHistoryView>,
+}
+
+/// An earlier password as the interface sees it: its date only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PasswordHistoryView {
+    /// When it stopped being the password, unix milliseconds.
+    pub until: u64,
 }
 
 impl ItemBody {
@@ -113,6 +124,11 @@ impl ItemBody {
             device: self.device.clone(),
             read_only: self.is_read_only(),
             folders: self.folders(),
+            password_history: self
+                .password_history_refs()
+                .into_iter()
+                .map(|(_, until)| PasswordHistoryView { until })
+                .collect(),
         }
     }
 }

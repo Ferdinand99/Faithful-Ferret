@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "./test-support.mjs";
 import {
   acceptedLicenses,
   adaptedEntries,
+  dataEntries,
   fillLines,
   fillTemplate,
   group,
@@ -356,6 +357,56 @@ describe("adaptedEntries", () => {
     expect(entries.map((e) => e.label).join(" | ")).toContain("AliasVault CSV parser");
     expect(entries.map((e) => e.label).join(" | ")).toContain("Bitwarden export formats");
     for (const e of entries) expect(e.text).toContain("END OF TERMS AND CONDITIONS");
+  });
+});
+
+describe("dataEntries", () => {
+  const files = {
+    "d/list.txt": "11111\tabacus\n",
+    "d/words.txt": "abacus\n",
+    LIC: "Creative Commons licence text.\n",
+  };
+  const readFile = (path) => {
+    if (!(path in files)) throw new Error("no such file");
+    return files[path];
+  };
+  const entry = {
+    name: "A word list", origin: "https://x.test/dice", source: "https://x.test/list.txt", license: "CC-BY-3.0-US",
+    licenseFile: "LIC", copyright: "The X Foundation", files: ["d/list.txt", "d/words.txt"],
+    note: "Modified by Faithful Ferret: the words alone.",
+  };
+  it("gives the entry with the licence text, and asks no header of a data file", () => {
+    const [d] = dataEntries({ data: [entry] }, readFile);
+    expect(d.licenseId).toBe("CC-BY-3.0-US");
+    expect(d.text).toBe("Creative Commons licence text.");
+    expect(d.files).toEqual(["d/list.txt", "d/words.txt"]);
+    expect(dataEntries({}, readFile)).toHaveLength(0);
+  });
+  it("fails for an incomplete entry, a note without the change or a missing file", () => {
+    expect(() => dataEntries({ data: [{ ...entry, copyright: "" }] }, readFile)).toThrow(/needs name/);
+    expect(() => dataEntries({ data: [{ ...entry, files: [] }] }, readFile)).toThrow(/needs name/);
+    expect(() => dataEntries({ data: [{ ...entry, note: "the words" }] }, readFile)).toThrow(/Modified by Faithful Ferret/);
+    expect(() => dataEntries({ data: [{ ...entry, files: ["d/none.txt"] }] }, readFile)).toThrow(/does not exist/);
+    expect(() => dataEntries({ data: [{ ...entry, licenseFile: "NONE" }] }, readFile)).toThrow(/no such file/);
+  });
+  it("is rendered last, with each licence text once", () => {
+    const rust = rustEntries([{ licenses: [{ id: "MIT", text: "MIT text", used_by: [{ crate: { name: "a", version: "1.0.0" } }] }] }]);
+    const data = dataEntries({ data: [entry, { ...entry, name: "Another list" }] }, readFile);
+    const text = render({ product: "P", rust, npm: [], fontLicense: "OFL text", data });
+    expect(text).toContain("Data from other projects (2 entries)");
+    expect(text).toContain("A word list\n  Origin: https://x.test/dice");
+    expect(text).toContain("  Copyright: The X Foundation");
+    expect(text.split("Creative Commons licence text.").length).toBe(2);
+    expect(text.indexOf("OFL text") < text.indexOf("Data from other projects")).toBe(true);
+  });
+  it("lists the EFF word list, and its files and licence text are in the repository", () => {
+    const entries = dataEntries(JSON.parse(read2("notices-extra.json")), read2);
+    const eff = entries.find((e) => e.label === "EFF large word list");
+    expect(eff.licenseId).toBe("CC-BY-3.0-US");
+    expect(eff.copyright).toBe("Electronic Frontier Foundation");
+    expect(eff.files).toContain("crates/ferret-core/src/generator/eff_large_words.txt");
+    expect(eff.text).toContain("Creative Commons Attribution 3.0 United States");
+    expect(read2("THIRD-PARTY-NOTICES")).toContain("Data from other projects (1 entry)");
   });
 });
 

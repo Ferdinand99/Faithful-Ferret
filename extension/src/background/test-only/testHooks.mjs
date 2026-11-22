@@ -181,6 +181,13 @@ export function install({ browser, runtime, coreHost, now, engine = () => null }
       lockAt: (await browser.storage.session.get("lock_at")).lock_at ?? null,
     }),
     summary: async () => summarize(await log.read()),
+    // The items of the open vault as the sync engine lists them: their ids and revisions, for a test that checks that
+    // nothing was written (no name, user name, address or password: a changed password changes the revision).
+    vault: () => {
+      const running = engine();
+      if (running === null) return { running: false, rows: [] };
+      return { running: true, rows: running.list().map((/** @type {{ id: string, rev: number }} */ item) => `${item.id}:${item.rev}`).sort() };
+    },
     // What the background page itself can do (it is not the same as an extension page for every API).
     probe: () => ({
       // The control for the CSP of the extension pages: no eval, so this has to throw.

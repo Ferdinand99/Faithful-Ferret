@@ -1,0 +1,29 @@
+{
+  "id": "hidden-zero-size-nl",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/hidden-zero-size-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#who",
+      "text": "Anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#trap"
+  ],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,31 @@
+{
+  "id": "tamper-synthetic-nl",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/tamper-synthetic-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "wait": 3500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,32 @@
+{
+  "id": "insecure-http-nb",
+  "class": "negative",
+  "category": "insecure",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "scheme": "http",
+  "path": "/insecure-http-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!insecureht-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

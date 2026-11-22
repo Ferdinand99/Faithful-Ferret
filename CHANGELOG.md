@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.7.0...v0.8.0) (2026-11-22)
+
+
+### Features
+
+* **core:** password generator, field comparison and password history ([#249](https://github.com/Ferdinand99/Faithful-Ferret/issues/249)) ([3c511e7](https://github.com/Ferdinand99/Faithful-Ferret/commit/3c511e77ca92c8ca568bd6f34638ac3bf413205b))
+* **ext:** automatic updates for the signed release build ([#244](https://github.com/Ferdinand99/Faithful-Ferret/issues/244)) ([926dd01](https://github.com/Ferdinand99/Faithful-Ferret/commit/926dd01609c35a98b4afde9e5dccbbbc3ec2d912))
+* **ext:** save build flag, capture rules in the design, and copy and sign-out follow-ups ([#247](https://github.com/Ferdinand99/Faithful-Ferret/issues/247)) ([52ec8a4](https://github.com/Ferdinand99/Faithful-Ferret/commit/52ec8a45c6aea816304bdbd959c4b01601c6fd85))
+
 ## [0.7.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.6.1...v0.7.0) (2026-11-22)
 
 

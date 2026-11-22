@@ -8,9 +8,13 @@
 # with `include_passkeys` the passkey keys). It needs the one-time token of
 # `UnlockJob.reauth_grant`, which only a fresh sign-in with the master password
 # makes; the secrets-walk test checks that it refuses without one.
+#
+# `reveal_password_history` shows one earlier password of one item (the web
+# vault's "Previous passwords"), the same kind of secret as `reveal_item_field`.
 reveal_emergency_sheet
 reveal_item_field
 reveal_item_notes
+reveal_password_history
 reveal_plain_export
 reveal_recovery_code
 reveal_secret_key_code

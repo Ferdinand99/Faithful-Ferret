@@ -1,0 +1,37 @@
+{
+  "id": "lookalike-homograph-de",
+  "class": "special",
+  "category": "lookalike",
+  "lang": "de",
+  "host": "login.xn--exmple-4nf.net",
+  "path": "/lookalike-homograph-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "{{password:login}}"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [],
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://login.xn--exmple-4nf.net",
+      "reuse": true
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

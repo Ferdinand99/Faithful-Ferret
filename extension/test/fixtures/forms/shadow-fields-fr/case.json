@@ -1,0 +1,42 @@
+{
+  "id": "shadow-fields-fr",
+  "class": "positive",
+  "category": "shadow",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/shadow-fields-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!shadowfiel-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "update",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

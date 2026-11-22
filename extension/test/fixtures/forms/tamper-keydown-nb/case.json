@@ -1,0 +1,35 @@
+{
+  "id": "tamper-keydown-nb",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/tamper-keydown-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "abcdefgh"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

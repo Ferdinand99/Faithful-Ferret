@@ -714,6 +714,39 @@ const MATCHES: &[MatchRow] = &[
     ("http://[::1]:3000", "host", "http://[::1]:3000/x", "host"),
     ("http://[::1]", "host", "http://[0:0:0:0:0:0:0:1]", "host"),
     ("http://[::1]", "host", "http://[::2]", "none"),
+    // --- exact: how the path is percent-encoded, pinned for later versions
+    // of `url`. `^` is in the path percent-encode set, so `a^b` is `a%5Eb`;
+    // `|` is not, so `a|b` stays as it is and is not `a%7Cb`.
+    (
+        "https://example.com/a^b",
+        "exact",
+        "https://example.com/a%5Eb",
+        "exact",
+    ),
+    (
+        "https://example.com/a%5Eb",
+        "exact",
+        "https://example.com/a^b",
+        "exact",
+    ),
+    (
+        "https://example.com/a|b",
+        "exact",
+        "https://example.com/a%7Cb",
+        "none",
+    ),
+    (
+        "https://example.com/a%7Cb",
+        "exact",
+        "https://example.com/a|b",
+        "none",
+    ),
+    (
+        "https://example.com/a|b",
+        "exact",
+        "https://example.com/a|b",
+        "exact",
+    ),
 ];
 
 /// `(page address, Some((origin, scheme, host, port)))`, or `None` when it has

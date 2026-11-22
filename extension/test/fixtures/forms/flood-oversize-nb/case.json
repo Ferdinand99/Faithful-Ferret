@@ -1,0 +1,36 @@
+{
+  "id": "flood-oversize-nb",
+  "class": "negative",
+  "category": "flood",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/flood-oversize-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Pw1!kT9x",
+      "repeat": 200
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trusted input self-test, frame</title>
+</head>
+<body>
+<input id="framed" type="text" aria-label="framed">
+<script>
+var log = [];
+["keydown", "keypress", "input"].forEach(function (type) {
+  document.addEventListener(type, function (e) {
+    log.push({ where: e.composedPath()[0].id, type: type, trusted: e.isTrusted });
+    document.documentElement.setAttribute("data-seen", JSON.stringify(log));
+  }, true);
+});
+</script>
+</body>
+</html>

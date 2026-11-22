@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 440px; color: #111; background: #fff; }
+label { display: block; margin: 8px 0 2px; }
+input, select, textarea, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+input[type=checkbox], input[type=radio] { width: auto; }
+button { width: auto; padding: 6px 14px; }
+fieldset { border: 1px solid #bbb; margin: 8px 0; }
+.row { margin: 8px 0; }
+.small { font-size: 13px; color: #555; }
+.btn { display: inline-block; padding: 6px 14px; border: 1px solid #333; border-radius: 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Sign in</h1>
+<div id="box"><label for="u">User name</label>
+<input id="u" name="username" type="text" autocomplete="username">
+<label for="p">Password</label>
+<input id="p" name="password" type="password" autocomplete="current-password">
+<div class="row"><span id="go" class="btn" role="button" tabindex="0" onclick="location.assign('/static/login-done.html')">Sign in</span></div></div>
+</body>
+</html>

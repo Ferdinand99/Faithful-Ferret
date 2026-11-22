@@ -161,6 +161,31 @@
 // name, and the A-label next to it when they differ. An address that is no
 // web address is `malformed_origin` for `page_origin` and `display_host`.
 //
+// Generator: `generate_password({ length, lower, upper, digits, symbols,
+// min_each, avoid_ambiguous })` and `generate_passphrase({ words, separator,
+// capitalize, number })` resolve `{ value, bits }`, a new password or
+// passphrase (EFF large word list) from the core and its entropy estimate for
+// display. They need no vault. Every key is required; options out of range are
+// `generator_options`. Nothing outside the core makes a password.
+//
+// Comparing a field: `vault.item_field_equals(handle, fieldId, candidate)`
+// resolves `true` when the first field of the open item with that id holds
+// exactly the UTF-8 bytes of `candidate` (no normalisation), compared in
+// constant time inside WASM, and `false` otherwise; the field is never sent
+// back. `vault.items_with_field_value(handles, fieldId, candidate)` resolves
+// the handles among `handles` for which it is `true`, in their order. A
+// candidate over 4 KiB is `too_large`, one with a lone surrogate
+// `invalid_input`. The binding wipes its copy of the candidate; the JavaScript
+// string cannot be wiped.
+//
+// Earlier passwords: `item_view` has `password_history: [{ until }]`, newest
+// first, at most five, the dates only; `vault.reveal_password_history(handle,
+// index)` resolves one value, on the user's request. An edit draft with
+// `keep_password_history: true` moves the password it replaces (the field
+// with the id `password`) into the history inside WASM, dated `nowMs`; an
+// unchanged password adds nothing, and the draft has no key for an earlier
+// password.
+//
 // A new recovery key: `vault.renew_recovery(pinned, currentRecoveryWrap,
 // manifestRow)` resolves `{ wrap, pk_r, manifest, pinned }`. The new key stays
 // in the worker: show it with `vault.reveal_recovery_code()`, have it typed back

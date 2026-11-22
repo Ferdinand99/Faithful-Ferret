@@ -1,0 +1,29 @@
+{
+  "id": "hidden-honeypot-nb",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/hidden-honeypot-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#who",
+      "text": "Anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#trap"
+  ],
+  "fields": {},
+  "source": "own"
+}

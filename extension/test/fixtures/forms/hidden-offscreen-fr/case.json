@@ -1,0 +1,29 @@
+{
+  "id": "hidden-offscreen-fr",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/hidden-offscreen-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#who",
+      "text": "Anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#trap"
+  ],
+  "fields": {},
+  "source": "own"
+}

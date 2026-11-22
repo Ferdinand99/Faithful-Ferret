@@ -15,6 +15,8 @@
 //! * `matching`: which open items belong to a page (`Vault.match_page`, which
 //!   reads the saved addresses only) and the page address functions
 //!   `page_origin`, `same_site` and `display_host`.
+//! * `generator`: `generate_password` and `generate_passphrase`, the core's
+//!   generator; they need no vault.
 //! * The functions in this file need no state.
 //!
 //! Failures are JavaScript `Error`s whose `message` and `code` are a stable
@@ -32,6 +34,7 @@
 mod convert;
 mod error;
 mod export;
+mod generator;
 mod item;
 mod job;
 mod matching;
@@ -43,6 +46,7 @@ mod vault;
 mod vector_ops;
 
 pub use export::{argon2_export_key, import_header};
+pub use generator::{generate_passphrase, generate_password};
 pub use job::UnlockJob;
 pub use matching::{display_host, page_origin, same_site};
 pub use vault::Vault;

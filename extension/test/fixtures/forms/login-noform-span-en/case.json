@@ -1,0 +1,42 @@
+{
+  "id": "login-noform-span-en",
+  "class": "positive",
+  "category": "login-noform",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/login-noform-span-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!loginnofor-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "update",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -5,6 +5,7 @@
 
 pub mod body;
 pub mod folders;
+pub mod history;
 pub mod manifest;
 pub mod pad;
 pub mod url_match;
@@ -12,11 +13,14 @@ pub mod view;
 
 pub use body::{Field, FieldKind, ItemBody, ItemType, Passkey, Totp, UrlEntry, UrlMatch};
 pub use folders::{FOLDERS_KEY, MAX_FOLDER_CHARS, MAX_FOLDERS, normalize_folders, same_folder};
+pub use history::{
+    MAX_PASSWORD_HISTORY, PASSWORD_FIELD_ID, PASSWORD_HISTORY_KEY, PasswordHistoryEntry,
+};
 pub use manifest::{Manifest, ManifestEntry};
 pub use url_match::{
     DisplayHost, PageOrigin, UrlMatchResult, display_host, page_origin, same_site, url_match,
 };
-pub use view::{FieldView, ItemView, PasskeyView, UrlView};
+pub use view::{FieldView, ItemView, PasskeyView, PasswordHistoryView, UrlView};
 
 /// A decrypted item and whether it may be written back.
 #[derive(Clone, PartialEq, Eq, Debug)]

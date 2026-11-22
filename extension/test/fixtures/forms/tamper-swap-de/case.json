@@ -1,0 +1,35 @@
+{
+  "id": "tamper-swap-de",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/tamper-swap-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!tamperswap-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

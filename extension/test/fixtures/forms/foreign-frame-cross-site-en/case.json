@@ -1,0 +1,39 @@
+{
+  "id": "foreign-frame-cross-site-en",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/foreign-frame-cross-site-en/",
+  "frame": {
+    "id": "#login-frame",
+    "host": "forms-evil.test",
+    "path": "/foreign-frame-cross-site-en/inner.html",
+    "kind": "foreign"
+  },
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!foreign-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#u",
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

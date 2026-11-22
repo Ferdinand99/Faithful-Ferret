@@ -71,6 +71,16 @@ pub(crate) struct ViewDto<'a> {
     /// The folder names in the order they are stored; `[]` for an item in no
     /// folder (also every item written before folders existed).
     folders: &'a [String],
+    /// The earlier passwords, newest first: `[{ until }]`, the date each
+    /// stopped being the password and never its value; `[]` for an item
+    /// without history.
+    password_history: Vec<HistoryViewDto>,
+}
+
+/// An earlier password in the view: its date only.
+#[derive(Serialize)]
+struct HistoryViewDto {
+    until: u64,
 }
 
 impl<'a> ViewDto<'a> {
@@ -118,6 +128,11 @@ impl<'a> ViewDto<'a> {
             device: v.device.as_deref(),
             read_only: v.read_only,
             folders: &v.folders,
+            password_history: v
+                .password_history
+                .iter()
+                .map(|h| HistoryViewDto { until: h.until })
+                .collect(),
         }
     }
 }
@@ -177,6 +192,15 @@ pub(crate) struct PasskeyDraft {
 /// ignored; a break is `folder_empty`, `folder_too_long`,
 /// `folder_bad_character`, `folder_too_many` or `folder_duplicate`, and
 /// nothing is sealed.
+///
+/// `keep_password_history: true` on an edit keeps the password that the edit
+/// replaces: when the field with the id `password` had a value and the draft
+/// leaves another value there (or removes the field), the old value goes to
+/// the front of the item's earlier passwords (at most five, newest first,
+/// dated `now_ms`). The binding moves it from the open body to the new one;
+/// it never passes through JavaScript, and the draft has no key for an
+/// earlier password. On a new item, or when the password is unchanged, the
+/// flag does nothing.
 #[derive(Default, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DraftDto {
@@ -206,6 +230,8 @@ pub(crate) struct DraftDto {
     remove_passkey: bool,
     #[serde(default)]
     folders: Option<Vec<String>>,
+    #[serde(default)]
+    keep_password_history: bool,
 }
 
 impl DraftDto {
@@ -365,6 +391,12 @@ pub(crate) fn build_body(
         body.set_folders(names)?;
     }
 
+    if draft.keep_password_history
+        && let Some(prev) = existing
+    {
+        body.keep_replaced_password(prev, now_ms)?;
+    }
+
     body.modified = now_ms;
     Ok(body)
 }
@@ -504,5 +536,6 @@ impl Shaped for DraftDto {
         ("passkey", &PasskeyDraft::SHAPE),
         ("remove_passkey", &ANY),
         ("folders", &Shape::List(&ANY)),
+        ("keep_password_history", &ANY),
     ]);
 }

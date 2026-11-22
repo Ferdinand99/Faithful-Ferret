@@ -1,0 +1,42 @@
+{
+  "id": "controlled-trim-nl",
+  "class": "positive",
+  "category": "controlled",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/controlled-trim-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "ola"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!controlled-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "update",
+      "username": "ola",
+      "password_from": "#p",
+      "origin": "https://forms.example.net",
+      "target": "forms"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

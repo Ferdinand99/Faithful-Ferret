@@ -1,0 +1,31 @@
+{
+  "id": "tamper-planted-en",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/tamper-planted-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

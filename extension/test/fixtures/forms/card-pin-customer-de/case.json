@@ -1,0 +1,35 @@
+{
+  "id": "card-pin-customer-de",
+  "class": "negative",
+  "category": "card",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/card-pin-customer-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#cust",
+      "text": "10482211"
+    },
+    {
+      "type": "#pin",
+      "text": "4821"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#pin"
+  ],
+  "fields": {
+    "#pin": "pin"
+  },
+  "source": "own"
+}

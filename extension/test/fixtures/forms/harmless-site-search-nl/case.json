@@ -1,0 +1,31 @@
+{
+  "id": "harmless-site-search-nl",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/harmless-site-search-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#q",
+      "text": "tuinstoelen"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#q"
+  ],
+  "fields": {
+    "#q": "search"
+  },
+  "source": "own"
+}

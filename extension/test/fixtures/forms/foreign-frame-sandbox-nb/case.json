@@ -1,0 +1,39 @@
+{
+  "id": "foreign-frame-sandbox-nb",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/foreign-frame-sandbox-nb/",
+  "frame": {
+    "id": "#login-frame",
+    "host": "forms.example.net",
+    "path": "/foreign-frame-sandbox-nb/inner.html",
+    "kind": "sandbox"
+  },
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!foreign-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#u",
+    "#p"
+  ],
+  "fields": {},
+  "source": "own"
+}

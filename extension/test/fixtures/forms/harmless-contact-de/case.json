@@ -1,0 +1,35 @@
+{
+  "id": "harmless-contact-de",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/harmless-contact-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#name",
+      "text": "Anna Beispiel"
+    },
+    {
+      "type": "#mail",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#msg",
+      "text": "Hallo"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

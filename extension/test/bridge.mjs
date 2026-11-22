@@ -16,6 +16,9 @@ const ALLOWED = {
   "runtime.getPlatformInfo": () => browser.runtime.getPlatformInfo(),
   "permissions.getAll": () => browser.permissions.getAll(),
   "tabs.query": (/** @type {any[]} */ args) => browser.tabs.query(args[0] ?? {}),
+  // What the offers store of the background holds for a tab: the offers' metadata and the SHA-256 of each
+  // password, never a password. The extension keeps no offers yet, so the answer says there is nothing to read.
+  offers_peek: () => ({ available: false, offers: [] }),
 };
 
 /** What the registered command and the menu item saw. @type {Record<string, unknown>[]} */

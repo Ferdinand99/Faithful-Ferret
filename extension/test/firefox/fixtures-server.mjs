@@ -12,8 +12,14 @@
 // The adversarial test sites of test/fixtures/sites (phishing and clickjacking
 // pages) are served on three listeners: the main https port, a second https port
 // and plain http, so one host name can be tested on another port and over http.
+//
+// The detection corpus of test/fixtures/forms is served the same way, from any listed
+// host on any listener: `/<case id>/` is the case's index.html and `/<case id>/<file>`
+// another page or script of the case (GET, HEAD and POST, so a form may post to a page of
+// its own). `{{origin:<name>}}` in a file becomes the origin of a named origin of the
+// sites, with the run's ports.
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
@@ -23,6 +29,52 @@ import { findSite, siteById } from "../fixtures/sites/index.mjs";
 import { IP_HOSTS, originText } from "../fixtures/sites/origins.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/** The detection corpus (extension/test/fixtures/forms). */
+export const FORMS_DIR = resolve(here, "..", "fixtures", "forms");
+/** The set that is added to the repository later (a folder that does not exist is skipped). */
+const HOLDOUT_FORMS_DIR = resolve(here, "..", "fixtures", "forms-holdout");
+const FORM_FILE_TYPES = /** @type {Record<string, string>} */ ({
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+});
+
+/**
+ * The case folders of the corpus directories (a folder holds the pages of one case), by case id.
+ * A later directory does not replace an earlier one's case.
+ * @param {string[]} dirs
+ * @returns {Map<string, string>}
+ */
+export function listFormCases(dirs) {
+  /** @type {Map<string, string>} */
+  const cases = new Map();
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      const folder = join(dir, name);
+      if (/^[a-z0-9_][a-z0-9-]*$/.test(name) && statSync(folder).isDirectory() && !cases.has(name)) cases.set(name, folder);
+    }
+  }
+  return cases;
+}
+
+/**
+ * The file of a corpus request, or undefined: `/<id>/` or `/<id>/<file>` with a plain file name of a known type.
+ * @param {Map<string, string>} cases
+ * @param {string} path
+ * @returns {{ file: string, type: string } | undefined}
+ */
+export function formFile(cases, path) {
+  const m = /^\/([a-z0-9_][a-z0-9-]*)\/([a-z0-9][a-z0-9._-]*)?$/.exec(path);
+  if (!m) return undefined;
+  const folder = cases.get(m[1]);
+  if (!folder) return undefined;
+  const name = m[2] ?? "index.html";
+  const type = FORM_FILE_TYPES[name.slice(name.lastIndexOf("."))];
+  const file = join(folder, name);
+  return type && existsSync(file) && statSync(file).isFile() ? { file, type } : undefined;
+}
 
 /**
  * The host names in test/fixtures/hosts.json. A run against an end-to-end stack of its own
@@ -129,10 +181,12 @@ export function makeCertificates(dir, hosts) {
  * The runner uses 443, 8443 and 80, so the test sites have the same origins as
  * a real site (https://login.example.net/ has no port in it). Two listeners
  * cannot share a port.
- * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string }} [options]
+ * `forms` lists the corpus directories (default: the corpus of test/fixtures/forms and, where it exists, forms-holdout).
+ * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string, forms?: string[] }} [options]
  * @returns {Promise<Fixtures>}
  */
-export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir } = {}) {
+export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir, forms = [FORMS_DIR, HOLDOUT_FORMS_DIR] } = {}) {
+  const formCases = listFormCases(forms);
   const wanted = [port, altPort, httpPort].filter((p) => p !== 0);
   if (new Set(wanted).size !== wanted.length) throw new Error(`fixtures: two listeners want the same port (${port}, ${altPort}, ${httpPort})`);
   const work = dir ?? mkdtempSync(join(tmpdir(), "ferret-fixtures-"));
@@ -158,7 +212,13 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
     }
     const common = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
     const site = req.method === "GET" || req.method === "HEAD" ? findSite(listener, host, path) : undefined;
-    if (site) {
+    const form = req.method === "GET" || req.method === "HEAD" || req.method === "POST" ? formFile(formCases, path) : undefined;
+    if (form) {
+      // A form posts to a page of its own: the body is not needed.
+      req.resume();
+      const text = readFileSync(form.file, "utf8").replace(/\{\{origin:([A-Za-z]+)\}\}/g, (_, name) => originText(name, ports));
+      res.writeHead(200, { ...common, "content-type": form.type }).end(req.method === "HEAD" ? undefined : text);
+    } else if (site) {
       const html = site.render({ url: (origin, p = "/") => `${originText(origin, ports)}${p}` });
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(req.method === "HEAD" ? undefined : html);
     } else if (path === "/sse" && req.method === "GET") {

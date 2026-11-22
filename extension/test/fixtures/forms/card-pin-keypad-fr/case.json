@@ -1,0 +1,31 @@
+{
+  "id": "card-pin-keypad-fr",
+  "class": "negative",
+  "category": "card",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/card-pin-keypad-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#pin",
+      "text": "7391"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#pin"
+  ],
+  "fields": {
+    "#pin": "pin"
+  },
+  "source": "own"
+}

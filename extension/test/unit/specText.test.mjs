@@ -46,7 +46,7 @@ test("the_capture_and_write_rules_are_in_the_spec", () => {
     "It never runs on `http://` pages; a capture from a frame whose ancestors are not all same-site with the top, secure and not opaque, or whose frame the page hides, is dropped; the origin is taken from the browser, never from the page.",
     // Where the captured value is held, and for how long.
     "Ferret keeps the captured values only in the memory of the background page and drops them after at most five minutes, on every lock of the vault, and when the tab closes; they are never written to extension storage or a log and never sent to the popup or a content script.",
-    "Copies made by the browser's JavaScript engine are freed but cannot be wiped; the copy inside the core is wiped.",
+    "Copies made by the browser's JavaScript engine are freed but cannot be wiped; the copy inside the core is wiped, except that for a value with characters outside ASCII the start of it that the glue copies first may remain in freed WebAssembly memory.",
     // When an offer comes.
     "A login form leads to an offer only after the page navigated or the form went away and no password form is shown afterwards; a sign-up, change or reset form leads to an offer three seconds after the last input.",
     // Where it is shown.

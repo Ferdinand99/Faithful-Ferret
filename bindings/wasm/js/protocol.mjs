@@ -71,6 +71,8 @@ export const STATELESS = new Set([
   "page_origin",
   "same_site",
   "display_host",
+  "generate_password",
+  "generate_passphrase",
 ]);
 
 /**
@@ -209,6 +211,8 @@ export const U32_ARGS = {
   close_item: [[0, false]],
   item_view: [[0, false]],
   reveal_item_field: [[0, false], [1, false]],
+  reveal_password_history: [[0, false], [1, false]],
+  item_field_equals: [[0, false]],
   reveal_item_notes: [[0, false]],
   reveal_totp_secret: [[0, false]],
   totp_code: [[0, false]],
@@ -249,6 +253,11 @@ export const STRING_ARGS = {
   page_origin: [[0, false]],
   same_site: [[0, false], [1, false]],
   display_host: [[0, false]],
+  // The field id is public; the candidate is the value to compare (a secret
+  // the caller already holds), which must be a string without a lone
+  // surrogate (see WELL_FORMED_ARGS).
+  item_field_equals: [[1, false], [2, false]],
+  items_with_field_value: [[1, false], [2, false]],
 };
 
 /** Throws `invalid_input` unless the text arguments of a call are strings (or left out where allowed). */
@@ -261,6 +270,25 @@ export function assertStringArgs(method, args) {
 }
 
 /**
+ * Text arguments that are compared byte for byte in the core: a string with a
+ * lone surrogate is `invalid_input`. `wasm-bindgen` would turn the surrogate
+ * into U+FFFD without a word, and a candidate that is changed on the way in
+ * could equal a stored value that it is not.
+ */
+export const WELL_FORMED_ARGS = {
+  item_field_equals: [2],
+  items_with_field_value: [2],
+};
+
+/** Throws `invalid_input` for a lone surrogate in a text argument of `WELL_FORMED_ARGS`. */
+export function assertWellFormedArgs(method, args) {
+  for (const index of argsOf(WELL_FORMED_ARGS, method)) {
+    const v = args[index];
+    if (typeof v !== "string" || !isWellFormed(v)) throw new FerretError("invalid_input");
+  }
+}
+
+/**
  * The arguments that the Rust side takes as a list of `u32` (item handles).
  * `wasm-bindgen` copies a list into a `Uint32Array`, which turns `4294967297`
  * into `1` and `"3"` into `3`, so the list is checked here: an array (or a
@@ -268,6 +296,7 @@ export function assertStringArgs(method, args) {
  */
 export const U32_LIST_ARGS = {
   match_page: [1],
+  items_with_field_value: [0],
 };
 
 /** The most handles one call may list (the most items a vault keeps open). */
@@ -370,6 +399,7 @@ export function assertArgTypes(method, args) {
   assertU32Args(method, args);
   assertF64Args(method, args);
   assertStringArgs(method, args);
+  assertWellFormedArgs(method, args);
   assertU32ListArgs(method, args);
 }
 

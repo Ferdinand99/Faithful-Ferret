@@ -1249,6 +1249,48 @@ fn url_ops(method: &str, i: &Value) -> Result<Value, Error> {
     })
 }
 
+/// The generator operations (`generator.*`): the core functions that
+/// `generate_password` and `generate_passphrase` call, with the recorded
+/// draws instead of the operating system's, and `uniform_index` on its own.
+fn generator_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Error> {
+    let flag = |k: &str| i[k].as_bool().unwrap();
+    let small = |k: &str| i[k].as_u64().unwrap();
+    Ok(match method {
+        "generate_password" => {
+            let g = ferret_core::generate_password(
+                &ferret_core::PasswordOptions {
+                    length: u16::try_from(small("length")).unwrap(),
+                    lower: flag("lower"),
+                    upper: flag("upper"),
+                    digits: flag("digits"),
+                    symbols: flag("symbols"),
+                    min_each: u8::try_from(small("min_each")).unwrap(),
+                    avoid_ambiguous: flag("avoid_ambiguous"),
+                },
+                rng,
+            )?;
+            json!({ "value": g.value.as_str(), "bits": g.bits })
+        }
+        "generate_passphrase" => {
+            let separator = i["separator"].as_str().unwrap().chars().next().unwrap();
+            let g = ferret_core::generate_passphrase(
+                &ferret_core::PassphraseOptions {
+                    words: u8::try_from(small("words")).unwrap(),
+                    separator,
+                    capitalize: flag("capitalize"),
+                    number: flag("number"),
+                },
+                rng,
+            )?;
+            json!({ "value": g.value.as_str(), "bits": g.bits })
+        }
+        _ => {
+            let n = u32::try_from(small("n")).unwrap();
+            json!({ "index": ferret_core::testing::generator::uniform_index(n, rng)? })
+        }
+    })
+}
+
 fn dispatch(
     method: &str,
     op: &str,
@@ -1306,6 +1348,9 @@ fn dispatch(
                     .map(|rp| json!({ "rp_id": rp.as_str() }))
             }),
         "url_match" | "page_origin" | "same_site" | "display_host" => url_ops(method, i),
+        "generate_password" | "generate_passphrase" | "uniform_index" => {
+            generator_ops(method, i, rng)
+        }
         "passkey_create" | "passkey_get" | "passkey_prf" => passkey_ops(method, i, rng),
         _ => return Err(None),
     };
