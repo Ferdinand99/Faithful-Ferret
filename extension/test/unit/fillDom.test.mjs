@@ -650,10 +650,11 @@ test("a_newsletter_box_before_the_sign_in_form_gets_nothing", () => {
   assert.deepEqual(kinds(loose.begin()), ["username", "password"]);
   assert.deepEqual(fillBoth(loose, { news: loose.news, user: loose.user, pass: loose.pass }), { news: "", user: "alice", pass: "pw-1" });
 
-  // Everything directly under the body: the text field nearest the password is the user name.
+  // Everything directly under the body: the user name field nearest the password is the user name.
+  // (On the whole page an unnamed text field is never taken: see the password-only test below.)
   const flat = setup({}, (document) => {
     const news = addInput(document, document.body, { type: "email", name: "email" }, { top: 20 });
-    const user = addInput(document, document.body, { type: "text", name: "q1" }, { top: 100 });
+    const user = addInput(document, document.body, { type: "text", name: "login" }, { top: 100 });
     const pass = addInput(document, document.body, { type: "password" }, { top: 160 });
     return { news, user, pass };
   });
@@ -720,6 +721,107 @@ test("a_second_form_and_a_loose_code_field_outside_the_group_are_not_reported", 
     return { pass, code };
   });
   assert.deepEqual(kinds(same.begin()), ["password", "totp"]);
+});
+
+test("a_password_only_page_without_a_form_never_puts_the_user_name_into_a_search_box", () => {
+  // A second sign-in step without a form: only a password field, and around it the site's
+  // search box in every common shape and an unnamed text field. None of them is part of a
+  // sign-in, so the report has the password only and a user name goes nowhere.
+  /** @type {Array<[string, (document: any) => any]>} */
+  const searchBoxes = [
+    ["name q", (document) => addInput(document, document.body, { type: "text", name: "q" }, { top: 20 })],
+    ["type search", (document) => addInput(document, document.body, { type: "search", name: "query" }, { top: 20 })],
+    ["role searchbox", (document) => addInput(document, document.body, { type: "text", role: "searchbox", placeholder: "Search users" }, { top: 20 })],
+    ["in a search element", (document) => {
+      const box = document.body.append(document.createElement("search"));
+      return addInput(document, box, { type: "text", name: "user-search" }, { top: 20 });
+    }],
+    ["in role search", (document) => {
+      const box = document.body.append(document.createElement("div", { role: "search" }));
+      return addInput(document, box, { type: "email", name: "find" }, { top: 20 });
+    }],
+    ["in a search form", (document) => {
+      const form = document.body.append(document.createElement("form", { role: "search" }));
+      const input = addInput(document, form, { type: "text", name: "login-lookup" }, { top: 20 });
+      input.form = form;
+      return input;
+    }],
+  ];
+  for (const [shape, addSearch] of searchBoxes) {
+    const t = setup({}, (document) => {
+      const search = addSearch(document);
+      const note = addInput(document, document.body, { type: "text", name: "comment" }, { top: 60 });
+      const step = document.body.append(document.createElement("div"));
+      const pass = addInput(document, step, { type: "password" }, { top: 160 });
+      return { search, note, pass };
+    });
+    assert.deepEqual(kinds(t.begin()), ["password"], shape);
+    assert.deepEqual(t.fill(fillMessage({ field: "username", value: "alice" })), { request_id: "req-1", ok: false, reason: "wrong_kind" }, shape);
+    assert.equal(t.fill()?.ok, true, shape);
+    assert.deepEqual([nativeValue(t.search), nativeValue(t.note), nativeValue(t.pass)], ["", "", "s3cret"], shape);
+  }
+
+  // A search box and no form and no password: nothing to fill at all.
+  const only = setup({}, (document) => ({
+    search: addInput(document, document.body, { type: "text", name: "q", placeholder: "Search by user name or e-mail" }, { top: 20 }),
+  }));
+  assert.deepEqual(only.begin(), []);
+  assert.deepEqual(only.fill(fillMessage({ field: "username", value: "alice" })), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(only.search), "");
+
+  // A named user name field on the whole page still joins the password.
+  const named = setup({}, (document) => {
+    const user = addInput(document, document.body, { type: "email", autocomplete: "username" }, { top: 100 });
+    const step = document.body.append(document.createElement("div"));
+    const pass = addInput(document, step, { type: "password" }, { top: 160 });
+    return { user, pass };
+  });
+  assert.deepEqual(kinds(named.begin()), ["username", "password"]);
+  assert.deepEqual(fillBoth(named, { user: named.user, pass: named.pass }), { user: "alice", pass: "pw-1" });
+});
+
+test("the_group_is_checked_again_at_fill_time", () => {
+  // The page moves the reported user name into another form after the report.
+  const moved = setup({}, (document) => {
+    const login = formAt(document, document.body, "login", 100);
+    const other = document.body.append(document.createElement("form", { id: "other" }));
+    return { login, other };
+  });
+  assert.deepEqual(kinds(moved.begin()), ["username", "password"]);
+  moved.login.user.form = moved.other;
+  assert.deepEqual(moved.fill(fillMessage({ field: "username", value: "alice" })), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(moved.login.user), "");
+  // The password, still in its form, is filled.
+  assert.equal(moved.fill()?.ok, true);
+
+  // A form-less field that gains a form, or a field that loses its form.
+  const gained = setup({}, (document) => {
+    const main = document.body.append(document.createElement("main"));
+    const user = addInput(document, main, { type: "text", name: "username" }, { top: 100 });
+    const pass = addInput(document, main, { type: "password" }, { top: 160 });
+    const form = document.body.append(document.createElement("form"));
+    return { user, pass, form };
+  });
+  assert.deepEqual(kinds(gained.begin()), ["username", "password"]);
+  gained.pass.form = gained.form;
+  assert.deepEqual(gained.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(gained.pass), "");
+  const lost = setup();
+  lost.begin();
+  lost.pass.form = null;
+  assert.deepEqual(lost.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(lost.pass), "");
+
+  // The page turns the reported password field into one that sets a new password
+  // (a sign-up or change form): the stored password never goes into it.
+  const turned = setup();
+  turned.begin();
+  turned.pass.setAttribute("autocomplete", "new-password");
+  assert.deepEqual(turned.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(turned.pass), "");
+  turned.user.setAttribute("autocomplete", "username new-password");
+  assert.deepEqual(turned.fill(fillMessage({ field: "username", value: "alice" })), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  assert.equal(nativeValue(turned.user), "");
 });
 
 test("an_input_in_a_disabled_fieldset_is_not_filled", () => {
