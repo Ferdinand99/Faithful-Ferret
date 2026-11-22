@@ -546,3 +546,65 @@ test("every_sync_text_is_there_in_both_languages", async () => {
     for (const key of keys) assert.equal(typeof texts[key], "string", `${lang}: ${key}`);
   }
 });
+
+test("accounts_of_reads_the_account_ids_of_one_server_from_its_own_records", async () => {
+  const { load } = await pkg();
+  const { accountsOf } = await load("background/session.mjs");
+  const A = "a1".repeat(16);
+  const B = "b2".repeat(16);
+  const C = "c3".repeat(16);
+  /** The keys `[server, account]` of each store; other stores and other key shapes are there to be ignored. */
+  const keys = {
+    pinned: [[SERVER, A], [OTHER, C], [SERVER, "not-an-id"], "loose"],
+    sync_state: [[SERVER, B], [SERVER, A]],
+    device_secrets: [[`${SERVER}/`, C], [SERVER, B.toUpperCase()]],
+    settings: [[SERVER, C]],
+  };
+  /** @type {string[][]} */
+  const opened = [];
+  const db = {
+    db: {
+      transaction(/** @type {string[]} */ names, /** @type {string} */ mode) {
+        assert.equal(mode, "readonly", "nothing is written");
+        opened.push([...names]);
+        let pending = 0;
+        let done = false;
+        const tx = {
+          /** @type {null | (() => void)} */ oncomplete: null,
+          /** @type {null | (() => void)} */ onabort: null,
+          error: null,
+          abort() {},
+          objectStore: (/** @type {keyof typeof keys} */ name) => ({
+            getAllKeys() {
+              /** @type {any} */
+              const request = { result: undefined, onsuccess: null, onerror: null };
+              pending += 1;
+              setTimeout(() => {
+                request.result = keys[name];
+                pending -= 1;
+                request.onsuccess?.();
+                // Committed once no request is left (the work asks for the next store in the meantime).
+                setTimeout(() => {
+                  if (pending === 0 && !done) {
+                    done = true;
+                    tx.oncomplete?.();
+                  }
+                }, 0);
+              }, 0);
+              return request;
+            },
+          }),
+        };
+        return tx;
+      },
+    },
+  };
+  // The ids under this server, from its pinned records, sync states and device secrets, sorted, each once. An entry
+  // of another server (also one stored under another spelling), a key that is no account id and the settings store
+  // are not read as accounts. The address asked for is taken as an origin.
+  assert.deepEqual(await accountsOf(db, SERVER), [A, B]);
+  assert.deepEqual(opened, [["pinned", "sync_state", "device_secrets"]]);
+  assert.deepEqual(await accountsOf(db, `${SERVER}/`), [A, B]);
+  assert.deepEqual(await accountsOf(db, OTHER), [C]);
+  assert.deepEqual(await accountsOf(db, "https://none.example.net"), []);
+});

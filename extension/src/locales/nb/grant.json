@@ -1,0 +1,10 @@
+{
+  "grant.title": "Gi Ferret tilgang i en ramme",
+  "grant.lead": "Siden du er på, viser et innloggingsskjema i en ramme fra",
+  "grant.why": "Den hører til samme nettsted som siden, men Ferret fyller bare inn der du har gitt tilgang. Gi tilgang én gang, så tilbyr Ferret elementene dine i den rammen fra nå av. Ferret fyller aldri inn i en ramme fra et annet nettsted.",
+  "grant.allow": "Gi Ferret tilgang til denne verten",
+  "grant.granted": "Tilgang gitt. Gå tilbake til siden og åpne Ferret igjen.",
+  "grant.refused": "Ingen tilgang. Ferret tilbyr ingenting i den rammen.",
+  "grant.error.origin_invalid": "Denne siden ble åpnet uten en gyldig adresse. Lukk den og prøv igjen fra Ferret.",
+  "grant.error.vault_locked": "Lås opp Ferret først, og prøv igjen fra siden."
+}

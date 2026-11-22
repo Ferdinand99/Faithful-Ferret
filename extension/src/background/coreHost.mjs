@@ -16,7 +16,8 @@
 // Boundary: an op gets the raw client. Production ops therefore live in this
 // file or in a background module that only the entry (main.mjs) imports and
 // passes in as `ops`: the session's ops (session.mjs), which hold the account
-// session over the same client, and the sync's ops (sync.mjs). The only other
+// session over the same client, the sync's ops (sync.mjs) and the matching's
+// ops (match.mjs). The only other
 // code that passes ops in is the test build's hooks (the test build only),
 // which a release does not contain.
 //
@@ -31,9 +32,9 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
 /**
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
- * `argon2_bench` and `measure_open` are only available in the test build, which
- * passes their implementations in (`ops`); in a release they are refused like any
- * other name.
+ * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe` and `match_bench`
+ * are only available in the test build, which passes their implementations in
+ * (`ops`); in a release they are refused like any other name.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -46,6 +47,13 @@ export const CORE_OPS = Object.freeze([
   "sync_state",
   "sync_retry",
   "forget_server",
+  "page_origin",
+  "same_site",
+  "display_host",
+  "candidates_match",
+  "frames_probe",
+  "item_probe",
+  "match_bench",
 ]);
 
 /**
