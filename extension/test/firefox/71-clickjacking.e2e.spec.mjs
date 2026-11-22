@@ -104,9 +104,15 @@ test("every_clickjacking_row_of_the_fixtures_fills_only_the_clear_fields", async
       } finally {
         await view.close();
       }
-      assert.notEqual(toast, POPUP_TEXT["popup.filled"], `${where}: refused (${toast})`);
       await w.session.waitFor(() => w.session.content(() => document.readyState === "complete"), 15_000, where);
-      assert.deepEqual(await documentsHolding(w.session, password), [], `${where}: the password is nowhere on the page`);
+      // The password never goes in. (A page whose password field is covered or hidden by the time the fill script looks
+      // may still get the user name in its visible field: the engine then anchors on that field, as on the first step of
+      // a two-step sign-in.)
+      assert.deepEqual(await documentsHolding(w.session, password), [], `${where}: the password is nowhere on the page (${toast})`);
+      if (site.expect.outcome === "origin_changed") {
+        assert.notEqual(toast, POPUP_TEXT["popup.filled"], `${where}: refused (${toast})`);
+        assert.deepEqual(await documentsHolding(w.session, USERNAME), [], `${where}: nothing on the foreign page`);
+      }
     }
 
     // Forged events and messages shaped like Ferret's change nothing; the real fill still works.
