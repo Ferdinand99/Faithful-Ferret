@@ -81,7 +81,7 @@ export function makeRoot(extra = {}) {
   const root = join(dir, "extension");
   const webRoot = join(dir, "web");
   mkdirSync(webRoot, { recursive: true });
-  for (const name of ["manifest", "src", "shared.json", "package.json"]) {
+  for (const name of ["manifest", "src", "icons", "shared.json", "package.json"]) {
     cpSync(join(extensionRoot, name), join(root, name), { recursive: true });
   }
   // The shared files come from the real web/src (the pages import them), so the copy is byte-equal to its source.
