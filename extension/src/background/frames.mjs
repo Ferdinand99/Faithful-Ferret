@@ -56,7 +56,9 @@ const ITEM_ID = /^[0-9a-f]{32}$/;
 const LOOPBACK = /^http:\/\/(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}|\[::1\])(?::\d{1,5})?$/;
 
 /**
- * @typedef {{ frameId: number, documentId?: string, url: string, origin: string }} FillableFrame
+ * @typedef {{ frameId: number, documentId?: string }} FrameRef one frame's document, as the browser names it
+ * @typedef {{ frameId: number, documentId?: string, url: string, origin: string, ancestors: FrameRef[] }} FillableFrame
+ *   `ancestors`: the frames above it, its parent first and the top last (none for the top)
  * @typedef {{
  *   page_origin(url: string): Promise<string>,
  *   same_site(a: string, b: string): Promise<boolean>,
@@ -161,13 +163,25 @@ export async function fillableFrames(tabId, { webNavigation, core }) {
   if (topOrigin === null) return [];
   const topSecure = isSecureOrigin(topOrigin);
 
-  /** @param {any} frame @param {string} origin @returns {FillableFrame} */
-  const entry = (frame, origin) => ({
+  /** @param {any} frame @returns {FrameRef} */
+  const refOf = (frame) => ({
     frameId: frame.frameId,
     ...(typeof frame.documentId === "string" && frame.documentId !== "" && frame.documentId.length <= 64 ? { documentId: frame.documentId } : {}),
-    url: frame.url,
-    origin,
   });
+  /**
+   * The frames above `frame`, its parent first, up to the top (a frame is offered only when that chain is whole).
+   * @param {any} frame @returns {FrameRef[]}
+   */
+  const ancestorsOf = (frame) => {
+    /** @type {FrameRef[]} */
+    const out = [];
+    for (let up = frame.frameId === 0 ? undefined : byId.get(frame.parentFrameId); up !== undefined && out.length < byId.size; up = up.frameId === 0 ? undefined : byId.get(up.parentFrameId)) {
+      out.push(refOf(up));
+    }
+    return out;
+  };
+  /** @param {any} frame @param {string} origin @returns {FillableFrame} */
+  const entry = (frame, origin) => ({ ...refOf(frame), url: frame.url, origin, ancestors: ancestorsOf(frame) });
 
   /** The verdict of each frame looked at: its origin when it may be offered items, else null. @type {Map<number, string | null>} */
   const verdicts = new Map([[0, topOrigin]]);
@@ -309,7 +323,14 @@ export async function candidates(tabId, { coreHost, frames, permissions, frameId
     })
   );
   /** The frames an item may be filled in, by id: only frames that were asked for and do not wait for a permission. */
-  const usable = new Map(asked.filter((f) => !f.waiting).map((f) => [f.frameId, /** @type {FillableFrame} */ ({ frameId: f.frameId, ...(f.documentId !== undefined ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin })]));
+  const usable = new Map(
+    asked
+      .filter((f) => !f.waiting)
+      .map((f) => [
+        f.frameId,
+        /** @type {FillableFrame} */ ({ frameId: f.frameId, ...(f.documentId !== undefined ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin, ancestors: f.ancestors }),
+      ]),
+  );
   /** @type {Candidate[]} */
   const items = [];
   for (const item of Array.isArray(reply?.items) ? reply.items : []) {

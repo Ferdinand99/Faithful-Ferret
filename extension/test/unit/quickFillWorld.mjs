@@ -28,7 +28,11 @@ const siteOf = (origin) => {
 };
 
 /**
- * @typedef {{ frameId: number, parentFrameId?: number, url: string, documentId?: string, build?: (document: any) => Record<string, any> }} FrameSpec
+ * @typedef {{
+ *   frameId: number, parentFrameId?: number, url: string, documentId?: string,
+ *   build?: (document: any) => Record<string, any>,
+ *   holder?: (element: any) => void,
+ * }} FrameSpec `holder` styles the element that holds the frame in its parent's page (a visible iframe by default)
  * @typedef {{ name?: string, urls: string[] }} ItemSpec
  */
 
@@ -112,6 +116,8 @@ export async function createWorld({ frames = [{ frameId: 0, url: PAGE }], items 
   let coreHost = null;
   /** Every answer of a frame to a value, in order. @type {Array<{ frameId: number, field: string, ok: boolean }>} */
   const fills = [];
+  /** The frame each holder element holds, as `runtime.getFrameId` says. @type {Map<any, number>} */
+  const holders = new Map();
   const sims = frames.map((spec) => {
     const page = createPage({ url: spec.url });
     const parts = spec.build ? spec.build(page.document) : {};
@@ -132,12 +138,29 @@ export async function createWorld({ frames = [{ frameId: 0, url: PAGE }], items 
       runtimeId: RUNTIME_ID,
       extensionBase: EXTENSION_BASE,
       targetOf: (id) => targets.get(id) ?? null,
+      frameIdOf: (element) => {
+        const id = holders.get(element);
+        if (id === undefined) throw new Error("not a frame");
+        return id;
+      },
       clock: () => clockMs,
     });
     const setField = (/** @type {string} */ field) => {
       lastField = field;
     };
-    return { spec, page, parts, engine, offered: Object.freeze({ begin: engine.begin, aim: engine.aim }), facts, setField };
+    return { spec, page, parts, engine, offered: Object.freeze({ begin: engine.begin, aim: engine.aim, where: engine.where, frameShown: engine.frameShown }), facts, setField };
+  });
+  // Each frame below the top has an iframe in its parent's page, shown beside the parent's own form.
+  sims.forEach((sim, i) => {
+    if (sim.spec.frameId === 0) return;
+    const parentId = sim.spec.parentFrameId ?? 0;
+    const parent = sims.find((s) => s.spec.frameId === parentId);
+    if (!parent) return;
+    const iframe = parent.page.document.createElement("iframe", { id: `frame-${sim.spec.frameId}` });
+    parent.page.document.body.append(iframe);
+    iframe.rect = { left: 400 + 420 * ((i - 1) % 2), top: 60 + 330 * Math.floor((i - 1) / 2), width: 400, height: 300 };
+    holders.set(iframe, sim.spec.frameId);
+    sim.spec.holder?.(iframe);
   });
   /** @param {any} target @param {any} [options] */
   const simOf = (target, options) => {

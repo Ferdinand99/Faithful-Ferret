@@ -30,6 +30,14 @@
 //   covered_after_report  the page is clear when the fill script reports its fields
 //                      and covers the password field after that (when the user
 //                      name is filled): the password is not filled
+//   frame_hidden       the entry matches the frame and is offered there, but the
+//                      page hides or covers the <iframe> itself (the frame cannot
+//                      see that from inside): the fill fails with frame_hidden
+//                      and nothing is filled anywhere
+//   frame_hidden_after_report  the frame is shown when the fill script reports
+//                      and when the user name goes in, and the page hides it
+//                      then: the fill fails with frame_hidden, the user name is
+//                      in the frame (`expect.user`), the password nowhere
 //   shows_host         the popup shows the host name, never the page's title
 //
 // `expect.domain_entry` and `expect.http_entry` say what the other entries do
@@ -343,6 +351,123 @@ add({
   render: ({ url }) => page({
     id: "framed-nested",
     body: `<h1>Welcome</h1>\n<iframe id="login-frame" title="Sign in" src="${esc(url("login", "/t/nested-login.html"))}"></iframe>`,
+  }),
+});
+
+// ------------------------------------ frames that the page hides or covers
+
+/**
+ * A same-site page with the entry's page in a frame that the page itself makes invisible or covers: the frame's own
+ * document looks clear from inside, so only a check of the <iframe> element in the page above it can refuse.
+ * @param {string} id
+ * @param {{ summary: string, reason: string, outcome?: string, css?: string, wrap?: (iframe: string) => string, frameStyle?: string }} options
+ */
+function framedTrick(id, { summary, reason, outcome = "frame_hidden", css = "", wrap = (iframe) => iframe, frameStyle }) {
+  add({
+    id, origin: "www", path: `/t/${id}.html`, summary,
+    expect: outcome === "fill_in_frame"
+      ? { outcome, domain_entry: "fill_in_frame", frame: "login-frame", frameOrigin: "login" }
+      : { outcome, reason, frame: "login-frame", frameOrigin: "login" },
+    render: ({ url }) => page({
+      id,
+      css,
+      body: `<h1>Welcome</h1>
+${wrap(`<iframe id="login-frame" title="Sign in" src="${esc(url("login", "/"))}"${frameStyle ? ` style="${esc(frameStyle)}"` : ""}></iframe>`)}`,
+    }),
+  });
+}
+
+framedTrick("framed-hidden-opacity", {
+  summary: "A same-site page with the entry's page in a frame whose <iframe> has opacity: 0: the frame looks clear from inside, and the user sees nothing.",
+  reason: "opacity",
+  frameStyle: "opacity: 0",
+});
+
+framedTrick("framed-hidden-visibility", {
+  summary: "A same-site page with the entry's page in a frame inside a parent with visibility: hidden: nothing of the frame is drawn.",
+  reason: "visibility",
+  wrap: (iframe) => `<div id="hostile-parent" style="visibility: hidden">${iframe}</div>`,
+});
+
+framedTrick("framed-hidden-offscreen", {
+  summary: "A same-site page with the entry's page in a frame placed far to the left of the page, out of the viewport.",
+  reason: "offscreen",
+  css: ".far-left { position: absolute; left: -10000px; top: 0; }",
+  wrap: (iframe) => `<div id="far-left" class="far-left">${iframe}</div>`,
+});
+
+framedTrick("framed-covered", {
+  summary: "A same-site page with the entry's page in a frame under a transparent element of the page: a click lands on the cover, not in the frame.",
+  reason: "covered",
+  css: ".over { position: relative; width: 422px; } .over iframe { margin: 0; } .cover { position: absolute; inset: 0; z-index: 10; background: transparent; }",
+  wrap: (iframe) => `<div class="over">${iframe}<div class="cover" id="cover"></div></div>`,
+});
+
+add({
+  id: "corner-login", origin: "login", path: "/t/corner-login.html",
+  summary: "The entry's own sign-in page with the form in its top left corner and nothing else (framed-covered-form frames it). Top-level it is a plain page and is filled.",
+  expect: { outcome: "fill", domain_entry: "fill", framedBy: "framed-covered-form" },
+  render: () => page({
+    id: "corner-login",
+    css: "body { margin: 0; } form { position: absolute; left: 16px; top: 16px; margin: 0; }",
+    body: loginForm(),
+  }),
+});
+
+add({
+  id: "framed-covered-form", origin: "www", path: "/t/framed-covered-form.html",
+  summary: "A same-site page with corner-login in a large frame (600 x 400) and a transparent element over the form's corner only: the frame's centre and quarter points stay clear, but a click on the form lands on the cover.",
+  expect: { outcome: "frame_hidden", reason: "covered", frame: "login-frame", frameOrigin: "login" },
+  render: ({ url }) => page({
+    id: "framed-covered-form",
+    css: ".over { position: relative; width: 602px; } .over iframe { margin: 0; width: 600px; height: 400px; } .cover { position: absolute; left: 8px; top: 8px; width: 264px; height: 84px; z-index: 10; background: transparent; }",
+    body: `<h1>Welcome</h1>
+<div class="over"><iframe id="login-frame" title="Sign in" src="${esc(url("login", "/t/corner-login.html"))}"></iframe><div class="cover" id="cover"></div></div>`,
+  }),
+});
+
+framedTrick("framed-visible", {
+  summary: "The control of the frame tricks: the same page and frame, shown and not covered: the frame is filled.",
+  reason: "none",
+  outcome: "fill_in_frame",
+  css: ".over { position: relative; width: 422px; } .over iframe { margin: 0; }",
+  wrap: (iframe) => `<div class="over">${iframe}</div>`,
+});
+
+add({
+  id: "late-hide-login", origin: "login", path: "/t/late-hide-login.html",
+  summary: "The entry's own sign-in page that tells the page above it when the user name gets a value (framed-late-hide hides the frame then). Top-level it is a plain page and is filled.",
+  expect: { outcome: "fill", domain_entry: "fill", framedBy: "framed-late-hide" },
+  render: () => page({
+    id: "late-hide-login",
+    body: `<h1>Example sign-in</h1>
+${loginForm()}
+<script>
+document.getElementById("login-user").addEventListener("input", function () {
+  if (window.parent !== window) window.parent.postMessage("fixture-user-filled", "*");
+});
+</script>`,
+  }),
+});
+
+add({
+  id: "framed-late-hide", origin: "www", path: "/t/framed-late-hide.html",
+  summary: "A same-site page whose frame (late-hide-login) is shown when the fill script reports and gets opacity: 0 once the user name has gone in, after the report and before the password. fixtureState() says whether the frame is hidden.",
+  expect: { outcome: "frame_hidden_after_report", reason: "opacity", frame: "login-frame", frameOrigin: "login", user: "login-user" },
+  render: ({ url }) => page({
+    id: "framed-late-hide",
+    body: `<h1>Welcome</h1>
+<iframe id="login-frame" title="Sign in" src="${esc(url("login", "/t/late-hide-login.html"))}"></iframe>
+<script>
+var hidden = false;
+var frame = document.getElementById("login-frame");
+window.addEventListener("message", function (event) {
+  if (event.source !== frame.contentWindow || event.data !== "fixture-user-filled") return;
+  frame.style.opacity = "0";
+  hidden = true;
+});
+window.fixtureState = function () { return { hidden: hidden }; };
+</script>`,
   }),
 });
 

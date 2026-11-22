@@ -52,6 +52,7 @@
   "popup.error.value_too_long": "Verdien er for lang til å fylles inn. Kopier den i stedet.",
   "popup.error.wrong_kind": "Feltet på siden er ikke den typen felt Ferret fyller med denne verdien.",
   "popup.error.covered": "Feltet er skjult eller dekket, så Ferret fylte det ikke.",
+  "popup.error.frame_hidden": "Innloggingsskjemaet ligger i en ramme som er skjult eller dekket på denne siden, så Ferret fylte det ikke.",
   "popup.error.vault_locked": "Hvelvet er låst. Lås det opp og prøv igjen.",
   "popup.error.not_filled": "Ingenting ble fylt inn.",
   "popup.error.no_site": "Dette elementet har ingen nettadresse å åpne.",

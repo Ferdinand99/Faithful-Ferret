@@ -41,7 +41,7 @@ async function worldOf(channel) {
 }
 
 /** The rows that 71-clickjacking checks (what the fields and the timing decide). */
-const CLICKJACKING = new Set(["fields", "turns_hostile", "covered_after_report", "origin_changed"]);
+const CLICKJACKING = new Set(["fields", "turns_hostile", "covered_after_report", "origin_changed", "frame_hidden", "frame_hidden_after_report"]);
 const PHISHING = SITES.filter((site) => !CLICKJACKING.has(site.expect.outcome) && site.expect.noise === undefined);
 /** The outcomes for which the popup offers the entry. */
 const OFFERED = new Set(["fill", "fill_in_frame", "offer_with_warning"]);

@@ -29,6 +29,11 @@ export const ITEMS = Object.freeze([
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** Whether an injection asks a document whether a frame of it is shown (inject.mjs `frameShownIn`). @param {any} injection */
+export const isFrameCheck = (injection) => typeof injection?.func === "function" && String(injection.func).includes("frameShown");
+/** Whether an injection asks a frame where its field is (inject.mjs `fieldPointsIn`). @param {any} injection */
+export const isFieldQuestion = (injection) => typeof injection?.func === "function" && String(injection.func).includes("api.where");
+
 /**
  * A port between a page and the background whose background end also has
  * `onDisconnect`, as the browser's: the page closing ends the session.
@@ -109,7 +114,10 @@ function viewOf(item) {
  * The world of the popup's item operations.
  * @param {{
  *   items?: ReadonlyArray<typeof ITEMS[number]>,
- *   frames?: Array<{ frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[] }>,
+ *   frames?: Array<{
+ *     frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[],
+ *     ancestors?: Array<{ frameId: number, documentId?: string }>,
+ *   }>,
  *   source?: boolean,
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
@@ -228,6 +236,22 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   const injections = [];
   /** Every message the background sent to a tab: tab, the decoded message, and where it went. @type {Array<{ tabId: number, message: any, options: any }>} */
   const pushed = [];
+  /**
+   * Whether a frame is shown in its parent document, as the fill script there answers (content/fill.mjs `frameShown`):
+   * a test changes `verdict` to play a page that hides or covers a frame. Every question is in `asked`.
+   */
+  const frameShown = {
+    verdict: (/** @type {number} */ _frameId, /** @type {string} */ _parentDocumentId) => "shown",
+    /** What a frame says of its field (content/fill.mjs `where`). */
+    where: (/** @type {string} */ _kind) => /** @type {any} */ ({ points: [[20, 20]] }),
+    /** @type {Array<{ frameId: number, documentId: string }>} */
+    asked: /** @type {Array<{ frameId: number, documentId: string }>} */ ([]),
+    /** Kinds a frame was asked about, in order. @type {string[]} */
+    kinds: /** @type {string[]} */ ([]),
+    /** A page that never answers: the frame questions (or the fill script's start) hang. */
+    hang: false,
+    hangBegin: false,
+  };
 
   /** A content script's message from a frame (the top's by default). @param {string} type @param {any} body @param {ReturnType<typeof frameSim>} [from] */
   const fromPage = (type, body, from = page) =>
@@ -242,6 +266,18 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       const sim = simOf(injection.target);
       if (sim === null) return [{ error: "no frame" }];
       if (injection.files) return [{ frameId: sim.sender.frameId }];
+      if (isFieldQuestion(injection)) {
+        if (frameShown.hang) return new Promise(() => {});
+        frameShown.kinds.push(injection.args[1]);
+        return [{ frameId: sim.sender.frameId, result: frameShown.where(injection.args[1]) }];
+      }
+      if (isFrameCheck(injection)) {
+        const [frameId, points] = injection.args;
+        frameShown.asked.push({ frameId, documentId: sim.sender.documentId });
+        const verdict = frameShown.verdict(frameId, sim.sender.documentId);
+        return [{ frameId: sim.sender.frameId, result: verdict === "shown" ? { verdict, points } : { verdict } }];
+      }
+      if (frameShown.hangBegin) return new Promise(() => {});
       const [requestId] = injection.args;
       if (sim.reports) {
         setTimeout(() => {
@@ -331,7 +367,14 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
                 name: item.name,
                 username: item.username === "" ? null : item.username,
                 how: "host",
-                frames: shown.filter((f) => f.itemIds.includes(item.id)).slice(0, 4).map((f) => ({ frameId: f.frameId, ...(f.documentId ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin })),
+                frames: shown.filter((f) => f.itemIds.includes(item.id)).slice(0, 4).map((f) => ({
+                  frameId: f.frameId,
+                  ...(f.documentId ? { documentId: f.documentId } : {}),
+                  url: f.url,
+                  origin: f.origin,
+                  // The documents above the frame (a frame of the top by default).
+                  ancestors: f.ancestors ?? (f.frameId === 0 ? [] : [{ frameId: 0, documentId: "doc-1" }]),
+                })),
               }))
               .filter((i) => i.frames.length > 0);
             return {
@@ -410,6 +453,9 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       return sim;
     },
     injections,
+    /** The injections that began a fill request (not the questions about a frame). */
+    begins: () => injections.filter((i) => i.func && !isFrameCheck(i) && !isFieldQuestion(i)),
+    frameShown,
     pushed,
     opened,
     written,
