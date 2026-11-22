@@ -257,7 +257,7 @@ test("compat_action_is_the_same_object_shape_in_both_variants", async () => {
 
 test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_adds_a_fixed_list", () => {
   /** The permissions that only the test variant has (test/test-parts). Remove an entry when the release gets it. */
-  const TEST_PERMISSIONS = ["clipboardWrite", "menus", "webNavigation"];
+  const TEST_PERMISSIONS = ["clipboardWrite"];
   const partsDir = join(extensionRoot, "manifest", "parts");
   const parts = readdirSync(partsDir).filter((n) => n.endsWith(".json")).map((n) => readJson(join(partsDir, n)));
   const fromParts = (/** @type {string} */ key) => parts.flatMap((p) => p[key] ?? []).sort();
@@ -267,7 +267,9 @@ test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_ad
     // The release is the base, the overlay and the parts, nothing from the test parts.
     assert.deepEqual(release.permissions, [...new Set(fromParts("permissions"))], `${mv}: release permissions are those of the parts`);
     assert.equal(release.options_ui, undefined, `${mv}: no options page in a release`);
-    assert.equal(release.commands, undefined, `${mv}: no command in a release`);
+    // The one command of a release is the fill shortcut.
+    assert.deepEqual(Object.keys(release.commands), ["fill-login"], `${mv}: only the fill shortcut in a release`);
+    assert.deepEqual(release.commands["fill-login"].suggested_key, { default: "Alt+Shift+L" });
     for (const key of ["content_scripts", "web_accessible_resources", "externally_connectable"]) assert.equal(release[key], undefined, key);
     assert.equal(release.browser_specific_settings.gecko.id, "ferret@hedgerow.tools");
     // The test variant: the release plus a named list, and its own pages and command.
@@ -278,6 +280,6 @@ test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_ad
     assert.deepEqual(optionalOf(release), ["https://*/*"], `${mv}: a release may ask for an https origin`);
     assert.deepEqual(optionalOf(test), ["https://*/*"], `${mv}: the test variant may ask for any https origin`);
     assert.equal(test.options_ui.page, "pages/test-only/options.html");
-    assert.ok(test.commands["ferret-test-command"]);
+    assert.deepEqual(Object.keys(test.commands).sort(), ["ferret-test-command", "fill-login"]);
   }
 });

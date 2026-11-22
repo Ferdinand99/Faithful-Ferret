@@ -408,6 +408,55 @@ ${this.log.slice(-4000)}`);
   }
 
   /**
+   * Opens the context menu on the element that `target` names, as `clickContextMenuItem`
+   * does, and returns the label and id of every item in it (also in a submenu), then
+   * closes it again without a click.
+   * @param {string} target
+   * @returns {Promise<Array<{ label: string | null, id: string | null, nested: boolean }>>}
+   */
+  async contextMenuItems(target) {
+    await this.#rightClick(target);
+    return this.chrome(async () => {
+      const win = Services.wm.getMostRecentWindow("navigator:browser");
+      const popup = win.document.getElementById("contentAreaContextMenu");
+      for (let i = 0; popup.state !== "open"; i++) {
+        if (i > 100) throw new Error("the context menu did not open");
+        await new Promise((resolve) => win.setTimeout(resolve, 100));
+      }
+      const items = [...popup.querySelectorAll("menuitem, menu")].filter((i) => !i.hidden && !i.collapsed);
+      const out = items.map((i) => ({ label: i.getAttribute("label"), id: i.id || null, nested: i.parentNode !== popup }));
+      popup.hidePopup();
+      return out;
+    });
+  }
+
+  /** A trusted right click on the element that `target` (a CSS selector) names, in the selected tab. @param {string} target */
+  async #rightClick(target) {
+    const before = this.context;
+    if (before !== "content") await this.setContext("content");
+    try {
+      await this.execute((/** @type {string} */ css) => document.querySelector(css)?.scrollIntoView({ block: "center" }), target);
+      const [element] = await this.findAll(target);
+      if (!element) throw new Error(`no element for ${target}`);
+      await wire("POST", `${this.#s()}/actions`, {
+        actions: [{
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions: [
+            { type: "pointerMove", origin: element, x: 0, y: 0 },
+            { type: "pointerDown", button: 2 },
+            { type: "pointerUp", button: 2 },
+          ],
+        }],
+      });
+      await wire("DELETE", `${this.#s()}/actions`);
+    } finally {
+      if (before !== "content") await this.setContext(before);
+    }
+  }
+
+  /**
    * Opens the context menu on the element that `target` (a CSS selector) names, in
    * the selected tab, and clicks the item with `label` (chrome context).
    * @param {string} label

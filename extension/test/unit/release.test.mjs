@@ -199,15 +199,15 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.content_scripts = [{ matches: ["https://*/*"], js: ["content/fill.inject.js"] }]; }, /content_scripts is not allowed in a release/],
         [(m) => { m.web_accessible_resources = ["content/fill.inject.js"]; }, /web_accessible_resources is not allowed in a release/],
         [(m) => { m.externally_connectable = { matches: ["https://*/*"] }; }, /externally_connectable is not allowed in a release/],
-        [(m) => { m.commands = { run: { suggested_key: { default: "Alt+Shift+F9" } } }; }, /the key commands is not in the release key list/],
+        [(m) => { m.commands = { run: { suggested_key: { default: "Alt+Shift+F9" } } }; }, /the command run is not a release command/],
+        [(m) => { m.commands["ferret-test-command"] = { suggested_key: { default: "Alt+Shift+F9" } }; }, /the command ferret-test-command is not a release command/],
+        [(m) => { m.commands = ["fill-login"]; }, /commands is not an object/],
         [(m) => { m.options_ui = { page: "pages/about.html" }; }, /the key options_ui is not in the release key list/],
         [(m) => { m.browser_action = { default_title: "x" }; }, /the key browser_action is not in the release key list/],
         [(m) => { m.chrome_url_overrides = { newtab: "pages/about.html" }; }, /the key chrome_url_overrides is not in the release key list/],
         [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
         // Allowed for the test variant, not for a release.
-        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
         [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
-        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
         [(m) => { m.optional_permissions = ["menus"]; }, /optional_permissions holds "menus"/],
         [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(an object/],
         [(m) => { m.content_security_policy = EXTENSION_CSP; }, /content_security_policy is not the extension CSP \(an object/],
@@ -233,9 +233,7 @@ test("release_check_refuses_manifest_keys_and_permissions_outside_the_release", 
         [(m) => { m.host_permissions = ["https://*/*"]; }, /the key host_permissions is not in the release key list/],
         [(m) => { m.optional_host_permissions = ["https://*/*"]; }, /the key optional_host_permissions is not in the release key list/],
         [(m) => { m.permissions.push("tabs"); }, /permissions holds "tabs"/],
-        [(m) => { m.permissions.push("menus"); }, /permissions holds "menus"/],
         [(m) => { m.permissions.push("clipboardWrite"); }, /permissions holds "clipboardWrite"/],
-        [(m) => { m.permissions.push("webNavigation"); }, /permissions holds "webNavigation"/],
         [(m) => { m.content_security_policy = undefined; }, /content_security_policy is not the extension CSP \(a string\)/],
         [(m) => { m.content_security_policy = { extension_pages: EXTENSION_CSP }; }, /content_security_policy is not the extension CSP \(a string\)/],
         [(m) => { m.content_security_policy = `${EXTENSION_CSP}; script-src-elem 'unsafe-inline'`; }, /content_security_policy is not the extension CSP/],
@@ -297,7 +295,7 @@ test("release_key_list_covers_the_keys_of_both_release_manifests_and_nothing_els
 });
 
 test("a_release_may_carry_only_the_release_permissions_and_the_test_variant_the_wider_list", async () => {
-  for (const permission of ["menus", "clipboardWrite", "webNavigation"]) {
+  for (const permission of ["clipboardWrite"]) {
     const env = makeRoot({ "manifest/parts/extra.json": `${JSON.stringify({ permissions: [permission] })}\n` });
     try {
       const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
@@ -321,10 +319,10 @@ test("a_release_may_carry_only_the_release_permissions_and_the_test_variant_the_
   } finally {
     env.cleanup();
   }
-  // The real file: release lists inside the wider ones, and the test-only entries are the three named ones.
+  // The real file: release lists inside the wider ones, and the test-only entries are the named ones.
   const release = readPermissionAllow(undefined, "release");
   const wider = readPermissionAllow(undefined, "test");
-  assert.deepEqual(wider.permissions.filter((p) => !release.permissions.includes(p)), ["clipboardWrite", "menus", "webNavigation"]);
+  assert.deepEqual(wider.permissions.filter((p) => !release.permissions.includes(p)), ["clipboardWrite"]);
 });
 
 test("release_check_fails_closed_without_the_permission_allow_list", async () => {
