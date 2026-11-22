@@ -7,9 +7,13 @@ const SEGMENT = /^[A-Za-z0-9_.-]{1,128}$/;
 const PARAM_NAME = /^:[a-z][A-Za-z0-9]*$/;
 const RAW_PATH = /^\/(?:[A-Za-z0-9_.~%:-]+(?:\/[A-Za-z0-9_.~%:-]+)*)?$/;
 
+// The part after `?`: a short run of plain characters, read by the one screen that asks for it (the list keeps its
+// filters there). It is never evaluated and never decides which route runs.
+const QUERY = /^[A-Za-z0-9_.~%:,=&-]{0,256}$/;
+
 /**
  * @typedef {{ path: string }} PathRoute
- * @typedef {{ route: any, params: Record<string, string>, path: string, found: boolean }} Match
+ * @typedef {{ route: any, params: Record<string, string>, path: string, query: string, found: boolean }} Match
  */
 
 /**
@@ -23,6 +27,22 @@ export function parseHash(hash) {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   if (raw === "") return "/";
   return RAW_PATH.test(raw) ? raw : null;
+}
+
+/**
+ * `#/items?type=login` gives the path `/items` and the query `type=login`. The path follows the rules of
+ * `parseHash`; the query is a short run of plain characters. Anything else gives null.
+ * @param {string} hash
+ * @returns {{ path: string, query: string } | null}
+ */
+export function parseLocation(hash) {
+  if (typeof hash !== "string") return null;
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const cut = raw.indexOf("?");
+  const pathPart = cut < 0 ? raw : raw.slice(0, cut);
+  const query = cut < 0 ? "" : raw.slice(cut + 1);
+  const path = parseHash(pathPart);
+  return path !== null && QUERY.test(query) ? { path, query } : null;
 }
 
 /** @param {string} segment @returns {string | null} */
@@ -82,32 +102,77 @@ function countParams(patterns) {
 
 /**
  * @param {{ routes: readonly any[], notFound: any, onChange: (match: Match) => void, win?: any }} options
- * @returns {{ go(path: string): void, start(): void, current(): string }}
+ * @returns {{
+ *   go(path: string): void, replace(path: string): void, start(): void, current(): string, query(): string,
+ *   watchQuery(fn: (query: string) => void): () => void,
+ * }}
  */
 export function createRouter({ routes, notFound, onChange, win = globalThis }) {
   let path = "/";
+  let query = "";
   let started = false;
+  /** Screens that follow the query of their own address: only they are told when the query alone changes. @type {Set<(query: string) => void>} */
+  const watchers = new Set();
 
   function handle() {
-    const parsed = parseHash(win.location.hash);
-    const hit = parsed === null ? null : matchRoute(routes, parsed);
-    path = parsed ?? "/";
-    if (hit) onChange({ route: hit.route, params: hit.params, path, found: true });
-    else onChange({ route: notFound, params: Object.create(null), path, found: false });
+    const parsed = parseLocation(win.location.hash);
+    const hit = parsed === null ? null : matchRoute(routes, parsed.path);
+    const nextPath = parsed?.path ?? "/";
+    const nextQuery = parsed?.query ?? "";
+    // The same screen with another query (a filter was changed, or back/forward moved between two): the screen that
+    // follows its query is told and is not built again; any other screen is built as it is for a new address.
+    if (started && hit && nextPath === path && watchers.size > 0) {
+      const changed = nextQuery !== query;
+      query = nextQuery;
+      if (changed) for (const fn of [...watchers]) fn(query);
+      return;
+    }
+    path = nextPath;
+    query = nextQuery;
+    watchers.clear();
+    if (hit) onChange({ route: hit.route, params: hit.params, path, query, found: true });
+    else onChange({ route: notFound, params: Object.create(null), path, query, found: false });
+  }
+
+  /** @param {unknown} target @returns {string} `#/path?query` */
+  function hashOf(target) {
+    if (typeof target !== "string") throw new TypeError("router: not a path");
+    const cut = target.indexOf("?");
+    const pathPart = cut < 0 ? target : target.slice(0, cut);
+    const queryPart = cut < 0 ? "" : target.slice(cut + 1);
+    if (!isPlainPath(pathPart) || !QUERY.test(queryPart)) throw new TypeError("router: not a path");
+    return `#${target}`;
   }
 
   return {
     go(target) {
-      if (typeof target !== "string" || !isPlainPath(target)) {
-        throw new TypeError("router: not a path");
-      }
-      const hash = `#${target}`;
+      const hash = hashOf(target);
       if (win.location.hash === hash) {
         if (started) handle();
         return;
       }
       win.location.hash = hash;
     },
+    /** Like `go`, but the address it leaves does not stay in the history (a redirect). @param {string} target */
+    replace(target) {
+      const hash = hashOf(target);
+      if (win.location.hash === hash) {
+        if (started) handle();
+        return;
+      }
+      if (typeof win.location.replace === "function") win.location.replace(hash);
+      else win.location.hash = hash;
+    },
+    /**
+     * Follows the query of the screen that is shown: `fn` is called when only the query changes, and the screen is
+     * not built again. The watchers are dropped when another screen is built.
+     * @param {(query: string) => void} fn
+     */
+    watchQuery(fn) {
+      watchers.add(fn);
+      return () => void watchers.delete(fn);
+    },
+    query: () => query,
     start() {
       if (started) return;
       started = true;

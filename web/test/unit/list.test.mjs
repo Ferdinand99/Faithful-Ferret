@@ -6,7 +6,7 @@ import { createSyncEngine, MANIFEST_ID } from "../../src/sync/engine.mjs";
 import { listView, matches } from "../../src/views/list.mjs";
 import { freshStore, scope } from "./idbHelpers.mjs";
 import { createFakeApi, createFakeClient, createFakeStore, counterRand, fakeMemory, FakeTimers, Model, until } from "./syncHelpers.mjs";
-import { all, click, fakeEngine, find, fire, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { all, click, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const base = {
   favorite: false, urls: [], username: "", rev: 1, pending: false, damaged: false, quarantined: false,
@@ -48,7 +48,8 @@ test("search_is_local_and_case_insensitive_and_never_sends_the_query", async () 
       assert.deepEqual(await query("GRACE hopper"), ["Mail"], "user name, every word");
       assert.deepEqual(await query("ada norway"), ["Bank of Norway"], "words from two fields");
       assert.deepEqual(await query("nothing like it"), []);
-      assert.ok(textOf(find(root, "count")).includes("vault.list.no_match"));
+      assert.ok(textOf(find(root, "empty-text")).includes("vault.list.no_match"));
+      assert.equal(find(root, "list-empty").hidden, false);
       assert.deepEqual(await query(""), ["Bank of Norway", "Mail", "Wiki"]);
 
       assert.deepEqual(sent, [], "no request was made");
@@ -68,13 +69,14 @@ test("matching_folds_case_and_compatibility_forms", () => {
   assert.equal(matches({ name: "x", urls: [] }, "   "), true, "a blank query shows everything");
 });
 
-test("favorites_come_first_and_the_engines_order_holds_inside_each_group", async () => {
+test("the_list_is_in_name_order_and_a_favourite_has_its_star_in_place", async () => {
   await withDom(async () => {
     const engine = fakeEngine({
-      items: [item(1, { name: "A" }), item(2, { name: "B", favorite: true }), item(3, { name: "C" }), item(4, { name: "D", favorite: true })],
+      items: [item(1, { name: "C" }), item(2, { name: "b", favorite: true }), item(3, { name: "A" }), item(4, { name: "D", favorite: true })],
     });
     const root = listView({ engine, router: { go() {} }, t });
-    assert.deepEqual(shownNames(root).map((n) => n.replace("★", "").trim()), ["B", "D", "A", "C"]);
+    assert.deepEqual(shownNames(root).map((n) => n.replace("★", "").trim()), ["A", "b", "C", "D"], "by name, a favourite does not jump to the top");
+    assert.equal(all(root, "item").filter((row) => textOf(row).includes("★")).length, 2);
   });
 });
 
@@ -142,7 +144,7 @@ test("every_sync_mark_is_shown_as_words", async () => {
     });
     const root = listView({ engine, router: { go() {} }, t });
     const rows = all(root, "item");
-    const marksOf = (row) => [...row.childNodes.flatMap((c) => [c, ...c.childNodes])].filter((n) => n.getAttribute?.("data-mark")).map((n) => [n.getAttribute("data-mark"), textOf(n).trim()]);
+    const marksOf = (row) => [...walk(row)].filter((n) => n.getAttribute?.("data-mark")).map((n) => [n.getAttribute("data-mark"), textOf(n).trim()]);
     assert.deepEqual(marksOf(rows[0]), [["pending", "vault.mark.pending"]]);
     assert.deepEqual(marksOf(rows[1]), [["damaged", "vault.mark.damaged"]]);
     assert.deepEqual(marksOf(rows[2]), [["quarantined", "vault.mark.quarantined"]]);
@@ -157,12 +159,14 @@ test("the_list_follows_the_engine_and_says_when_it_is_empty", async () => {
   await withDom(async () => {
     const engine = fakeEngine({ items: [] });
     const root = listView({ engine, router: { go() {} }, t });
-    assert.ok(textOf(find(root, "count")).includes("vault.list.empty"));
+    assert.ok(textOf(find(root, "empty-text")).includes("vault.list.empty"));
+    assert.equal(find(root, "search").parentNode.hidden, true, "nothing to search in an empty vault");
     engine.items = [item(1, { name: "Late" })];
     engine.emit("changed", { ids: [engine.items[0].id] });
     await settle();
     assert.deepEqual(shownNames(root), ["Late"]);
-    assert.ok(textOf(find(root, "count")).includes("vault.list.count"));
+    assert.ok(textOf(find(root, "count")).includes("list.count_one"));
+    assert.equal(find(root, "list-empty").hidden, true);
   });
 });
 

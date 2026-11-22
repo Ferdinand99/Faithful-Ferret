@@ -88,3 +88,60 @@ test("router_never_executes_route_params", () => {
     assert.doesNotMatch(source, sink);
   }
 });
+
+test("a_query_after_the_path_reaches_the_route_and_a_change_of_only_the_query_does_not_build_the_screen_again", () => {
+  const list = { path: "/items", title: "items.list", load: () => null };
+  const seen = [];
+  const win = fakeWindow("#/items?type=login");
+  const router = createRouter({ routes: [home, list, item], notFound, win, onChange: (m) => seen.push(m) });
+  router.start();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].route, list);
+  assert.equal(seen[0].query, "type=login");
+  assert.equal(router.query(), "type=login");
+
+  // Without a screen that follows its query, a new query builds the screen as for any new address.
+  win.location.hash = "#/items?type=note";
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].query, "type=note");
+
+  // A screen that follows the query is told, and nothing is built again.
+  const told = [];
+  const off = router.watchQuery((query) => told.push(query));
+  win.location.hash = "#/items?fav=1";
+  win.location.hash = "#/items";
+  win.location.hash = "#/items";
+  assert.deepEqual(told, ["fav=1", ""], "told once for each change, not for the same query");
+  assert.equal(seen.length, 2);
+  assert.equal(router.query(), "");
+
+  // Another path builds a screen and drops the watchers.
+  win.location.hash = "#/items/7";
+  assert.equal(seen.length, 3);
+  assert.equal(seen[2].route, item);
+  assert.equal(seen[2].query, "");
+  win.location.hash = "#/items?a=1";
+  win.location.hash = "#/items?a=2";
+  assert.deepEqual(told, ["fav=1", ""], "the watcher of the screen that left hears nothing");
+  off();
+});
+
+test("go_and_replace_take_a_path_with_a_plain_query_and_refuse_anything_else", () => {
+  const win = fakeWindow("#/");
+  win.location.replaced = [];
+  const original = Object.getOwnPropertyDescriptor(win.location, "hash");
+  win.location.replace = (hash) => {
+    win.location.replaced.push(hash);
+    original.set.call(win.location, hash);
+  };
+  const router = createRouter({ routes: [home, { path: "/items", title: "t", load: () => null }], notFound, win, onChange() {} });
+  router.start();
+  router.go("/items?type=login&fav=1");
+  assert.equal(win.location.hash, "#/items?type=login&fav=1");
+  router.replace("/items?fav=1");
+  assert.deepEqual(win.location.replaced, ["#/items?fav=1"]);
+  for (const bad of ["/items?<x>", "/items?a b", "/items?a;b", "/items?" + "a".repeat(300), "//evil?x=1", "javascript:alert(1)"]) {
+    assert.throws(() => router.go(bad), TypeError, bad);
+    assert.throws(() => router.replace(bad), TypeError, bad);
+  }
+});
