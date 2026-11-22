@@ -22,13 +22,34 @@ const LIST_FILE = /public[_-]?suffix|effective_tld_names|\.dat$/i;
 /** Names in code that a suffix rule has. */
 const SUFFIX_LOGIC = /\b(?:public_?suffix(?:es)?|registrable_?domain|registrableDomain|etld(?:\+1|plus_?one)?|effective_?tld|getDomain|psl)\b/i;
 
-/** Splitting a host (or any text) on its dots: the first step of every suffix rule written by hand. */
-const SPLIT_ON_DOTS = /\.split\(\s*(?:"\."|'\.'|`\.`|\/\\\.\/[a-z]*)\s*\)/;
+/**
+ * Cutting a host (or any text) at its dots: the first step of every suffix rule written by hand, whether by
+ * `split` or by looking for a dot with `indexOf` or `lastIndexOf`.
+ */
+const SPLIT_ON_DOTS = /\.(?:split|lastIndexOf|indexOf)\(\s*(?:"\."|'\.'|`\.`|\/\\\.\/[a-z]*)\s*[,)]/g;
+
+/**
+ * The places in shippable code that look for a dot and are no site rule, each with its line and its reason.
+ * Nothing else may cut a text at its dots.
+ */
+const DOT_EXEMPT = Object.freeze([
+  {
+    path: "src/background/session.mjs",
+    line: 'const last = name.slice(name.lastIndexOf(".") + 1);',
+    why: "RESERVED_SUFFIXES: the special-use names of RFC 2606 and RFC 6761 that a release refuses as a server; not the Public Suffix List and no site rule",
+  },
+  {
+    path: "scripts/build.mjs",
+    line: 'const ext = path.slice(path.lastIndexOf("."));',
+    why: "the extension of a file name in the package (for its media type), not a host",
+  },
+]);
 
 /**
  * What is not checked, and why: the test sites hold real names of the list on purpose (they test the core's
- * list), and so do the test that checks them and this file. The passkey spike is a throwaway test add-on with
- * its own stand-in (never built into a package; the passkey provider will use the core's rules).
+ * list), and so do the test that checks them, their README and this file. The passkey spike's authenticator is a
+ * throwaway test add-on with its own stand-in suffix set (never built into a package), and its test names entries
+ * of it. TODO(passkey): the passkey provider uses the core's `validate_rp_id`; these two skips go when it lands.
  */
 const SKIPPED = Object.freeze([
   "node_modules/",
@@ -37,7 +58,7 @@ const SKIPPED = Object.freeze([
   "test/unit/fixtures.test.mjs",
   "test/unit/noPsl.test.mjs",
   "test/unit/passkeySpike.test.mjs",
-  "test/spikes/",
+  "test/spikes/passkey/addon/authenticator.mjs",
   "test/firefox/README.md",
 ]);
 
@@ -82,7 +103,13 @@ function problemsOf(path, text) {
     const code = data;
     const logic = SUFFIX_LOGIC.exec(code);
     if (logic) out.push(`${path}: ${logic[0]} (a suffix rule)`);
-    if (SPLIT_ON_DOTS.test(code)) out.push(`${path}: splits a text on its dots`);
+    for (const found of code.matchAll(SPLIT_ON_DOTS)) {
+      const start = code.lastIndexOf("\n", found.index) + 1;
+      const end = code.indexOf("\n", found.index);
+      const line = code.slice(start, end < 0 ? undefined : end).trim();
+      if (DOT_EXEMPT.some((e) => e.path === path && e.line === line)) continue;
+      out.push(`${path}: cuts a text at its dots (${line.slice(0, 80)})`);
+    }
   }
   return out;
 }
@@ -104,6 +131,13 @@ test("there_is_no_psl_data_or_logic_under_extension", () => {
   assert.notDeepEqual(problemsOf("src/x.mjs", "export function registrableDomain(host) { return host; }"), []);
   assert.notDeepEqual(problemsOf("src/x.mjs", 'const labels = host.split(".");'), []);
   assert.notDeepEqual(problemsOf("src/x.mjs", "const labels = host.split(/\\./);"), []);
+  assert.notDeepEqual(problemsOf("src/x.mjs", 'const tld = host.slice(host.lastIndexOf(".") + 1);'), []);
+  assert.notDeepEqual(problemsOf("src/x.mjs", 'const rest = host.slice(host.indexOf(".", 1));'), []);
+  // An exemption holds for its own line in its own file only, and the exempt lines are still there.
+  assert.notDeepEqual(problemsOf("src/background/session.mjs", 'const tld = host.slice(host.lastIndexOf(".") + 1);'), []);
+  assert.notDeepEqual(problemsOf("src/x.mjs", 'const last = name.slice(name.lastIndexOf(".") + 1);'), []);
+  assert.deepEqual(problemsOf("src/background/session.mjs", 'const last = name.slice(name.lastIndexOf(".") + 1);'), []);
+  for (const e of DOT_EXEMPT) assert.ok(readFileSync(join(extensionRoot, e.path), "utf8").includes(e.line), `${e.path}: the exempt line is still there`);
   assert.notDeepEqual(problemsOf("src/public_suffix_list.dat", "com\n"), []);
   assert.notDeepEqual(problemsOf("src/data/effective_tld_names.json", "[]"), []);
   // And leave alone what is not a list: a name that only contains an entry, a comment, an e-mail split.

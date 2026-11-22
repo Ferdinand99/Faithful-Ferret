@@ -30,7 +30,9 @@
 // the permission the toolbar button gives (`activeTab`, the top's origin). It
 // is offered nothing until its host permission is granted, which is asked for
 // in a tab of the extension (`pages/grant.html`, see `grantUrl`): a request
-// from the popup would close the popup.
+// from the popup would close the popup. It is matched all the same (matching
+// needs no permission), and named for the grant only when some item matches
+// it: a frame no item could fill never asks for a permission.
 //
 // The items: the core host opens the vault's items in batches, asks the core
 // which of them match each chosen frame and closes every handle again. What
@@ -253,9 +255,10 @@ function newSession() {
 /**
  * The items a tab is offered. The host shown is the core's `display_host` of
  * the top's address (never the tab's title); `insecure` says the top is plain
- * `http` (not loopback), where the core offers only `http` items. Frames of
- * another origin than the top whose host permission is missing are listed in
- * `grant` and offered nothing.
+ * `http` (not loopback), where the core offers only `http` items. A frame of
+ * another origin than the top whose host permission is missing is matched too
+ * (matching needs no permission), but offered nothing: it is listed in `grant`
+ * when some item matches it, and only then.
  *
  * @param {number} tabId
  * @param {{
@@ -276,61 +279,68 @@ export async function candidates(tabId, { coreHost, frames, permissions, session
   const insecure = !isSecureOrigin(top.origin);
   const chosen = frameId === undefined ? all : all.filter((f) => f.frameId === frameId);
 
-  /** @type {FillableFrame[]} */
-  const usable = [];
-  /** @type {Map<string, FillableFrame>} */
-  const waiting = new Map();
+  /** The chosen frames in the browser's order, each either usable now or waiting for its permission. */
+  /** @type {Array<FillableFrame & { waiting: boolean }>} */
+  const asked = [];
+  /** @type {Map<string, boolean>} origin -> whether its permission is granted */
+  const permitted = new Map();
   for (const frame of chosen) {
     if (frame.origin === top.origin) {
-      usable.push(frame);
+      asked.push({ ...frame, waiting: false });
       continue;
     }
     // Only an `https` origin can be granted (the optional permission is `https://*/*`).
     if (!frame.origin.startsWith("https://")) continue;
-    const frameHost = await displayHost(coreHost, frame.url);
-    let granted = false;
-    try {
-      granted = (await permissions?.contains({ origins: [permissionPattern(frameHost)] })) === true;
-    } catch {
-      granted = false;
+    if (!permitted.has(frame.origin)) {
+      const frameHost = await displayHost(coreHost, frame.url);
+      let granted = false;
+      try {
+        granted = (await permissions?.contains({ origins: [permissionPattern(frameHost)] })) === true;
+      } catch {
+        granted = false;
+      }
+      permitted.set(frame.origin, granted);
     }
-    if (granted) usable.push(frame);
-    else if (!waiting.has(frame.origin)) waiting.set(frame.origin, frame);
+    asked.push({ ...frame, waiting: permitted.get(frame.origin) !== true });
   }
+  if (asked.length === 0) return { host, insecure, items: [], grant: [] };
 
+  const id = typeof session === "string" && ID.test(session) ? session : newSession();
+  const reply = /** @type {any} */ (
+    await coreHost.call("candidates_match", {
+      session: id,
+      tab_id: tabId,
+      frames: asked.map((f) => ({
+        frame_id: f.frameId,
+        ...(f.documentId !== undefined ? { document_id: f.documentId } : {}),
+        url: f.url,
+        origin: f.origin,
+        ...(f.waiting ? { waiting: true } : {}),
+      })),
+    })
+  );
+  const usable = new Set(asked.filter((f) => !f.waiting).map((f) => f.frameId));
+  /** @type {Candidate[]} */
+  const items = (Array.isArray(reply?.items) ? reply.items : [])
+    .filter(
+      (/** @type {any} */ item) =>
+        typeof item?.ref === "string" &&
+        ID.test(item.ref) &&
+        typeof item.name === "string" &&
+        (item.username === null || typeof item.username === "string") &&
+        ["host", "domain", "exact"].includes(item.how) &&
+        usable.has(item.frame_id),
+    )
+    .slice(0, MAX_CANDIDATES)
+    .map((/** @type {any} */ item) => ({ ref: item.ref, name: item.name, username: item.username, how: item.how, frameId: item.frame_id }));
+
+  // The frames waiting for their permission that some item matches, one entry per origin.
+  const matchedWaiting = new Set(Array.isArray(reply?.grant_frames) ? reply.grant_frames : []);
   /** @type {GrantNeeded[]} */
   const grant = [];
-  for (const [origin, frame] of waiting) grant.push({ origin, host: await displayHost(coreHost, frame.url) });
-
-  /** @type {Candidate[]} */
-  let items = [];
-  if (usable.length > 0) {
-    const id = typeof session === "string" && ID.test(session) ? session : newSession();
-    const reply = /** @type {any} */ (
-      await coreHost.call("candidates_match", {
-        session: id,
-        tab_id: tabId,
-        frames: usable.map((f) => ({
-          frame_id: f.frameId,
-          ...(f.documentId !== undefined ? { document_id: f.documentId } : {}),
-          url: f.url,
-          origin: f.origin,
-        })),
-      })
-    );
-    const known = new Set(usable.map((f) => f.frameId));
-    items = (Array.isArray(reply?.items) ? reply.items : [])
-      .filter(
-        (/** @type {any} */ item) =>
-          typeof item?.ref === "string" &&
-          ID.test(item.ref) &&
-          typeof item.name === "string" &&
-          (item.username === null || typeof item.username === "string") &&
-          ["host", "domain", "exact"].includes(item.how) &&
-          known.has(item.frame_id),
-      )
-      .slice(0, MAX_CANDIDATES)
-      .map((/** @type {any} */ item) => ({ ref: item.ref, name: item.name, username: item.username, how: item.how, frameId: item.frame_id }));
+  for (const frame of asked) {
+    if (!frame.waiting || !matchedWaiting.has(frame.frameId) || grant.some((g) => g.origin === frame.origin)) continue;
+    grant.push({ origin: frame.origin, host: await displayHost(coreHost, frame.url) });
   }
   return { host, insecure, items, grant };
 }

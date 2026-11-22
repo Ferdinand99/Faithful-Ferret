@@ -129,8 +129,13 @@ test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
       let tabId = await visit(server.siteUrl("login"));
       await session.waitFor(async () => ours((await ui("candidates", { tab_id: tabId })).items).length === 2, 30_000, "the new entries");
 
-      // The same-site frame of another origin is granted once (as a person does in the grant tab), so the rows that
-      // fill in that frame are a real control.
+      // The same-site frame of another origin: the host entry matches it, so the list names it for the grant (and
+      // offers nothing in it yet). It is granted once in the grant tab, as a person does, so the rows that fill in
+      // that frame are a real control.
+      tabId = await visit(server.siteUrl("framed-same-site"));
+      const waiting = await ui("candidates", { tab_id: tabId });
+      assert.deepEqual(waiting.grant.map((/** @type {any} */ g) => g.origin), [server.origin("login")], `${channel}: the frame waits for its permission`);
+      assert.deepEqual(ours(waiting.items).filter((i) => i.frame_id !== 0), [], `${channel}: nothing in the frame before the grant`);
       const grantTab = await session.newTab();
       await session.switchTo(grantTab);
       await session.navigate(`${EXTENSION_ORIGIN}/pages/grant.html?${new URLSearchParams({ origin: server.origin("login") })}`);

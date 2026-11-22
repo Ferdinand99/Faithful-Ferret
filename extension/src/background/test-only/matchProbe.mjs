@@ -125,7 +125,7 @@ export function createMatchProbe({ engine, webNavigation = /** @type {any} */ (g
         };
         const origin = await client.vault.page_origin(args.url);
         const started = now();
-        const matched = await matchItems(client, source, [{ frameId: 0, url: args.url, origin }]);
+        const { items: matched } = await matchItems(client, source, [{ frameId: 0, url: args.url, origin }]);
         const ms = now() - started;
         let closedIsRefused = false;
         if (lastClosed !== null) {

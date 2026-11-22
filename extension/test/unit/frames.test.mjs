@@ -10,7 +10,7 @@ import { CORE_OPS, createCoreHost } from "../../src/background/coreHost.mjs";
 import candidatesHandler from "../../src/background/handlers/candidates.handler.mjs";
 import { candidates, confirmFrame, fillableFrames, grantUrl, isSecureOrigin, MAX_FRAMES, permissionPattern } from "../../src/background/frames.mjs";
 import { createLock } from "../../src/background/lock.mjs";
-import { createMatchHost } from "../../src/background/match.mjs";
+import { createGrantList, createMatchHost } from "../../src/background/match.mjs";
 import { createRouter } from "../../src/background/router.mjs";
 import { createGrantFlow, originParam } from "../../src/pages/grantFlow.mjs";
 import { UI_PORT, UI_TYPES, decode, encode } from "../../src/shared/protocol.mjs";
@@ -263,11 +263,22 @@ test("a_same_site_frame_with_another_origin_asks_for_its_host_permission_in_the_
   const frames = /** @type {Array<[number, number, string]>} */ ([[0, -1, `${WWW}/`], [41, 0, `${LOGIN}/`]]);
   const w = await world({ items, frames });
   const before = await w.list({ session: "s1" });
-  // Not covered by activeTab (the top's origin): nothing is offered in the frame, and the list names it for the grant.
+  // Not covered by activeTab (the top's origin): nothing is offered in the frame. Matching needs no permission, so
+  // the frame is matched, and because an item matches it the list names it for the grant.
   assert.deepEqual(before.items, []);
   assert.deepEqual(before.grant, [{ origin: LOGIN, host: { a_label: "login.example.net", unicode: "login.example.net" } }]);
   assert.deepEqual(w.permissions.asked, [["https://login.example.net/*"]]);
-  assert.deepEqual(w.matches.map((m) => m.url), [`${WWW}/`], "the frame's address is not matched before the grant");
+  assert.deepEqual(w.matches.map((m) => m.url), [`${WWW}/`, `${LOGIN}/`], "the frame's own address is matched");
+  assert.equal(w.matchHost.refs.size(), 0, "no reference is made for a frame that waits for its permission");
+
+  // A same-site frame of another origin that no item matches asks for nothing (no permission without a use).
+  const idle = await world({ items: [{ id: itemId(5), name: "Shop", urls: ["https://shop.example.net/"] }], frames });
+  const quiet = await idle.list();
+  assert.deepEqual(quiet.grant, []);
+  assert.deepEqual(quiet.items, []);
+  // ... and the grant tab refuses that origin: no list named it.
+  const idleCheck = await candidatesHandler.handle({ origin: LOGIN }, /** @type {any} */ ({ type: "grant_check", call: idle.call, state: () => "unlocked", channel: "ui", sender: {} }));
+  assert.deepEqual(idleCheck, { ok: false, reason: "origin_invalid" });
 
   // The grant tab is opened for the origin, checks it with the core and asks for the host's pattern on a click.
   const fake = createFakeBrowser();
@@ -358,7 +369,7 @@ test("opaque_frames_and_frames_with_an_http_ancestor_are_skipped", async () => {
   for (const secure of ["https://a.example", "http://localhost", "http://localhost:3000", "http://127.0.0.1", "http://127.255.0.9:81", "http://[::1]", "http://[::1]:8080"]) {
     assert.equal(isSecureOrigin(secure), true, secure);
   }
-  for (const insecure of ["http://a.example", "http://localhost.evil.test", "http://127.0.0.1.evil.test", "http://128.0.0.1", "http://[::2]", "http://10.0.0.1", "null", "", "ws://localhost"]) {
+  for (const insecure of ["http://a.example", "http://localhost.evil.test", "http://127.0.0.1.evil.test", "http://128.0.0.1", "http://[::2]", "http://192.0.2.1", "null", "", "ws://localhost"]) {
     assert.equal(isSecureOrigin(insecure), false, insecure);
   }
   // At most MAX_FRAMES frames are offered, the top first.
@@ -550,4 +561,38 @@ test("the_candidates_handler_answers_on_the_wire_and_its_reply_fits_the_protocol
   }
   assert.deepEqual(candidatesHandler.types, ["candidates", "grant_check"]);
   assert.equal(candidatesHandler.channel, "ui");
+});
+
+test("the_grant_tab_asks_only_for_an_origin_a_list_named_and_only_for_a_while", async () => {
+  const clock = { t: 1_000_000 };
+  const grants = createGrantList({ now: () => clock.t });
+  assert.equal(grants.has("https://login.example.net"), false);
+  grants.add("https://login.example.net");
+  assert.equal(grants.has("https://login.example.net"), true);
+  assert.equal(grants.has("https://other.example.net"), false);
+  assert.equal(grants.has(/** @type {any} */ (undefined)), false);
+  // Ten minutes, then it is gone; a clock that went back forgets it too.
+  clock.t += 10 * 60_000;
+  assert.equal(grants.has("https://login.example.net"), true);
+  clock.t += 1;
+  assert.equal(grants.has("https://login.example.net"), false);
+  grants.add("https://login.example.net");
+  clock.t -= 5;
+  assert.equal(grants.has("https://login.example.net"), false);
+  // At most 32, the oldest first out.
+  for (let i = 0; i < 40; i += 1) grants.add(`https://h${i}.example.net`);
+  assert.equal(grants.has("https://h7.example.net"), false);
+  assert.equal(grants.has("https://h8.example.net"), true);
+  assert.equal(grants.has("https://h39.example.net"), true);
+
+  // Through the background: listed by a list, refused once the vault locks.
+  const items = [{ id: itemId(1), name: "Login", urls: [`${LOGIN}/`] }];
+  const w = await world({ items, frames: [[0, -1, `${WWW}/`], [41, 0, `${LOGIN}/`]] });
+  const check = (/** @type {string} */ origin) => candidatesHandler.handle({ origin }, /** @type {any} */ ({ type: "grant_check", call: w.call, state: () => "unlocked", channel: "ui", sender: {} }));
+  assert.equal((await check(LOGIN)).ok, false, "not before a list named it");
+  await w.list();
+  assert.equal((await check(LOGIN)).ok, true);
+  assert.equal((await check("https://shop.example.net")).ok, false, "a canonical https origin no list named");
+  await w.coreHost.lock("manual");
+  assert.equal((await check(LOGIN)).ok, false, "a lock forgets the named origins");
 });

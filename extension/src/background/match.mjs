@@ -5,7 +5,11 @@
 //   page_origin       the origin the core gives an address (`page_origin`)
 //   same_site         whether two addresses are on the same site (`same_site`)
 //   display_host      how the core shows the host of an address (`display_host`)
-//   candidates_match  the items whose saved addresses match the chosen frames
+//   candidates_match  the items whose saved addresses match the chosen frames,
+//                     and which of the frames that wait for their host
+//                     permission some item matches
+//   grant_listed      whether a list named an origin for a grant (the grant
+//                     tab asks for no other)
 //
 // The first three are stateless functions of the core and need no key. The
 // last one needs the open vault: it takes the items from the sync engine's list
@@ -20,6 +24,14 @@
 // and is emptied at every lock. The fill flow takes a reference back with
 // `refs.lookup(session, ref, { kind, tabId, frameId })`, which answers only for
 // the same session, kind, tab and frame.
+//
+// A frame of the top's site with another origin waits for its host permission.
+// Matching needs no permission (the core compares the address the browser gave
+// with the saved ones), so such a frame is matched too, but no reference is made
+// for it: it is only named, so that the popup can ask for the permission, and
+// only when some item matches it. The origins named this way are kept for 10
+// minutes (at most 32, emptied at every lock), and the grant tab asks only for
+// one of them.
 
 /** An item id: 16 bytes in lower-case hex (the sync engine's form). */
 const ITEM_ID = /^[0-9a-f]{32}$/;
@@ -40,6 +52,9 @@ const MAX_SESSIONS = 8;
 const MAX_URL = 8192;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const HOW = Object.freeze(["exact", "host", "domain"]);
+/** How long a listed grant origin may be asked for, and how many are kept. */
+const GRANT_TTL_MS = 10 * 60_000;
+const MAX_GRANTS = 32;
 
 /** The error of this module: a short code. */
 export class MatchError extends Error {
@@ -154,7 +169,8 @@ function checkFrames(frames) {
       throw new MatchError("invalid_input");
     }
     if (f.document_id !== undefined && !isText(f.document_id, 64)) throw new MatchError("invalid_input");
-    return { frameId: f.frame_id, documentId: f.document_id, url: f.url, origin: f.origin };
+    if (f.waiting !== undefined && typeof f.waiting !== "boolean") throw new MatchError("invalid_input");
+    return { frameId: f.frame_id, documentId: f.document_id, url: f.url, origin: f.origin, waiting: f.waiting === true };
   });
 }
 
@@ -163,19 +179,25 @@ function checkFrames(frames) {
  * the frame where the core's answer is closest (exact, then the host, then the
  * registrable domain; on a tie the earlier frame, the top first). A `domain`
  * entry for the host of a frame is therefore offered for that frame, where its
- * form is, and not for the top it also matches by domain. Every handle that is
- * opened is closed before this returns or throws.
+ * form is, and not for the top it also matches by domain. A frame marked
+ * `waiting` (its host permission is missing) is matched, but no item is offered
+ * for it: it only shows up in `waiting`, the indexes of such frames that some
+ * item matches. Every handle that is opened is closed before this returns or
+ * throws.
  *
  * @param {{ vault: { match_page(url: string, handles: number[]): Promise<unknown> } }} client the op's client
  * @param {ItemSource} source
- * @param {Array<{ frameId: number, documentId?: string, url: string, origin: string }>} frames
- * @returns {Promise<Array<{ id: string, name: string, username: string, how: string, frame: number }>>} `frame` is the index in `frames`
+ * @param {Array<{ frameId: number, documentId?: string, url: string, origin: string, waiting?: boolean }>} frames
+ * @returns {Promise<{ items: Array<{ id: string, name: string, username: string, how: string, frame: number }>, waiting: number[] }>}
+ *   `frame` and `waiting` are indexes in `frames`
  */
 export async function matchItems(client, source, frames) {
   // Only items with a saved address can match; which address matches is the core's to say.
   const items = source.list().filter((s) => typeof s.id === "string" && ITEM_ID.test(s.id) && s.damaged !== true && s.quarantined !== true && Array.isArray(s.urls) && s.urls.length > 0);
   /** @type {Map<string, { how: string, frame: number }>} */
   const best = new Map();
+  /** @type {Set<number>} */
+  const waiting = new Set();
   for (let at = 0; at < items.length; at += MATCH_BATCH) {
     const batch = items.slice(at, at + MATCH_BATCH);
     /** @type {Array<{ handle: number, close(): Promise<void> }>} */
@@ -201,6 +223,10 @@ export async function matchItems(client, source, frames) {
           const id = idOf.get(/** @type {any} */ (hit)?.handle);
           const how = /** @type {any} */ (hit)?.how;
           if (id === undefined || !HOW.includes(how)) continue;
+          if (frames[frame].waiting === true) {
+            waiting.add(frame);
+            continue;
+          }
           const known = best.get(id);
           if (known !== undefined && HOW.indexOf(known.how) <= HOW.indexOf(how)) continue;
           best.set(id, { how, frame });
@@ -218,16 +244,47 @@ export async function matchItems(client, source, frames) {
   }
   // The closest match first (exact, then the host, then the registrable domain), then by name.
   out.sort((a, b) => HOW.indexOf(a.how) - HOW.indexOf(b.how) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || (a.id < b.id ? -1 : 1));
-  return out;
+  return { items: out, waiting: [...waiting].sort((a, b) => a - b) };
+}
+
+/**
+ * The origins a list named for a grant, for a while (`GRANT_TTL_MS`, at most `MAX_GRANTS`).
+ * @param {{ now: () => number }} clock
+ */
+export function createGrantList({ now }) {
+  /** @type {Map<string, number>} origin -> when a list named it */
+  const named = new Map();
+  const drop = () => {
+    const t = now();
+    for (const [origin, at] of named) if (t - at > GRANT_TTL_MS || t < at) named.delete(origin);
+  };
+  return {
+    /** @param {string} origin */
+    add(origin) {
+      drop();
+      named.delete(origin);
+      named.set(origin, now());
+      while (named.size > MAX_GRANTS) named.delete(/** @type {string} */ (named.keys().next().value));
+    },
+    /** @param {unknown} origin */
+    has(origin) {
+      drop();
+      return typeof origin === "string" && named.has(origin);
+    },
+    clear() {
+      named.clear();
+    },
+  };
 }
 
 /**
  * The matching of the extension and its core-host operations. Call `attach`
  * once the core host exists.
- * @param {{ engine: () => ItemSource | null, refs?: ReturnType<typeof createRefTable> }} options `engine`: the sync
- *   engine of the open vault, or null
+ * @param {{ engine: () => ItemSource | null, refs?: ReturnType<typeof createRefTable>, now?: () => number }} options
+ *   `engine`: the sync engine of the open vault, or null
  */
-export function createMatchHost({ engine, refs = createRefTable() }) {
+export function createMatchHost({ engine, refs = createRefTable(), now = Date.now }) {
+  const grants = createGrantList({ now });
   /** @param {unknown} url */
   const checkUrl = (url) => {
     if (!isText(url, MAX_URL)) throw new MatchError("invalid_input");
@@ -271,9 +328,11 @@ export function createMatchHost({ engine, refs = createRefTable() }) {
         // A new list: the session's earlier references are gone, also when this one fails.
         refs.reset(session);
         const source = engine();
-        if (source === null) return { items: [] };
+        if (source === null) return { items: [], grant_frames: [] };
         const matched = await matchItems(client, source, frames);
-        const items = matched.slice(0, MAX_REFS).map((m) => {
+        const grantFrames = matched.waiting.map((i) => frames[i]);
+        for (const frame of grantFrames) grants.add(frame.origin);
+        const items = matched.items.slice(0, MAX_REFS).map((m) => {
           const frame = frames[m.frame];
           const ref = refs.issue(session, {
             kind: "fill",
@@ -292,8 +351,13 @@ export function createMatchHost({ engine, refs = createRefTable() }) {
             frame_id: frame.frameId,
           };
         });
-        return { items };
+        return { items, grant_frames: grantFrames.map((f) => f.frameId) };
       },
+    },
+    grant_listed: {
+      vault: false,
+      worker: /** @type {const} */ ("none"),
+      run: async (/** @type {any} */ _client, /** @type {any} */ args) => ({ listed: grants.has(args?.origin) }),
     },
   });
 
@@ -302,11 +366,14 @@ export function createMatchHost({ engine, refs = createRefTable() }) {
     refs,
 
     /**
-     * Joins the core host: every lock forgets the references.
+     * Joins the core host: every lock forgets the references and the listed grant origins.
      * @param {{ onLocked(listener: () => void): unknown }} coreHost
      */
     attach(coreHost) {
-      coreHost.onLocked(() => refs.clear());
+      coreHost.onLocked(() => {
+        refs.clear();
+        grants.clear();
+      });
     },
   };
 }

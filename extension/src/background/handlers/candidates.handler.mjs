@@ -6,8 +6,10 @@
 //                shows, whether the page is plain `http`, the items with their
 //                references, and the frames of the same site that wait for their
 //                host permission
-//   grant_check  the origin the grant tab was opened for, checked by the core:
-//                an `https` origin as the core writes it, and its host
+//   grant_check  the origin the grant tab was opened for: only one that a list
+//                named for a grant in the last minutes (a frame of the page's
+//                site that some item matches), and an `https` origin exactly as
+//                the core writes it; the answer is its host and the pattern
 //
 // The frames come from the browser (`webNavigation`), the site rules and the
 // match from the core (frames.mjs, match.mjs). The references belong to the
@@ -75,6 +77,10 @@ async function handle(body, ctx) {
         canonical = null;
       }
       if (canonical !== origin || !origin.startsWith("https://")) return { ok: false, reason: "origin_invalid" };
+      // Only an origin the background named for a grant (the grant tab is a page of its own, so the list it came from
+      // was answered on another port; the names are kept for a while and forgotten at every lock).
+      const listed = /** @type {any} */ (await call("grant_listed", { origin })).listed === true;
+      if (!listed) return { ok: false, reason: "origin_invalid" };
       const host = /** @type {import("../frames.mjs").Host} */ (await call("display_host", { url: origin }));
       return { ok: true, origin, host, pattern: permissionPattern(host) };
     }

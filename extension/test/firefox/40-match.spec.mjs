@@ -9,9 +9,10 @@
 //   `self.origin` is "null" there, and `confirmFrame` refuses it (in MV3 Firefox
 //   already refuses to inject into it).
 // - Over the real UI port, the list names the host the core shows (never the
-//   page's title), flags a plain http page, and names the same-site frame of
-//   another origin for the grant tab, which asks for the host on a click; after
-//   the grant the frame is no longer waiting.
+//   page's title) and flags a plain http page. A same-site frame of another
+//   origin that no item matches asks for no permission, and the grant tab
+//   refuses an origin no list named (the grant itself is in the end-to-end spec,
+//   where an item matches the frame).
 //
 // The vault is "open" without a key here (the test build's `measure_open`): the
 // items of a real vault are matched by the end-to-end spec (40-match.e2e.spec.mjs).
@@ -210,37 +211,26 @@ test("the_list_shows_the_core_host_flags_http_and_asks_for_a_frame_permission_in
       assert.equal(list.insecure, false, `${channel}: https`);
       assert.deepEqual(list.grant, []);
 
-      // The same-site frame of another origin waits for its host permission.
+      // The same-site frame of another origin: with no item that matches it (this vault has none), it asks for
+      // nothing. (The grant with a matching item is the end-to-end spec's.)
       tabId = await visit(server.siteUrl("framed-same-site"));
       list = await ui("candidates", { tab_id: tabId });
       const login = server.origin("login");
-      assert.deepEqual(list.grant, [{ origin: login, host: { a_label: "login.example.net", unicode: "login.example.net" } }], channel);
-      // The cross-site page that frames the same login page asks for nothing.
+      assert.deepEqual(list.grant, [], `${channel}: no item matches the frame, so no permission is asked for`);
       const crossTab = await visit(server.siteUrl("framed-cross-site"));
       assert.deepEqual((await ui("candidates", { tab_id: crossTab })).grant, [], `${channel}: a cross-site frame is never offered a grant`);
 
-      // The grant tab: the host as the core shows it, and the permission asked on the click.
+      // The grant tab asks only for an origin a list named: neither this origin nor a page address gets a button.
       const grantTab = await session.newTab();
       await session.switchTo(grantTab);
-      await session.navigate(`${EXTENSION_ORIGIN}/pages/grant.html?${new URLSearchParams({ origin: login })}`);
-      await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 20_000, "the grant tab");
-      assert.equal(await session.content(() => document.querySelector('[data-role="grant-host"]')?.textContent), "login.example.net");
-      const [allow] = await session.findAll('[data-role="grant-allow"]');
-      await session.click(allow);
-      await session.waitFor(() => session.content(() => document.querySelector('[data-role="grant-status"]')?.getAttribute("data-outcome") ?? null), 20_000, "the grant");
-      assert.equal(await session.content(() => document.querySelector('[data-role="grant-status"]')?.getAttribute("data-outcome")), "granted", channel);
-      // A tab opened for an address that is not an https origin asks for nothing.
-      await session.navigate(`${EXTENSION_ORIGIN}/pages/grant.html?${new URLSearchParams({ origin: `${login}/login` })}`);
-      await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 20_000, "the refused grant tab");
-      assert.equal((await session.findAll('[data-role="grant-allow"]')).length, 0, channel);
-      assert.equal((await session.findAll('[data-role="grant-invalid"]')).length, 1, channel);
+      for (const origin of [login, `${login}/login`]) {
+        await session.navigate(`${EXTENSION_ORIGIN}/pages/grant.html?${new URLSearchParams({ origin })}`);
+        await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 20_000, "the refused grant tab");
+        assert.equal((await session.findAll('[data-role="grant-allow"]')).length, 0, `${channel}: ${origin}`);
+        assert.equal((await session.findAll('[data-role="grant-invalid"]')).length, 1, `${channel}: ${origin}`);
+      }
       await session.closeTab();
       await session.switchTo(pageTab);
-
-      // After the grant the frame no longer waits.
-      tabId = await visit(server.siteUrl("framed-same-site"));
-      list = await ui("candidates", { tab_id: tabId });
-      assert.deepEqual(list.grant, [], `${channel}: granted`);
     } finally {
       await session.quit();
     }
