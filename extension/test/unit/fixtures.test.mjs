@@ -90,7 +90,7 @@ test("the_site_table_covers_every_case_and_is_well_formed", () => {
     "framed-late-hide", "late-hide-login", "framed-covered-form", "corner-login",
     "overlay", "overlay-popover", "overlay-dialog", "opacity-html", "offscreen", "below-fold", "hidden-fields", "tiny-fields",
     "css-shadow", "css-visibility", "css-visibility-collapse",
-    "blur-opacity", "blur-overlay", "blur-swap", "blur-navigate", "forged-events", "navigate-frame", "ferret-lookalike",
+    "blur-opacity", "blur-overlay", "blur-swap", "blur-navigate", "forged-events", "hostile-prototypes", "navigate-frame", "ferret-lookalike",
     ...["opacity", "filter", "transform", "clip-path", "mask", "mix-blend-mode"].flatMap((p) => [`css-${p}`, `css-${p}-subtle`]),
   ];
   for (const id of required) assert.ok(ids.includes(id), `a site named ${id}`);

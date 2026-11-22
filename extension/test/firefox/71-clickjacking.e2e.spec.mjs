@@ -4,7 +4,8 @@
 // - Every row of the test sites whose fields or timing decide (covers, opacity,
 //   filters, transforms, clip paths, masks, blend modes, hidden ancestors,
 //   shadow roots, tiny and far-away fields, a page that turns hostile when the
-//   popup opens, forged events): the real popup about the page's tab, a
+//   popup opens, forged events, a page that replaces the prototypes the fill
+//   script would read before it is injected): the real popup about the page's tab, a
 //   screenshot, and a real "Fill" on the host entry. Afterwards no field the
 //   site marks "reject" holds anything, every field it marks "fill" holds the
 //   password, and the password is nowhere else.
@@ -59,6 +60,9 @@ test("every_clickjacking_row_of_the_fixtures_fills_only_the_clear_fields", async
       const tabId = await w.visit(w.server.siteUrl(site.id));
       const marked = (await inputsOf(w.session)).filter((input) => input.expect !== null);
       const clear = marked.filter((input) => input.expect === "fill");
+      // A page that lies to its own scripts starts lying now, before the popup opens and the fill script comes in.
+      const arm = typeof site.expect.arm === "string" ? site.expect.arm : null;
+      if (arm !== null) await w.session.content((/** @type {string} */ name) => { /** @type {any} */ (window)[name](); }, arm);
       const view = await w.popup(tabId);
       let toast = "";
       try {
@@ -88,6 +92,11 @@ test("every_clickjacking_row_of_the_fixtures_fills_only_the_clear_fields", async
         assert.equal(after.some((i) => i.value !== ""), false, `${where}: no field has a value`);
       }
       assert.deepEqual(await documentsHolding(w.session, password), clear.length > 0 ? ["top"] : [], `${where}: no frame has it`);
+      if (arm !== null) {
+        // The lies were in place during the fill, and the value went in past the page's own setter.
+        const state = await w.session.content(() => /** @type {any} */ (window).fixtureState());
+        assert.deepEqual(state, { armed: true, setterCalls: 0, lies: true, clobbered: true }, `${where}: ${JSON.stringify(state)}`);
+      }
     }
 
     // The page turns hostile when the popup takes the focus (and on turnHostile(), called here as well, since a

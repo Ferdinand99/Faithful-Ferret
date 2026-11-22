@@ -761,6 +761,73 @@ window.fixtureState = function () { return { sent: sent, userValue: user.value, 
   }),
 });
 
+add({
+  id: "hostile-prototypes", origin: "login", path: "/t/hostile-prototypes.html",
+  summary: "A page that lies to its own scripts once armHostilePrototypes() runs (before the popup opens, so before the fill script is injected): getBoundingClientRect, elementsFromPoint and getComputedStyle say its invisible decoy password field is shown and on top, getAttribute says a field that sets a new password is a current one, the value setter of inputs records every call, and named controls hide form.getAttribute and form.elements. The fill script reads the page through the browser's own wrappers, so none of it counts: the decoy and the new-password field stay empty, the clear field is filled, and the page's setter never runs. fixtureState() says whether the lies are in place and what the setter saw.",
+  expect: { outcome: "fields", visible: "ok-pass", arm: "armHostilePrototypes" },
+  render: () => page({
+    id: "hostile-prototypes",
+    body: `<h1>Example sign-in</h1>
+<form id="proto-form" method="post" action="/static/login-done.html">
+  <input type="hidden" name="getAttribute" value="clobbered">
+  <input type="hidden" name="elements" value="clobbered">
+  <input id="decoy-pass" name="p0" type="password" autocomplete="current-password" style="opacity: 0" data-fixture-expect="reject" data-fixture-reason="opacity">
+  <input id="new-pass" name="p1" type="password" autocomplete="new-password">
+  <input id="ok-user" name="username" type="text" autocomplete="username">
+  <input id="ok-pass" name="password" type="password" autocomplete="current-password" data-fixture-expect="fill">
+  <button type="submit">Sign in</button>
+</form>
+<script>
+var armed = false;
+var setterCalls = 0;
+function armHostilePrototypes() {
+  if (armed) return;
+  armed = true;
+  var decoy = document.getElementById("decoy-pass");
+  var rect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () {
+    return this === decoy ? new DOMRect(16, 60, 240, 28) : rect.call(this);
+  };
+  Document.prototype.elementsFromPoint = function () { return [decoy]; };
+  var computed = window.getComputedStyle;
+  window.getComputedStyle = function (element, pseudo) {
+    var real = computed.call(window, element, pseudo);
+    if (element !== decoy) return real;
+    return new Proxy(real, {
+      get: function (target, key) {
+        if (key === "opacity") return "1";
+        if (key === "getPropertyValue") return function (name) { return name === "opacity" ? "1" : target.getPropertyValue(name); };
+        var value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  var attribute = Element.prototype.getAttribute;
+  Element.prototype.getAttribute = function (name) {
+    if (name === "autocomplete" && this.id === "new-pass") return "current-password";
+    return attribute.call(this, name);
+  };
+  var value = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  Object.defineProperty(HTMLInputElement.prototype, "value", {
+    configurable: true,
+    get: function () { return value.get.call(this); },
+    set: function (next) { setterCalls += 1; value.set.call(this, next); },
+  });
+}
+window.armHostilePrototypes = armHostilePrototypes;
+window.fixtureState = function () {
+  var form = document.getElementById("proto-form");
+  return {
+    armed: armed,
+    setterCalls: setterCalls,
+    lies: armed && document.elementsFromPoint(1, 1)[0] === document.getElementById("decoy-pass") && document.getElementById("new-pass").getAttribute("autocomplete") === "current-password",
+    clobbered: typeof form.getAttribute !== "function" && typeof form.elements.length !== "number",
+  };
+};
+</script>`,
+  }),
+});
+
 // ------------------------------------------------- navigation and imitation
 
 add({
