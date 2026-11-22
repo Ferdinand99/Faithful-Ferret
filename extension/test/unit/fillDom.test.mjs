@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createFillEngine, MIN_SIDE } from "../../src/content/fill.mjs";
 import { importsOf, reach, readGraph } from "./importGraph.mjs";
 import {
-  addInput, addLoginForm, BACKGROUND_SENDER, createPage, decodeSent, EXTENSION_BASE, fillMessage, RUNTIME_ID,
+  addInput, addLoginForm, addText, BACKGROUND_SENDER, createPage, decodeSent, EXTENSION_BASE, fillMessage, RUNTIME_ID,
 } from "./fakeDom.mjs";
 
 /** Starts an engine on a page. `begin()` reports and returns the fields. */
@@ -906,7 +906,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   const walk = (dir) => readdirSync(join(dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const files = new Map(walk(src).filter((p) => /\.(?:mjs|js)$/.test(p)).map((p) => [posix.normalize(p.slice(src.length + 1).split("\\").join("/")), Buffer.from(readFileSync(p))]));
 
-  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
+  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/patterns.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
   const FORBIDDEN_TEXT = /\bsubtle\b|SubtleCrypto|importKey|deriveKey|deriveBits|WebAssembly|\bWorker\b|indexedDB|localStorage|sessionStorage|\.storage\b|background\/|pkg-web|client\.mjs|\bargon2|\bhkdf\b|\bsha-?256\b/i;
   /** @param {Map<string, Buffer>} map @returns {string[]} */
   const problems = (map) => {
@@ -930,7 +930,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.deepEqual(problems(files), []);
   // Not vacuous: the content files exist, reach the protocol, and the reader sees their imports.
   assert.ok(files.has("content/fill.mjs") && files.has("content/entry.mjs"));
-  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs"]);
+  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs"]);
   assert.deepEqual(importsOf(files.get("content/entry.mjs")?.toString("utf8") ?? "").specifiers, ["./fill.mjs"]);
 
   // The check finds what it is for.
@@ -1124,4 +1124,164 @@ test("the_frame_gives_the_points_of_the_field_it_would_fill_and_two_levels_move_
     cover(p.document, { left: 595, top: 300, width: 260, height: 40 });
   });
   assert.equal(/** @type {any} */ (coveredTop.engine.frameShown(coveredTop.FRAME, fromMiddle.points)).verdict, "covered");
+});
+
+// ------------------------------------------------------------ the detection module (forms.mjs) in the fill engine
+
+/**
+ * A form built from a list: `["input", attributes]` or `[tag, text, attributes]`; inputs and buttons belong to it.
+ * @param {any} document @param {Array<[string, ...any[]]>} parts @param {{ form?: boolean }} [options]
+ * @returns {Record<string, any>} the elements by id
+ */
+function formOf(document, parts, { form = true } = {}) {
+  const parent = form ? document.body.append(document.createElement("form", { id: "f" })) : document.body;
+  /** @type {Record<string, any>} */
+  const byId = {};
+  let top = 40;
+  for (const [tag, ...rest] of parts) {
+    const element = tag === "input" ? addInput(document, parent, rest[0], { top }) : addText(document, parent, tag, rest[0], rest[1] ?? {});
+    if (tag === "input") top += 50;
+    if (form && (tag === "input" || tag === "button")) element.form = parent;
+    const id = (tag === "input" ? rest[0] : rest[1] ?? {}).id;
+    if (id) byId[id] = element;
+  }
+  return byId;
+}
+
+/** Every kind of value, sent to the page in turn: none of them may land anywhere. @param {any} t */
+function tryEveryValue(t) {
+  return ["username", "password", "totp"].map((field) => t.fill(fillMessage({ field, value: field === "totp" ? "123456" : `v-${field}` }))?.ok === true);
+}
+
+test("the_unsafe_fill_classes_of_the_corpus_get_no_value", () => {
+  /** @type {Array<[string, Array<[string, ...any[]]>]>} */
+  const pages = [
+    ["a card form with its security code as a password", [["label", "Navn på kortet", { for: "holder" }], ["input", { id: "holder", type: "text", name: "kortholder", autocomplete: "cc-name" }], ["label", "Sikkerhetskode", { for: "cvc" }], ["input", { id: "cvc", type: "password", name: "cvv", maxlength: "3" }], ["button", "Fortsett", { type: "submit" }]]],
+    ["a checkout with an e-mail field", [["input", { id: "email", type: "email", name: "email", autocomplete: "email" }], ["input", { id: "card", type: "text", name: "card", inputmode: "numeric", autocomplete: "cc-number" }], ["input", { id: "exp", type: "text", name: "exp", autocomplete: "cc-exp" }], ["input", { id: "cvc", type: "password", name: "cvc", inputmode: "numeric", maxlength: "4", autocomplete: "cc-csc" }]]],
+    ["a customer number and a PIN", [["label", "Kundennummer", { for: "cust" }], ["input", { id: "cust", type: "text", name: "kunde", inputmode: "numeric", autocomplete: "off" }], ["label", "PIN", { for: "pin" }], ["input", { id: "pin", type: "password", name: "pin", inputmode: "numeric", maxlength: "4", autocomplete: "off" }], ["button", "Anmelden", { type: "submit" }]]],
+    ["a PIN pad field", [["label", "Code PIN", { for: "pin" }], ["input", { id: "pin", type: "password", name: "code_secret", inputmode: "numeric", maxlength: "4", autocomplete: "off" }]]],
+    ["a one-time code typed as password", [["label", "Bekreftelseskode", { for: "code" }], ["input", { id: "code", type: "password", name: "engangskode", autocomplete: "one-time-code", inputmode: "numeric", maxlength: "6" }]]],
+    ["an SMS code typed as password", [["label", "Verification code", { for: "code" }], ["input", { id: "code", type: "password", name: "sms_code", inputmode: "numeric", maxlength: "6", autocomplete: "off" }]]],
+    ["a sign-up form with a confirm field and no tokens", [["input", { id: "email", type: "text", name: "mail", placeholder: "E-mailadres" }], ["input", { id: "pw", type: "password", name: "wachtwoord", placeholder: "Wachtwoord" }], ["input", { id: "pw2", type: "password", name: "wachtwoord2", placeholder: "Bevestig wachtwoord" }], ["button", "Account aanmaken", { type: "submit" }]]],
+    ["a sign-up form with one password and no tokens", [["input", { id: "user", type: "text", name: "nutzer", autocomplete: "username" }], ["input", { id: "pw", type: "password", name: "kennwort" }], ["button", "Konto erstellen", { type: "submit" }]]],
+    ["a newsletter box", [["label", "E-postadresse", { for: "mail" }], ["input", { id: "mail", type: "email", name: "epost", autocomplete: "email" }], ["button", "Send", { type: "submit" }]]],
+    ["a newsletter box marked as a user name", [["label", "Adresse e-mail", { for: "mail" }], ["input", { id: "mail", type: "text", name: "courriel", autocomplete: "username" }], ["button", "Envoyer", { type: "submit" }]]],
+    ["a contact form", [["input", { id: "name", type: "text", name: "name", autocomplete: "name" }], ["input", { id: "mail", type: "email", name: "email", autocomplete: "email" }], ["textarea", ""], ["button", "Senden", { type: "submit" }]]],
+  ];
+  for (const [shape, parts] of pages) {
+    const t = setup({}, (document) => formOf(document, parts));
+    assert.deepEqual(t.begin(), [], `${shape}: nothing reported`);
+    assert.deepEqual(tryEveryValue(t), [false, false, false], `${shape}: no value accepted`);
+    for (const [id, element] of Object.entries(t)) {
+      if (element?.localName === "input") assert.equal(nativeValue(element), "", `${shape}: #${id} stays empty`);
+    }
+  }
+});
+
+test("a_frame_whose_document_its_parent_wrote_reports_no_field", () => {
+  /** @param {(window: any, document: any) => void} arrange */
+  const framed = (arrange) => {
+    const t = setup({ url: "https://example.com/login" });
+    arrange(t.window, t.document);
+    return t;
+  };
+  const holder = (/** @type {any} */ document, /** @type {Record<string, string>} */ attributes) => document.createElement("iframe", attributes);
+  // `document.open()` from the parent: the frame shows the address of the parent, and its holder has none of its own.
+  const written = framed((window, document) => {
+    window.parent = { location: { href: "https://example.com/login" } };
+    window.frameElement = holder(document, { id: "login-frame" });
+  });
+  assert.deepEqual(written.begin(), []);
+  // An `about:blank` or `srcdoc` holder, even when the address differs.
+  for (const attributes of [{ src: "about:blank" }, { srcdoc: "<form></form>", src: "https://example.com/x" }, { src: "  " }]) {
+    const t = framed((window, document) => {
+      window.parent = { location: { href: "https://example.com/" } };
+      window.frameElement = holder(document, attributes);
+    });
+    assert.deepEqual(t.begin(), [], JSON.stringify(attributes));
+  }
+  // The address of the parent in a frame whose holder the frame cannot see.
+  const same = framed((window) => {
+    window.parent = { location: { href: "https://example.com/login" } };
+    window.frameElement = null;
+  });
+  assert.deepEqual(same.begin(), []);
+  // Controls: a frame loaded from its own address, a frame below a parent of another origin (nothing can be read), and
+  // the top.
+  const loaded = framed((window, document) => {
+    window.parent = { location: { href: "https://example.com/" } };
+    window.frameElement = holder(document, { src: "/login" });
+  });
+  assert.deepEqual(kinds(loaded.begin()), ["username", "password"]);
+  const foreignParent = framed((window) => {
+    window.parent = { get location() { throw new Error("cross-origin"); } };
+    Object.defineProperty(window, "frameElement", { get() { throw new Error("cross-origin"); } });
+  });
+  assert.deepEqual(kinds(foreignParent.begin()), ["username", "password"]);
+  const top = framed((window) => {
+    window.parent = window;
+  });
+  assert.deepEqual(kinds(top.begin()), ["username", "password"]);
+});
+
+test("fill_keeps_every_visibility_rule", () => {
+  /** The ways a page hides or covers a field, each applied to one element. @type {Array<[string, (element: any, t: any) => void]>} */
+  const hides = [
+    ["display none", (e) => { e.style.display = "none"; }],
+    ["opacity", (e) => { e.style.opacity = "0.2"; }],
+    ["visibility", (e) => { e.style.visibility = "hidden"; }],
+    ["transform", (e) => { e.style.transform = "translateX(-50%)"; }],
+    ["filter", (e) => { e.style.filter = "blur(1px)"; }],
+    ["aria-hidden", (e) => { e.setAttribute("aria-hidden", "true"); }],
+    ["inert", (e) => { e.inert = true; }],
+    ["zero size", (e) => { e.rect = { ...e.rect, width: 0, height: 0 }; }],
+    ["off the page", (e) => { e.rect = { ...e.rect, left: -2000 }; }],
+    ["disabled", (e) => { e.disabled = true; }],
+    ["read-only", (e) => { e.readOnly = true; }],
+    ["covered", (e, t) => {
+      const cover = t.document.body.append(t.document.createElement("div"));
+      cover.rect = { left: e.rect.left - 5, top: e.rect.top - 5, width: e.rect.width + 10, height: e.rect.height + 10 };
+      cover.z = 10;
+    }],
+  ];
+  /** The fields of each kind of group the engine fills: [shape, parts, the id of the field, its kind, a value]. @type {Array<[string, Array<[string, ...any[]]>, string, string, string]>} */
+  const fields = [
+    ["the password of a sign-in", [["input", { id: "u", type: "text", name: "username" }], ["input", { id: "p", type: "password", name: "password" }]], "p", "password", "pw-1"],
+    ["the user name of a sign-in", [["input", { id: "u", type: "text", name: "username" }], ["input", { id: "p", type: "password", name: "password" }]], "u", "username", "alice"],
+    ["a user name step", [["input", { id: "u", type: "text", name: "username" }], ["button", "Next", { type: "submit" }]], "u", "username", "alice"],
+    ["the password in use of a change form", [["input", { id: "c", type: "password", autocomplete: "current-password" }], ["input", { id: "n", type: "password", autocomplete: "new-password" }]], "c", "password", "pw-1"],
+    ["a code field", [["input", { id: "o", type: "text", name: "otp", inputmode: "numeric", maxlength: "6" }]], "o", "totp", "123456"],
+  ];
+  for (const [shape, parts, id, kind, value] of fields) {
+    // Control: shown, it is reported and filled.
+    const control = setup({}, (document) => formOf(document, parts));
+    assert.ok(kinds(control.begin()).includes(kind), `${shape}: reported`);
+    assert.equal(control.fill(fillMessage({ field: kind, value }))?.ok, true, `${shape}: filled`);
+    for (const [how, hide] of hides) {
+      // Hidden before the report: not reported (the group gives no field the user cannot see).
+      const before = setup({}, (document) => formOf(document, parts));
+      hide(before[id], before);
+      assert.equal(kinds(before.begin()).includes(kind), false, `${shape}, ${how}: not reported`);
+      // Hidden after the report: refused, and nothing goes in.
+      const after = setup({}, (document) => formOf(document, parts));
+      after.begin();
+      hide(after[id], after);
+      assert.equal(after.fill(fillMessage({ field: kind, value }))?.ok, false, `${shape}, ${how}: refused`);
+      assert.equal(nativeValue(after[id]), "", `${shape}, ${how}: empty`);
+    }
+  }
+});
+
+test("a_password_field_that_the_page_turns_into_a_code_field_after_the_report_gets_no_password", () => {
+  const t = setup();
+  t.begin();
+  t.pass.setAttribute("autocomplete", "one-time-code");
+  assert.deepEqual(t.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  t.pass.setAttribute("autocomplete", "cc-csc");
+  assert.deepEqual(t.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" });
+  t.pass.setAttribute("autocomplete", "off");
+  t.pass.setAttribute("inputmode", "numeric");
+  assert.deepEqual(t.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" }, "a PIN by its shape");
+  t.pass.setAttribute("inputmode", "text");
+  assert.equal(t.fill()?.ok, true, "control");
 });

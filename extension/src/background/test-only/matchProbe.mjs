@@ -7,7 +7,8 @@
 //                 browser lists in all
 //   item_probe    makes one item with the sync engine (the extension writes no
 //                 items in this release; the tests need entries to match), with
-//                 an optional user name and password the test made up
+//                 an optional user name, password and one-time-code address
+//                 (`otpauth://totp/...`) the test made up
 //   match_bench   seals `n` items in the open vault (kept in memory here, never
 //                 stored or sent), then times the real `matchItems` over them for
 //                 one page: the items are opened and viewed as the sync engine
@@ -72,6 +73,11 @@ export function createMatchProbe({ engine, webNavigation = /** @type {any} */ (g
         // A password of the test's own making, so the adversarial specs can see where a fill puts it.
         if (text(args.password, 256)) fields.push({ id: "password", label: "Password", kind: "password", value: args.password });
         if (fields.length > 0) draft.fields = fields;
+        // A one-time-code secret of the test's own making, so the matrix can see where a fill puts the code.
+        if (args.totp !== undefined) {
+          if (!text(args.totp, 512) || !args.totp.startsWith("otpauth://totp/")) throw fail("invalid_input");
+          draft.totp = { uri: args.totp };
+        }
         return { id: await running.create(draft) };
       },
     },

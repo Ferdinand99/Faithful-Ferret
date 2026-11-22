@@ -101,6 +101,16 @@ export class FakeNode {
     while (node.parentNode) node = node.parentNode;
     return node;
   }
+
+  /** The element with this id among the descendants (not entering shadow trees), or null. @param {string} id */
+  getElementById(id) {
+    return this.descendants().find((e) => e.getAttribute?.("id") === id) ?? null;
+  }
+
+  /** The text of the node: its own `text` and that of every descendant, in document order. */
+  get textContent() {
+    return [/** @type {any} */ (this).text ?? "", ...this.childNodes.map((c) => c.textContent)].join("");
+  }
 }
 
 export class FakeShadowRoot extends FakeNode {
@@ -148,6 +158,8 @@ export class FakeElement extends FakeNode {
     this.listeners = new Map();
     /** @type {string[]} */
     this.events = [];
+    /** The element's own text (a label's or a button's words). */
+    this.text = "";
     if (tag === "input") Object.setPrototypeOf(this, FakeInput.prototype);
   }
 
@@ -234,7 +246,19 @@ export class FakeElement extends FakeNode {
   }
 }
 
-class FakeInput extends FakeElement {}
+class FakeInput extends FakeElement {
+  /** The labels of the input: a `label` above it, and every `label` of its root whose `for` names its id. */
+  get labels() {
+    /** @type {any[]} */
+    const out = [];
+    for (let node = this.parentNode; node && node.nodeType === 1; node = node.parentNode) {
+      if (node.localName === "label") out.push(node);
+    }
+    const id = this.getAttribute("id");
+    if (id) for (const label of this.getRootNode().querySelectorAll("label")) if (label.getAttribute("for") === id && !out.includes(label)) out.push(label);
+    return out;
+  }
+}
 // The native accessors a real input has, found where the engine looks for them.
 const nativeValue = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(FakeHTMLInputElement.prototype, "value"));
 Object.defineProperty(FakeInput.prototype, "value", nativeValue);
@@ -278,6 +302,7 @@ export class FakeDocument extends FakeNode {
     this.documentElement.clientHeight = 800;
     this.append(this.documentElement);
     this.body = this.documentElement.append(new FakeElement(this, "body"));
+    this.title = "";
   }
 
   /** @param {number} x @param {number} y */
@@ -326,6 +351,16 @@ export function addInput(document, parent, attributes, rect = {}) {
   parent.append(input);
   input.rect = rect === null ? null : { left: 100, top: 100, width: 240, height: 32, ...rect };
   return input;
+}
+
+/**
+ * Adds an element with words to `parent` (a label, a button, a heading).
+ * @param {any} document @param {any} parent @param {string} tag @param {string} text @param {Record<string, string>} [attributes]
+ */
+export function addText(document, parent, tag, text, attributes = {}) {
+  const element = parent.append(document.createElement(tag, attributes));
+  element.text = text;
+  return element;
 }
 
 /**

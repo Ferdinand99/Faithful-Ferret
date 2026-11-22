@@ -16,12 +16,14 @@
 //            fields and checks that the fields hold the same value (a measure of its own, not part of capture).
 //
 // The vault of a run has a few entries (ENTRIES), all with the user name VAULT_USERNAME and a password the
-// run makes up. Nothing of a password goes into a report: a fill is recorded as "this entry's password went
-// into #id" and an offer by the SHA-256 of its password.
+// run makes up; the `forms` entry also has a one-time-code secret the run makes up. Nothing of a password or a
+// code goes into a report: a fill is recorded as "this entry's password went into #id" (or its code, or digit n of
+// its code) and an offer by the SHA-256 of its password.
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { FORMS_DIR } from "./fixtures-server.mjs";
 import { VAULT_USERNAME, loadCorpus } from "./matrixReport.mjs";
+import { recentCodes } from "./totp.mjs";
 
 /** Where the hold-out set is added to the repository when the time comes. */
 export const HOLDOUT_DIR = resolve(FORMS_DIR, "..", "forms-holdout");
@@ -31,11 +33,11 @@ export const formsDirFor = (set) => (set === "holdout" ? HOLDOUT_DIR : FORMS_DIR
 
 /**
  * The entries of the matrix's vault: what the extension should offer where. `rule` is what a fill is judged by
- * (`domain` is the registrable domain of a `domain` entry).
- * @type {Readonly<Record<string, { name: string, url: string, matching: "host" | "domain" | "exact", domain?: string }>>}
+ * (`domain` is the registrable domain of a `domain` entry). `totp`: the entry has a one-time-code secret.
+ * @type {Readonly<Record<string, { name: string, url: string, matching: "host" | "domain" | "exact", domain?: string, totp?: boolean }>>}
  */
 export const ENTRIES = Object.freeze({
-  forms: { name: "Forms entry", url: "https://forms.example.net/", matching: "host" },
+  forms: { name: "Forms entry", url: "https://forms.example.net/", matching: "host", totp: true },
   login: { name: "Login entry", url: "https://login.example.net/", matching: "host" },
   domain: { name: "Domain entry", url: "https://app.forms.example.org/", matching: "domain", domain: "example.org" },
   wwwA: { name: "Www entry A", url: "https://www.forms.example.net/", matching: "host" },
@@ -272,6 +274,35 @@ export async function scanDocs(session) {
 }
 
 /**
+ * The vault values of one entry that a scan finds: its password, its user name, its whole code, and the digits of its
+ * code in a row of one-character fields of one document (digit n of the code in the n-th of them).
+ * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} rows
+ * @param {string} key @param {string} password @param {string[]} codes the codes the entry can have now
+ * @returns {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>}
+ */
+export function fillsIn(rows, key, password, codes) {
+  /** @type {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>} */
+  const out = [];
+  for (const input of rows) {
+    if (input.value === "") continue;
+    if (input.value === password) out.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
+    else if (input.value === VAULT_USERNAME) out.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });
+    else if (codes.includes(input.value)) out.push({ entry: key, kind: "totp", id: `#${input.id}`, docUrl: input.docUrl });
+  }
+  // Split codes: a run of one-character values in one document, in order, that spells a whole code.
+  for (const code of codes) {
+    for (let i = 0; i + code.length <= rows.length; i += 1) {
+      const run = rows.slice(i, i + code.length);
+      if (run.every((r) => r.value.length === 1 && r.docUrl === run[0].docUrl) && run.map((r) => r.value).join("") === code) {
+        run.forEach((r, n) => out.push({ entry: key, kind: "totp", index: n, id: `#${r.id}`, docUrl: r.docUrl }));
+        i += code.length - 1;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * The rows of a scan that stand for a document that could not be read. A case with one cannot say that nothing was
  * filled there, so it is not run.
  * @param {Array<{ type: string }>} rows
@@ -359,11 +390,6 @@ export async function fillCase(w, c) {
   /** @type {import("./matrixReport.mjs").Result} */
   const result = { case: c, ran: { fill: false, capture: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
   const want = c.expect.fill;
-  if (want && Object.values(want.fields).some((kind) => String(kind).startsWith("totp"))) {
-    // The vault of the matrix cannot hold a one-time-code secret yet, so there is no code to look for.
-    result.error = "the matrix vault has no one-time-code entry yet";
-    return result;
-  }
   const count = { n: 0 };
   try {
     let tabId = await openCase(w, c, count);
@@ -378,14 +404,9 @@ export async function fillCase(w, c) {
       result.observed?.tried?.push({ entry: key, ok: reply.ok, ...(reply.reason ? { reason: reply.reason } : {}) });
       // The page may put the state back (a controlled field) or move on; look after a moment.
       await sleep(700);
-      const password = w.passwords[key];
       const rows = await scanDocs(w.session);
       if (unreadableOf(rows).length > 0) throw new Error("a document of the page could not be read, so a fill into it would go unseen");
-      for (const input of rows) {
-        if (input.value === "") continue;
-        if (input.value === password) result.observed?.fills?.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
-        else if (input.value === VAULT_USERNAME) result.observed?.fills?.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });
-      }
+      result.observed?.fills?.push(...fillsIn(rows, key, w.passwords[key], w.totps?.[key] ? recentCodes(w.totps[key]) : []));
       await leave(w.session);
     }
     result.ran.fill = true;

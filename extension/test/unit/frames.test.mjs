@@ -638,3 +638,28 @@ test("the_grant_tab_asks_only_for_an_origin_a_list_named_and_only_for_a_while", 
   await w.coreHost.lock("manual");
   assert.equal((await check(LOGIN)).ok, false, "a lock forgets the named origins");
 });
+
+test("a_frame_below_a_middle_frame_of_another_origin_is_marked_unchecked_without_that_origins_permission", async () => {
+  // top (www) → 11 (login, the same site, another origin) → 13 (www again). The item is for www: the top and frame 13
+  // tie. Frame 13 is covered by activeTab (the top's origin), but the document of frame 11 can only be asked whether
+  // frame 13 is shown there with the permission of the login origin.
+  const items = [{ id: itemId(1), name: "Www", username: "ola", urls: [`${WWW}/`] }];
+  const frames = /** @type {Array<[number, number, string]>} */ ([[0, -1, `${WWW}/`], [11, 0, `${LOGIN}/mid`], [13, 11, `${WWW}/inner`]]);
+  const without = await world({ items, frames });
+  const list = await without.list();
+  assert.deepEqual(list.items[0].frames.map((f) => [f.frameId, f.unchecked === true]), [[0, false], [13, true]]);
+  assert.deepEqual(without.permissions.asked, [["https://login.example.net/*"]], "the middle frame's permission was asked about, once");
+  // With the permission (as the optional permission for https pages gives), the frame is checked like any other.
+  const granted = await world({ items, frames, granted: ["https://login.example.net/*"] });
+  const checked = await granted.list();
+  assert.deepEqual(checked.items[0].frames.map((f) => [f.frameId, f.unchecked === true]), [[0, false], [13, false]]);
+  assert.equal(Object.hasOwn(checked.items[0].frames[1], "unchecked"), false);
+  // A middle frame of the top's own origin needs no permission.
+  const own = await world({ items, frames: [[0, -1, `${WWW}/`], [11, 0, `${WWW}/mid`], [13, 11, `${WWW}/inner`]] });
+  const ownList = await own.list();
+  assert.deepEqual(ownList.items[0].frames.map((f) => [f.frameId, f.unchecked === true]), [[0, false], [11, false], [13, false]]);
+  assert.deepEqual(own.permissions.asked, []);
+  // The menu names frame 13 only: the middle frame is still looked at.
+  const menu = await without.list({ frameId: 13 });
+  assert.deepEqual(menu.items[0].frames.map((f) => [f.frameId, f.unchecked === true]), [[13, true]]);
+});

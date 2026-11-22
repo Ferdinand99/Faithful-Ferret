@@ -60,6 +60,16 @@
       "note": "Modified by Faithful Ferret: the reader of the AliasVault .avux manifest and CSV export is adapted from the readers of those formats (key names and columns, system field keys, matching names without regard to case, the one manifest version that is read, the otpauth address of a code). It is bounded and strict, returns Faithful Ferret's item drafts and a report, and counts and leaves out attachments, passkeys, folders, tags and the earlier values of a field. The test files are made-up data of the same shape."
     },
     {
+      "name": "AliasVault form field terms",
+      "origin": "https://github.com/aliasvault/aliasvault",
+      "source": "apps/browser-extension/src/utils/formDetector/FieldPatterns.ts (commit 7e7cd6f3141c94f884ddd1666987aec3ffcdcdf3)",
+      "license": "AGPL-3.0-only",
+      "licenseFile": "LICENSE",
+      "copyright": "Copyright (c) aliasvault. All rights reserved. (the holder line in the file headers of the project; FieldPatterns.ts itself has no copyright line)",
+      "files": ["extension/src/content/patterns.mjs"],
+      "note": "Modified by Faithful Ferret: the English and Dutch terms that mark a one-time-code field and a search or filter box are taken from that file and written the way the extension compares text; the PIN and card security code terms are kinds of their own, the settings terms of the exclusion list are left out, and German, Norwegian and French terms are added. Every other list in the file is Faithful Ferret's own. The browser extension's form detection reads them."
+    },
+    {
       "name": "Bitwarden export formats",
       "origin": "https://github.com/bitwarden/sdk-internal and https://github.com/bitwarden/clients",
       "source": "crates/bitwarden-exporters/src/{json,csv}.rs and crates/bitwarden-vault/src/cipher/ of sdk-internal; libs/importer/src/importers/ of clients",

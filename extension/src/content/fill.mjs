@@ -39,19 +39,33 @@
 // design document (section on clickjacking) states this limit too, and a test
 // pins it, so that a later change is deliberate.
 //
-// Which field: one request fills one group (see `scan`): the password field of
-// a form, the user name before it and the one-time code in the same form, and
-// never a field that sets a new password or a site search field. At the fill
-// the field must still be in the form it had at the report and must not set a
-// new password. A field id is only a handle for the report. A `fill_field` names the kind, and the engine fills the field of that
-// kind in the group. The engine answers only to a message that the extension
-// itself sent.
+// Which field: one request fills one group, found by the detection module
+// (forms.mjs): the first sign-in or change group of the page whose password the
+// user can see, else a user name step, else a one-time code. A sign-in gives the
+// user name, the password and its one-time code; a change form the user name
+// and the password in use; a user name step the user name; a code page the
+// code. A sign-up or reset form, a card or PIN form and any other form give
+// nothing: a stored password never goes into a field that sets a new one, nor
+// into a card's security code, a PIN or a code field, and a user name never
+// into a search box or an e-mail field of a newsletter. A split code (one box
+// per digit) is one field: each box gets one digit, and only when the code has
+// as many digits as there are boxes. At the fill the field must still be in the
+// form it had at the report and must still be a field of its kind. A field id is
+// only a handle for the report. A `fill_field` names the kind, and the engine
+// fills the field of that kind in the group. The engine answers only to a
+// message that the extension itself sent.
+//
+// A frame whose document its parent wrote (`document.open()` into a frame with
+// no address of its own, which gives the frame the parent's address) is not a
+// page the user opened: it reports no field.
 //
 // The context menu (`aim`): a click on Ferret's menu item names one field
 // (`menus.getTargetElement`). The extension aims the engine at it before the
 // request begins, and that request fills the group of the clicked field
 // instead of the first one of the page. The clicked field gets the value of its
-// own kind, so a password goes into it only when it is a password input. An
+// own kind, so a password goes into it only when it is the password of a
+// sign-in or change group, and a code only when it is a code field. A clicked
+// text field that is no search, card or code field gets the user name. An
 // element that is no text or password input is refused at the aim. An input the
 // engine would not fill (hidden, covered, one that sets a new password) gives
 // an empty report: an aimed request never falls back to another field of the
@@ -72,6 +86,7 @@
 // extension's own calls, never as messages a page or a frame could send.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
+import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, shadowOf } from "./forms.mjs";
 
 /** The smallest width and height, in CSS pixels, of a field the engine fills. */
 export const MIN_SIDE = 8;
@@ -103,11 +118,6 @@ function validPoints(points) {
     points.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 1e7))
   );
 }
-const TEXT_TYPES = new Set(["text", "email", "tel", "number", "search", "url"]);
-const USERNAME_TYPES = new Set(["text", "email", "tel"]);
-const TOTP_HINT = /(?:^|[^a-z])(?:otp|totp|2fa|mfa|tfa)(?:[^a-z]|$)|one.?time|verification.?code|authenticator|auth.?code|two.?factor/;
-const USERNAME_HINT = /user|login|e-?mail|account|identif|sign-?in/;
-
 /** The values that mean "no effect" for the properties that would hide or move a field. */
 const REQUIRED_DEFAULTS = Object.freeze([
   ["filter", "none"],
@@ -129,51 +139,9 @@ const OPTIONAL_DEFAULTS = Object.freeze([
 
 /**
  * @typedef {"username" | "password" | "totp"} Kind
- * @typedef {{ kind: Kind, id: string, element: any, form: any }} Field
+ * @typedef {{ kind: Kind, id: string, element: any, form: any }} Field `element`: the input, or the boxes of a split code
  * @typedef {"origin_changed" | "hidden" | "covered" | "gone" | "wrong_kind"} Reason
  */
-
-/** @param {any} node */
-const isElement = (node) => typeof node === "object" && node !== null && node.nodeType === 1;
-
-/**
- * The shadow root of an element, open or closed (Firefox lets a content script
- * see closed ones), or null.
- * @param {any} element
- */
-function shadowOf(element) {
-  return element.openOrClosedShadowRoot ?? element.shadowRoot ?? null;
-}
-
-const UNRENDERED = Symbol("unrendered");
-
-/**
- * The parent of a node in the flat tree, which is the tree the page is drawn
- * from: a slotted node's parent is its slot, and a shadow root's parent is its
- * host. Null at the top. UNRENDERED for a child of a shadow host that has no
- * slot for it (the browser does not draw it).
- *
- * @param {any} node
- * @returns {any}
- */
-function flatParent(node) {
-  if (node.assignedSlot) return node.assignedSlot;
-  const parent = node.parentElement;
-  if (parent) {
-    const root = shadowOf(parent);
-    if (root) {
-      const name = node.getAttribute("slot") ?? "";
-      for (const slot of root.querySelectorAll("slot")) {
-        if ((slot.getAttribute("name") ?? "") === name) return slot;
-      }
-      return UNRENDERED;
-    }
-    return parent;
-  }
-  const up = node.parentNode;
-  if (up && up.host) return up.host;
-  return null;
-}
 
 /**
  * @param {any} style a computed style
@@ -214,83 +182,6 @@ function newFieldId(random) {
   let out = "";
   for (const b of bytes) out += b.toString(16).padStart(2, "0");
   return out;
-}
-
-/**
- * @param {any} element
- * @returns {string} lower-case text of the attributes that name a field's purpose
- */
-function hintsOf(element) {
-  const parts = ["name", "id", "aria-label", "placeholder"].map((a) => element.getAttribute(a) ?? "");
-  return parts.join(" ").toLowerCase();
-}
-
-/** @param {any} element */
-function autocompleteTokens(element) {
-  return (element.getAttribute("autocomplete") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-}
-
-/**
- * Whether a text input is part of a site search rather than a sign-in: its
- * type is `search`, its role is `searchbox`, its name is `q`, or it lies in a
- * `<search>` element or an element (its form too) with `role="search"`. Such
- * a field never gets a user name or a code.
- * @param {any} element
- */
-function isSearchField(element) {
-  if (String(element.type ?? "").toLowerCase() === "search") return true;
-  if ((element.getAttribute("role") ?? "").toLowerCase() === "searchbox") return true;
-  if ((element.getAttribute("name") ?? "").toLowerCase() === "q") return true;
-  const form = element.form;
-  if (isElement(form) && (form.getAttribute("role") ?? "").toLowerCase() === "search") return true;
-  for (let node = flatParent(element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
-    if (node.localName === "search" || (node.getAttribute("role") ?? "").toLowerCase() === "search") return true;
-  }
-  return false;
-}
-
-/**
- * @typedef {{ element: any, role: "password" | "totp" | "username" | "text", order: number }} Candidate
- */
-
-/**
- * Whether `node` is `container` or lies inside it, in the flat tree.
- * @param {any} container
- * @param {any} node
- */
-function isInside(container, node) {
-  for (let n = node, depth = 0; n && n !== UNRENDERED && depth <= MAX_DEPTH; n = flatParent(n), depth += 1) {
-    if (n === container) return true;
-  }
-  return false;
-}
-
-/**
- * The candidates that belong with the anchor: those of its form, or, without a
- * form, those without a form inside the nearest container of the anchor that
- * holds a candidate of another kind (the anchor alone when there is none).
- * When that container is the whole page (the body or the root element), an
- * unnamed text field there is no user name field: only fields named for one
- * (see `scan`) join the anchor, so a password-only step never sends the user
- * name into some other text field of the page.
- *
- * @param {Candidate} anchor
- * @param {Candidate[]} candidates
- * @param {any} document
- * @returns {Candidate[]}
- */
-function groupOf(anchor, candidates, document) {
-  const form = anchor.element.form;
-  if (form) return candidates.filter((c) => c.element.form === form);
-  const loose = candidates.filter((c) => !c.element.form);
-  for (let node = flatParent(anchor.element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
-    const inside = loose.filter((c) => isInside(node, c.element));
-    if (inside.some((c) => c.role !== anchor.role)) {
-      const wholePage = node === document.body || node === document.documentElement;
-      return wholePage ? inside.filter((c) => c === anchor || c.role !== "text") : inside;
-    }
-  }
-  return [anchor];
 }
 
 /**
@@ -464,9 +355,6 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     return out;
   }
 
-  /** Every input of the frame in document order, through shadow roots. */
-  const allInputs = () => allElements((name) => name === "input");
-
   /**
    * Whether a field of the frame `frameId` (a frame of this document) is shown
    * here: the one element that holds the frame (the browser names the frame
@@ -521,10 +409,15 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     return { verdict: "shown", points: moved };
   }
 
+  /** The boxes of a split code, or the one element of a field, as a list. @param {any} element @returns {any[]} */
+  const elementsOf = (element) => (Array.isArray(element) ? element : [element]);
+
   /**
    * Where the field of `kind` of the pending request `requestId` is: its
    * sample points in this frame's viewport, when it passes every check now,
-   * else why not. For the documents above this frame (see `frameShown`).
+   * else why not. For the documents above this frame (see `frameShown`). The
+   * boxes of a split code give the centre of each box (at most MAX_POINTS of
+   * them, the first and the last among them), and every box must pass.
    * @param {unknown} requestId
    * @param {unknown} kind
    * @returns {{ points: Array<[number, number]> } | { problem: "gone" | "hidden" | "covered" | "wrong_kind" }}
@@ -533,6 +426,22 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (pending === null || typeof requestId !== "string" || pending.requestId !== requestId) return { problem: "gone" };
     const field = pending.fields.find((f) => f.kind === kind);
     if (!field) return { problem: "wrong_kind" };
+    if (Array.isArray(field.element)) {
+      const boxes = field.element;
+      for (const box of boxes) {
+        const problem = inspect(box);
+        if (problem !== null) return { problem };
+      }
+      const picked = boxes.length <= MAX_POINTS ? boxes : [0, 1, Math.floor(boxes.length / 2), boxes.length - 2, boxes.length - 1].map((i) => boxes[i]);
+      /** @type {Array<[number, number]>} */
+      const points = [];
+      for (const box of picked) {
+        const [centre] = samplePoints(box.getBoundingClientRect());
+        if (!centre) return { problem: "hidden" };
+        points.push(centre);
+      }
+      return { points };
+    }
     const problem = inspect(field.element);
     if (problem !== null) return { problem };
     const points = samplePoints(field.element.getBoundingClientRect());
@@ -540,112 +449,133 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
-   * The group of fields that one request fills, found in four steps:
+   * Whether this frame's document was written by its parent rather than loaded:
+   * a frame below the top whose holder (the parent's `iframe`, `frame`,
+   * `object` or `embed`, reachable only when the parent has this frame's
+   * origin) has no address of its own or an `about:` one, or a `srcdoc`; or a
+   * frame that shows its parent's own address (what `document.open()` from the
+   * parent gives it). Such a document is the parent page's markup in a frame,
+   * not a page the user opened, and it reports no field.
+   * @returns {boolean}
+   */
+  function writtenByParent() {
+    try {
+      const parent = window.parent;
+      if (parent === undefined || parent === null || parent === window) return false;
+      const holder = window.frameElement;
+      if (isElement(holder)) {
+        if (holder.hasAttribute("srcdoc")) return true;
+        const address = holder.getAttribute(holder.localName === "object" ? "data" : "src");
+        if (typeof address !== "string" || address.trim() === "" || /^\s*about:/i.test(address)) return true;
+      }
+      const own = window.location?.href;
+      const above = parent.location?.href;
+      return typeof own === "string" && typeof above === "string" && own === above;
+    } catch {
+      // A parent of another origin: its address and its holder cannot be read, and it cannot have written this
+      // document either.
+      return false;
+    }
+  }
+
+  /**
+   * The fields one request fills, from the groups of the page (forms.mjs). A
+   * field takes a role in a group only when it passes `inspect` now.
    *
-   * 1. Every input that passes `inspect` is a candidate. A field with
-   *    autocomplete "new-password" is not (a stored password never goes into a
-   *    field that sets a new one), and neither is a text field of a site search
-   *    (`isSearchField`).
-   * 2. The anchor is the first candidate password field. A page with no password
-   *    field (the first step of a two-step sign-in) anchors on the first user
-   *    name field, then on the first one-time-code field.
-   * 3. The group is the anchor's form. Without a form it is the nearest
-   *    container of the anchor that also holds a candidate of another kind;
-   *    when that is the whole page, only fields named for their purpose.
-   * 4. The group gives at most one field per kind: the password, the user name
-   *    (the last text field before the password, else the first user name field
-   *    after it) and the first one-time-code field.
+   * Without `target`: the first sign-in or change group whose password the
+   * user can see, else the first user name step, else the first code page. A
+   * sign-in gives its user name, its password and its code; a change form its
+   * user name and the password in use; a user name step the user name; a code
+   * page the code (one field, or the boxes of a split code).
+   *
+   * With `target` (the field of a context menu click), that field must pass
+   * `inspect` and be one the engine fills, or nothing is reported. The password
+   * of a sign-in or change group gives that group, with the clicked field as the
+   * password. A code field gives the code. Any other text field that is no
+   * search, card, PIN or code field gets the user name, and in a sign-in or
+   * change group the password and the code of its group as well.
    *
    * Nothing outside the group is reported, so no kind can land in another form
    * than the one that gets the password.
-   *
-   * With `target` (the field of a context menu click), that field is the anchor
-   * instead, and it must be a candidate itself, or nothing is reported. A
-   * password field anchors as in step 2. A user name field gets the user name,
-   * and its group gives the password field after it (else the last one before
-   * it) and the one-time code. A one-time-code field gets the code only.
    *
    * @param {any} [target]
    * @returns {Field[]}
    */
   function scan(target) {
-    /** @type {Candidate[]} */
-    const candidates = [];
-    allInputs().forEach((element, order) => {
-      const type = String(element.type ?? "").toLowerCase();
-      const tokens = autocompleteTokens(element);
-      if (type === "password") {
-        if (tokens.includes("new-password") || inspect(element) !== null) return;
-        candidates.push({ element, role: "password", order });
-        return;
+    if (writtenByParent()) return [];
+    /** @type {Map<any, boolean>} */
+    const seen = new Map();
+    const usable = (/** @type {any} */ element) => {
+      if (!seen.has(element)) seen.set(element, inspect(element) === null);
+      return /** @type {boolean} */ (seen.get(element));
+    };
+    const groups = findGroups(document, { maxNodes: MAX_NODES, shown: usable });
+    /** @type {Map<any, number>} */
+    const order = new Map();
+    for (const group of groups) for (const f of group.fields) order.set(f.element, f.order);
+
+    /** @type {Array<{ kind: Kind, element: any }>} */
+    const chosen = [];
+    /** @param {Kind} kind @param {any} element */
+    const take = (kind, element) => {
+      if (element !== undefined && element !== null) chosen.push({ kind, element });
+    };
+    /** @param {import("./forms.mjs").Group} group @param {any} [password] */
+    const report = (group, password) => {
+      if (group.kind === "login" || group.kind === "change") {
+        take("username", group.username);
+        take("password", password ?? group.password ?? group.current);
+        if (group.kind === "login") take("totp", group.otp);
+      } else if (group.kind === "identifier") {
+        take("username", group.username);
+      } else if (group.kind === "otp") {
+        take("totp", group.otp);
       }
-      if (!TEXT_TYPES.has(type) || tokens.includes("new-password") || isSearchField(element)) return;
-      if (tokens.includes("one-time-code") || TOTP_HINT.test(hintsOf(element))) {
-        if (inspect(element) === null) candidates.push({ element, role: "totp", order });
-        return;
-      }
-      if (!USERNAME_TYPES.has(type) || inspect(element) !== null) return;
-      const named = tokens.includes("username") || tokens.includes("email") || USERNAME_HINT.test(hintsOf(element));
-      candidates.push({ element, role: named ? "username" : "text", order });
-    });
+    };
 
     if (target !== undefined) {
-      const clicked = candidates.find((c) => c.element === target);
-      if (!clicked) return [];
-      if (clicked.role !== "password") return fieldsOf(aimedGroup(clicked, candidates));
+      if (!usable(target)) return [];
+      const group = groups.find((g) => g.fields.some((f) => f.element === target));
+      const field = group?.fields.find((f) => f.element === target);
+      if (!group || !field) return [];
+      const signIn = group.kind === "login" || group.kind === "change";
+      if (field.password) {
+        if (signIn && field.kind === "current_password") report(group, target);
+      } else if (field.kind === "otp" || field.kind === "otp_digit") {
+        const code = group.otp;
+        if (code === target || (Array.isArray(code) && code.includes(target))) take("totp", code);
+      } else if (["username", "email", "other"].includes(field.kind) && !field.reasons.includes("card")) {
+        take("username", target);
+        if (signIn) {
+          take("password", group.password ?? group.current);
+          if (group.kind === "login") take("totp", group.otp);
+        }
+      }
+      return fieldsOf(chosen, order);
     }
-    const anchor =
-      (target !== undefined ? candidates.find((c) => c.element === target) : undefined) ??
-      candidates.find((c) => c.role === "password") ??
-      candidates.find((c) => c.role === "username" && autocompleteTokens(c.element).includes("username")) ??
-      candidates.find((c) => c.role === "username") ??
-      candidates.find((c) => c.role === "totp");
-    if (!anchor) return [];
-    const group = groupOf(anchor, candidates, document);
 
-    /** @type {Candidate[]} */
-    const chosen = [anchor];
-    if (anchor.role === "password") {
-      const before = group.filter((c) => (c.role === "username" || c.role === "text") && c.order < anchor.order);
-      const user = before.at(-1) ?? group.find((c) => c.role === "username" && c.order > anchor.order);
-      if (user) chosen.push(user);
-    }
-    if (anchor.role !== "totp") {
-      const code = group.find((c) => c.role === "totp");
-      if (code) chosen.push(code);
-    }
-    return fieldsOf(chosen);
+    const pick =
+      groups.find((g) => (g.kind === "login" && g.password) || (g.kind === "change" && g.current)) ??
+      groups.find((g) => g.kind === "identifier" && g.username) ??
+      groups.find((g) => g.kind === "otp" && g.otp);
+    if (pick) report(pick);
+    return fieldsOf(chosen, order);
   }
 
   /**
-   * The group of a clicked field that is not a password field: the field
-   * itself, and for a user name field the password field and the one-time code
-   * of its group.
-   * @param {Candidate} clicked
-   * @param {Candidate[]} candidates
-   * @returns {Candidate[]}
-   */
-  function aimedGroup(clicked, candidates) {
-    if (clicked.role === "totp") return [clicked];
-    const group = groupOf(clicked, candidates, document);
-    const passwords = group.filter((c) => c.role === "password");
-    const password = passwords.find((c) => c.order > clicked.order) ?? passwords.at(-1);
-    const code = group.find((c) => c.role === "totp");
-    return [clicked, ...(password ? [password] : []), ...(code ? [code] : [])];
-  }
-
-  /**
-   * The report entries of the chosen candidates, in document order, each with
-   * a new random id and the form it belongs to now (checked again at fill).
-   * @param {Candidate[]} chosen
+   * The report entries of the chosen fields, in document order, each with a
+   * new random id and the form it belongs to now (checked again at fill).
+   * @param {Array<{ kind: Kind, element: any }>} chosen
+   * @param {Map<any, number>} order
    * @returns {Field[]}
    */
-  function fieldsOf(chosen) {
-    return [...chosen].sort((x, y) => x.order - y.order).map(({ element, role }) => ({
-      kind: /** @type {Kind} */ (role === "text" ? "username" : role),
+  function fieldsOf(chosen, order) {
+    const at = (/** @type {any} */ element) => order.get(elementsOf(element)[0]) ?? 0;
+    return [...chosen].sort((x, y) => at(x.element) - at(y.element)).map(({ kind, element }) => ({
+      kind,
       id: newFieldId(random),
       element,
-      form: element.form ?? null,
+      form: elementsOf(element)[0].form ?? null,
     }));
   }
 
@@ -735,6 +665,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     }
     const target = pending?.fields.find((f) => f.kind === kind);
     if (!target) return { ok: false, reason: "wrong_kind" };
+    if (Array.isArray(target.element)) return fillBoxes(target, value);
     const { element } = target;
     // The kind is checked again on the live element: a password goes only into
     // a password input, and nothing else goes into one.
@@ -749,14 +680,44 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       if ((element.form ?? null) !== target.form || autocompleteTokens(element).includes("new-password")) {
         return { ok: false, reason: "wrong_kind" };
       }
+      // A password field the page has turned into a code, PIN or card field, or into one that sets a new password.
+      if (kind === "password" && classifyField(element).kind !== "current_password") return { ok: false, reason: "wrong_kind" };
     }
     const problem = inspect(element);
     if (problem !== null) return { ok: false, reason: problem };
     if (!nativeSetter) return { ok: false, reason: "gone" };
-    nativeSetter.call(element, value);
+    put(element, value);
+    return { ok: true };
+  }
+
+  /** Sets a value with the native setter and fires `input` and `change`. @param {any} element @param {string} value */
+  function put(element, value) {
+    /** @type {any} */ (nativeSetter).call(element, value);
     for (const name of ["input", "change"]) {
       element.dispatchEvent(new window.Event(name, { bubbles: true }));
     }
+  }
+
+  /**
+   * A code into the boxes of a split code: one digit each, only when the code
+   * has exactly as many digits as there are boxes, and every box still passes
+   * every check (a text input of its form, shown, nothing over it).
+   * @param {Field} target
+   * @param {string} value
+   * @returns {{ ok: true } | { ok: false, reason: Reason }}
+   */
+  function fillBoxes(target, value) {
+    const boxes = /** @type {any[]} */ (target.element);
+    if (!/^[0-9]+$/.test(value) || value.length !== boxes.length) return { ok: false, reason: "wrong_kind" };
+    for (const box of boxes) {
+      if (!isElement(box) || box.isConnected !== true) return { ok: false, reason: "gone" };
+      const type = String(box.type ?? "").toLowerCase();
+      if (type === "password" || !TEXT_TYPES.has(type) || (box.form ?? null) !== target.form) return { ok: false, reason: "wrong_kind" };
+      const problem = inspect(box);
+      if (problem !== null) return { ok: false, reason: problem };
+    }
+    if (!nativeSetter) return { ok: false, reason: "gone" };
+    boxes.forEach((box, i) => put(box, value[i]));
     return { ok: true };
   }
 
