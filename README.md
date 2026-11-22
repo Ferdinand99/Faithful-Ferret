@@ -12,7 +12,7 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.6.0).** The cryptographic core, the OPAQUE server library, the server and the
+> **Status: in development, pre-1.0 (v0.6.1).** The cryptographic core, the OPAQUE server library, the server and the
 > web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
 > backups with an encrypted copy off the machine. v0.6.0 adds devices: clients other than the web vault sign in with
@@ -29,7 +29,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.6.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.6.1 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -42,7 +42,8 @@ These are in v0.6.0 and are tested on a test instance. All of it is pre-1.0, and
 - **One-time sign-in code.** An administrator can issue a code that is good once, for 24 hours. It resets a sign-in
   only. It never opens a vault, and recovery still needs the recovery key and the sheet.
 - **Encrypted export.** Signing in again is required, and the file is encrypted with a separate export password, so
-  it does not open with the master password.
+  it does not open with the master password. For moving to another service, the web vault can also export plain
+  CSV or JSON. That file is not encrypted, and it needs the master password again and two separate confirmations.
 - **Import.** From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted `.avux`
   and CSV). Duplicates are not removed, and passkeys, folders, tags and attachments are not imported.
 - **Tabs.** The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the
@@ -105,7 +106,10 @@ Wi-Fi and custom item types, sharing, and e-mail aliases as an optional add-on. 
 Security is the top priority of the project, and this is how the design handles it:
 
 - **Zero-knowledge.** The vault is encrypted and decrypted only on your devices. A valid server session does not
-  unlock the vault, and nothing on the server, including administration, can decrypt it.
+  unlock the vault, and nothing on the server, including administration, can decrypt it. The web vault is the
+  exception to trust: it trusts the server that delivers its code, so a malicious operator could serve a tampered
+  page. The browser extension and the apps are the real protection against that (see
+  [Honest limits](#honest-limits)).
 - **Master password and an optional secret key.** The master password unlocks the vault on a new device. A
   separate secret key can be added to protect against offline guessing if someone copies the server's database.
 - **Recovery you control.** Recovery uses a recovery key on an emergency sheet and an encrypted export that you keep.
@@ -124,9 +128,9 @@ Security is the top priority of the project, and this is how the design handles 
   not been independently audited by anyone. Making the design and code public is how others can check it, and
   [`docs/REVIEW-PACKAGE.md`](docs/REVIEW-PACKAGE.md) is a scoped starting point for anyone who wants to review the
   cryptographic core.
-- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. This
-  limitation will be documented, and administrators will be able to turn the web vault off and use the extension
-  and apps only.
+- **The web vault trusts the server that serves it.** A compromised server could serve a tampered web page. The
+  server always serves the web vault, and there is no switch to turn it off. If you do not want to trust the server
+  that delivers the code, use the browser extension and the apps.
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
