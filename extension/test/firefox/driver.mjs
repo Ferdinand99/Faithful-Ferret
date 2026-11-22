@@ -438,6 +438,7 @@ ${this.log.slice(-4000)}`);
       await this.execute((/** @type {string} */ css) => document.querySelector(css)?.scrollIntoView({ block: "center" }), target);
       const [element] = await this.findAll(target);
       if (!element) throw new Error(`no element for ${target}`);
+      // A right click through the WebDriver actions: Firefox makes the same trusted contextmenu event as for a person.
       await wire("POST", `${this.#s()}/actions`, {
         actions: [{
           type: "pointer",
@@ -463,41 +464,30 @@ ${this.log.slice(-4000)}`);
    * @param {string} target
    */
   async clickContextMenuItem(label, target) {
-    const before = this.context;
-    if (before !== "content") await this.setContext("content");
-    try {
-      await this.execute((/** @type {string} */ css) => document.querySelector(css)?.scrollIntoView({ block: "center" }), target);
-      const [element] = await this.findAll(target);
-      if (!element) throw new Error(`no element for ${target}`);
-      // A right click through the WebDriver actions: Firefox makes the same trusted contextmenu event as for a person.
-      await wire("POST", `${this.#s()}/actions`, {
-        actions: [{
-          type: "pointer",
-          id: "mouse",
-          parameters: { pointerType: "mouse" },
-          actions: [
-            { type: "pointerMove", origin: element, x: 0, y: 0 },
-            { type: "pointerDown", button: 2 },
-            { type: "pointerUp", button: 2 },
-          ],
-        }],
-      });
-      await wire("DELETE", `${this.#s()}/actions`);
-    } finally {
-      if (before !== "content") await this.setContext(before);
-    }
+    await this.#rightClick(target);
     await this.chrome(async (/** @type {string} */ wanted) => {
       const win = Services.wm.getMostRecentWindow("navigator:browser");
       const popup = win.document.getElementById("contentAreaContextMenu");
-      for (let i = 0; popup.state !== "open"; i++) {
-        if (i > 100) throw new Error("the context menu did not open");
-        await new Promise((resolve) => win.setTimeout(resolve, 100));
-      }
+      const opened = async (/** @type {any} */ menu, /** @type {string} */ what) => {
+        for (let i = 0; menu.state !== "open"; i++) {
+          if (i > 100) throw new Error(`${what} did not open`);
+          await new Promise((resolve) => win.setTimeout(resolve, 100));
+        }
+      };
+      await opened(popup, "the context menu");
       const items = [...popup.querySelectorAll("menuitem")];
       const item = items.find((i) => i.getAttribute("label") === wanted);
       if (!item) {
         popup.hidePopup();
         throw new Error(`no menu item ${wanted}; there are: ${items.map((i) => i.getAttribute("label")).join(" | ")}`);
+      }
+      // With more than one item of an add-on, Firefox puts them in a submenu named after it: open that first.
+      const parent = item.parentNode;
+      if (parent !== popup) {
+        parent.parentNode.openMenu(true);
+        await opened(parent, "the add-on's submenu");
+        parent.activateItem(item);
+        return;
       }
       popup.activateItem(item);
     }, label);
