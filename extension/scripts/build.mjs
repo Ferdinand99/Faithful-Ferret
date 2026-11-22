@@ -65,6 +65,7 @@ export const CONTENT_TYPES = Object.freeze({
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
   ".wasm": "application/wasm",
 });
 
@@ -105,9 +106,13 @@ const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
  * check even when it was added after the build.
  */
 const COMMON_RELEASE_KEYS = [
-  "background", "browser_specific_settings", "commands", "content_security_policy", "description",
+  "background", "browser_specific_settings", "commands", "content_security_policy", "description", "icons",
   "manifest_version", "name", "optional_permissions", "options_ui", "permissions", "version",
 ];
+/** The folder of the extension's icon artwork, copied to icons/ in the package (any .svg file in it). */
+export const ICONS_DIR = "icons";
+/** The sizes the manifest declares an icon for (the add-on list, and the toolbar button). */
+export const ICON_SIZES = Object.freeze([16, 32, 48, 96, 128]);
 /** The one options page: the settings, opened in a tab. */
 const RELEASE_OPTIONS_PAGE = "pages/settings.html";
 
@@ -322,6 +327,18 @@ function checkHtml(label, html) {
   }
 }
 
+/**
+ * An icon is a picture and nothing else: no script, no event handler, no embedded
+ * document, no reference to another file or a remote resource.
+ * @param {string} label @param {string} svg
+ */
+function checkSvg(label, svg) {
+  if (!/^\s*<svg\b/.test(svg)) throw new Error(`${label}: not an SVG document`);
+  if (/<\s*(?:script|foreignObject|iframe|object|embed|image|use|a|style|animate|set)\b/i.test(svg)) throw new Error(`${label}: only shapes are allowed in an icon`);
+  if (/<!(?:DOCTYPE|ENTITY)|<\?xml-stylesheet/i.test(svg)) throw new Error(`${label}: no DOCTYPE or ENTITY in an icon`);
+  if (/[\s/]on[a-z]+\s*=|javascript:|(?:href|src)\s*=|url\(\s*["']?(?!#)/i.test(svg)) throw new Error(`${label}: an icon may not run code or name another resource`);
+}
+
 /** @param {string} path @param {Buffer} bytes */
 function checkFile(path, bytes) {
   if (path.endsWith(".map")) throw new Error(`${path}: source maps are not allowed`);
@@ -329,6 +346,7 @@ function checkFile(path, bytes) {
   if (!Object.hasOwn(CONTENT_TYPES, ext)) throw new Error(`${path}: file type is not allowed`);
   if (bytes.length > MAX_FILE_BYTES && ext !== ".wasm") throw new Error(`${path}: over 4 MiB`);
   if (ext === ".html") checkHtml(path, bytes.toString("utf8"));
+  if (ext === ".svg") checkSvg(path, bytes.toString("utf8"));
   if ((ext === ".mjs" || ext === ".js" || ext === ".css") && /sourceMappingURL=/.test(bytes.toString("utf8"))) {
     throw new Error(`${path}: source map reference is not allowed`);
   }
@@ -338,7 +356,8 @@ function checkFile(path, bytes) {
 function manifestFiles(manifest) {
   const action = manifest.action ?? manifest.browser_action;
   const bg = manifest.background ?? {};
-  return [action?.default_popup, bg.page, ...(bg.scripts ?? []), manifest.options_ui?.page].filter((p) => typeof p === "string");
+  const icons = [manifest.icons, action?.default_icon].flatMap((map) => (isPlainObject(map) ? Object.values(map) : []));
+  return [action?.default_popup, bg.page, ...(bg.scripts ?? []), manifest.options_ui?.page, ...icons].filter((p) => typeof p === "string");
 }
 
 /**
@@ -528,7 +547,17 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
   problems.push(...sharedProblems(files, webRoot));
   const raw = files.get("manifest.json");
   if (raw === undefined) problems.push("manifest.json is missing");
-  else problems.push(...manifestProblems(raw.toString("utf8"), permissionAllow));
+  else {
+    problems.push(...manifestProblems(raw.toString("utf8"), permissionAllow));
+    // Every icon the manifest names is in the package.
+    try {
+      for (const path of manifestFiles(JSON.parse(raw.toString("utf8")))) {
+        if (!files.has(path)) problems.push(`manifest.json: ${path} is not in the package`);
+      }
+    } catch {
+      // not valid JSON: manifestProblems said so
+    }
+  }
   return problems;
 }
 
@@ -806,6 +835,12 @@ export async function build({
     for (const path of TEST_ONLY_FILES) {
       if (existsSync(join(root, path))) dist.set(path, readFileSync(join(root, path)));
     }
+  }
+
+  // The icon artwork: extension/icons/*.svg, shipped as icons/*.svg.
+  for (const name of listDir(join(root, ICONS_DIR))) {
+    if (!/^[a-z0-9-]+\.svg$/.test(name)) throw new Error(`${ICONS_DIR}/${name}: only <name>.svg files live in ${ICONS_DIR}`);
+    dist.set(`icons/${name}`, readFileSync(join(root, ICONS_DIR, name)));
   }
 
   // 3. Shared files from the web vault (an empty list adds nothing).

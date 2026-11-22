@@ -141,13 +141,13 @@ The two AMO API values are secrets of a GitHub **environment** named `amo-signin
 
 ## Signing a release build
 
-The workflow `.github/workflows/extension-sign-release.yml` ("Extension sign release build") signs the release variant: the MV2 package with the add-on id `ferret@hedgerow.tools`, without the test hooks, the test pages or the test host names. It is the build to install for daily use. It runs only when started by hand and uses the same `amo-signing` environment as above, so every signing waits for your approval and only runs started on `ext` get the secrets.
+The workflow `.github/workflows/extension-sign-release.yml` ("Extension sign release build") signs the release variant: the MV2 package with the add-on id `ferret@hedgerow.tools`, without the test hooks, the test pages or the test host names. It is the build to install for daily use. It runs only when started by hand and uses the same `amo-signing` environment as above, so every signing waits for your approval and only runs started on `ext` or `main` get the secrets.
 
 ```
-gh workflow run extension-sign-release.yml --ref ext -f ref=<commit SHA>
+gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>
 ```
 
-The input `ref` is the code to sign: a full 40-character commit SHA that is reachable from `ext` or `main`, or the branch name `ext` or `main` (`main` has no `extension/` folder yet, so for now that means `ext`). Anything else is refused. The run prints the commit it resolved.
+The input `ref` is the code to sign: a full 40-character commit SHA that is reachable from `ext` or `main`, or the branch name `ext` or `main`. Run it on `main` (`--ref main`) with the commit on `main` as the input. Anything else is refused. The run prints the commit it resolved.
 
 Who approves: the required reviewer of `amo-signing` (you), in the Actions tab under "Review deployments", after the build job has passed. Look at the build job's summary first: commit, version and SHA-256.
 
@@ -159,7 +159,7 @@ What is checked before the approval is asked for (the build job, which has no se
 - the add-on id is the release id, the manifest version is 2, the name is not the test name;
 - the package is at most 8 MiB.
 
-What is checked after the approval (the sign job): the downloaded package has the SHA-256 the build job reported; it is signed unlisted with the locked web-ext; the signed package holds exactly the files of the unsigned one apart from Mozilla's `META-INF/` signature. The signed `.xpi` and its SHA-256 are kept as the artifact `ferret-release-mv2-signed` for seven days, and the SHA-256 is in the job summary.
+What is checked after the approval (the sign job): the downloaded package has the SHA-256 the build job reported; it is signed unlisted with the locked web-ext; the signed package holds exactly the files of the unsigned one apart from Mozilla's `META-INF/` signature and `manifest.json`, which Mozilla rewrites when it signs (it drops the trailing newline) and which is therefore compared as parsed JSON; every other file must be byte for byte the same. The signed `.xpi` and its SHA-256 are kept as the artifact `ferret-release-mv2-signed` for seven days, and the SHA-256 is in the job summary.
 
 AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`. The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
 
