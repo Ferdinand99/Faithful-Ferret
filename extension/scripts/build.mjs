@@ -106,8 +106,15 @@ const SORTED_ARRAYS = new Set(PERMISSION_KEYS);
  */
 const COMMON_RELEASE_KEYS = [
   "background", "browser_specific_settings", "commands", "content_security_policy", "description",
-  "manifest_version", "name", "optional_permissions", "permissions", "version",
+  "manifest_version", "name", "optional_permissions", "options_ui", "permissions", "version",
 ];
+/** The one options page: the settings, opened in a tab. */
+const RELEASE_OPTIONS_PAGE = "pages/settings.html";
+
+/** @param {unknown} value */
+function isReleaseOptionsUi(value) {
+  return isPlainObject(value) && Object.keys(value).length === 2 && value.page === RELEASE_OPTIONS_PAGE && value.open_in_tab === true;
+}
 
 /** The commands a release may declare: the fill shortcut (manifest/parts/commands.json), nothing else. */
 export const RELEASE_COMMANDS = Object.freeze(["fill-login"]);
@@ -452,6 +459,11 @@ function manifestProblems(text, allow) {
         if (!RELEASE_COMMANDS.includes(name)) problems.push(`manifest.json: the command ${name} is not a release command`);
       }
     }
+  }
+
+  // The settings page opens in a tab of its own, so it is an ordinary top-level page of the extension.
+  if ("options_ui" in manifest && !isReleaseOptionsUi(manifest.options_ui)) {
+    problems.push("manifest.json: options_ui is not the settings page opened in a tab");
   }
 
   // The CSP is one constant, in the shape of the manifest version.
