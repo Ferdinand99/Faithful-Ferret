@@ -323,7 +323,7 @@ test("the_release_publish_jobs_have_the_least_access_and_announce_only_the_signe
   // The order: publishing needs the signing (and so its approval) and the written manifest.
   assert.match(manifest, /^ {4}needs: \[build, sign\]\n/m);
   assert.match(publish, /^ {4}needs: \[build, sign, manifest\]\n/m);
-  // Only a run started on main, for a commit on main, publishes: a run from ext signs and stops.
+  // Only a run started on main, for a commit on main, publishes.
   const guard = "    if: github.ref == 'refs/heads/main' && needs.build.outputs.on_main == 'true'\n";
   for (const job of [manifest, publish]) assert.equal(job.split(guard).length, 2, "the main-only guard, once, on the job");
   assert.equal([...code.matchAll(/^ {4}if:/gm)].length, 2, "no other job-level condition");

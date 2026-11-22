@@ -134,20 +134,20 @@ The two AMO API values are secrets of a GitHub **environment** named `amo-signin
 
 1. In the repository on GitHub: Settings, Environments, "New environment", name it `amo-signing`.
 2. On the environment, under "Required reviewers", tick it and add yourself. Leave "Prevent self-review" off (you start the run and you approve it). Save.
-3. Under "Deployment branches and tags" choose "Selected branches and tags" and add the rule `ext`. A run started on any other branch is then refused the secrets.
+3. Under "Deployment branches and tags" choose "Selected branches and tags" and add the rule `main`. A run started on any other branch is then refused the secrets.
 4. Under "Environment secrets" add `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` (the values from your AMO developer hub API credentials). Then delete the repository secrets of the same names (Settings, Secrets and variables, Actions), so no other workflow can read them.
-5. The file must also be on `main` before GitHub lists the workflow (a copy of it on `main` is enough; it cannot do anything there, because `main` has no `extension/` folder). Start a run on the `ext` branch: `gh workflow run extension-sign-measure.yml --ref ext -f manifest=mv2` (and again with `mv3`). The run stops at "Waiting for review"; open it in the Actions tab, click "Review deployments", tick `amo-signing` and approve. Only then does the signing job start.
+5. Start a run on the `main` branch: `gh workflow run extension-sign-measure.yml --ref main -f manifest=mv2` (and again with `mv3`). The run stops at "Waiting for review"; open it in the Actions tab, click "Review deployments", tick `amo-signing` and approve. Only then does the signing job start.
 6. Download the artifact `ferret-measure-<manifest>-signed` (the repository is public, so the artifact is kept for one day only) and install it as below.
 
 ## Signing a release build
 
-The workflow `.github/workflows/extension-sign-release.yml` ("Extension sign release build") signs the release variant: the MV2 package with the add-on id `ferret@hedgerow.tools`, without the test hooks, the test pages or the test host names. It is the build to install for daily use. It runs only when started by hand and uses the same `amo-signing` environment as above, so every signing waits for your approval and only runs started on `ext` or `main` get the secrets.
+The workflow `.github/workflows/extension-sign-release.yml` ("Extension sign release build") signs the release variant: the MV2 package with the add-on id `ferret@hedgerow.tools`, without the test hooks, the test pages or the test host names. It is the build to install for daily use. It runs only when started by hand and uses the same `amo-signing` environment as above, so every signing waits for your approval and only runs started on `main` get the secrets.
 
 ```
 gh workflow run extension-sign-release.yml --ref main -f ref=<commit SHA on main>
 ```
 
-The input `ref` is the code to sign: a full 40-character commit SHA that is reachable from `ext` or `main`, or the branch name `ext` or `main`. Run it on `main` (`--ref main`) with the commit on `main` as the input. Anything else is refused. The run prints the commit it resolved.
+The input `ref` is the code to sign: a full 40-character commit SHA that is reachable from `main`, or the branch name `main`. Run it on `main` (`--ref main`) with the commit on `main` as the input. Anything else is refused. The run prints the commit it resolved.
 
 Who approves: the required reviewer of `amo-signing` (you), in the Actions tab under "Review deployments", after the build job has passed. Look at the build job's summary first: commit, version and SHA-256.
 
@@ -202,7 +202,7 @@ The update manifest has Mozilla's format, one entry per published version, oldes
 ### How a version is published
 
 1. Raise `version` in `extension/package.json` (and the lock file) in a pull request to `main`, and merge it.
-2. Start the signing workflow on `main` as above and approve `amo-signing`. Only a run started on `main` for a commit on `main` publishes; a run started on `ext`, or for a commit that is only on `ext`, signs the package and stops before the two jobs below.
+2. Start the signing workflow on `main` as above and approve `amo-signing`. Only a run started on `main` for a commit on `main` publishes.
 3. The workflow then runs two more jobs:
    - `manifest` (read access only) checks the signed file against the SHA-256 the sign job reported, fetches the current `updates.json` and adds the new version with `extension/scripts/updates-json.mjs`. The writer hashes the file itself and refuses to go on when the hash differs, when the file has no Mozilla signature, another add-on id, another version or another `update_url`, when the version is not newer than every listed one, or when the current file is not exactly in the shape it writes (a link that is not this repository's HTTPS link for that version, a hash that is not SHA-256, an extra key). Every older entry is kept. Only when the release `extension-updates` does not exist at all (the first publication) does it start a new file; any other failure to read the current file stops the run.
    - `publish` (`contents: write`, and no code from the repository) checks both files again, makes the release `extension-v<version>` with the signed file and its `SHA256SUMS`, reads the live `updates.json` again and refuses unless the new file is the live one plus one entry at the end (or the same file, on a re-run), replaces `updates.json` in the release `extension-updates` (it makes that release the first time), and then downloads both over HTTPS as Firefox will and compares them with what was signed and written.

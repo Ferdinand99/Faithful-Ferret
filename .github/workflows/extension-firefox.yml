@@ -9,7 +9,7 @@ name: Extension Firefox
 on:
   pull_request:
   push:
-    branches: [main, ext]
+    branches: [main]
 
 concurrency:
   group: extension-firefox-${{ github.ref }}

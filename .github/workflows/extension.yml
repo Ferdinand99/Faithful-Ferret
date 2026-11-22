@@ -10,7 +10,7 @@ name: Extension
 on:
   pull_request:
   push:
-    branches: [main, ext]
+    branches: [main]
 
 concurrency:
   group: extension-${{ github.ref }}
