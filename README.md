@@ -67,14 +67,15 @@ These are in v0.7.0 and are tested on a test instance. All of it is pre-1.0, and
   redeemed sign-in code and a restore sign every device out. The database holds only token hashes, never a token.
 - **New web vault layout.** The web vault has a side menu (all items, favourites, folders, trash, import and export,
   and pinned folders), an account menu with a light, dark or system theme, and a drawer on a phone. The item list has
-  search, filter chips, sortable columns and bulk actions (favourite, move to a folder, move to the trash), and an item
+  search, filter chips, sortable columns, bulk actions (favourite, move to the trash), a row menu with Move to folder, and an item
   opens in its own view with an edit form. The generator and the health check are in the menu as "Coming soon".
 - **Folders.** A folder is a label inside each item, encrypted with it, so the server never sees a name. An item can be
   in up to 20 folders (names of 1 to 64 characters). The web vault can put items in folders, and rename, merge, delete
   and pin folders to the menu. Import from Bitwarden and AliasVault turns folders and collections into folders.
 - **Unlock after the session has ended.** When the server session has ended but the browser still remembers the
-  account, the web vault shows the remembered e-mail and asks for the master password (and for the secret key, if the
-  device does not hold it) instead of a full sign-in form. The same checks of the server run as at any sign-in.
+  account, the web vault shows the remembered e-mail and asks only for the master password instead of a full sign-in form.
+  If the account has a secret key that this device does not keep, the full sign-in page is shown. The same checks of
+  the server run as at any sign-in.
 - **Firefox extension.** See [below](#firefox-extension).
 - **Deployment.** The stack for real data publishes its two ports on the loopback address only and trusts exactly one
   proxy. Server images are built for amd64 and arm64 and signed with cosign, and the deploy script verifies the
@@ -99,8 +100,8 @@ that build is made, and [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the che
   filter for the whole vault. "Fill" puts the login into the page, and a value goes straight from the vault to the
   frame, never through the popup. The shortcut Alt+Shift+L (Firefox lets you change it) and the context menu entry
   "Fill with Ferret" do the same.
-- **Copy.** Copy the user name, e-mail, password or one-time code from a row. Ferret clears the clipboard 30 seconds
-  after its last copy.
+- **Copy.** Copy the user name, e-mail or password from a row, and a one-time code from the item's view. Ferret clears
+  the clipboard 30 seconds after its last copy.
 - **Auto-lock.** The vault locks after 15 seconds to 24 hours without use of Ferret's own pages (15 minutes by
   default). Activity in a web page does not count, and the vault also locks when the browser closes.
 - **Frame and phishing rules.** The extension fills only a frame that matches the item's saved address and that is
