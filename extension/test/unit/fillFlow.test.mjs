@@ -12,6 +12,7 @@
 // - a report or a result that names no pending request does nothing.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createRefs } from "../../src/background/fillFlow.mjs";
 import { ITEMS, LOGIN_ORIGIN, LOGIN_URL, OTHER_PASSWORD, PASSWORD, TAB, TOTP_CODE, idOf, itemWorld } from "./itemHelpers.mjs";
 
 /** The calls of the fake core that read a value. @param {any} world */
@@ -273,4 +274,58 @@ test("an_insecure_candidate_and_the_one_time_code_fill_through_the_same_path", a
   // The list never named the item's other values.
   assert.equal(JSON.stringify(row).includes(PASSWORD), false);
   assert.equal(ITEMS.length, 3);
+});
+
+test("a_lock_and_an_unlock_while_the_frame_is_fetched_again_drop_the_reference_of_the_fill", async () => {
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const [row] = await suggestions(popup);
+  // The second question to the page matching (the fill's check of the frame): the vault locks and opens again meanwhile.
+  world.matching.before = async (n) => {
+    if (n !== 2) return;
+    await world.coreHost.lock("manual");
+    await world.open();
+  };
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: false, reason: "not_offered" });
+  assert.deepEqual(world.injections, []);
+  assert.deepEqual(reveals(world), []);
+});
+
+test("an_open_vault_without_a_running_sync_refuses_item_actions_without_locking", async () => {
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const [row] = await suggestions(popup);
+  world.matching.syncRunning = false;
+  assert.deepEqual(await popup.list.copy(row.ref, "password"), { ok: false, reason: "sync_not_running" });
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: false, reason: "sync_not_running" });
+  assert.equal((await popup.list.item(row.ref)).reason, "sync_not_running");
+  await assert.rejects(popup.request("search", { query: "" }));
+  // None of it is a failed worker: the vault stays open, and nothing was read.
+  assert.equal(world.coreHost.state(), "unlocked");
+  assert.equal(world.client.locks, 0);
+  assert.deepEqual(world.written, []);
+  assert.deepEqual(reveals(world), []);
+});
+
+test("a_full_session_drops_its_oldest_copy_reference_and_never_a_fill_reference", () => {
+  let n = 0;
+  const refs = createRefs({ random: (bytes) => bytes.fill((n += 1)), max: 3 });
+  const session = "a".repeat(32);
+  const fill = refs.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frameId: 0, origin: LOGIN_ORIGIN });
+  const copies = [2, 3].map((i) => refs.issue(session, "copy", { purpose: "copy", itemId: idOf(i) }));
+  // A new copy reference: the oldest copy one goes, the fill one stays.
+  const fourth = refs.issue(session, "copy", { purpose: "copy", itemId: idOf(4) });
+  assert.equal(refs.get(session, copies[0]), null);
+  assert.equal(refs.get(session, fill)?.purpose, "fill");
+  assert.equal(refs.get(session, copies[1])?.itemId, idOf(3));
+  assert.equal(refs.get(session, fourth)?.itemId, idOf(4));
+  // The dropped item gets a new reference when it is asked for again.
+  const again = refs.issue(session, "copy", { purpose: "copy", itemId: idOf(2) });
+  assert.notEqual(again, copies[0]);
+  // A session full of fill references refuses a new one rather than drop one.
+  const full = createRefs({ random: (bytes) => bytes.fill((n += 1)), max: 2 });
+  for (const frameId of [0, 1]) full.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frameId, origin: LOGIN_ORIGIN });
+  assert.throws(() => full.issue(session, "copy", { purpose: "copy", itemId: idOf(2) }), { code: "busy" });
 });

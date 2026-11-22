@@ -191,8 +191,9 @@ export function createRouter({
     // A request to lock is never refused: it runs whatever the check says.
     if (!may && type !== "lock") return post(port, encodeRefusal(id, "vault_locked"));
     // Activity in Ferret's own UI moves the deadline. The messages that need no
-    // key (a state poll, an unlock attempt) do not.
-    if (!LOCK_EXEMPT.includes(type)) lock.touch();
+    // key (a state poll, an unlock attempt) do not, and neither does a read a page
+    // made by itself (`automatic`): it is still checked against the deadline above.
+    if (!LOCK_EXEMPT.includes(type) && body?.automatic !== true) lock.touch();
     /** @type {HandlerContext} */
     const ctx = Object.freeze({
       channel: "ui",

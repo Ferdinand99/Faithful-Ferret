@@ -325,7 +325,8 @@ async function main() {
         return;
       }
       mount(syncSlot, syncPart(next, note));
-      if (!vault.busy()) void vault.reload().catch(() => {});
+      // Not the user's doing: the reload does not move the auto-lock's deadline.
+      if (!vault.busy()) void vault.reload({ automatic: true }).catch(() => {});
       follow(next, note, syncSlot, vault);
     }, SYNC_REFRESH_MS);
     refresh = mine;

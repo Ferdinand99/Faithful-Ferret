@@ -280,11 +280,15 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     frames: frames ?? [{ frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] }],
     /** Every question the fill flow asked of the page matching. @type {number[]} */
     asked: /** @type {number[]} */ ([]),
+    /** Runs before the page matching answers its n-th question (a test plays something that happens meanwhile). */
+    before: async (/** @type {number} */ _n) => {},
+    /** Whether the sync engine runs (an open vault whose sync did not start has none). */
+    syncRunning: true,
   };
   /** @type {any} */
   let coreHost = null;
   const fillHost = createFillHost({
-    syncHost: { engine: () => (coreHost?.state() === "unlocked" ? engine : null) },
+    syncHost: { engine: () => (coreHost?.state() === "unlocked" && matching.syncRunning ? engine : null) },
     clipboard,
     scripting,
     tabs,
@@ -292,6 +296,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       ? {
           candidates: async (/** @type {number} */ tabId) => {
             matching.asked.push(tabId);
+            await matching.before(matching.asked.length);
             return tabId === TAB ? { host: { unicode: "login.example.net", a_label: "login.example.net" }, frames: structuredClone(matching.frames) } : { frames: [] };
           },
         }

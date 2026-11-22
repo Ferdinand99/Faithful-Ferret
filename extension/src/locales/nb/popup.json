@@ -57,5 +57,6 @@
   "popup.error.no_site": "Dette elementet har ingen nettadresse å åpne.",
   "popup.error.clipboard": "Ferret fikk ikke skrevet til utklippstavlen.",
   "popup.error.not_found": "Dette elementet finnes ikke lenger i hvelvet.",
-  "popup.error.unknown": "Det gikk ikke. Prøv igjen."
+  "popup.error.unknown": "Det gikk ikke. Prøv igjen.",
+  "popup.error.sync_not_running": "Synkroniseringen har ikke startet, så elementene i hvelvet er ikke her ennå. Lås og lås opp for å prøve igjen."
 }

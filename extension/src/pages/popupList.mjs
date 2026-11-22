@@ -296,15 +296,19 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
     return box;
   }
 
-  /** Builds the list again from the background's answers. */
-  async function reload() {
+  /**
+   * Builds the list again from the background's answers.
+   * @param {{ automatic?: boolean }} [o] `automatic`: the popup reloads by itself (the sync changed something), which is not
+   *   activity of the user and must not keep the vault open
+   */
+  async function reload({ automatic = false } = {}) {
     generation += 1;
     const mine = generation;
     closeMenus();
     const searching = query.trim() !== "";
     const [page, found] = await Promise.all([
-      searching ? Promise.resolve(null) : list.page(tabId),
-      list.list({ query, type }),
+      searching ? Promise.resolve(null) : list.page(tabId, { automatic }),
+      list.list({ query, type, automatic }),
     ]);
     if (mine !== generation) return;
     count.textContent = t("popup.vault.count", { count: found.count });

@@ -185,8 +185,10 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
+  // `automatic` (here and in `search`): a read the page made by itself (after the sync changed something), not an action of
+  // the user, so it does not move the auto-lock's deadline. The lock is still checked.
   candidates: {
-    request: object({ tab_id: tabId, frame_id: frameId }),
+    request: object({ tab_id: tabId, frame_id: frameId, automatic: boolean() }, { optional: ["automatic"] }),
     reply: object(
       {
         handles: array(handle, { max: 100 }),
@@ -202,8 +204,8 @@ export const UI_TYPES = defineTypes({
   // says how many items match in all.
   search: {
     request: object(
-      { query: string({ max: 256 }), favorites: boolean(), type: itemType, offset: integer({ min: 0, max: 1_000_000 }) },
-      { optional: ["favorites", "type", "offset"] },
+      { query: string({ max: 256 }), favorites: boolean(), type: itemType, offset: integer({ min: 0, max: 1_000_000 }), automatic: boolean() },
+      { optional: ["favorites", "type", "offset", "automatic"] },
     ),
     reply: object({ handles: array(handle, { max: 100 }), total: integer({ min: 0, max: 1_000_000 }) }),
   },

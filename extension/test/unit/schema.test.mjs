@@ -217,7 +217,7 @@ test("every UI request and reply round-trips with a sample body", () => {
       { tab_id: 1, frame_id: 0 },
       { handles: [{ ref: "h1", name: "Example", username: "me", insecure: false, favorite: true, type: "login", site: true, frame_id: 0 }], host: "example.com", host_a_label: "example.com" },
     ],
-    search: [{ query: "ex", favorites: true, type: "login", offset: 40 }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
+    search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],
     item: [{ ref: "h1" }, { ok: true, name: "Example", username: "me", type: "login", favorite: false, urls: ["https://example.com/login"], copyable: ["username", "password", "totp"] }],

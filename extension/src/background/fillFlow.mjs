@@ -114,7 +114,19 @@ export function createRefs({ random, max = MAX_REFS }) {
       const key = [purpose, entry.itemId, entry.tabId ?? "", entry.frameId ?? "", entry.documentId ?? "", entry.origin ?? ""].join("|");
       const known = own.byKey.get(key);
       if (known !== undefined) return known;
-      if (own.entries.size >= max) throw new FillError("busy");
+      if (own.entries.size >= max) {
+        // Full: the oldest "copy" reference goes (a search makes it again when it is needed). A "fill" reference is
+        // never dropped to make room.
+        const oldest = [...own.entries].find(([, e]) => e.purpose === "copy");
+        if (oldest === undefined) throw new FillError("busy");
+        own.entries.delete(oldest[0]);
+        for (const [k, r] of own.byKey) {
+          if (r === oldest[0]) {
+            own.byKey.delete(k);
+            break;
+          }
+        }
+      }
       const ref = hex(random(new Uint8Array(16)));
       own.byKey.set(key, ref);
       own.entries.set(ref, Object.freeze({ ...entry, purpose }));
@@ -232,7 +244,8 @@ export function createFillHost({
   /** @returns {Engine} */
   const engine = () => {
     const running = syncHost.engine();
-    if (running === null) throw new FillError("vault_locked");
+    // An open vault whose sync did not start has no list: that is not a lock, and must not look like a failed worker.
+    if (running === null) throw new FillError("sync_not_running");
     return running;
   };
 
@@ -478,9 +491,13 @@ export function createFillHost({
     if (source === null) return { ok: false, reason: "not_offered" };
     if (pending.size > 0) return { ok: false, reason: "busy" };
     if (host?.state() !== "unlocked") return { ok: false, reason: "vault_locked" };
+    // No running sync, no item to fill: said before anything is put into the page.
+    engine();
 
     // The frame now, as the browser and the core see it: it must still be the one the reference was made for.
     const now = await source.candidates(tabId);
+    // A lock (and a new unlock) while the frame was asked for dropped every reference: this one is gone too.
+    if (refs.get(session, ref) !== entry) return { ok: false, reason: "not_offered" };
     const frame = (Array.isArray(now?.frames) ? now.frames : []).find((f) => f.frameId === frameId);
     if (
       !frame ||

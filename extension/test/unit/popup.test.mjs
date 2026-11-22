@@ -189,3 +189,57 @@ test("the_list_has_only_working_controls", () => {
   assert.equal(/style=/.test(html), false, "no inline style");
   assert.equal(/<script\b(?![^>]*\bsrc=)/.test(html), false, "no inline script");
 });
+
+test("an_automatic_list_reload_does_not_move_the_lock_deadline", async () => {
+  // A popped-out popup reloads its list whenever the sync changes something. With nobody at it, it locks at the deadline.
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const deadline = world.sessionStorage.data.get("lock_at");
+  assert.equal(typeof deadline, "number");
+  let lockedAt = null;
+  for (let minute = 1; minute <= 20 && lockedAt === null; minute += 1) {
+    world.clock.advance(60_000);
+    await popup.list.page(TAB, { automatic: true });
+    await popup.list.list({ automatic: true }).catch(() => null);
+    await world.tick();
+    if (world.coreHost.state() === "locked") lockedAt = minute;
+    else assert.equal(world.sessionStorage.data.get("lock_at"), deadline, `minute ${minute}: the deadline stayed`);
+  }
+  assert.equal(lockedAt, 15, "locked at the deadline (15 minutes)");
+
+  // The same reads made by the user move it.
+  const busy = await itemWorld();
+  await busy.open();
+  const user = busy.popup();
+  for (let minute = 1; minute <= 20; minute += 1) {
+    busy.clock.advance(60_000);
+    await user.list.page(TAB);
+    await user.list.list({});
+    await busy.tick();
+  }
+  assert.equal(busy.coreHost.state(), "unlocked");
+  assert.equal(busy.sessionStorage.data.get("lock_at"), busy.clock.now() + 15 * 60_000);
+});
+
+test("open_site_opens_only_the_items_own_web_address", async () => {
+  const bad = ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "ftp://x.example.net/", "about:blank"];
+  const items = [
+    { id: idOf(7), name: "Mixed", username: "m", password: "pw-7-secret", favorite: false, type: "login", urls: [...bad, "https://example.net/"], totp: false },
+    { id: idOf(8), name: "Only bad", username: "b", password: "pw-8-secret", favorite: false, type: "login", urls: bad, totp: false },
+  ];
+  const world = await itemWorld({ items });
+  await world.open();
+  const popup = world.popup();
+  const [mixed] = (await popup.list.search({ query: "mixed" })).rows;
+  const [onlyBad] = (await popup.list.search({ query: "only bad" })).rows;
+  assert.equal(mixed.site, true);
+  assert.equal(onlyBad.site, false);
+  assert.deepEqual(await popup.list.openSite(mixed.ref), { ok: true });
+  assert.deepEqual(world.opened, ["https://example.net/"]);
+  assert.deepEqual(await popup.list.openSite(onlyBad.ref), { ok: false, reason: "no_site" });
+  assert.deepEqual(world.opened, ["https://example.net/"], "nothing else was opened");
+  // The page names a reference, never an address: an unknown reference opens nothing.
+  assert.deepEqual(await popup.request("open_site", { ref: "f".repeat(32) }), { ok: false, reason: "not_offered" });
+  assert.deepEqual(world.opened, ["https://example.net/"]);
+});

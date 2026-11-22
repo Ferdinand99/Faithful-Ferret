@@ -189,6 +189,7 @@ export const ACTION_ERRORS = Object.freeze([
   "no_site",
   "clipboard",
   "not_found",
+  "sync_not_running",
 ]);
 
 /** The i18n key of the text of a refused action. @param {unknown} reason */
@@ -229,13 +230,18 @@ export function rowsOf(reply) {
  * @param {import("./ui.mjs").Request} request
  */
 export function createListFlow(request) {
-  /** @param {{ query?: string, favorites?: boolean, type?: string | null, offset?: number }} o @returns {Promise<Section>} */
-  const search = async ({ query = "", favorites = false, type = null, offset = 0 }) => {
+  /**
+   * @param {{ query?: string, favorites?: boolean, type?: string | null, offset?: number, automatic?: boolean }} o
+   *   `automatic`: the popup reads again by itself (not the user), so the auto-lock's deadline does not move
+   * @returns {Promise<Section>}
+   */
+  const search = async ({ query = "", favorites = false, type = null, offset = 0, automatic = false }) => {
     const reply = await request("search", {
       query: query.slice(0, 256),
       ...(favorites ? { favorites: true } : {}),
       ...(type !== null ? { type } : {}),
       ...(offset > 0 ? { offset } : {}),
+      ...(automatic ? { automatic: true } : {}),
     });
     return { rows: rowsOf(reply), total: Number.isSafeInteger(reply?.total) ? reply.total : 0 };
   };
@@ -247,12 +253,13 @@ export function createListFlow(request) {
      * The candidates of the page in the tab `tabId`: the items that may be filled there. Null when the background
      * offers none for this page (no page, no matching yet, or a refusal).
      * @param {number | null} tabId
+     * @param {{ automatic?: boolean }} [o] see `search`
      * @returns {Promise<PageSection | null>}
      */
-    async page(tabId) {
+    async page(tabId, { automatic = false } = {}) {
       if (tabId === null) return null;
       try {
-        const reply = await request("candidates", { tab_id: tabId, frame_id: 0 });
+        const reply = await request("candidates", { tab_id: tabId, frame_id: 0, ...(automatic ? { automatic: true } : {}) });
         return { host: shownHost({ host: reply?.host, host_a_label: reply?.host_a_label }), rows: rowsOf(reply).filter((row) => row.frameId !== null) };
       } catch {
         return null;
@@ -261,15 +268,15 @@ export function createListFlow(request) {
 
     /**
      * What the list shows: with no query, the favourites and all items; with a query, what it found.
-     * @param {{ query?: string, type?: string | null }} o
+     * @param {{ query?: string, type?: string | null, automatic?: boolean }} o `automatic`: see `search`
      * @returns {Promise<{ favorites: Section | null, all: Section, count: number }>}
      */
-    async list({ query = "", type = null }) {
+    async list({ query = "", type = null, automatic = false }) {
       const searching = query.trim() !== "";
       const [favorites, all, everything] = await Promise.all([
-        searching ? Promise.resolve(null) : search({ favorites: true, type }),
-        search({ query, type }),
-        searching || type !== null ? search({ query: "" }) : Promise.resolve(null),
+        searching ? Promise.resolve(null) : search({ favorites: true, type, automatic }),
+        search({ query, type, automatic }),
+        searching || type !== null ? search({ query: "", automatic }) : Promise.resolve(null),
       ]);
       return { favorites, all, count: (everything ?? all).total };
     },
