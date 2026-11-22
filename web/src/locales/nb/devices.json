@@ -30,6 +30,7 @@
   "devices.platform.macos": "macOS",
   "devices.platform.other": "Annet",
   "devices.platform.windows": "Windows",
+  "devices.refresh": "Sjekk på nytt",
   "devices.revoke.body": "«{name}» mister tilgangen til serveren med en gang og må logge inn igjen med hovedpassordet ditt. Det den allerede har lagret, blir liggende på den.",
   "devices.revoke.button": "Tilbakekall",
   "devices.revoke.confirm": "Tilbakekall",

@@ -4,6 +4,7 @@
 // the page never reads the store and never shows more than a name and a date.
 // "Restore" writes the item back to the server. "Remove for good" asks first.
 import { el, mount } from "../dom.mjs";
+import { emptyState } from "./emptyState.mjs";
 import { askConfirm, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 
 /**
@@ -21,7 +22,8 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
   const host = el("div", { class: "dialog-host", "data-role": "dialog-host" });
   const list = el("ul", { class: "trash-items", "data-role": "trash-items" });
-  const empty = el("p", { class: "count", "data-role": "trash-empty" });
+  // The count, or the empty state when the trash holds nothing.
+  const empty = el("div", { "data-role": "trash-empty" });
   /** One action at a time: a second click while one runs is ignored. */
   let busy = false;
   let wiped = false;
@@ -71,7 +73,14 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
     if (wiped || mine !== reading) return;
     const sorted = [...entries].sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
     mount(list, ...sorted.map(row));
-    mount(empty, document.createTextNode(sorted.length === 0 ? t("conflict.trash.empty") : t("conflict.trash.count", { count: sorted.length })));
+    if (sorted.length === 0) {
+      mount(empty, emptyState({
+        role: "trash-empty-state", icon: "trash", text: t("conflict.trash.empty"),
+        actions: [{ label: t("conflict.trash.empty_action"), role: "empty-items", href: "#/items" }],
+      }));
+    } else {
+      mount(empty, el("p", { class: "count" }, t("conflict.trash.count", { count: sorted.length })));
+    }
   }
 
   /**

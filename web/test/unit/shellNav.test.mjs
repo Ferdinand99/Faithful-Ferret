@@ -12,7 +12,7 @@ import trashRoute from "../../src/routes/trash.route.mjs";
 import { fakeEngine, find, t, withDom } from "./vaultHelpers.mjs";
 
 const ROUTES = [listRoute, newRoute, favoritesRoute, exportRoute, trashRoute];
-const ROLES = ["nav-items", "nav-new", "nav-favorites", "nav-transfer", "nav-trash"];
+const ROLES = ["nav-items", "nav-favorites", "nav-transfer", "nav-trash"];
 
 function frame(win) {
   const engine = fakeEngine();
@@ -49,7 +49,7 @@ test("the_entry_of_the_open_screen_is_marked_and_the_mark_follows_the_address", 
     assert.deepEqual(current(), ["nav-items"]);
 
     win.go("#/items/new");
-    assert.deepEqual(current(), ["nav-new"], "making an item is its own entry, not the list");
+    assert.deepEqual(current(), ["nav-items"], "making an item has no entry of its own: it belongs to the list, whose Add button starts it");
     // An item or its edit form or its conflict belongs to the list.
     win.go("#/items/0123456789abcdef0123456789abcdef/edit");
     assert.deepEqual(current(), ["nav-items"]);
@@ -72,6 +72,7 @@ test("the_entry_of_the_open_screen_is_marked_and_the_mark_follows_the_address", 
     root.isConnected = true;
     root.isConnected = false;
     win.go("#/items");
+    win.listeners.filter(([type]) => type === "storage").forEach(([, fn]) => fn({ key: null }));
     assert.equal(win.listeners.length, 0);
   });
 });
@@ -96,3 +97,64 @@ test("the_menu_is_built_from_the_routes_and_a_page_with_no_routes_has_no_entries
     assert.equal(find(bare, "nav-generator").getAttribute("href"), null);
   });
 });
+
+test("the_list_with_the_favourites_on_belongs_to_the_favourites_entry_whatever_else_is_chosen", async () => {
+  await withDom(async () => {
+    const win = pageWindow("#/items");
+    const { current } = frame(win);
+    win.go("#/items?fav=1");
+    assert.deepEqual(current(), ["nav-favorites"]);
+    win.go("#/items?type=login&fav=1&sort=changed");
+    assert.deepEqual(current(), ["nav-favorites"]);
+    win.go("#/items?type=login");
+    assert.deepEqual(current(), ["nav-items"], "a filter that is not the favourites is the list of all items");
+    win.go("#/items?sort=changed&dir=asc");
+    assert.deepEqual(current(), ["nav-items"]);
+  });
+});
+
+test("the_favourites_route_opens_the_list_with_the_chip_on_and_does_not_stay_in_the_history", async () => {
+  await withDom(async () => {
+    const replaced = [];
+    const node = favoritesRoute.load({ replace: (path) => replaced.push(path) });
+    assert.deepEqual(replaced, ["/items?fav=1"]);
+    assert.ok(node);
+  });
+});
+
+test("another_tabs_theme_choice_is_followed_at_once_and_the_listener_goes_with_the_screen", async () => {
+  await withDom(async () => {
+    const win = pageWindow("#/items");
+    const state = { now: "auto", syncs: 0 };
+    const theme = { current: () => state.now, set: (name) => void (state.now = name), sync: () => void (state.syncs += 1) };
+    const scope = createWipeScope();
+    const root = shellView({
+      t, engine: fakeEngine(), session: { onLock() {} }, content: globalThis.document.createElement("div"),
+      lock: async () => {}, touch: () => true, scope, onLocked: () => globalThis.document.createElement("div"), win,
+      routes: ROUTES, prefs: createUiPrefs(null), theme,
+    });
+    const checked = () => [...walkAll(root)].filter((n) => n.getAttribute?.("aria-checked") === "true").map((n) => n.getAttribute("data-theme-set"));
+    assert.deepEqual(checked(), ["auto"]);
+    const storage = () => win.listeners.filter(([type]) => type === "storage");
+    assert.equal(storage().length, 1);
+
+    state.now = "dark"; // the other tab chose
+    storage().forEach(([, fn]) => fn({ key: "ferret-theme" }));
+    assert.equal(state.syncs, 1, "the page applies the stored choice");
+    assert.deepEqual(checked(), ["dark"], "the menu shows it without being opened again");
+
+    storage().forEach(([, fn]) => fn({ key: "ferret-list" }));
+    assert.equal(state.syncs, 1, "another key is not the theme");
+    storage().forEach(([, fn]) => fn({ key: null })); // storage cleared
+    assert.equal(state.syncs, 2);
+
+    scope.run();
+    assert.equal(storage().length, 0, "nothing of the screen is listening any more");
+  });
+});
+
+/** Every node below `node`. */
+function* walkAll(node) {
+  yield node;
+  for (const child of node.childNodes ?? []) yield* walkAll(child);
+}

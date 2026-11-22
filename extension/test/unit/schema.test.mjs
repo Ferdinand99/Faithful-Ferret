@@ -149,10 +149,17 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
       decode(raw("copy", { ref: "h", field: "password", [key]: "x" }), UI_TYPES),
     );
   }
-  // A reply to the page never has a value, only handles and flags.
+  // A reply to the page never has a value, only references, names and flags.
   refusesShape(() =>
     decode(
-      raw("candidates", { handles: [{ ref: "h", name: "n", password: "x" }] }),
+      raw("candidates", { insecure: false, items: [{ ref: "h", name: "n", how: "host", frame_id: 0, password: "x" }], grant: [] }),
+      UI_TYPES,
+      { reply: true },
+    ),
+  );
+  refusesShape(() =>
+    decode(
+      raw("candidates", { insecure: false, items: [{ ref: "h", name: "n", how: "host", frame_id: 0, handle: 3 }], grant: [] }),
       UI_TYPES,
       { reply: true },
     ),
@@ -215,11 +222,22 @@ test("every UI request and reply round-trips with a sample body", () => {
     unlock: [{ mp: "pw", sk: "A3-XXXX" }, { ok: false, reason: "wrong_credentials" }],
     candidates: [
       { tab_id: 1, frame_id: 0 },
-      { handles: [{ ref: "h1", name: "Example", username: "me", insecure: false }] },
+      {
+        handles: [{ ref: "h1", name: "Example", username: "me", insecure: false, favorite: true, type: "login", site: true, frame_id: 0 }],
+        host: { a_label: "login.example.net", unicode: "login.example.net" },
+        insecure: false,
+        grant: [{ origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" } }],
+      },
     ],
-    search: [{ query: "ex" }, { handles: [] }],
+    grant_check: [
+      { origin: "https://sso.example.net" },
+      { ok: true, origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" }, pattern: "https://sso.example.net/*" },
+    ],
+    search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],
+    item: [{ ref: "h1" }, { ok: true, name: "Example", username: "me", type: "login", favorite: false, urls: ["https://example.com/login"], copyable: ["username", "password", "totp"] }],
+    open_site: [{ ref: "h1" }, { ok: false, reason: "no_site" }],
     settings: [{ lock_seconds: 900 }, { lock_seconds: 900 }],
     sync_state: [{}, { running: true, status: "idle", live: "live", halted: "server_restored", warnings: ["rev_lower_than_local"] }],
     sync_retry: [{}, { ok: false, reason: "sync_still_halted" }],

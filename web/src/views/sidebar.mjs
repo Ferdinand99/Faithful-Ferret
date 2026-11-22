@@ -9,6 +9,7 @@
 // The pieces the frame needs from outside (the sync and live pills, what Lock and
 // Sign out do) are handed in; the frame owns the rest of the page.
 import { el, mount } from "../dom.mjs";
+import { focusNode, popMenu, within } from "./popMenu.mjs";
 import { currentEntry, initialsOf, sidebarModel } from "./sidebarModel.mjs";
 
 /** Where Help leads (the project's public documentation). */
@@ -20,78 +21,6 @@ export const PHONE_QUERY = "(max-width: 767.98px)";
 let sequence = 0;
 let folderMenus = 0;
 
-/** @param {any} node */
-const focusNode = (node) => {
-  if (typeof node?.focus === "function") node.focus();
-};
-
-/** Whether `node` is `ancestor` or stands below it. @param {any} node @param {any} ancestor */
-function within(node, ancestor) {
-  for (let one = node; one; one = one.parentNode) if (one === ancestor) return true;
-  return false;
-}
-
-/**
- * A menu that opens from a button: `aria-expanded` on the button, arrow keys,
- * Home and End inside, and a way to close it that puts the focus back.
- * @param {{ trigger: HTMLElement, menu: HTMLElement, items: () => HTMLElement[], onOpen?: () => void }} options
- */
-function popMenu({ trigger, menu, items, onOpen }) {
-  let open = false;
-  /** @param {boolean} value */
-  const set = (value) => {
-    open = value;
-    menu.hidden = !value;
-    trigger.setAttribute("aria-expanded", value ? "true" : "false");
-  };
-  /** @param {"first" | "last" | null} focus */
-  const show = (focus) => {
-    onOpen?.();
-    set(true);
-    const list = items();
-    focusNode(focus === "last" ? list[list.length - 1] : list[0]);
-  };
-  set(false);
-  trigger.addEventListener("click", () => {
-    if (open) {
-      set(false);
-      return;
-    }
-    show("first");
-  });
-  trigger.addEventListener("keydown", (/** @type {any} */ event) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault?.();
-      if (!open) show(event.key === "ArrowUp" ? "last" : "first");
-    }
-  });
-  menu.addEventListener("keydown", (/** @type {any} */ event) => {
-    const list = items();
-    const at = list.findIndex((node) => node === event.target || within(event.target, node));
-    /** @param {number} to */
-    const move = (to) => {
-      event.preventDefault?.();
-      focusNode(list[(to + list.length) % list.length]);
-    };
-    if (event.key === "ArrowDown") move(at + 1);
-    else if (event.key === "ArrowUp") move(at <= 0 ? list.length - 1 : at - 1);
-    else if (event.key === "Home") move(0);
-    else if (event.key === "End") move(list.length - 1);
-    else if (event.key === "Tab") set(false); // the focus goes on to the next control by itself
-  });
-  return {
-    trigger,
-    menu,
-    isOpen: () => open,
-    /** @param {boolean} [returnFocus] */
-    close(returnFocus = false) {
-      if (!open) return;
-      set(false);
-      if (returnFocus) focusNode(trigger);
-    },
-  };
-}
-
 /**
  * @typedef {object} SidebarOptions
  * @property {(key: string, vars?: Record<string, string | number>) => string} t
@@ -99,6 +28,7 @@ function popMenu({ trigger, menu, items, onOpen }) {
  * @property {{ all: number, favorites: number }} counts
  * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders the vault has (none yet)
  * @property {ReturnType<typeof import("../uiPrefs.mjs").createUiPrefs>} prefs
+ * @property {{ current(): string, set(theme: string): void }} [theme] the theme choice, shown in the account menu (without it the menu has none)
  * @property {string | null} [email]
  * @property {HTMLElement} status the sync state (a pill)
  * @property {HTMLElement | null} liveStatus the live-update state, or null
@@ -114,7 +44,7 @@ function popMenu({ trigger, menu, items, onOpen }) {
  * @param {SidebarOptions} options
  */
 export function sidebarView({
-  t, routes, counts, folders = [], prefs, email = null, status, liveStatus, onLock, onSignOut, admin, accountPaths = [], helpUrl = HELP_URL, win,
+  t, routes, counts, folders = [], prefs, theme, email = null, status, liveStatus, onLock, onSignOut, admin, accountPaths = [], helpUrl = HELP_URL, win,
 }) {
   sequence += 1;
   const sideId = `vault-side-${sequence}`;
@@ -189,9 +119,34 @@ export function sidebarView({
   const helpItem = helpLink();
   const lockItem = menuItem("lock", "lock", t("shell.account.lock"), null);
   const signOutItem = menuItem("sign-out", "signout", t("shell.account.signout"), null);
-  const accountItems = [settingsItem, helpItem, lockItem, ...(onSignOut ? [signOutItem] : [])];
+  // The theme choice: three radio entries in a group of their own. Choosing one changes the page at once and leaves the menu
+  // open, so the effect is seen; the choice is a per-device preference (theme.mjs), never vault data.
+  /** @type {Map<string, HTMLElement>} */
+  const themeItems = new Map();
+  for (const [name, icon, text] of /** @type {const} */ ([["light", "sun", "shell.theme.light"], ["dark", "moon", "shell.theme.dark"], ["auto", "auto", "shell.theme.system"]])) {
+    const item = el("button", {
+      type: "button", role: "menuitemradio", tabindex: "-1", class: "side-menuitem", "aria-checked": "false", "data-role": "theme-choice", "data-theme-set": name,
+    }, el("span", { class: "icon", "data-icon": icon, "aria-hidden": "true" }), t(text));
+    item.addEventListener("click", () => {
+      theme?.set(name);
+      paintTheme();
+    });
+    themeItems.set(name, item);
+  }
+  /** Marks the choice in force (read again, so another tab's change shows). */
+  function paintTheme() {
+    const now = theme?.current();
+    for (const [name, item] of themeItems) item.setAttribute("aria-checked", name === now ? "true" : "false");
+  }
+  paintTheme();
+  const themeGroup = el("div", { class: "side-menu-group", role: "group", "aria-labelledby": `${accountMenuId}-theme`, "data-role": "theme" },
+    el("span", { class: "side-menu-label", id: `${accountMenuId}-theme` }, t("shell.theme.label")), ...themeItems.values());
+  const themeEntries = theme ? [...themeItems.values()] : [];
+  const accountItems = [settingsItem, helpItem, ...themeEntries, lockItem, ...(onSignOut ? [signOutItem] : [])];
   const accountMenu = el("div", { class: "side-menu", id: accountMenuId, role: "menu", "aria-label": t("security.nav.account"), "data-role": "account-menu" },
-    settingsItem, helpItem, el("div", { class: "side-menu-sep", role: "separator" }), lockItem, ...(onSignOut ? [signOutItem] : []));
+    settingsItem, helpItem, el("div", { class: "side-menu-sep", role: "separator" }),
+    ...(theme ? [themeGroup, el("div", { class: "side-menu-sep", role: "separator" })] : []),
+    lockItem, ...(onSignOut ? [signOutItem] : []));
   const foot = el("div", { class: "side-foot" },
     el("div", { class: "side-account" }, accountButton, accountMenu),
     el("div", { class: "side-sync", "data-role": "side-sync" }, status, ...(liveStatus ? [liveStatus] : [])));
@@ -205,10 +160,13 @@ export function sidebarView({
   const closeMenus = (/** @type {ReturnType<typeof popMenu> | null} */ except = null) => {
     for (const menu of menus) if (menu !== except) menu.close(false);
   };
-  const account = popMenu({ trigger: accountButton, menu: accountMenu, items: () => accountItems, onOpen: () => closeMenus() });
+  const account = popMenu({ trigger: accountButton, menu: accountMenu, items: () => accountItems, onOpen: () => {
+    closeMenus();
+    paintTheme();
+  } });
   menus.push(account);
   // A menu is opened by the one control: a second one that opens closes the first (the folder menus do the same).
-  accountItems.forEach((item) => item.addEventListener("click", () => account.close(false)));
+  accountItems.filter((item) => !themeEntries.includes(item)).forEach((item) => item.addEventListener("click", () => account.close(false)));
 
   settingsItem.addEventListener("click", () => closeDrawer(false));
   lockItem.addEventListener("click", () => void onLock());
@@ -367,7 +325,9 @@ export function sidebarView({
       render();
     },
     markCurrent: (/** @type {string} */ next) => markCurrent(next),
-    refs: { menuButton, closeButton, collapseButton, accountButton, switcher, lockItem, signOutItem, settingsItem, helpItem, accountMenu },
+    /** The theme choice was changed elsewhere (another tab): the checked entry follows. */
+    refreshTheme: paintTheme,
+    refs: { menuButton, closeButton, collapseButton, accountButton, switcher, lockItem, signOutItem, settingsItem, helpItem, accountMenu, themeItems },
     state: () => ({ drawerOpen, accountOpen: account.isOpen(), collapsed: side.getAttribute("data-collapsed") === "true" }),
     openDrawer: () => {
       setDrawer(true);

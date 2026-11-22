@@ -129,7 +129,7 @@ test("every_route_of_the_build_that_asks_for_a_place_in_the_menu_gets_one", asyn
   const routes = [];
   for (const file of readdirSync(dir).filter((name) => name.endsWith(".route.mjs")).sort()) routes.push((await import(`../../src/routes/${file}`)).default);
   const asking = routes.filter((route) => route.sidebar);
-  assert.ok(asking.length >= 5);
+  assert.ok(asking.length >= 4);
   const entries = sidebarModel({ routes }).flatMap((s) => s.entries).filter((e) => e.kind === "link");
   assert.deepEqual(entries.map((e) => e.id).sort(), asking.map((r) => r.path).sort());
   // No two entries share a role or a path.

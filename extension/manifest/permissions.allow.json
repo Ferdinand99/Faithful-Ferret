@@ -4,7 +4,7 @@
   "host_permissions": [],
   "optional_host_permissions": ["https://*/*"],
   "release": {
-    "permissions": ["activeTab", "alarms", "idle", "menus", "scripting", "storage", "webNavigation"],
+    "permissions": ["activeTab", "alarms", "clipboardWrite", "idle", "menus", "scripting", "storage", "webNavigation"],
     "optional_permissions": [],
     "host_permissions": [],
     "optional_host_permissions": ["https://*/*"]

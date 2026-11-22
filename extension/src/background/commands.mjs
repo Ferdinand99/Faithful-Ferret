@@ -38,8 +38,8 @@ export const FILL_COMMAND = "fill-login";
  *   state(): "locked" | "unlocked",
  * }} FillCalls
  *   the core host, as this module uses it: the fill flow's operations `fill_offer`
- *   ({ session, tab_id } -> { handles: OfferedHandle[] }) and `fill`
- *   ({ session, ref, tab_id, frame_id } -> { ok, reason? })
+ *   ({ session, tab_id, frame_id? } -> { handles: OfferedHandle[] }) and `fill`
+ *   ({ session, ref, tab_id, frame_id? } -> { ok, reason? }); `frame_id` keeps that one frame (the menu's)
  * @typedef {{ endSession(session: string): void }} FillSessions
  *   the fill flow's end of a session: its references are dropped
  * @typedef {{ checkOrLock(type: string): Promise<boolean>, touch(): void }} LockCheck
@@ -113,7 +113,8 @@ export function createQuickFill({
     lock.touch();
     const session = hex(random(new Uint8Array(16)));
     try {
-      const offer = await coreHost.call("fill_offer", { session, tab_id: tabId }).catch(() => null);
+      // The menu asks for the clicked frame only; the shortcut for every frame Ferret may fill.
+      const offer = await coreHost.call("fill_offer", { session, tab_id: tabId, ...(click === null ? {} : { frame_id: click.frameId }) }).catch(() => null);
       /** @type {OfferedHandle[]} */
       const all = Array.isArray(offer?.handles) ? offer.handles : [];
       // The menu fills only in the frame that was clicked: a match in any other frame does not count.
@@ -121,9 +122,7 @@ export function createQuickFill({
       if (here.length !== 1) return open();
       const [one] = here;
       if (typeof one?.ref !== "string") return open();
-      // The shortcut fills in the reference's own frame (the first, top first); the menu in the clicked one only.
-      const frameId = click === null ? framesOf(one)[0] : click.frameId;
-      if (!isIndex(frameId)) return open();
+      if (framesOf(one).length === 0) return open();
       // An http item is offered with a warning and one more click, in the popup only.
       if (one.insecure === true) return open();
       if (click !== null) {
@@ -144,7 +143,9 @@ export function createQuickFill({
           return open();
         }
       }
-      const result = await coreHost.call("fill", { session, ref: one.ref, tab_id: tabId, frame_id: frameId }).catch(() => null);
+      // The menu fills in the clicked frame only. The shortcut lets the fill flow take the first of the reference's
+      // frames (top first) whose fill script reports sign-in fields.
+      const result = await coreHost.call("fill", { session, ref: one.ref, tab_id: tabId, ...(click === null ? {} : { frame_id: click.frameId }) }).catch(() => null);
       return result?.ok === true ? "filled" : "not_filled";
     } finally {
       try {

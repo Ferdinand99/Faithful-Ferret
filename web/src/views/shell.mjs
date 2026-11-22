@@ -15,11 +15,13 @@ import { autoLockFor } from "../lock.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
 import { createWipeScope, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 import { menuRoutes } from "./account.mjs";
+import { menuPathOf } from "./listModel.mjs";
 import { sidebarView } from "./sidebar.mjs";
 import { countItems } from "./sidebarModel.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
+import { THEME_KEY, createThemeChoice } from "../theme.mjs";
 import { createUiPrefs } from "../uiPrefs.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
@@ -47,6 +49,7 @@ import { createUiPrefs } from "../uiPrefs.mjs";
  * @property {{ check(): Promise<boolean>, go(): void | Promise<void> }} [admin] the way to the admin pages; the switch shows only when `check` answers true
  * @property {() => Promise<void> | void} [signOut] what "Sign out" does (it leaves for the sign-in page itself, and rejects when the server could not be asked); without it the menu has no such item
  * @property {ReturnType<typeof createUiPrefs>} [prefs] what this device remembers about the menu
+ * @property {ReturnType<typeof createThemeChoice>} [theme] the theme choice of the account menu (Light, Dark, System)
  * @property {readonly { id: string, name: string, parentId?: string | null }[]} [folders] the folders of the vault, for the pinned ones (the vault has none yet)
  *
  * @typedef {object} LiveSource
@@ -127,7 +130,7 @@ function trackLock(session, screen) {
  * takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), folders = [], win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders = [], win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, el("span", { class: "pill-text" }, t("sync.state.syncing")));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -135,7 +138,7 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   const liveStatus = live ? el("span", { class: "pill live-status", role: "status", "data-role": "live-status" }) : null;
   const items = () => (typeof engine.list === "function" ? engine.list() : []);
   const chrome = sidebarView({
-    t, routes, counts: countItems(items(), MANIFEST_ID), folders, prefs, email, status, liveStatus, admin, accountPaths,
+    t, routes, counts: countItems(items(), MANIFEST_ID), folders, prefs, theme, email, status, liveStatus, admin, accountPaths,
     onLock: async () => {
       await lock();
     },
@@ -163,9 +166,8 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   skip.addEventListener("click", () => {
     if (typeof main.focus === "function") main.focus();
   });
-  // Out of reach while the drawer is open: the screen, the skip link, and the page's own footer (outside the frame).
-  const pageFoot = globalThis.document?.getElementById?.("foot") ?? null;
-  chrome.setBehind([skip, body, ...(pageFoot === null ? [] : [pageFoot])]);
+  // Out of reach while the drawer is open: the screen and the skip link.
+  chrome.setBehind([skip, body]);
   // What the frame hands to the page (the window's media query, the parts it holds) is let go when the frame leaves the page or the vault locks.
   scope.add(() => chrome.dispose());
   mount(root, skip, chrome.top, el("div", { class: "vault-layout" }, chrome.side, chrome.backdrop, body));
@@ -255,7 +257,12 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   }
 
   // The entry of the screen that is open says so (aria-current), and follows the address.
-  const pathNow = () => String(win?.location?.hash ?? "").replace(/^#/, "");
+  // The list keeps its filters after a "?": the part before it is the page, and the list with the favourites on belongs to the Favourites entry.
+  const pathNow = () => {
+    const raw = String(win?.location?.hash ?? "").replace(/^#/, "");
+    const cut = raw.indexOf("?");
+    return cut < 0 ? raw : menuPathOf(raw.slice(0, cut), raw.slice(cut + 1));
+  };
   chrome.markCurrent(pathNow());
   if (typeof win?.addEventListener === "function") {
     const onHash = () => {
@@ -265,6 +272,22 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     };
     win.addEventListener("hashchange", onHash);
     scope.add(() => win.removeEventListener?.("hashchange", onHash));
+  }
+  // Another tab changed the theme: this page follows at once, and the account menu shows the new choice. (The event is only
+  // delivered to the other tabs, never to the one that made the change.)
+  if (typeof win?.addEventListener === "function") {
+    const onStorage = (/** @type {{ key?: string | null }} */ event) => {
+      // A frame that has left the page stops listening.
+      if (/** @type {any} */ (root).isConnected === false) {
+        win.removeEventListener?.("storage", onStorage);
+        return;
+      }
+      if (event?.key !== THEME_KEY && event?.key !== null && event?.key !== undefined) return;
+      theme.sync?.();
+      chrome.refreshTheme();
+    };
+    win.addEventListener("storage", onStorage);
+    scope.add(() => win.removeEventListener?.("storage", onStorage));
   }
   // The numbers beside "All items" and "Favourites" follow the items.
   scope.add(listenWhileShown(root, engine, "changed", () => chrome.setCounts(countItems(items(), MANIFEST_ID))));
@@ -413,7 +436,16 @@ export async function enterVault(ctx) {
   const autoLock = autoLockFor(session, sync);
 
   const open = session.current?.() ?? null;
-  const onUnlocked = () => go(path);
+  // After an unlock the same screen comes back, with the filters of its address (the list keeps them there).
+  const onUnlocked = () => {
+    const hash = String(globalThis.location?.hash ?? "");
+    const cut = hash.indexOf("?");
+    try {
+      go(cut < 0 ? path : `${path}${hash.slice(cut)}`);
+    } catch {
+      go(path);
+    }
+  };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
   const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
   if (!open) return { locked: lockedScreen() };

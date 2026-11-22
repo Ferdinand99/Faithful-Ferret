@@ -72,7 +72,7 @@ async function setup({ unlocked = true, stored = {} } = {}) {
     record("unlock", { ok: true }, async (ctx) => {
       await ctx.call("unlock_probe");
     }),
-    record("candidates", { handles: [] }, (ctx) => ctx.call("vault_probe")),
+    record("candidates", { handles: [], insecure: false, grant: [] }, (ctx) => ctx.call("vault_probe")),
     record("frame_report", undefined),
     record("fill_result", undefined),
   ];

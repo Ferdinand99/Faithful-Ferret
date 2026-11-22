@@ -257,7 +257,7 @@ test("compat_action_is_the_same_object_shape_in_both_variants", async () => {
 
 test("the_release_manifest_has_nothing_of_the_test_parts_and_the_test_variant_adds_a_fixed_list", () => {
   /** The permissions that only the test variant has (test/test-parts). Remove an entry when the release gets it. */
-  const TEST_PERMISSIONS = ["clipboardWrite"];
+  const TEST_PERMISSIONS = /** @type {string[]} */ ([]);
   const partsDir = join(extensionRoot, "manifest", "parts");
   const parts = readdirSync(partsDir).filter((n) => n.endsWith(".json")).map((n) => readJson(join(partsDir, n)));
   const fromParts = (/** @type {string} */ key) => parts.flatMap((p) => p[key] ?? []).sort();

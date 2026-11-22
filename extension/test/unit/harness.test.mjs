@@ -49,9 +49,9 @@ test("the_test_variant_has_the_bridge_and_a_test_command_and_a_release_has_neith
       assert.ok(tm.permissions.includes("activeTab") && tm.permissions.includes("menus"));
       // A release has the fill shortcut only, never the test command.
       assert.deepEqual(Object.keys(rm.commands), ["fill-login"]);
-      // The release permissions at this stage: storage (core), alarms and idle (lock), activeTab and scripting (fill),
-      // menus and webNavigation (the context menu and its frame).
-      assert.deepEqual(rm.permissions, ["activeTab", "alarms", "idle", "menus", "scripting", "storage", "webNavigation"]);
+      // The release permissions: storage (core), alarms and idle (lock), activeTab and scripting (fill),
+      // clipboardWrite (copy from the popup), menus (the context menu), webNavigation (the frames of a tab).
+      assert.deepEqual(rm.permissions, ["activeTab", "alarms", "clipboardWrite", "idle", "menus", "scripting", "storage", "webNavigation"]);
       // No host permission of any kind in the test variant either.
       assert.deepEqual((tm.permissions ?? []).filter((/** @type {string} */ p) => p.includes("://") || p === "<all_urls>"), []);
       assert.equal("host_permissions" in tm, false);

@@ -223,6 +223,12 @@ ${this.log.slice(-4000)}`);
     return value.handle;
   }
 
+  /** Opens a window of its own (with one tab) and returns the handle of its tab. @returns {Promise<string>} */
+  async newWindow() {
+    const value = await wire("POST", `${this.#s()}/window/new`, { type: "window" });
+    return value.handle;
+  }
+
   /** @returns {Promise<string[]>} the handles of all open tabs */
   async windowHandles() {
     return wire("GET", `${this.#s()}/window/handles`);

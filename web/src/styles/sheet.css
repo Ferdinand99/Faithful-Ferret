@@ -90,9 +90,8 @@
     display: block;
   }
 
-  /* Everything but the page of the sheet: the footer and anything else outside #app. */
+  /* Everything but the page of the sheet: anything outside #app. */
   body > :not(#app),
-  .app-foot,
   .account form,
   .account .btn,
   .account .status,

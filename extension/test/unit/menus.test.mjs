@@ -1,8 +1,8 @@
-// The context menu (src/background/menus.mjs) and the aim of the fill engine at
-// the clicked field (src/content/fill.mjs `aim`, src/background/inject.mjs
-// `aimFill`): one fixed item that names nothing, a click fills only in its own
-// frame and only the clicked field's group, and a password goes only into a
-// password input.
+// The context menu (src/background/menus.mjs) over the real page matching,
+// frame rules and fill flow, and the aim of the fill engine at the clicked field
+// (src/content/fill.mjs `aim`, src/background/inject.mjs `aimFill`): one fixed
+// item that names nothing, a click fills only in its own frame and only the
+// clicked field's group, and a password goes only into a password input.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,10 +12,9 @@ import { aimFill } from "../../src/background/inject.mjs";
 import { FALLBACK_TITLE, MENU_ID, TITLE_KEY, listenForMenus, menuTitle, titleLanguage } from "../../src/background/menus.mjs";
 import { AIM_MS } from "../../src/content/fill.mjs";
 import { extensionRoot } from "./buildHelpers.mjs";
-import { addInput, addLoginForm } from "./fakeDom.mjs";
-import { ITEM, createWorld, valueOf } from "./quickFillWorld.mjs";
-
-const PAGE = "https://example.com/login";
+import { encode } from "../../src/shared/protocol.mjs";
+import { BACKGROUND_SENDER, addInput, addLoginForm } from "./fakeDom.mjs";
+import { ITEM, PAGE, TAB, createWorld, valueOf } from "./quickFillWorld.mjs";
 
 /** A fake `menus` that records every call. */
 function fakeMenus() {
@@ -34,20 +33,23 @@ function fakeMenus() {
   };
 }
 
+/** @param {Awaited<ReturnType<typeof createWorld>>} world */
+const quickFillOf = (world) => createQuickFill({
+  coreHost: world.coreHost,
+  lock: world.lock,
+  sessions: world.sessions,
+  openPopup: world.openPopup,
+  scripting: world.scripting,
+  webNavigation: world.webNavigation,
+});
+
 /**
- * The menu on a world: returns a way to click the item on an element of the page.
- * @param {ReturnType<typeof createWorld>} world
+ * The menu on a world: returns a way to click the item on an element of a frame.
+ * @param {Awaited<ReturnType<typeof createWorld>>} world
  */
 async function menuOn(world) {
   const menus = fakeMenus();
-  const quickFill = createQuickFill({
-    coreHost: world.coreHost,
-    lock: world.lock,
-    sessions: world.sessions,
-    openPopup: world.openPopup,
-    scripting: world.scripting,
-    webNavigation: world.webNavigation,
-  });
+  const quickFill = quickFillOf(world);
   /** @type {Promise<unknown>[]} */
   const runs = [];
   const spy = {
@@ -64,21 +66,21 @@ async function menuOn(world) {
     menus,
     /**
      * Clicks the item on `element` (in frame `frameId`, whose address the menu saw as `frameUrl`).
-     * @param {any} element @param {{ frameId?: number, frameUrl?: string, menuItemId?: string, tabId?: number }} [where]
+     * @param {any} element @param {{ frameId?: number, frameUrl?: string, menuItemId?: string }} [where]
      */
-    async click(element, { frameId = 0, frameUrl = PAGE, menuItemId = MENU_ID, tabId = 7 } = {}) {
+    async click(element, { frameId = 0, frameUrl = PAGE, menuItemId = MENU_ID } = {}) {
       nextId += 1;
       world.targets.set(nextId, element);
       runs.length = 0;
       const info = { menuItemId, frameId, targetElementId: nextId, editable: true, pageUrl: frameId === 0 ? frameUrl : PAGE, ...(frameId === 0 ? {} : { frameUrl }) };
-      for (const listener of menus.listeners) listener(info, { id: tabId });
+      for (const listener of menus.listeners) listener(info, { id: TAB });
       const outcomes = await Promise.all(runs);
       return outcomes[0];
     },
   };
 }
 
-/** Two sign-in forms, one under the other, and a search box with no form. */
+/** Two sign-in forms, one under the other, a search box and a free text box with no form. */
 function twoForms(/** @type {any} */ document) {
   const first = addLoginForm(document);
   const form = document.body.append(document.createElement("form", { id: "second" }));
@@ -90,22 +92,23 @@ function twoForms(/** @type {any} */ document) {
   return { user: first.user, pass: first.pass, user2, pass2, search, note };
 }
 
+const TOP = { frameId: 0, url: PAGE, build: twoForms };
+const LOGIN_FRAME = "https://login.example.com/frame";
+const EVIL_FRAME = "https://evil.example.net/frame";
+
 test("the_menu_has_one_static_item_and_lists_no_item_names", async () => {
-  const world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
+  const world = await createWorld({ frames: [TOP], items: [{ name: "My bank", urls: ["https://example.com/"] }] });
   const menu = await menuOn(world);
   // One item, made once, on editable fields, with a fixed title.
   assert.deepEqual(menu.menus.calls, [["remove", MENU_ID], ["create", { id: MENU_ID, title: "Fill with Ferret", contexts: ["editable"] }]]);
   assert.equal(menu.menus.listeners.length, 1);
 
-  // Clicks with one match, several, none, while locked: the menu never changes, whatever the vault holds.
-  await menu.click(world.pass);
-  world.offer = [{ frameId: 0, items: 3 }];
-  await menu.click(world.pass);
-  world.offer = [];
-  await menu.click(world.pass);
-  world.state = "locked";
-  await menu.click(world.pass);
+  // Clicks that fill, that find nothing and that come while locked: the menu never changes, whatever the vault holds.
+  assert.equal(await menu.click(world.pass), "filled");
+  await menu.click(world.pass, { frameId: 0, frameUrl: "https://example.com/other" });
+  await world.coreHost.call("fill_offer", { session: "0".repeat(32), tab_id: TAB }).catch(() => {});
   assert.equal(menu.menus.calls.length, 2, "no create, update or remove after the start");
+  assert.equal(JSON.stringify(menu.menus.calls).includes("My bank"), false);
 
   // The item's title is a catalog text, never an item: English and Norwegian, and the English text as the fallback.
   const en = JSON.parse(readFileSync(join(extensionRoot, "src", "locales", "en", "menus.json"), "utf8"));
@@ -135,7 +138,7 @@ test("the_menu_has_one_static_item_and_lists_no_item_names", async () => {
 
 test("the_menu_click_fills_the_clicked_field_when_exactly_one_candidate_matches", async () => {
   // The click on the second form's password: that form is filled, the first one stays empty.
-  let world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
+  let world = await createWorld({ frames: [TOP] });
   let menu = await menuOn(world);
   assert.equal(await menu.click(world.pass2), "filled");
   assert.equal(valueOf(world.user2), ITEM.username);
@@ -143,14 +146,21 @@ test("the_menu_click_fills_the_clicked_field_when_exactly_one_candidate_matches"
   assert.equal(valueOf(world.user), "");
   assert.equal(valueOf(world.pass), "");
   assert.equal(world.popups.count, 0);
-  // The script was aimed at the clicked field in the clicked frame's document before the fill began.
-  const aims = world.injections.filter((i) => "func" in i && /\.aim\(/.test(String(i.func)));
-  assert.equal(aims.length, 1);
-  assert.deepEqual(aims[0].target, { tabId: 7, documentIds: ["doc-0"] });
+  // The page matching and the fill were both for the clicked frame only.
   assert.deepEqual(world.ops(), ["fill_offer", "fill"]);
+  assert.equal(world.log[0].args.frame_id, 0);
+  assert.equal(world.log[1].args.frame_id, 0);
+  // The script was aimed at the clicked field in the clicked frame's document before the fill began there.
+  const funcs = world.injections.filter((i) => "func" in i);
+  assert.match(String(funcs[0].func), /\.aim\(/);
+  assert.deepEqual(funcs[0].target, { tabId: TAB, documentIds: ["doc-0"] });
+  assert.match(String(funcs[1].func), /\.begin\(/);
+  assert.deepEqual(funcs[1].target, { tabId: TAB, documentIds: ["doc-0"] });
+  assert.equal(world.refSessions(), 0);
+  assert.equal(world.openHandles(), 0);
 
   // The click on the first form's user name: the user name goes into it and the password into its form's password.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
+  world = await createWorld({ frames: [TOP] });
   menu = await menuOn(world);
   assert.equal(await menu.click(world.user), "filled");
   assert.equal(valueOf(world.user), ITEM.username);
@@ -158,8 +168,8 @@ test("the_menu_click_fills_the_clicked_field_when_exactly_one_candidate_matches"
   assert.equal(valueOf(world.pass2), "");
 
   // Several matches, or none: the popup, and nothing put into the page.
-  for (const offer of [[{ frameId: 0, items: 2 }], []]) {
-    world = createWorld({ build: twoForms, offer });
+  for (const items of [[{ urls: ["https://example.com/"] }, { urls: ["https://example.com/x"] }], []]) {
+    world = await createWorld({ frames: [TOP], items });
     menu = await menuOn(world);
     assert.equal(await menu.click(world.pass2), "popup");
     assert.equal(world.injections.length, 0);
@@ -167,132 +177,137 @@ test("the_menu_click_fills_the_clicked_field_when_exactly_one_candidate_matches"
   }
 
   // Locked: the popup at once, in the turn of the click.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 0 }], state: "locked" });
+  world = await createWorld({ frames: [TOP], state: "locked" });
   menu = await menuOn(world);
   assert.equal(await menu.click(world.pass2), "popup");
   assert.deepEqual(world.ops(), []);
 
   // A click on another menu item does nothing; a click without the element or the frame address opens the popup.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
+  world = await createWorld({ frames: [TOP] });
   menu = await menuOn(world);
   assert.equal(await menu.click(world.pass2, { menuItemId: "something-else" }), undefined);
   assert.equal(world.popups.count, 0);
-  for (const listener of menu.menus.listeners) listener({ menuItemId: MENU_ID, frameId: 0, pageUrl: PAGE }, { id: 7 });
-  for (const listener of menu.menus.listeners) listener({ menuItemId: MENU_ID, frameId: 0, targetElementId: 5 }, { id: 7 });
+  for (const listener of menu.menus.listeners) listener({ menuItemId: MENU_ID, frameId: 0, pageUrl: PAGE }, { id: TAB });
+  for (const listener of menu.menus.listeners) listener({ menuItemId: MENU_ID, frameId: 0, targetElementId: 5 }, { id: TAB });
   assert.equal(world.popups.count, 2);
   assert.deepEqual(world.ops(), []);
 });
 
 test("the_menu_applies_the_frame_rules_to_its_frame", async () => {
-  // The only match is in the top frame; the click is in a cross-site frame, which the page matching does not offer.
-  // Nothing is filled, not in that frame and not in the top one.
-  let world = createWorld({
-    build: twoForms,
-    offer: [{ frameId: 0 }],
-    frames: { 0: { url: PAGE, documentId: "doc-0" }, 3: { url: "https://evil.example.net/frame", documentId: "doc-3" } },
+  // A cross-site frame whose origin matches an entry, below a top that matches too: a click in the frame fills
+  // nothing, not in that frame and not in the top one.
+  let world = await createWorld({
+    frames: [TOP, { frameId: 3, url: EVIL_FRAME, build: addLoginForm }],
+    items: [{ urls: ["https://example.com/", "https://evil.example.net/"] }],
   });
   let menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 3, frameUrl: "https://evil.example.net/frame" }), "popup");
+  assert.equal(await menu.click(world.frame(3).pass, { frameId: 3, frameUrl: EVIL_FRAME }), "popup");
   assert.deepEqual(world.ops(), ["fill_offer"]);
+  assert.equal(world.log[0].args.frame_id, 3);
+  assert.equal(world.injections.length, 0);
+  assert.equal(valueOf(world.frame(3).pass), "");
+  assert.equal(valueOf(world.pass), "");
+
+  // A same-site frame with its own match: the click there fills there, and only there.
+  world = await createWorld({
+    frames: [TOP, { frameId: 5, url: LOGIN_FRAME, build: addLoginForm }],
+    items: [{ urls: ["https://login.example.com/"] }],
+  });
+  menu = await menuOn(world);
+  assert.equal(await menu.click(world.frame(5).pass, { frameId: 5, frameUrl: LOGIN_FRAME }), "filled");
+  assert.equal(valueOf(world.frame(5).pass), ITEM.password);
+  assert.equal(valueOf(world.pass), "");
+  for (const injection of world.injections) assert.deepEqual(injection.target, { tabId: TAB, documentIds: ["doc-5"] });
+
+  // One item tied to the top and a frame of the same origin: a click in the top fills the top only, even though
+  // the frame has a form too.
+  world = await createWorld({ frames: [TOP, { frameId: 5, url: "https://example.com/frame", build: addLoginForm }] });
+  menu = await menuOn(world);
+  assert.equal(await menu.click(world.pass), "filled");
+  assert.equal(valueOf(world.pass), ITEM.password);
+  assert.equal(valueOf(world.frame(5).pass), "");
+  for (const injection of world.injections) assert.deepEqual(injection.target, { tabId: TAB, documentIds: ["doc-0"] });
+
+  // An opaque frame (about:blank) gets nothing, also when the click names it.
+  world = await createWorld({ frames: [TOP, { frameId: 6, url: "about:blank", build: addLoginForm }] });
+  menu = await menuOn(world);
+  assert.equal(await menu.click(world.frame(6).pass, { frameId: 6, frameUrl: "about:blank" }), "popup");
+  assert.equal(world.injections.length, 0);
+
+  // `info.frameId` and `info.frameUrl` disagree with the frame the browser resolves (the id names a document at
+  // another address now, of the same origin, which still matches): nothing is filled.
+  world = await createWorld({ frames: [TOP] });
+  world.nav.set(0, { frameId: 0, parentFrameId: -1, url: "https://example.com/elsewhere", documentId: "doc-9" });
+  menu = await menuOn(world);
+  assert.equal(await menu.click(world.pass), "popup");
   assert.equal(world.injections.length, 0);
   assert.equal(valueOf(world.pass), "");
 
-  // A match in the clicked same-site frame fills there, and only there.
-  world = createWorld({
-    build: twoForms,
-    offer: [{ frameId: 0 }, { frameId: 5 }],
-    frames: { 5: { url: "https://login.example.com/frame", documentId: "doc-5" } },
-  });
+  // The frame is gone: nothing is filled.
+  world = await createWorld({ frames: [TOP, { frameId: 5, url: LOGIN_FRAME, build: addLoginForm }], items: [{ urls: ["https://login.example.com/"] }] });
+  world.nav.delete(5);
   menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 5, frameUrl: "https://login.example.com/frame" }), "filled");
-  const fill = world.log.find((l) => l.op === "fill");
-  assert.equal(fill?.args.frame_id, 5);
-  for (const injection of world.injections) assert.deepEqual(injection.target.documentIds ?? injection.target.frameIds, injection.target.documentIds ? ["doc-5"] : [5]);
-
-  // A reference tied to several frames (top first): the menu fills in the clicked one of them only, the shortcut in
-  // the first; a click in a frame the reference is not tied to fills nothing.
-  const tied = { offer: [{ frameId: 0, frameIds: [0, 5] }], frames: { 0: { url: PAGE, documentId: "doc-0" }, 5: { url: "https://login.example.com/frame", documentId: "doc-5" }, 8: { url: "https://example.com/other", documentId: "doc-8" } } };
-  world = createWorld({ build: twoForms, ...tied });
-  menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 5, frameUrl: "https://login.example.com/frame" }), "filled");
-  assert.equal(world.log.find((l) => l.op === "fill")?.args.frame_id, 5);
-  world = createWorld({ build: twoForms, ...tied });
-  menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 8, frameUrl: "https://example.com/other" }), "popup");
-  assert.deepEqual(world.ops(), ["fill_offer"]);
-  world = createWorld({ build: twoForms, ...tied });
-  const shortcut = createQuickFill({ coreHost: world.coreHost, lock: world.lock, openPopup: world.openPopup, scripting: world.scripting, webNavigation: world.webNavigation });
-  assert.equal(await shortcut.fillOrOpen(7), "filled");
-  assert.equal(world.log.find((l) => l.op === "fill")?.args.frame_id, 0);
-
-  // `info.frameId` and `info.frameUrl` disagree with the frame the browser resolves (the id names a document at
-  // another address now): no fill.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 5 }], frames: { 5: { url: "https://login.example.com/next", documentId: "doc-6" } } });
-  menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 5, frameUrl: "https://login.example.com/frame" }), "popup");
+  assert.equal(await menu.click(world.frame(5).pass, { frameId: 5, frameUrl: LOGIN_FRAME }), "popup");
   assert.equal(world.injections.length, 0);
 
-  // The frame moved on after the click (it shows another address now): no fill.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 0 }], frames: { 0: { url: "https://example.com/elsewhere", documentId: "doc-9" } } });
+  // A plain http page: the popup (warning and one more click), no fill.
+  world = await createWorld({ frames: [{ frameId: 0, url: "http://example.com/login", build: twoForms }], items: [{ urls: ["http://example.com/"] }] });
   menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass), "popup");
-  assert.equal(world.injections.length, 0);
-  assert.deepEqual(world.ops(), ["fill_offer"]);
-
-  // The frame is gone: no fill.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 6 }], frames: { 6: null } });
-  menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass, { frameId: 6, frameUrl: "https://example.com/a" }), "popup");
-  assert.equal(world.injections.length, 0);
-
-  // An http match in the clicked frame: the popup (warning and one more click), no fill.
-  world = createWorld({ build: twoForms, offer: [{ frameId: 0, insecure: true }] });
-  menu = await menuOn(world);
-  assert.equal(await menu.click(world.pass), "popup");
+  assert.equal(await menu.click(world.pass, { frameUrl: "http://example.com/login" }), "popup");
   assert.equal(world.injections.length, 0);
 });
 
 test("a_password_is_never_filled_into_a_non_password_field_from_the_menu", async () => {
-  // A search box and a plain text box with no form, on a page with sign-in forms: the clicked box gets the user
-  // name at most, and no password anywhere, even from a background that sends every value it has.
+  // A search box and a free text box with no form, on a page with sign-in forms: the clicked box gets the user
+  // name at most, no password goes anywhere, and no other field is touched.
   for (const field of ["search", "note"]) {
-    const world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
-    world.pushEveryKind = true;
+    const world = await createWorld({ frames: [TOP] });
     const menu = await menuOn(world);
     await menu.click(/** @type {any} */ (world)[field]);
     const box = /** @type {any} */ (world)[field];
     assert.notEqual(valueOf(box), ITEM.password, field);
     for (const input of [world.user, world.pass, world.user2, world.pass2]) assert.equal(valueOf(input), "", `${field}: no other field`);
-    assert.deepEqual(world.fills.find((f) => f.field === "password"), { field: "password", ok: false }, `${field}: the engine refused the password`);
+    assert.equal(world.fills.some((f) => f.field === "password"), false, `${field}: no password was sent`);
   }
 
+  // The engine itself refuses a password for a field that is not a password input, whatever the background sends.
+  const world = await createWorld({ frames: [TOP] });
+  world.targets.set(1, world.note);
+  const run = async (/** @type {any} */ func, /** @type {any[]} */ args) => (await world.scripting.executeScript({ target: { tabId: TAB, frameIds: [0] }, func, args }))[0].result;
+  assert.equal(await run((/** @type {number} */ t) => /** @type {any} */ (globalThis).__ferretFill.aim(t), [1]), true);
+  assert.equal(await run((/** @type {string} */ r) => /** @type {any} */ (globalThis).__ferretFill.begin(r), ["req-x"]), true);
+  const engine = world.engineOf(0);
+  for (const field of ["password", "username"]) {
+    engine.onMessage(encode("fill_field", { request_id: "req-x", field, value: field === "password" ? ITEM.password : ITEM.username, expect: { origin: "https://example.com", frameUrl: PAGE } }), BACKGROUND_SENDER);
+  }
+  assert.equal(valueOf(world.note), ITEM.username, "the user name may go into the clicked text box");
+  for (const input of [world.note, world.pass, world.pass2, world.search]) assert.notEqual(valueOf(input), ITEM.password);
+
   // The clicked field is a password field: the password goes into it, and the user name never does.
-  let world = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
-  let menu = await menuOn(world);
-  await menu.click(world.pass2);
-  assert.equal(valueOf(world.pass2), ITEM.password);
-  assert.notEqual(valueOf(world.pass2), ITEM.username);
+  let other = await createWorld({ frames: [TOP] });
+  let menu = await menuOn(other);
+  await menu.click(other.pass2);
+  assert.equal(valueOf(other.pass2), ITEM.password);
+  assert.equal(valueOf(other.user2), ITEM.username);
 
   // Fields the engine never fills: one that sets a new password, a hidden one, a checkbox. The report is empty, so
   // nothing at all is filled (an aimed request never falls back to the page's first form).
   for (const attributes of [{ type: "password", autocomplete: "new-password" }, { type: "text", "aria-hidden": "true" }, { type: "checkbox" }]) {
-    world = createWorld({
-      build: (document) => ({ ...addLoginForm(document), odd: addInput(document, document.body, attributes, { top: 300 }) }),
-      offer: [{ frameId: 0 }],
+    other = await createWorld({
+      frames: [{ frameId: 0, url: PAGE, build: (document) => ({ ...addLoginForm(document), odd: addInput(document, document.body, attributes, { top: 300 }) }) }],
     });
-    world.pushEveryKind = true;
-    menu = await menuOn(world);
-    assert.equal(await menu.click(world.odd), "not_filled", JSON.stringify(attributes));
-    assert.equal(valueOf(world.odd), "");
-    assert.equal(valueOf(world.user), "");
-    assert.equal(valueOf(world.pass), "");
+    menu = await menuOn(other);
+    assert.equal(await menu.click(other.odd), "not_filled", JSON.stringify(attributes));
+    assert.equal(valueOf(other.odd), "");
+    assert.equal(valueOf(other.user), "");
+    assert.equal(valueOf(other.pass), "");
   }
 });
 
 test("an_aim_is_for_the_next_request_of_its_document_only", async () => {
-  const world = createWorld({ build: twoForms });
+  const world = await createWorld({ frames: [TOP] });
   // The engine is driven through the world's scripting, as the background reaches it.
-  const run = async (/** @type {any} */ func, /** @type {any[]} */ args) => (await world.scripting.executeScript({ target: { tabId: 7, frameIds: [0] }, func, args }))[0].result;
+  const run = async (/** @type {any} */ func, /** @type {any[]} */ args) => (await world.scripting.executeScript({ target: { tabId: TAB, frameIds: [0] }, func, args }))[0].result;
   const begin = (/** @type {string} */ id) => run((/** @type {string} */ r) => /** @type {any} */ (globalThis).__ferretFill.begin(r), [id]);
   const aim = (/** @type {unknown} */ id) => run((/** @type {unknown} */ t) => /** @type {any} */ (globalThis).__ferretFill.aim(t), [id]);
   world.targets.set(1, world.pass2);
@@ -301,26 +316,23 @@ test("an_aim_is_for_the_next_request_of_its_document_only", async () => {
   assert.equal(await aim("1"), false);
   assert.equal(await aim(1.5), false);
   assert.equal(await aim(99), false);
-  const other = createWorld({ build: twoForms });
+  const other = await createWorld({ frames: [TOP] });
   world.targets.set(2, other.pass2);
   assert.equal(await aim(2), false);
 
-  // An aim holds for one request: the next begin fills the clicked group, the one after it the page's first form.
+  // An aim holds for one request: the next begin uses it up, and the shortcut after it fills the page's first form.
   assert.equal(await aim(1), true);
   assert.equal(await begin("req-a"), true);
-  world.offer = [{ frameId: 0 }];
-  const quick = createQuickFill({ coreHost: world.coreHost, lock: world.lock, openPopup: world.openPopup, scripting: world.scripting, webNavigation: world.webNavigation });
-  assert.equal(await quick.fillOrOpen(7), "filled");
+  assert.equal(await quickFillOf(world).fillOrOpen(TAB), "filled");
   assert.equal(valueOf(world.pass), ITEM.password, "not aimed: the page's first form");
   assert.equal(valueOf(world.pass2), "");
 
   // An aim that waited longer than AIM_MS is gone.
-  const late = createWorld({ build: twoForms, offer: [{ frameId: 0 }] });
+  const late = await createWorld({ frames: [TOP] });
   late.targets.set(1, late.pass2);
-  await late.scripting.executeScript({ target: { tabId: 7, frameIds: [0] }, func: (/** @type {number} */ t) => /** @type {any} */ (globalThis).__ferretFill.aim(t), args: [1] });
+  await late.scripting.executeScript({ target: { tabId: TAB, frameIds: [0] }, func: (/** @type {number} */ t) => /** @type {any} */ (globalThis).__ferretFill.aim(t), args: [1] });
   late.advance(AIM_MS + 1);
-  const lateQuick = createQuickFill({ coreHost: late.coreHost, lock: late.lock, openPopup: late.openPopup, scripting: late.scripting, webNavigation: late.webNavigation });
-  assert.equal(await lateQuick.fillOrOpen(7), "filled");
+  assert.equal(await quickFillOf(late).fillOrOpen(TAB), "filled");
   assert.equal(valueOf(late.pass), ITEM.password);
   assert.equal(valueOf(late.pass2), "");
 });

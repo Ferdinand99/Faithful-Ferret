@@ -30,6 +30,7 @@
   "devices.platform.macos": "macOS",
   "devices.platform.other": "Other",
   "devices.platform.windows": "Windows",
+  "devices.refresh": "Check again",
   "devices.revoke.body": "“{name}” loses its access to the server at once and has to sign in again with your master password. What it has already stored stays on it.",
   "devices.revoke.button": "Revoke",
   "devices.revoke.confirm": "Revoke",

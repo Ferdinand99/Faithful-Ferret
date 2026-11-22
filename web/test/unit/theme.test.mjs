@@ -1,4 +1,4 @@
-// The theme switch, the footer, the early theme script and the font loader.
+// The theme choice, the early theme script and the font loader.
 // Storage and the page are fakes; no browser is needed.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import vm from "node:vm";
 import { bytesFromBase64, FONT_FAMILY, FONT_MODULE, loadInter } from "../../src/font.mjs";
-import { applyTheme, mountFooter, readTheme, storeTheme, THEME_KEY, themeControl } from "../../src/theme.mjs";
-import { all, click, textOf, walk, withDom } from "./vaultHelpers.mjs";
+import { applyTheme, createThemeChoice, readTheme, storeTheme, THEME_KEY } from "../../src/theme.mjs";
 import { web } from "./helpers.mjs";
 
 /** A storage that remembers what was written, or throws when blocked. */
@@ -33,7 +32,6 @@ const fakeRoot = () => {
   };
 };
 
-const t = (key) => key;
 
 test("the_stored_theme_is_light_dark_or_auto_and_nothing_else", () => {
   assert.equal(readTheme(memoryStorage()), "auto");
@@ -79,38 +77,50 @@ test("applying_auto_leaves_the_decision_to_the_system", () => {
   assert.doesNotThrow(() => applyTheme("dark", null));
 });
 
-test("the_switch_shows_the_stored_choice_and_changes_the_page_and_the_storage", async () => {
-  await withDom(async () => {
-    const storage = memoryStorage({ [THEME_KEY]: "dark" });
-    const root = fakeRoot();
-    const control = themeControl({ t, storage, root });
-    assert.equal(control.getAttribute("role"), "group");
-    assert.equal(control.getAttribute("aria-label"), "app.theme.label");
-    const button = (name) => [...walk(control)].find((n) => n.getAttribute?.("data-theme-set") === name);
-    const [auto, light, dark] = ["auto", "light", "dark"].map(button);
-    assert.ok(auto && light && dark);
-    assert.deepEqual([auto, light, dark].map((b) => b.getAttribute("aria-pressed")), ["false", "false", "true"]);
-    assert.ok(textOf(light).includes("app.theme.light"));
+test("the_choice_reads_the_stored_word_and_changes_the_page_and_the_storage", () => {
+  const storage = memoryStorage({ [THEME_KEY]: "dark" });
+  const root = fakeRoot();
+  const choice = createThemeChoice({ storage, root });
+  assert.equal(choice.current(), "dark");
 
-    await click(light);
-    assert.equal(root.attributes.get("data-theme"), "light");
-    assert.equal(storage.data.get(THEME_KEY), "light");
-    assert.deepEqual([auto, light, dark].map((b) => b.getAttribute("aria-pressed")), ["false", "true", "false"]);
+  choice.set("light");
+  assert.equal(root.attributes.get("data-theme"), "light");
+  assert.equal(storage.data.get(THEME_KEY), "light");
+  assert.equal(choice.current(), "light");
 
-    await click(auto);
-    assert.equal(root.attributes.has("data-theme"), false);
-    assert.equal(storage.data.has(THEME_KEY), false);
-    assert.deepEqual([auto, light, dark].map((b) => b.getAttribute("aria-pressed")), ["true", "false", "false"]);
-  });
+  // System (auto): the page decides again and nothing is stored.
+  choice.set("auto");
+  assert.equal(root.attributes.has("data-theme"), false);
+  assert.equal(storage.data.has(THEME_KEY), false);
+  assert.equal(choice.current(), "auto");
 });
 
-test("the_footer_holds_the_name_and_the_switch", async () => {
-  await withDom(async () => {
-    const footer = globalThis.document.createElement("footer");
-    mountFooter(footer, { t, storage: memoryStorage() });
-    assert.ok(textOf(footer).includes("app.name"));
-    assert.equal(all(footer, "theme").length, 1);
-  });
+test("the_choice_ignores_a_word_that_is_not_a_theme_and_survives_a_blocked_storage", () => {
+  const storage = memoryStorage({}, { blocked: true });
+  const root = fakeRoot();
+  const choice = createThemeChoice({ storage, root });
+  assert.doesNotThrow(() => choice.set("dark"));
+  assert.equal(root.attributes.get("data-theme"), "dark", "the page still changes");
+  assert.equal(choice.current(), "auto", "but nothing is remembered");
+  choice.set("s3cret-master-password");
+  assert.equal(root.attributes.get("data-theme"), "dark", "a word that is not a theme changes nothing");
+  assert.equal(memoryStorage().data.size, 0);
+});
+
+test("the_choice_is_read_again_so_that_another_tabs_change_shows", () => {
+  const storage = memoryStorage();
+  const choice = createThemeChoice({ storage, root: fakeRoot() });
+  assert.equal(choice.current(), "auto");
+  storage.data.set(THEME_KEY, "dark"); // another tab chose
+  assert.equal(choice.current(), "dark");
+});
+
+test("the_page_has_no_footer_that_adds_height_to_a_short_page", () => {
+  const html = readFileSync(join(web, "src", "index.html"), "utf8");
+  assert.doesNotMatch(html, /<footer/);
+  assert.doesNotMatch(html, /id="foot"/);
+  const boot = readFileSync(join(web, "src", "boot.mjs"), "utf8");
+  assert.doesNotMatch(boot, /mountFooter|"foot"/);
 });
 
 /** Runs theme-init.mjs, a classic script, against a fake page. */

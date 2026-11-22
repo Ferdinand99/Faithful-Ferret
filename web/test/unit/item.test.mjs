@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { editView } from "../../src/views/edit.mjs";
 import { itemView } from "../../src/views/item.mjs";
-import { all, click, coded, fakeClient, fakeEngine, find, settle, t, textOf, withDom } from "./vaultHelpers.mjs";
+import { FakeElement, all, click, coded, fakeClient, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
 const PASSWORD = "pw-SECRET-1";
@@ -282,5 +282,300 @@ test("the_item_is_read_again_when_the_engine_says_it_changed_and_secrets_go_back
     engine.emit("changed", { ids: [ID] });
     await settle();
     assert.ok(!textOf(root).includes(PASSWORD), "a change to this item hides what was shown");
+  });
+});
+
+// ------------------------------------------------------------------ the new look
+
+/** The cards of the page, by their kind. */
+const cardsOf = (root) => all(root, "item-card").concat(all(root, "urls")).map((card) => card.getAttribute("data-card"));
+
+test("the_page_has_a_header_with_a_tile_the_name_the_type_and_the_actions_and_then_the_cards", async () => {
+  await withDom(async () => {
+    const { root } = await open();
+    const head = find(root, "item-head");
+    assert.ok(head, "a header");
+    const tile = [...head.childNodes].find((n) => n.getAttribute?.("class")?.includes("tile"));
+    assert.equal(textOf(tile).trim(), "B", "the tile shows the first letter of the name");
+    assert.equal(tile.getAttribute("data-type"), "login");
+    assert.equal(tile.getAttribute("aria-hidden"), "true", "the letter is decoration: the name is the heading");
+    assert.ok(textOf(find(head, "type")).includes("vault.type.login"));
+    assert.ok(find(head, "edit") && find(head, "delete") && find(head, "more"), "Edit, move to trash and the menu are in the header");
+    assert.deepEqual(cardsOf(root), ["login", "fields", "notes", "urls"], "sign-in, other fields, notes, addresses");
+    assert.ok(textOf(find(root, "back")).includes("vault.item.back"));
+  });
+});
+
+test("the_sign_in_fields_are_one_card_and_the_other_fields_another", async () => {
+  await withDom(async () => {
+    const { root } = await open();
+    const login = all(root, "item-card").find((c) => c.getAttribute("data-card") === "login");
+    const fields = all(root, "item-card").find((c) => c.getAttribute("data-card") === "fields");
+    assert.deepEqual(all(login, "field").map((f) => f.getAttribute("data-key")), ["f0", "f1"]);
+    assert.deepEqual(all(fields, "field").map((f) => f.getAttribute("data-key")), ["f2"]);
+    assert.ok(textOf(login).includes("vault.item.card_login"));
+    assert.ok(textOf(fields).includes("vault.item.card_fields"));
+  });
+  await withDom(async () => {
+    // A note with fields and no sign-in: its fields are "Details", not "Custom fields".
+    const { root } = await open({ view: { item_type: "note", fields: [{ id: "x", label: "Code", kind: "text", value: "42" }], urls: [], has_notes: false } });
+    assert.deepEqual(cardsOf(root), ["fields"]);
+    assert.ok(textOf(root).includes("vault.item.card_details"));
+    assert.ok(!textOf(root).includes("vault.item.card_login"));
+  });
+});
+
+test("an_item_with_nothing_but_a_name_has_no_empty_cards", async () => {
+  await withDom(async () => {
+    const { root } = await open({ view: { fields: [], urls: [], has_notes: false } });
+    assert.deepEqual(cardsOf(root), []);
+    assert.ok(find(root, "item-head"));
+  });
+});
+
+test("every_copy_and_reveal_button_names_the_field_it_acts_on", async () => {
+  await withDom(async () => {
+    const { root } = await open();
+    const name = (role, key) => find(root, role, key).getAttribute("aria-label");
+    assert.equal(name("copy", "f0"), 'vault.item.copy_label {"label":"User name"}');
+    assert.equal(name("copy", "f1"), 'vault.item.copy_label {"label":"Password"}');
+    assert.equal(name("reveal", "f1"), 'vault.item.show_label {"label":"Password"}');
+    assert.equal(name("reveal", "f2"), 'vault.item.show_label {"label":"PIN"}');
+    assert.equal(name("reveal", "notes"), 'vault.item.show_label {"label":"vault.item.notes"}');
+    assert.equal(find(root, "reveal", "f0"), null, "a plain value has no reveal button");
+    // The name follows the state: showing makes it "Hide Password", hiding makes it "Show Password" again.
+    await click(find(root, "reveal", "f1"));
+    assert.equal(name("reveal", "f1"), 'vault.item.hide_label {"label":"Password"}');
+    await click(find(root, "reveal", "f2"));
+    assert.equal(name("reveal", "f1"), 'vault.item.show_label {"label":"Password"}', "the one that was shown goes back");
+    assert.equal(name("reveal", "f2"), 'vault.item.hide_label {"label":"PIN"}');
+    // Every one of them is a real button, so the keyboard reaches it and Enter or Space works.
+    for (const button of [...all(root, "copy"), ...all(root, "reveal")]) assert.equal(button.tagName, "button");
+  });
+});
+
+test("an_address_has_a_copy_button_and_copying_it_does_not_ask_the_worker", async () => {
+  await withDom(async () => {
+    const { root, written, client } = await open();
+    assert.equal(textOf(find(root, "url")).trim(), "https://bank.example");
+    const button = find(root, "copy-url");
+    assert.equal(button.getAttribute("aria-label"), 'vault.item.copy_label {"label":"vault.item.address"}');
+    await click(button);
+    assert.deepEqual(written, ["https://bank.example"]);
+    assert.deepEqual(client.calls, [], "an address is not a secret: the worker is not asked");
+    assert.ok(textOf(root).includes("vault.item.copied"));
+  });
+});
+
+test("the_header_shows_a_star_after_the_name_only_for_a_favourite", async () => {
+  await withDom(async () => {
+    const plain = await open();
+    assert.ok(!textOf(find(plain.root, "item-head")).includes("★"));
+    const fav = await open({ view: { favorite: true } });
+    const h1 = [...walk(find(fav.root, "item-head"))].find((n) => n.tagName === "h1");
+    const star = [...walk(h1)].find((n) => n.getAttribute?.("role") === "img");
+    assert.equal(star.getAttribute("aria-label"), "vault.item.favorite", "the star has a name for a screen reader");
+    assert.ok(textOf(h1).trim().startsWith("Bank"), "the name comes first");
+  });
+});
+
+test("the_folder_labels_are_hidden_until_the_item_has_some", async () => {
+  await withDom(async () => {
+    const none = await open();
+    assert.equal(find(none.root, "folder-chips").hidden, true, "the hook is there and hidden");
+    assert.equal(all(none.root, "folder-chip").length, 0);
+
+    const some = await open({ view: { folders: ["Home", "Finance", "bad\nlabel"] } });
+    assert.equal(find(some.root, "folder-chips").hidden, false);
+    assert.deepEqual(all(some.root, "folder-chip").map((c) => textOf(c).trim()), ["Home", "Finance"], "a label that is not one plain line is dropped");
+  });
+});
+
+test("the_folder_task_can_make_the_chips_and_add_move_to_folder_to_the_menu", async () => {
+  await withDom(async () => {
+    const moved = [];
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW, folders: ["Home"] } }, secrets: { [ID]: ["ada", PASSWORD, PIN] } });
+    const root = await itemView({
+      engine, sync: engine, client: fakeClient(engine), id: ID, t, moveToFolder: (id) => moved.push(id),
+      folderChip: (label) => globalThis.document.createTextNode(`[${label}]`),
+    });
+    assert.ok(textOf(find(root, "folder-chip")).includes("[Home]"), "the folder task's chip is used");
+    await click(find(root, "more"));
+    await click(find(root, "move"));
+    assert.deepEqual(moved, [ID]);
+  });
+  await withDom(async () => {
+    const { root } = await open();
+    assert.equal(find(root, "move"), null, "without the hook there is no such entry");
+  });
+});
+
+test("delete_is_move_to_trash_and_says_what_the_trash_does", async () => {
+  await withDom(async () => {
+    const { root, engine, moves } = await open();
+    assert.ok(textOf(find(root, "delete")).includes("vault.item.trash"));
+    const pending = click(find(root, "delete"));
+    await settle();
+    const dialog = find(root, "dialog");
+    const words = textOf(dialog);
+    assert.ok(words.includes("list.trash_title_one") && words.includes("list.trash_body") && words.includes("list.trash_confirm"), "the same words as the list's trash question");
+    await click(find(dialog, "dialog-confirm"));
+    await pending;
+    await settle();
+    assert.deepEqual(engine.calls.filter((c) => c[0] === "remove"), [["remove", ID]]);
+    assert.deepEqual(moves, ["/items"]);
+  });
+});
+
+test("the_menu_switches_the_favourite_with_a_patch_of_that_key_against_the_newest_revision", async () => {
+  await withDom(async () => {
+    const { root, engine } = await open();
+    const more = find(root, "more");
+    assert.equal(more.getAttribute("aria-haspopup"), "menu");
+    assert.equal(more.getAttribute("aria-expanded"), "false");
+    assert.equal(more.getAttribute("aria-label"), 'vault.item.more {"name":"Bank"}');
+    assert.equal(find(root, "more-menu").hidden, true);
+    await click(more);
+    assert.equal(more.getAttribute("aria-expanded"), "true");
+    assert.equal(find(root, "more-menu").hidden, false);
+    assert.ok(textOf(find(root, "favorite")).includes("vault.item.favorite_add"));
+
+    // A newer revision came in since the page was drawn: the patch carries that one, so the engine can refuse a stale write.
+    engine.items[0] = { ...ENTRY, rev: 5 };
+    await click(find(root, "favorite"));
+    await settle();
+    assert.deepEqual(engine.calls.filter((c) => c[0] === "update"), [["update", ID, { favorite: true }]]);
+    assert.deepEqual(engine.expectedRevs, [5]);
+    assert.ok(textOf(root).includes("vault.item.favorited"));
+    assert.equal(find(root, "more-menu").hidden, true, "the menu closed");
+  });
+});
+
+test("a_favourite_is_switched_off_with_the_same_patch_and_a_refusal_is_shown", async () => {
+  await withDom(async () => {
+    const { root, engine } = await open({ view: { favorite: true } });
+    await click(find(root, "more"));
+    assert.ok(textOf(find(root, "favorite")).includes("vault.item.favorite_remove"));
+    engine.failWith = coded("item_changed");
+    await click(find(root, "favorite"));
+    await settle();
+    assert.deepEqual(engine.calls.filter((c) => c[0] === "update"), [["update", ID, { favorite: false }]]);
+    assert.ok(textOf(root).includes("vault.error.item_changed"), "the reason is shown and nothing was changed");
+  });
+});
+
+test("an_item_that_cannot_be_changed_has_no_menu_and_no_edit_or_trash", async () => {
+  await withDom(async () => {
+    for (const entry of [{ readOnly: true }, { damaged: true }, { blocked: true, blockedReason: "conflict" }, { quarantined: true }, { missingOnServer: true }]) {
+      const { root } = await open({ entry, view: entry.readOnly ? { read_only: true } : {} });
+      assert.equal(find(root, "more"), null, JSON.stringify(entry));
+      assert.equal(find(root, "edit"), null);
+      assert.equal(find(root, "delete"), null);
+      assert.ok(find(root, "item-head"), "it can still be read");
+    }
+  });
+});
+
+test("the_menu_closes_on_a_press_outside_it_and_the_listener_goes_with_a_lock", async () => {
+  await withDom(async () => {
+    const listeners = new Set();
+    globalThis.document.addEventListener = (type, fn) => type === "pointerdown" && listeners.add(fn);
+    globalThis.document.removeEventListener = (type, fn) => type === "pointerdown" && listeners.delete(fn);
+    const { createWipeScope } = await import("../../src/views/common.mjs");
+    const scope = createWipeScope();
+    const engine = fakeEngine({ items: [{ ...ENTRY }], views: { [ID]: { ...VIEW } }, secrets: { [ID]: ["ada", PASSWORD, PIN] } });
+    const root = await itemView({ engine, sync: engine, client: fakeClient(engine), id: ID, t, scope });
+    assert.equal(listeners.size, 1);
+    await click(find(root, "more"));
+    assert.equal(find(root, "more-menu").hidden, false);
+    // A press on the menu itself leaves it open; a press somewhere else closes it.
+    for (const fn of listeners) fn({ target: find(root, "favorite") });
+    assert.equal(find(root, "more-menu").hidden, false);
+    for (const fn of listeners) fn({ target: { parentNode: null } });
+    assert.equal(find(root, "more-menu").hidden, true);
+
+    // A secret that is on the page goes with the lock, and so does the listener.
+    await click(find(root, "reveal", "f1"));
+    assert.ok(textOf(root).includes(PASSWORD));
+    scope.run();
+    assert.equal(listeners.size, 0, "nothing of the page is held by the document after a lock");
+    assert.ok(!textOf(root).includes(PASSWORD) && !textOf(root).includes("Bank"), "nothing decrypted is left in the page");
+    assert.equal(root.childNodes.length, 0);
+  });
+});
+
+test("the_menu_is_driven_from_the_keyboard", async () => {
+  await withDom(async () => {
+    const { root } = await open();
+    const menu = find(root, "more-menu");
+    const focused = [];
+    for (const node of walk(root)) if (node.getAttribute) node.focus = () => focused.push(node.getAttribute("data-role"));
+    // Down on the button opens the menu and moves into it; Escape in the menu closes it and the focus goes back to the button.
+    await fire(find(root, "more"), "keydown", { key: "ArrowDown" });
+    assert.equal(menu.hidden, false);
+    assert.equal(focused.at(-1), "favorite");
+    await fire(menu, "keydown", { key: "Escape", target: find(root, "favorite") });
+    assert.equal(menu.hidden, true);
+    assert.equal(focused.at(-1), "more");
+  });
+});
+
+test("after_the_favourite_switch_the_focus_is_on_the_new_menu_button_and_the_page_is_built_once", async () => {
+  await withDom(async () => {
+    const focused = [];
+    const saved = FakeElement.prototype.focus;
+    FakeElement.prototype.focus = function focus() {
+      focused.push(this.getAttribute("data-role"));
+    };
+    try {
+      const { root, engine } = await open();
+      const opens = () => engine.calls.filter((c) => c[0] === "open").length;
+      await click(find(root, "more"));
+      const oldMore = find(root, "more");
+      const before = opens();
+      focused.length = 0;
+      await click(find(root, "favorite"));
+      await settle();
+      assert.equal(opens(), before, "nothing is built until the engine says the item changed");
+      // The engine says so: the header is built again, and its menu button has the focus.
+      engine.items[0] = { ...ENTRY, favorite: true, rev: 3 };
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.equal(opens(), before + 1, "one rebuild");
+      assert.notEqual(find(root, "more"), oldMore, "the header is a new one");
+      assert.equal(focused.at(-1), "more");
+      // A later rebuild (another device's change) does not take the focus.
+      focused.length = 0;
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.deepEqual(focused, []);
+    } finally {
+      if (saved === undefined) delete FakeElement.prototype.focus;
+      else FakeElement.prototype.focus = saved;
+    }
+  });
+});
+
+test("a_refused_favourite_switch_leaves_the_focus_alone_for_the_next_rebuild", async () => {
+  await withDom(async () => {
+    const focused = [];
+    const saved = FakeElement.prototype.focus;
+    FakeElement.prototype.focus = function focus() {
+      focused.push(this.getAttribute("data-role"));
+    };
+    try {
+      const { root, engine } = await open();
+      await click(find(root, "more"));
+      engine.failWith = coded("item_changed");
+      await click(find(root, "favorite"));
+      await settle();
+      focused.length = 0;
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.deepEqual(focused, []);
+    } finally {
+      if (saved === undefined) delete FakeElement.prototype.focus;
+      else FakeElement.prototype.focus = saved;
+    }
   });
 });

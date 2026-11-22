@@ -110,17 +110,28 @@ const frameId = integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
 // A host name as the extension shows it (the core's `display_host`): the Unicode form, and the A-label next to it.
 const host = string({ min: 1, max: 300 });
+const displayHost = object({ a_label: host, unicode: host });
 const email = string({ min: 1, max: 254 });
+// The item types of the vault, as the core names them.
+const itemType = string({ max: 16, oneOf: ["login", "note", "card", "identity", "other"] });
+// One item as a page may see it: a name, a user name, marks, and a reference that is good only in the session of the
+// page that got it. Never a password, a code or any other value of the item.
 const handle = object(
   {
     ref,
     name: string({ max: 256 }),
     username: string({ max: 256 }),
     insecure: boolean(),
+    favorite: boolean(),
+    type: itemType,
+    // The item has a web address that "Open the site" can open.
+    site: boolean(),
+    // A candidate of a page: the first frame it was matched in, and every frame it may be filled in (the top first).
+    frame_id: frameId,
+    frame_ids: array(frameId, { max: 4 }),
   },
-  { optional: ["username", "insecure"] },
+  { optional: ["username", "insecure", "favorite", "type", "site", "frame_id", "frame_ids"] },
 );
-const handles = object({ handles: array(handle, { max: 100 }) });
 const empty = object({});
 
 /**
@@ -185,21 +196,73 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
+  // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
+  // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
+  // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`
+  // lists the frames of the same site that some item matches and that are offered nothing until their host
+  // permission is granted. `automatic` (here and in `search`): a read the page made by itself (after the sync changed
+  // something), not an action of the user, so it does not move the auto-lock's deadline. The lock is still checked.
   candidates: {
-    request: object({ tab_id: tabId, frame_id: frameId }),
-    reply: handles,
+    request: object({ tab_id: tabId, frame_id: frameId, automatic: boolean() }, { optional: ["frame_id", "automatic"] }),
+    reply: object(
+      {
+        handles: array(handle, { max: 100 }),
+        host: displayHost,
+        insecure: boolean(),
+        grant: array(object({ origin, host: displayHost }), { max: 32 }),
+      },
+      { optional: ["host"] },
+    ),
   },
-  // A search finds anything in the vault. Its handles are for copying only.
+  // The origin the grant tab was opened for, checked by the core: an `https` origin, its host and the permission.
+  grant_check: {
+    request: object({ origin }),
+    reply: object(
+      { ok: boolean(), reason, origin, host: displayHost, pattern: string({ min: 1, max: 320 }) },
+      { optional: ["reason", "origin", "host", "pattern"] },
+    ),
+  },
+  // A search finds anything in the vault. Its handles are for copying only: "Fill" takes a handle of `candidates`.
+  // `favorites` keeps the favourites only and `type` one item type; `offset` pages through a long answer, and `total`
+  // says how many items match in all.
   search: {
-    request: object({ query: string({ max: 256 }) }),
-    reply: handles,
+    request: object(
+      { query: string({ max: 256 }), favorites: boolean(), type: itemType, offset: integer({ min: 0, max: 1_000_000 }), automatic: boolean() },
+      { optional: ["favorites", "type", "offset", "automatic"] },
+    ),
+    reply: object({ handles: array(handle, { max: 100 }), total: integer({ min: 0, max: 1_000_000 }) }),
   },
+  // "Fill" with a reference of `candidates`. Without `frame_id` the background fills the first of the reference's frames
+  // that has a sign-in form; with it (the menu's frame) only that frame.
   fill: {
-    request: object({ ref, tab_id: tabId, frame_id: frameId }),
+    request: object({ ref, tab_id: tabId, frame_id: frameId }, { optional: ["frame_id"] }),
     reply: okReply,
   },
   copy: {
     request: object({ ref, field }),
+    reply: okReply,
+  },
+  // What the popup shows of one item: the name, the user name, the addresses and which values can be copied. A
+  // password or a code is never part of it.
+  item: {
+    request: object({ ref }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        name: string({ max: 256 }),
+        username: string({ max: 256 }),
+        type: itemType,
+        favorite: boolean(),
+        urls: array(string({ max: 2048 }), { max: 16 }),
+        copyable: array(field, { max: 3 }),
+      },
+      { optional: ["reason", "name", "username", "type", "favorite", "urls", "copyable"] },
+    ),
+  },
+  // "Open the site": the background opens the item's first web address in a new tab.
+  open_site: {
+    request: object({ ref }),
     reply: okReply,
   },
   // What the sync shows in the popup: codes only (the state, a stop, the warnings), never an item or a name.

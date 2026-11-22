@@ -2,7 +2,7 @@
 // only after it has been typed back. A page that is hidden while the key is shown throws it away and sends nothing. After the
 // renewal the old key opens nothing and the new one recovers the account; the server makes a backup set at once and tells the
 // stand-in monitor about it, with a message that holds no name, no path and no secret.
-import { addNeedle, createItem, expect, freshContext, hostStep, leave, monitorCalls, newDevice, noViolations, pace, pushToken, remember, requireAccount, rowsNamed, secrets, SLOW, synced, test, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, freshContext, hostStep, leave, monitorCalls, newDevice, noViolations, pace, pushToken, remember, requireAccount, findRows, secrets, SLOW, synced, test, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -178,7 +178,7 @@ test("a_new_recovery_key_makes_the_old_one_useless_and_a_backup_follows", async 
   remember();
   await recovered.locator('[data-role="open-vault"]').click();
   await expect(recovered.locator('[data-role="list"]')).toBeVisible({ timeout: 60_000 });
-  await expect(rowsNamed(recovered, name)).toHaveCount(1, { timeout: 60_000 });
+  await expect((await findRows(recovered, name))).toHaveCount(1, { timeout: 60_000 });
   await third.close();
   await device.context.close();
   leave("m3-22", { done: true });

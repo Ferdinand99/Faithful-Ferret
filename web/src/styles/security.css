@@ -54,7 +54,7 @@
   border-radius: var(--r-lg);
   background: var(--card-raised);
   color: var(--text);
-  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), var(--shadow-pop);
+  box-shadow: 0 0 0 100vmax var(--scrim), var(--shadow-pop);
 }
 
 .reauth-dialog > * + * {

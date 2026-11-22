@@ -1,7 +1,8 @@
 // What only the test build has. It is in a folder named test-only: the release
 // build leaves the folder out and the release check refuses it.
 //
-//  * the core operations `argon2_bench` and `measure_open`;
+//  * the core operations `argon2_bench` and `measure_open`, and the matching's
+//    probes `frames_probe`, `item_probe` and `match_bench` (matchProbe.mjs);
 //  * a port for the test pages to call core operations by name;
 //  * the lifetime log of the background page and the scenarios of the lifetime
 //    measurement (measureLog.mjs, measureScenario.mjs), with a port to start
@@ -17,6 +18,7 @@
 
 import { contentSender, isTopLevelExtensionPage, isUiPort } from "../../shared/origin.mjs";
 import * as fillProbe from "./fillProbe.mjs";
+import { createMatchProbe } from "./matchProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
 
@@ -145,10 +147,12 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
  *   runtime: { id?: string, getURL: (path: string) => string },
  *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, addOps: (ops: any) => void, state: () => string },
  *   now: () => number,
- * }} deps
+ *   engine?: () => any,
+ * }} deps `engine`: the sync engine of the open vault, or null
  */
-export function install({ browser, runtime, coreHost, now }) {
+export function install({ browser, runtime, coreHost, now, engine = () => null }) {
   coreHost.addOps(ops);
+  coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
   const storageLocal = browser.storage.local;
   const { log } = startMeasureLog({
     runtime: browser.runtime,

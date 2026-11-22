@@ -1,16 +1,24 @@
-// The popup (design document, sections 7.2 and 10.3.1). In this version it
-// shows whether a device is signed in, unlocks it with the master password,
-// locks it with the button in the header, and shows what the sync found: its
-// state, a stop with "Try again" and "Forget this server", and the warnings.
-// The views are in popupFlow.mjs; this file builds them with `el()`. The list
-// of the vault comes later and builds on the unlocked view.
+// The popup (design document, sections 7.2, 10.3.1 and 10.6). It shows
+// whether a device is signed in, unlocks it with the master password, locks it
+// with the button in the header, shows what the sync found (its state, a stop
+// with "Try again" and "Forget this server", and the warnings), and, while the
+// vault is open, the list of the vault (popupList.mjs): the candidates of the
+// page with "Fill", the favourites and all items, search, a filter by type,
+// copying and one item's view. The views are in popupFlow.mjs; this file builds
+// them with `el()`.
+//
+// The page the popup is about is the active tab of the window it was opened
+// from. A popup that was popped out into a window of its own keeps that tab
+// (`?tab=<id>` in its address); a popup page opened as a tab of its own has no
+// page, so it offers nothing to fill.
 //
 // The first sign-in never happens here: Firefox closes the popup when a
 // permission is asked for, so it is done in the sign-in tab.
 
 import { el, mount } from "../shared/dom.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
-import { createPopupFlow, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
+import { createListFlow, createPopupFlow, statusKey, stopKey, warningKey } from "./popupFlow.mjs";
+import { createVaultList } from "./popupList.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
 /** @typedef {import("./page.mjs").Texts} Texts */
@@ -26,6 +34,25 @@ function byId(id) {
   return node;
 }
 
+/**
+ * The tab whose page the popup is about, or null.
+ * @returns {Promise<number | null>}
+ */
+async function pageTab() {
+  const named = new URLSearchParams(location.search).get("tab");
+  if (named !== null) return /^[0-9]{1,10}$/.test(named) ? Number(named) : null;
+  try {
+    const own = await browser.tabs.getCurrent();
+    const [active] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (typeof active?.id !== "number") return null;
+    // The popup page in a tab of its own is not about a page.
+    if (own !== undefined && own?.id === active.id) return null;
+    return active.id;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const root = byId("root");
   const lockButton = byId("lock");
@@ -35,6 +62,9 @@ async function main() {
   translateStatic(document, texts);
   const ui = connectUi(browser.runtime);
   const flow = createPopupFlow(ui.request);
+  const listFlow = createListFlow(ui.request);
+  const tabId = await pageTab();
+  const poppedOut = new URLSearchParams(location.search).has("tab");
 
   /** @param {PopupView} view */
   function header(view) {
@@ -234,31 +264,53 @@ async function main() {
   }
 
   /**
+   * The open vault: the sync's part and the list of the vault, and the account and server at the foot.
    * @param {PopupView} view
    * @param {string | null} [note] see `syncPart`
    */
   function unlocked(view, note = null) {
+    const syncSlot = el("div", { class: "ff-sync-slot", "data-role": "sync-slot" }, syncPart(view, note));
+    const vault = createVaultList({
+      texts,
+      list: listFlow,
+      tabId,
+      onFilled: () => {
+        // The page has what it needs; a popped-out window stays.
+        if (!poppedOut) setTimeout(() => window.close(), 600);
+      },
+      // The permission is asked for in a tab of its own: a request from the popup would close the popup.
+      onGrant: (origin) => {
+        const url = `${browser.runtime.getURL("pages/grant.html")}?${new URLSearchParams({ origin }).toString()}`;
+        void browser.tabs.create({ url }).then(() => {
+          if (!poppedOut) window.close();
+        });
+      },
+    });
     mount(
       root,
       el(
         "section",
-        { class: "ff-panel", "data-role": "unlocked-view" },
-        el("h1", null, texts.t("session.open.title")),
-        where(view),
-        syncPart(view, note),
-        el("p", { class: "ff-hint" }, texts.t("session.popup.open_hint")),
+        { class: "ff-panel ff-unlocked", "data-role": "unlocked-view" },
+        syncSlot,
+        vault.root,
+        el("footer", { class: "ff-foot" }, where(view)),
       ),
     );
-    follow(view, note);
+    void vault.reload().then(() => vault.focus(), () => {});
+    follow(view, note, syncSlot, vault);
   }
 
   /**
    * The sync's part follows the background while the popup is open: it is built again only when what the background
-   * says has changed, and not while the user answers the question of "Forget this server".
+   * says has changed, and not while the user answers the question of "Forget this server". The list is read again
+   * when the sync's state changes (the vault may hold new items), unless the user is in a menu or an item's view.
+   * A change of the view (a lock, another account) builds the popup again.
    * @param {PopupView} view what is shown now
    * @param {string | null} note
+   * @param {HTMLElement} syncSlot
+   * @param {ReturnType<typeof createVaultList>} vault
    */
-  function follow(view, note) {
+  function follow(view, note, syncSlot, vault) {
     const mine = setTimeout(async () => {
       if (refresh !== mine) return;
       refresh = null;
@@ -271,8 +323,18 @@ async function main() {
       }
       // Something else was shown meanwhile (an action of the user wins).
       if (refresh !== null || document.body.dataset.view !== "unlocked") return;
-      if (next !== null && JSON.stringify(next) !== JSON.stringify(view)) show(next, note);
-      else follow(view, note);
+      if (next === null || JSON.stringify(next) === JSON.stringify(view)) {
+        follow(view, note, syncSlot, vault);
+        return;
+      }
+      if (next.view !== "unlocked" || next.account !== view.account || next.server !== view.server) {
+        show(next, note);
+        return;
+      }
+      mount(syncSlot, syncPart(next, note));
+      // Not the user's doing: the reload does not move the auto-lock's deadline.
+      if (!vault.busy()) void vault.reload({ automatic: true }).catch(() => {});
+      follow(next, note, syncSlot, vault);
     }, SYNC_REFRESH_MS);
     refresh = mine;
   }
@@ -286,7 +348,9 @@ async function main() {
   });
 
   popOut.addEventListener("click", async () => {
-    await browser.windows.create({ url: browser.runtime.getURL("pages/popup.html"), type: "popup", width: 380, height: 620 });
+    // The window keeps the page this popup is about.
+    const page = tabId !== null ? `?tab=${tabId}` : "";
+    await browser.windows.create({ url: browser.runtime.getURL(`pages/popup.html${page}`), type: "popup", width: 380, height: 620 });
     window.close();
   });
 
