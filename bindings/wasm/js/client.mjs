@@ -125,6 +125,14 @@
 // `tombstone_invalid` otherwise (the item is then quarantined, its local copy
 // is kept). An item id that is not 16 bytes is `invalid_input`.
 //
+// Folders: an item's folder names live in its encrypted body. `item_view`
+// returns them as `folders: string[]` (`[]` for an item in no folder, also
+// every item written before folders existed). In an `encrypt_item` draft,
+// `folders` is the whole list: leave it out to keep the item's folders, pass
+// `[]` to clear them. Each name is trimmed, 1 to 64 characters, at most 20 per
+// item, no two equal when case is ignored (`folder_empty`, `folder_too_long`,
+// `folder_too_many`, `folder_duplicate`).
+//
 // Copying an item: `vault.copy_item(handle, newItemId, nowMs, device?)` seals a
 // copy of the open item under `newItemId` (16 bytes of `crypto.getRandomValues`,
 // not the item's own id and not the manifest id) and resolves

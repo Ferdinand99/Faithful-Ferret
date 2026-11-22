@@ -4,12 +4,14 @@
 //! [`crate::envelope`].
 
 pub mod body;
+pub mod folders;
 pub mod manifest;
 pub mod pad;
 pub mod url_match;
 pub mod view;
 
 pub use body::{Field, FieldKind, ItemBody, ItemType, Passkey, Totp, UrlEntry, UrlMatch};
+pub use folders::{FOLDERS_KEY, MAX_FOLDER_CHARS, MAX_FOLDERS, normalize_folders, same_folder};
 pub use manifest::{Manifest, ManifestEntry};
 pub use url_match::{
     DisplayHost, PageOrigin, UrlMatchResult, display_host, page_origin, same_site, url_match,

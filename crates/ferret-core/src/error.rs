@@ -34,6 +34,21 @@ pub enum InputError {
     LastMethod,
 }
 
+/// Why a list of folder names was refused (Fase 1 § 5.2, the `folders` key
+/// of an item body).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderError {
+    /// A name that is empty once its surrounding white space is trimmed.
+    Empty,
+    /// A name longer than 64 characters once trimmed.
+    TooLong,
+    /// More than 20 names for one item.
+    TooMany,
+    /// Two names that are equal when case is ignored.
+    Duplicate,
+}
+
 /// Which structure was malformed.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +235,8 @@ pub enum Error {
     /// A wrap or manifest entry the server holds is at the largest
     /// `kek_generation`, so no later generation exists for a new wrap.
     GenerationExhausted,
+    /// The folder names of an item break a rule.
+    Folder(FolderError),
 }
 
 impl Error {
@@ -295,6 +312,10 @@ impl Error {
         Error::Pinned(PinnedField::ServerKey),
         Error::Pinned(PinnedField::AuthKey),
         Error::GenerationExhausted,
+        Error::Folder(FolderError::Empty),
+        Error::Folder(FolderError::TooLong),
+        Error::Folder(FolderError::TooMany),
+        Error::Folder(FolderError::Duplicate),
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -379,6 +400,12 @@ impl Error {
                 PinnedField::AuthKey => "pinned_auth_key",
             },
             Error::GenerationExhausted => "generation_exhausted",
+            Error::Folder(kind) => match kind {
+                FolderError::Empty => "folder_empty",
+                FolderError::TooLong => "folder_too_long",
+                FolderError::TooMany => "folder_too_many",
+                FolderError::Duplicate => "folder_duplicate",
+            },
         }
     }
 }

@@ -273,7 +273,9 @@ impl Vault {
     }
 
     /// The imported item number `index` as `{ item_id, view }`, without its
-    /// secrets.
+    /// secrets. `view` is the view of `item_view`, `folders` included: an
+    /// item of a Ferret export keeps its folders, and `import_seal` writes
+    /// them into the vault with the rest of the body.
     pub fn import_view(&self, index: u32) -> Result<JsValue, JsValue> {
         run(|| {
             let items = self.inner()?.import.as_ref().ok_or(Fail::Input)?;

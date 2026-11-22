@@ -1180,12 +1180,14 @@ The server stores `Argon2id(LV, salt_s)` with vole-kit's parameters and compares
   "notes":    text?,
   "created":  u64 (unix ms), "modified": u64 (unix ms), "favorite": bool,
   "device":   text? (name of the device that wrote it)        // used by the conflict view § 8.5
+  "folders":  [ text ]? (folder names, see below)
 }
 ```
 
 - Limits (§ 5.2): ≤ 64 KiB per text/byte string, ≤ 10 000 elements, depth ≤ 16.
 - `fields[].kind` with an unknown value is preserved and treated as `text`.
 - `passkey` and `totp` are fields, not separate types in v1.
+- **Folders** *(clarified 2026-11-22)*: `folders` holds the item's folder names. An item can be in several folders or in none, and a folder exists only as a name that items carry: there is no separate folder list, and the server learns nothing new (the names are inside the encrypted body; sync and the wire are unchanged). A write trims each name, which must then have 1 to 64 characters; at most 20 names per item; no two names equal when case is ignored. A name that breaks a rule is refused (`folder_empty`, `folder_too_long`, `folder_too_many`, `folder_duplicate`), never dropped. An empty list removes the key. A reader skips entries that break the rules without changing the body. The key is kept with the unknown keys, so an older client preserves it, and an edit that does not set folders keeps them. The encrypted export and the JSON export include it.
 - **Newer schema** (`schema` > 1) is read-only. The body is shown, and on export (encrypted and unencrypted JSON) it is written out exactly as it was read. CSV export rejects such items (`unsupported`), so that no secret fields disappear silently. *(Clarified 2026-10-30.)*
 
 **Manifest (`kind = 2`)**

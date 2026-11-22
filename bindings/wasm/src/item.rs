@@ -68,6 +68,9 @@ pub(crate) struct ViewDto<'a> {
     favorite: bool,
     device: Option<&'a str>,
     read_only: bool,
+    /// The folder names in the order they are stored; `[]` for an item in no
+    /// folder (also every item written before folders existed).
+    folders: &'a [String],
 }
 
 impl<'a> ViewDto<'a> {
@@ -114,6 +117,7 @@ impl<'a> ViewDto<'a> {
             favorite: v.favorite,
             device: v.device.as_deref(),
             read_only: v.read_only,
+            folders: &v.folders,
         }
     }
 }
@@ -164,6 +168,14 @@ pub(crate) struct PasskeyDraft {
 /// item. To remove the one-time-password setup, the notes or the passkey, set
 /// `remove_totp`, `remove_notes` or `remove_passkey`. There is no key for a
 /// private key, a PRF seed or a TOTP secret apart from the address.
+///
+/// `folders` is the whole list of folder names: missing (or `null`) keeps the
+/// folders the item has, `[]` takes the item out of every folder, and a list
+/// replaces them. The names are checked by the core
+/// (`ferret_core::item::folders`): trimmed, 1 to 64 characters, at most 20,
+/// no two equal when case is ignored; a break is `folder_empty`,
+/// `folder_too_long`, `folder_too_many` or `folder_duplicate`, and nothing is
+/// sealed.
 #[derive(Default, Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DraftDto {
@@ -191,6 +203,8 @@ pub(crate) struct DraftDto {
     passkey: Option<PasskeyDraft>,
     #[serde(default)]
     remove_passkey: bool,
+    #[serde(default)]
+    folders: Option<Vec<String>>,
 }
 
 impl DraftDto {
@@ -224,7 +238,8 @@ fn field_kind(text: Option<&String>, previous: Option<&FieldKind>) -> FieldKind 
 ///   item, `modified` of an edit.
 ///
 /// A body from a newer schema is `read_only_schema`. A TOTP address that
-/// does not parse is the error of `parse_otpauth` and is refused before
+/// does not parse is the error of `parse_otpauth`, and folder names that
+/// break a rule the error of `ItemBody::set_folders`; both are refused before
 /// anything is sealed.
 pub(crate) fn build_body(
     draft: &DraftDto,
@@ -343,6 +358,10 @@ pub(crate) fn build_body(
         // Only the name of a passkey that is there can be changed.
         let pk = body.passkey.as_mut().ok_or(Fail::Input)?;
         pk.user_name.clone_from(&p.user_name);
+    }
+
+    if let Some(names) = &draft.folders {
+        body.set_folders(names)?;
     }
 
     body.modified = now_ms;
@@ -483,5 +502,6 @@ impl Shaped for DraftDto {
         ("device", &ANY),
         ("passkey", &PasskeyDraft::SHAPE),
         ("remove_passkey", &ANY),
+        ("folders", &Shape::List(&ANY)),
     ]);
 }
