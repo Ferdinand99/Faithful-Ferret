@@ -11,7 +11,7 @@ const clipped = (page) =>
     const out = [];
     const width = document.documentElement.clientWidth;
     const describe = (node) => `${node.tagName.toLowerCase()}${node.getAttribute("data-role") ? `[${node.getAttribute("data-role")}]` : ""} "${(node.textContent ?? "").trim().slice(0, 40)}"`;
-    for (const node of document.querySelectorAll("#app *, #foot *")) {
+    for (const node of document.querySelectorAll("#app *")) {
       const box = node.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) continue;
       // `overflow-x: clip` on the body hides what sticks out, so the edges are measured here.
@@ -415,7 +415,7 @@ test("the_sheet_prints_dark_on_white_in_any_theme_with_the_recovery_key_on_a_pag
   await page.goto("/");
   await expect(page.locator("#app h1")).toBeVisible();
   // A chosen dark theme must not reach the paper.
-  await page.locator('[data-theme-set="dark"]').click();
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await setupSheet(page);
   const onScreen = await page.evaluate(() => getComputedStyle(document.querySelector('[data-role="sheet-secret-key"]')).color);
   await page.emulateMedia({ media: "print" });
@@ -434,14 +434,14 @@ test("the_sheet_prints_dark_on_white_in_any_theme_with_the_recovery_key_on_a_pag
       buttons: [...document.querySelectorAll("#app .btn")].filter((b) => getComputedStyle(b).display !== "none").length,
       forms: shown("form"),
       typeBack: [...document.querySelectorAll(".no-print")].filter((n) => getComputedStyle(n).display !== "none").length,
-      footer: shown("#foot"),
+      footer: document.getElementById("foot") !== null && shown("#foot"),
       marks: [...document.querySelectorAll("#app .auth-card")].filter((c) => getComputedStyle(c, "::before").display !== "none").length,
     };
   });
   expect(onScreen).not.toBe("rgb(29, 29, 31)"); // dark on screen: light text
   expect(paper.scheme).toBe("light");
   for (const color of [paper.key, paper.recovery, paper.heading]) expect(color).toBe("rgb(29, 29, 31)");
-  expect(paper.label).toBe("rgb(110, 110, 115)");
+  expect(paper.label).toBe("rgb(102, 102, 107)");
   expect(paper.page).toBe("page");
   expect(paper.app).toBe("block");
   expect(paper).toMatchObject({ buttons: 0, forms: false, typeBack: 0, footer: false, marks: 0 });

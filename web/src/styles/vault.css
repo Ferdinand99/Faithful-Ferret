@@ -74,97 +74,6 @@
   }
 }
 
-.vault-ui .star {
-  margin-inline-end: 0.25rem;
-  color: var(--warn-text);
-}
-
-.vault-ui .marks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.vault-ui .marks:empty {
-  display: none;
-}
-
-/* One item */
-.vault-ui .item-card > h1,
-.vault-ui .edit > h1 {
-  overflow-wrap: anywhere;
-  font-size: 1.5rem;
-  letter-spacing: -0.019em;
-}
-
-.vault-ui .type {
-  color: var(--muted);
-}
-
-.vault-ui .fields {
-  border-top: 1px solid var(--line);
-}
-
-.vault-ui .fields:empty {
-  display: none;
-}
-
-.vault-ui .field-row {
-  display: grid;
-  grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--sp-2) var(--sp-4);
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.vault-ui .field-row .label {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.vault-ui .field-row .value {
-  overflow-wrap: anywhere;
-  font-family: var(--mono);
-  font-size: 0.875rem;
-  letter-spacing: 0;
-}
-
-.vault-ui .field-row .actions {
-  justify-content: flex-end;
-}
-
-.vault-ui .urls ul {
-  margin: var(--sp-2) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.vault-ui .urls li {
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
-  overflow-wrap: anywhere;
-}
-
-.vault-ui .item-card > .actions {
-  margin-top: var(--sp-5);
-}
-
-@media (max-width: 30rem) {
-  .vault-ui .field-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .vault-ui .field-row .actions {
-    justify-content: flex-start;
-  }
-
-  .vault-ui .item-card > .actions .btn,
-  .vault-ui .edit .actions .btn {
-    flex: 1 1 auto;
-  }
-}
-
 /* The confirmation: a raised card in the page, not a window. */
 .vault-ui .dialog {
   padding: var(--sp-5);
@@ -188,9 +97,4 @@
 
 .vault-ui .dialog .actions {
   margin-top: var(--sp-4);
-}
-
-/* The edit form */
-.vault-ui .edit form {
-  margin-top: var(--sp-5);
 }

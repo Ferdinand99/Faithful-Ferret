@@ -60,7 +60,7 @@ function scrub(draft) {
  * @returns {Promise<HTMLElement>}
  */
 export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope, tracker }) {
-  const root = el("section", { class: "card edit", "data-role": "edit" });
+  const root = el("section", { class: "edit-view", "data-role": "edit" });
 
   /** @type {any} */
   let view = null;
@@ -151,7 +151,9 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   notes.input.addEventListener("input", () => {
     notesTouched = true;
   });
-  const notesSlot = el("div", { "data-role": "notes-slot" });
+  const notesSlot = el("section", { class: "card item-section", "data-role": "notes-slot" });
+  const folderSlot = el("div", { class: "folder-slot", "data-role": "folder-slot" });
+  folderSlot.hidden = true;
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
@@ -184,7 +186,8 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     errorBox.hidden = false;
   }
 
-  const loginRows = el("div", { class: "stack", "data-role": "login-fields" }, username.row, password.row, url.row);
+  const loginRows = el("section", { class: "card item-section stack", "data-role": "login-fields" },
+    el("h2", null, t("vault.item.card_login")), username.row, password.row, url.row);
   const showsLogin = () => (id === null ? typeSelect.value === "login" : kind === "login" || oldUsername !== undefined || oldPassword !== undefined);
   const syncRows = () => {
     loginRows.hidden = !showsLogin();
@@ -309,11 +312,15 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       }
     },
   },
-  id === null ? el("div", { class: "field" }, el("label", { for: "edit-type" }, t("vault.edit.type")), typeSelect) : null,
-  name.row,
+  // The first card: what every item has. The slot at its foot is the folder task's: hidden until the vault has folders.
+  el("section", { class: "card item-section stack", "data-role": "details-card" },
+    el("h2", null, t("vault.edit.card_details")),
+    id === null ? el("div", { class: "field" }, el("label", { for: "edit-type" }, t("vault.edit.type")), typeSelect) : null,
+    name.row,
+    el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
+    folderSlot),
   loginRows,
   notesSlot,
-  el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
   status,
   errorBox,
   el("div", { class: "actions" }, save, cancel));

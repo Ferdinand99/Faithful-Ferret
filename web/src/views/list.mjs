@@ -9,6 +9,7 @@
 // (`update` with the one field), a deletion is `remove` (the item goes to the trash of this device), and several rows
 // are several writes in the outbox, which the sync sends together.
 import { el, mount } from "../dom.mjs";
+import { emptyBlock } from "./emptyState.mjs";
 import { createListPrefs } from "../listPrefs.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges, marksOf } from "./common.mjs";
@@ -226,9 +227,8 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   const spacerBottom = el("div", { class: "list-spacer", "aria-hidden": "true" });
   const rows = el("div", { class: "list-rows", role: "rowgroup", "data-role": "items" }, spacerTop, spacerBottom);
   const table = el("div", { class: "list-table", role: "table", "aria-label": t("list.table_label"), "data-role": "table", "data-folders": "off", "data-changed": "on" }, head, rows);
-  const emptyText = el("p", { class: "empty-text", "data-role": "empty-text" });
-  const emptyActions = el("div", { class: "actions" });
-  const empty = el("div", { class: "list-empty", "data-role": "list-empty" }, emptyText, emptyActions);
+  const emptyView = emptyBlock({ role: "list-empty", icon: "items", class: "list-empty" });
+  const empty = emptyView.root;
   empty.hidden = true;
 
   const message = el("p", { class: "message list-message", role: "status", "data-role": "message" });
@@ -368,24 +368,16 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     empty.hidden = shown.length > 0;
     table.hidden = shown.length === 0;
     if (shown.length === 0) {
-      mount(emptyActions);
       if (total === 0) {
-        mount(emptyText, document.createTextNode(t("vault.list.empty")));
-        const first = el("button", { type: "button", class: "btn btn-primary i-plus", "data-role": "empty-add" }, t("list.add"));
-        first.addEventListener("click", () => router.go("/items/new"));
-        emptyActions.appendChild(first);
+        // The one useful thing in an empty vault: make the first item.
+        emptyView.fill(t("vault.list.empty"), [{ label: t("list.add"), role: "empty-add", icon: "i-plus", primary: true, onClick: () => router.go("/items/new") }], "items");
       } else {
-        mount(emptyText, document.createTextNode(t(searching && filtering ? "list.empty_both" : searching ? "vault.list.no_match" : onlyFavorites ? "shell.favorites.empty" : "list.empty_filters")));
-        if (searching) {
-          const clear = el("button", { type: "button", class: "btn btn-secondary", "data-role": "empty-clear-search" }, t("list.search_clear_all"));
-          clear.addEventListener("click", () => clearTheSearch());
-          emptyActions.appendChild(clear);
-        }
-        if (filtering) {
-          const clear = el("button", { type: "button", class: "btn btn-secondary", "data-role": "empty-clear-filters" }, t("list.clear_filters"));
-          clear.addEventListener("click", () => change({ ...state, types: [], favorite: false, folders: [] }));
-          emptyActions.appendChild(clear);
-        }
+        /** @type {import("./emptyState.mjs").EmptyAction[]} */
+        const ways = [];
+        if (searching) ways.push({ label: t("list.search_clear_all"), role: "empty-clear-search", onClick: () => clearTheSearch() });
+        if (filtering) ways.push({ label: t("list.clear_filters"), role: "empty-clear-filters", onClick: () => change({ ...state, types: [], favorite: false, folders: [] }) });
+        const line = t(searching && filtering ? "list.empty_both" : searching ? "vault.list.no_match" : onlyFavorites ? "shell.favorites.empty" : "list.empty_filters");
+        emptyView.fill(line, ways, searching ? "search" : onlyFavorites ? "star" : "items");
       }
     }
 

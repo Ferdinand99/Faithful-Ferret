@@ -28,5 +28,9 @@
   "shell.soon": "Coming soon",
   "shell.switch.admin": "Admin",
   "shell.switch.label": "Vault, switch to Admin",
-  "shell.switch.vault": "Vault"
+  "shell.switch.vault": "Vault",
+  "shell.theme.dark": "Dark",
+  "shell.theme.label": "Theme",
+  "shell.theme.light": "Light",
+  "shell.theme.system": "System"
 }

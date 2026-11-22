@@ -80,7 +80,8 @@ test("use_here_with_an_unsaved_edit_warns_first", async ({ browser }) => {
     // A form with text in it that is not saved.
     const name = `Tabs-draft-${Date.now()}`;
     const password = `Draft-pw-${Date.now()}-x!`;
-    await first.locator('[data-role="nav-new"]').click();
+    await first.locator('[data-role="nav-items"]').click();
+    await first.locator('[data-role="new-item"]').click();
     await expect(first.locator('[data-role="edit-form"]')).toBeVisible();
     await first.locator('[data-role="name"]').fill(name);
     await first.locator('[data-role="username"]').fill("draft-user");

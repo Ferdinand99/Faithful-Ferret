@@ -74,7 +74,7 @@ async function mountList(page, options = {}) {
     host.style.minHeight = "100vh";
     const main = el("main", { class: "vault-main" });
     host.appendChild(main);
-    document.body.insertBefore(host, document.getElementById("foot"));
+    document.body.appendChild(host);
     const started = performance.now();
     const view = listView({
       engine, router: { go: (path) => { location.hash = `#${path}`; } }, t: i18n.t, nav, locale: "en", touch: () => true,

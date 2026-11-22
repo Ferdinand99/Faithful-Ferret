@@ -77,6 +77,7 @@
   "conflict.trash.count": "Elementer i papirkurven: {count}",
   "conflict.trash.deleted": "Slettet {when}",
   "conflict.trash.empty": "Papirkurven er tom.",
+  "conflict.trash.empty_action": "Gå til alle elementer",
   "conflict.trash.heading": "Lokal papirkurv",
   "conflict.trash.intro": "Slettede elementer ligger på denne enheten i 30 dager, i kryptert form, slik at en sletting kan angres. Etter det, og når du logger ut, fjernes de fra denne enheten.",
   "conflict.trash.link": "Lokal papirkurv",

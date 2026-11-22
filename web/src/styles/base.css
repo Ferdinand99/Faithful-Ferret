@@ -22,13 +22,14 @@
   --pressed: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.08));
   --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   --line-strong: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.14));
-  --control-border: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.26));
+  /* The edge of a text field and of a box: the only thing that shows where it is, so at least 3:1 on the card, the page and the field itself (WCAG 1.4.11). */
+  --field-line: light-dark(#86868b, #76767b);
   --bar: light-dark(rgba(245, 245, 247, 0.76), rgba(11, 11, 13, 0.72));
   --blur-bar: blur(20px) saturate(180%);
 
   /* Text */
   --text: light-dark(#1d1d1f, #f5f5f7);
-  --muted: light-dark(#6e6e73, #a1a1a6);
+  --muted: light-dark(#66666b, #a1a1a6);
   --faint: light-dark(#aeaeb2, #6e6e73);
   --placeholder: light-dark(#737378, #8a8a8f);
   --on-inverse: light-dark(#ffffff, #0b0b0d);
@@ -37,6 +38,7 @@
   --brand: light-dark(#6656e8, #8b7dff);
   --brand-fill: light-dark(rgba(102, 86, 232, 0.1), rgba(139, 125, 255, 0.16));
   --brand-ring: light-dark(rgba(102, 86, 232, 0.22), rgba(139, 125, 255, 0.32));
+  --brand-text: light-dark(#6656e8, #a99fff); /* brand-coloured text on a brand tint (a chosen chip, the current entry) */
 
   /* Status: base for dots, -text for readable text, -fill for tints */
   --ok: light-dark(#34c759, #30d158);
@@ -56,8 +58,6 @@
   --neutral-fill: light-dark(rgba(118, 118, 128, 0.14), rgba(118, 118, 128, 0.24));
 
   /* Controls and shadows */
-  --seg-thumb: light-dark(#ffffff, #5a5a5f);
-  --seg-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.3));
   --shadow-card: 0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0));
   --shadow-pop: 0 10px 30px -6px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.5)), 0 2px 6px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.3));
 
@@ -301,9 +301,6 @@ h2 {
 .i-pencil::before { --icon: var(--i-pencil); }
 .i-trash::before { --icon: var(--i-trash); }
 .i-back::before { --icon: var(--i-back); }
-.icon-sun { --icon: var(--i-sun); }
-.icon-moon { --icon: var(--i-moon); }
-.icon-auto { --icon: var(--i-auto); }
 
 /* 4. Buttons */
 .btn {
@@ -476,7 +473,7 @@ textarea {
   min-height: 44px;
   margin: 0;
   padding: 10px 14px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--field-line);
   border-radius: 12px;
   background-color: var(--field);
   color: var(--text);
@@ -555,7 +552,7 @@ input[type="radio"] {
   width: 20px;
   height: 20px;
   margin: 0;
-  border: 1.5px solid var(--control-border);
+  border: 1.5px solid var(--field-line);
   border-radius: 6px;
   background-color: var(--field);
   background-position: center;
@@ -748,69 +745,7 @@ fieldset {
   --btn-hover: color-mix(in srgb, var(--card) 92%, var(--text));
 }
 
-/* 8. Segmented control (the theme switch in the footer) */
-.segmented {
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  max-width: 100%;
-  padding: 2px;
-  border-radius: var(--r-sm);
-  background: var(--fill);
-}
-
-.segmented > button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--dur-ui) ease,
-    box-shadow var(--dur-ui) ease;
-}
-
-.segmented > button[aria-pressed="true"] {
-  background: var(--seg-thumb);
-  box-shadow: var(--seg-shadow);
-  font-weight: 600;
-}
-
-.segmented .icon {
-  width: 16px;
-  height: 16px;
-}
-
-@media (pointer: coarse) {
-  .segmented > button {
-    min-height: 36px;
-  }
-}
-
-/* 9. The footer: the name and the theme switch, on every screen. */
-.app-foot {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-2) var(--sp-4);
-  padding: var(--sp-6) var(--sp-4) calc(var(--safe-bottom) + var(--sp-6));
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-/* 10. Preferences */
+/* 8. Preferences */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;
@@ -832,13 +767,12 @@ fieldset {
   :root {
     --line: light-dark(rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
     --line-strong: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
-    --control-border: light-dark(rgba(0, 0, 0, 0.6), rgba(255, 255, 255, 0.6));
+    --field-line: light-dark(#5c5c61, #a6a6ab);
     --muted: light-dark(#3a3a3c, #d1d1d6);
     --bar: var(--bg);
   }
 
-  .btn-secondary,
-  .segmented {
+  .btn-secondary {
     box-shadow: inset 0 0 0 1px var(--line-strong);
   }
 
@@ -855,7 +789,6 @@ fieldset {
   }
 
   .btn,
-  .segmented,
   .card,
   .auth-card,
   .notice,

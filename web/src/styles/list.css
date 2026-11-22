@@ -155,7 +155,7 @@
 .vault-ui .chip[data-active="true"] {
   border-color: transparent;
   background: var(--brand-fill);
-  color: var(--brand);
+  color: var(--brand-text);
 }
 
 .vault-ui .chip-main {
@@ -279,7 +279,7 @@
   flex: none;
   width: 18px;
   height: 18px;
-  border: 1.5px solid var(--control-border);
+  border: 1.5px solid var(--field-line);
   border-radius: 5px;
   background: var(--field) center / 12px no-repeat;
 }
@@ -312,6 +312,12 @@
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   background: var(--brand-fill);
+}
+
+/* A button on the tinted bar sits on the card colour, so its text keeps its contrast (as in a notice). */
+.vault-ui .list-bulk .btn {
+  --btn-bg: var(--card);
+  --btn-hover: color-mix(in srgb, var(--card) 92%, var(--text));
 }
 
 .vault-ui .bulk-count {
@@ -518,7 +524,7 @@
 
 .vault-ui .list-view .star {
   margin-inline-end: 0.25rem;
-  color: var(--brand);
+  color: var(--brand-text);
 }
 
 .vault-ui .detail-line .detail {
@@ -597,26 +603,6 @@
     width: 44px;
     height: 44px;
   }
-}
-
-/* The empty states */
-.vault-ui .list-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-10) var(--sp-4);
-  text-align: center;
-}
-
-.vault-ui .list-empty .empty-text {
-  max-width: 32rem;
-  margin: 0;
-  color: var(--muted);
-}
-
-.vault-ui .list-empty .actions {
-  justify-content: center;
 }
 
 .vault-ui .list-message:empty {

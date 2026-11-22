@@ -45,6 +45,11 @@
 .icon[data-icon="signout"] { --icon: var(--i-signout); }
 .icon[data-icon="more"] { --icon: var(--i-more); }
 .icon[data-icon="pin"] { --icon: var(--i-pin); }
+.icon[data-icon="sun"] { --icon: var(--i-sun); }
+.icon[data-icon="moon"] { --icon: var(--i-moon); }
+.icon[data-icon="auto"] { --icon: var(--i-auto); }
+.icon[data-icon="search"] { --icon: var(--i-search); }
+.icon[data-icon="copy"] { --icon: var(--i-copy); }
 
 .vault-ui .icon {
   width: 18px;
@@ -263,7 +268,7 @@
 }
 
 .vault-ui a.side-link[aria-current="page"] .icon {
-  color: var(--brand);
+  color: var(--brand-text);
 }
 
 .vault-ui .side-label {
@@ -431,6 +436,26 @@
   background: var(--line);
 }
 
+/* The theme choice in the account menu: a small heading, then the three radio entries. */
+.vault-ui .side-menu-label {
+  display: block;
+  padding: 6px 10px 2px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vault-ui .side-menuitem[aria-checked="true"] {
+  background: var(--brand-fill);
+  font-weight: 600;
+}
+
+.vault-ui .side-menuitem[aria-checked="true"] .icon {
+  color: var(--brand-text);
+}
+
 /* The account at the foot */
 .vault-ui .side-foot {
   display: flex;
@@ -448,6 +473,8 @@
 .vault-ui .side-account .side-menu {
   inset-inline: 0;
   bottom: calc(100% + 8px);
+  max-height: calc(100dvh - 7rem);
+  overflow-y: auto;
 }
 
 .vault-ui .side-account-btn {

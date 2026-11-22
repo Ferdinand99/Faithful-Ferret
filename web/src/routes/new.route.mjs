@@ -5,7 +5,6 @@ import { enterVault, trackerOf } from "../views/shell.mjs";
 export default {
   path: "/items/new",
   title: "vault.new.title",
-  sidebar: { section: "primary", order: 10, icon: "plus", role: "nav-new", title: "vault.nav.new" },
   load: async (ctx) => {
     const vault = await enterVault(ctx);
     if (vault.locked) return vault.locked;
