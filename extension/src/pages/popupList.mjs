@@ -2,8 +2,9 @@
 // the vault and its count, the search and the filter by type, the chip of the
 // filter that is on, and the sections "Suggestions for this page" (the
 // candidates of the page, with "Fill" and "Copy password"), "Favourites" and
-// "All items" (copy, open the site and a menu with "View", "Copy user name",
-// "Copy password" and "Open the site"). "View" shows one item.
+// "All items" (open the site, the copy menu with "Copy user name" or "Copy
+// e-mail" and "Copy password", and a menu with "View", "Copy user name", "Copy
+// password" and "Open the site"). "View" shows one item.
 //
 // The popup builds everything with `el()` from what the background answered:
 // names, user names, marks and references. A password or a code never reaches
@@ -12,6 +13,7 @@
 // whether it worked.
 
 import { el, mount } from "../shared/dom.mjs";
+import { createCopyMenu } from "./copyMenu.mjs";
 import { COPY_FIELDS, FILTER_TYPES, actionErrorKey } from "./popupFlow.mjs";
 
 /** @typedef {import("./page.mjs").Texts} Texts */
@@ -151,8 +153,8 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
     return false;
   }
 
-  /** @param {string} ref @param {string} field */
-  const copy = (ref, field) => act(() => list.copy(ref, field), `popup.copied.${field}`);
+  /** @param {string} ref @param {string} field @param {string} [done] the i18n key of the note when it worked */
+  const copy = (ref, field, done = `popup.copied.${field}`) => act(() => list.copy(ref, field), done);
   /** @param {string} ref */
   const openSite = (ref) => act(() => list.openSite(ref), "popup.opened");
 
@@ -217,7 +219,7 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   }
 
   /**
-   * A candidate of the page: "Fill" and "Copy password". An item on an unencrypted page needs one click more.
+   * A candidate of the page: "Fill" and the copy menu. An item on an unencrypted page needs one click more.
    * @param {Row} row
    */
   function suggestionRow(row) {
@@ -243,19 +245,36 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
       { class: "ff-row", "data-role": "suggestion", "data-ref": row.ref },
       ...text,
       fill,
-      copyPasswordButton(row),
+      copyMenu(row),
     );
   }
 
-  /** @param {Row} row */
-  function copyPasswordButton(row) {
-    const button = iconButton("copy-password", t("popup.row.copy_password"), "copy");
-    button.addEventListener("click", () => void copy(row.ref, "password"));
-    return button;
+  /**
+   * The copy button of a row: a menu of the values the row's item can be asked to copy. Like the row's other menu,
+   * it closes the other menus when it opens, and a click elsewhere or Escape closes it.
+   * @param {Row} row
+   */
+  function copyMenu(row) {
+    /** @type {HTMLElement | null} */
+    let button = null;
+    const menu = createCopyMenu({
+      row,
+      t,
+      copy: (field, done) => copy(row.ref, field, done),
+      onOpen: (close) => {
+        closeMenus();
+        openMenu = { button: /** @type {HTMLElement} */ (button), close };
+      },
+      onClose: () => {
+        if (openMenu?.button === button) openMenu = null;
+      },
+    });
+    button = menu.button;
+    return menu.root;
   }
 
   /**
-   * An item of the vault (a favourite, or in all items): open the site, copy the password and the menu. It is never
+   * An item of the vault (a favourite, or in all items): open the site, the copy menu and the menu. It is never
    * filled from here.
    * @param {Row} row
    */
@@ -266,7 +285,7 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
       site = iconButton("open-site", t("popup.row.open_site"), "open");
       site.addEventListener("click", () => void openSite(row.ref));
     }
-    return el("div", { class: "ff-row", "data-role": "item-row", "data-ref": row.ref }, ...rowText(row), site, copyPasswordButton(row), rowMenu(row));
+    return el("div", { class: "ff-row", "data-role": "item-row", "data-ref": row.ref }, ...rowText(row), site, copyMenu(row), rowMenu(row));
   }
 
   /** @param {string} title @param {number} total @param {string} role */

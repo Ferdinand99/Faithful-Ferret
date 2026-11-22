@@ -1,14 +1,27 @@
-/* The list of the vault in the popup (the approved layout, 380 by 620): the
+/* The list of the vault in the popup (the approved layout, 380 wide): the
    vault and its count, the search with the filter button and its badge, the
-   chip of the filter that is on, the sections with their rows, a row's menu
+   chip of the filter that is on, the sections with their rows, a row's menus
    and one item's view. Sizes and colours are those of the layout, through the
-   Hedgerow tokens of session.css. The icons are masks in the text colour. */
+   Hedgerow tokens of session.css. The icons are masks in the text colour.
+
+   Height: Firefox makes a toolbar popup as tall as its page wants, up to 600
+   pixels, and cuts off the rest. The open vault is exactly that tall, so the
+   header and the foot are always whole and only the list scrolls. In a tab or
+   a window of its own (popped out) the popup takes the window's height. */
 
 body.ff-popup[data-view="unlocked"] {
-  height: 620px;
+  height: 600px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+body.ff-popup.ff-windowed[data-view="unlocked"] {
+  height: 100vh;
+}
+
+body.ff-popup[data-view="unlocked"] > .ff-bar {
+  flex: none;
 }
 
 body.ff-popup[data-view="unlocked"] .ff-popup-body {
@@ -90,6 +103,12 @@ body.ff-popup[data-view="unlocked"] .ff-popup-body {
 
 .ff-ico-back {
   --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M15%2018l-6-6%206-6%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-caret {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%273%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M6%209l6%206%206-6%27/%3E%3C/svg%3E);
+  width: 9px;
+  height: 9px;
 }
 
 .ff-ico-more {
@@ -399,6 +418,15 @@ body.ff-popup[data-view="unlocked"] .ff-popup-body {
   flex: none;
 }
 
+/* The copy button opens its menu: the copy icon and a caret. */
+.ff-row-icon.ff-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 38px;
+}
+
 .ff-fill:focus-visible,
 .ff-row-icon:focus-visible,
 .ff-filter:focus-visible,
@@ -524,6 +552,7 @@ body.ff-popup[data-view="unlocked"] .ff-popup-body {
 }
 
 .ff-foot {
+  flex: none;
   padding: 8px 14px 10px;
   border-top: 1px solid var(--line);
   background: var(--card);
@@ -539,9 +568,20 @@ body.ff-popup[data-view="unlocked"] .ff-popup-body {
   font-size: 12px;
 }
 
-.ff-foot .ff-where-account {
+/* A long account or server name ends in an ellipsis; its title holds all of it. */
+.ff-foot .ff-where-account,
+.ff-foot .ff-where-host {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ff-foot .ff-where-account {
+  flex: 1 1 auto;
+}
+
+.ff-foot .ff-where-host {
+  flex: 0 1 auto;
+  max-width: 60%;
 }

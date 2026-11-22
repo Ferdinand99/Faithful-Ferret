@@ -54,6 +54,7 @@ export function makeTar(files) {
  */
 export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/pages/about.mjs": "export {};\n",
+  "src/pages/copyMenu.mjs": "export {};\n",
   "src/pages/grant.mjs": "export {};\n",
   "src/pages/page.mjs": "export {};\n",
   "src/pages/popup.mjs": "export {};\n",
