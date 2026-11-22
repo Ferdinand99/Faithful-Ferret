@@ -154,14 +154,63 @@ Who approves: the required reviewer of `amo-signing` (you), in the Actions tab u
 What is checked before the approval is asked for (the build job, which has no secrets):
 
 - the release package is built twice and both builds must have the same SHA-256;
-- `web-ext lint --warnings-as-errors`;
+- `web-ext lint --warnings-as-errors --self-hosted` (the release carries an `update_url`, which the linter allows only for an add-on that is not hosted on AMO; `--self-hosted` drops only AMO's hosting rules);
 - the release check (`scripts/check-ext-release.sh`): no test file, test page, test id, fixed UUID, internal host name or test-only permission, only the release manifest keys, and the shared web files unchanged;
 - the add-on id is the release id, the manifest version is 2, the name is not the test name;
 - the package is at most 8 MiB.
 
 What is checked after the approval (the sign job): the downloaded package has the SHA-256 the build job reported; it is signed unlisted with the locked web-ext; the signed package holds exactly the files of the unsigned one apart from Mozilla's `META-INF/` signature and `manifest.json`, which Mozilla rewrites when it signs (it drops the trailing newline) and which is therefore compared as parsed JSON; every other file must be byte for byte the same. The signed `.xpi` and its SHA-256 are kept as the artifact `ferret-release-mv2-signed` for seven days, and the SHA-256 is in the job summary.
 
+After the sign job the same run publishes the signed package for the automatic updates (next section). Approving the signing therefore also hands the new version to every installed release build.
+
 AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`. The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
+
+## Automatic updates
+
+The signed release build updates itself. The extension is unlisted, so AMO does not offer the updates; instead every release build carries the address of an update manifest in `browser_specific_settings.gecko.update_url`, and Firefox reads that file now and then (about once a day, or at once with "Check for Updates" in `about:addons`) and installs a newer version it lists.
+
+The update URL is
+
+```
+https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-updates/updates.json
+```
+
+It is the asset `updates.json` of the GitHub release with the fixed tag `extension-updates`. An installed build keeps asking the URL it was built with, so this URL must never change: do not delete or rename the release `extension-updates` or its tag, do not rename the repository, and do not turn on immutable releases for the repository (the file is replaced on every publication; a release that is immutable cannot have its asset replaced). The URL is a constant in `extension/scripts/lib/updates.mjs`; the build adds it to the release variant only (no manifest file may set it), the test variant has none, and the release check (`scripts/check-ext-release.sh`) refuses a release package with any other value or with none.
+
+Why a release asset and not the project site: it needs only `contents: write` for one job of the signing workflow, with no new secret, no pull request and no Pages deployment, and its address depends on the repository name alone (the project site's address follows the custom domain of another repository's Pages settings). The file does not have to be trusted for the updates to be safe: Firefox installs only a package that Mozilla has signed for this add-on id (which needs the AMO key in the `amo-signing` environment), only a version newer than the installed one, and only when the downloaded file has the SHA-256 that `update_hash` names.
+
+Each version's package is the asset `ferret-firefox-mv2-release-<version>-signed.xpi` of the release `extension-v<version>`. These tags never start with `v`, which belongs to the core releases that release-please makes, and none of these releases is marked as the latest release.
+
+The update manifest has Mozilla's format, one entry per published version, oldest first:
+
+```json
+{
+  "addons": {
+    "ferret@hedgerow.tools": {
+      "updates": [
+        {
+          "version": "0.7.1",
+          "update_link": "https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-v0.7.1/ferret-firefox-mv2-release-0.7.1-signed.xpi",
+          "update_hash": "sha256:<SHA-256 of that signed file>"
+        }
+      ]
+    }
+  }
+}
+```
+
+### How a version is published
+
+1. Raise `version` in `extension/package.json` (and the lock file) in a pull request to `main`, and merge it.
+2. Start the signing workflow on `main` as above and approve `amo-signing`. Only a run started on `main` for a commit on `main` publishes; a run started on `ext`, or for a commit that is only on `ext`, signs the package and stops before the two jobs below.
+3. The workflow then runs two more jobs:
+   - `manifest` (read access only) checks the signed file against the SHA-256 the sign job reported, fetches the current `updates.json` and adds the new version with `extension/scripts/updates-json.mjs`. The writer hashes the file itself and refuses to go on when the hash differs, when the file has no Mozilla signature, another add-on id, another version or another `update_url`, when the version is not newer than every listed one, or when the current file is not exactly in the shape it writes (a link that is not this repository's HTTPS link for that version, a hash that is not SHA-256, an extra key). Every older entry is kept. Only when the release `extension-updates` does not exist at all (the first publication) does it start a new file; any other failure to read the current file stops the run.
+   - `publish` (`contents: write`, and no code from the repository) checks both files again, makes the release `extension-v<version>` with the signed file and its `SHA256SUMS`, reads the live `updates.json` again and refuses unless the new file is the live one plus one entry at the end (or the same file, on a re-run), replaces `updates.json` in the release `extension-updates` (it makes that release the first time), and then downloads both over HTTPS as Firefox will and compares them with what was signed and written.
+4. If `publish` fails, "Re-run failed jobs" is safe: a release `extension-v<version>` that already holds the same file is kept, one that holds another file stops the run, and the writer leaves the file unchanged when the same entry is already listed.
+
+### Installing 0.7.1 once
+
+Version 0.7.1 is the first release build that carries the update URL. Builds up to 0.7.0 have none and never update themselves. Install 0.7.1 by hand once: download `ferret-firefox-mv2-release-0.7.1-signed.xpi` from the release `extension-v0.7.1` and open it in Firefox (or use "Install Add-on From File" in `about:addons`). It replaces 0.7.0 in place (same add-on id, so the settings and the device stay). Every later version arrives by itself. To see it happen at once, choose "Check for Updates" in the menu of `about:addons`.
 
 ## The measurement by hand
 
