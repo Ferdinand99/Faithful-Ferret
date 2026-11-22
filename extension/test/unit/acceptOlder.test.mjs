@@ -157,3 +157,42 @@ test("a_preview_that_failed_can_be_read_again_and_a_busy_engine_says_so", async 
   assert.equal(one(root, "older-reupload")?.textContent, en.t("sync.older.preview_reupload", { count: 1 }));
   assert.equal(one(root, "older-accept")?.hasAttribute("disabled"), false);
 });
+
+test("a_build_without_saving_says_the_conflicts_stay_as_drafts_instead_of_asking_for_a_decision", async () => {
+  // A package with the feature off, as a release has it.
+  const { build } = await import("../../scripts/build.mjs");
+  const { makeRoot } = await import("./buildHelpers.mjs");
+  const { pathToFileURL } = await import("node:url");
+  const env = makeRoot();
+  try {
+    const off = await build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv2", variant: "test", features: [] });
+    const { createOlderPanel } = await import(pathToFileURL(join(off.dir, "pages", "olderState.mjs")).href);
+    const texts = textsOf(JSON.parse(await readFile(join(off.dir, "locales.en.json"), "utf8")), "en");
+    useDocument();
+    let accepted = 0;
+    const flow = {
+      preview: async () => ({ ok: true, reupload: 2, conflicts: 3, manifestOlder: false }),
+      accept: async () => {
+        accepted += 1;
+        return { ok: true, reuploaded: 2, conflicts: 3, manifestOlder: false, unreadable: 0 };
+      },
+    };
+    const made = createOlderPanel({ texts, flow, onClose: () => {} });
+    await made.loaded;
+    // Before: the conflicts are named as drafts that stay, not as decisions to make.
+    assert.equal(one(made.root, "older-conflicts-note")?.textContent, texts.t("sync.older.release_conflicts"));
+    /** @type {any} */ (one(made.root, "older-word")).value = "accept";
+    await submit(one(made.root, "older-form"));
+    assert.equal(accepted, 1);
+    // After: the same, and no word about a decision.
+    assert.equal(one(made.root, "older-done")?.textContent, texts.t("sync.older.done_release", { reuploaded: 2, conflicts: 3 }));
+    assert.equal(one(made.root, "older-done-conflicts")?.textContent, texts.t("sync.older.release_conflicts"));
+    const shown = made.root.textContent;
+    for (const key of ["sync.older.done_conflicts", "sync.older.conflicts_note", "sync.items.review"]) assert.equal(shown.includes(texts.t(key)), false, key);
+    assert.equal(byRole(made.root, "sync-review").length, 0, "no list to open");
+    // The release text does not send the user to a place that cannot show the drafts.
+    assert.doesNotMatch(texts.t("sync.older.release_conflicts"), /open (it|them) in the web vault/i);
+  } finally {
+    env.cleanup();
+  }
+});

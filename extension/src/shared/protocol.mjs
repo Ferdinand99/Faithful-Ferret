@@ -324,8 +324,9 @@ export const UI_TYPES = defineTypes({
     request: object({ server: serverUrl }),
     reply: object({ ok: boolean(), reason, pending: count, shared: boolean() }, { optional: ["reason", "pending", "shared"] }),
   },
-  // "Forget this server": `server` is the one the page showed; another stored one is not forgotten.
-  forget_server: { request: object({ server: serverUrl }), reply: okReply },
+  // "Forget this server": `server` is the one the page showed; another stored one is not forgotten. `expect_pending` is
+  // the count of unsent changes the page's question named: when more wait now, nothing is forgotten (`changed`).
+  forget_server: { request: object({ server: serverUrl, expect_pending: count }, { optional: ["expect_pending"] }), reply: okReply },
   // The items whose change waits to be sent, was refused (`reason`: the server's code), or is in conflict, conflicts
   // first, each with a reference good only in this page's session. Names and user names only.
   sync_items: {

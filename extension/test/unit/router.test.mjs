@@ -287,7 +287,11 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   // A UI type from a content script is ignored, as is a message that is not ours.
   log.length = 0;
   // The setting and the lock button are for the extension's own pages: a content script can neither change the setting nor lock.
-  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_preview(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(), "junk", 5, undefined]) {
+  for (const raw of [requests.unlock(), requests.state(), requests.candidates(), requests.sync_state(), requests.forget_preview(), requests.forget_server(), requests.lock(), encode("settings", { lock_seconds: 86_400 }), requests.settings(),
+    // The sync's types for the popup: an older state, the items that wait, a conflict's versions and choices.
+    encode("sync_older_preview", {}), encode("sync_accept_older", { confirmed: true }), encode("sync_items", {}),
+    encode("item_conflict", { ref: "r1" }), encode("item_resolve", { ref: "r1", choice: "mine" }), encode("item_discard", { ref: "r1" }),
+    "junk", 5, undefined]) {
     assert.equal(await router.onMessage(raw, sender), undefined);
   }
   assert.deepEqual(log, []);

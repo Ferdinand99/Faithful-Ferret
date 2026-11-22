@@ -18,6 +18,7 @@ export const REASONS = Object.freeze([
   "worker_failed",
   "network",
   "not_confirmed",
+  "changed",
   "not_verified",
   "not_verified_no_checkpoint",
   "invalid_state",
@@ -64,7 +65,7 @@ async function handle(body, ctx) {
       case "forget_preview":
         return answerOf(await call("forget_preview", { server: body.server }), ["pending"], ["shared"]);
       case "forget_server":
-        return answerOf(await call("forget_server", { server: body.server }));
+        return answerOf(await call("forget_server", { server: body.server, ...(body.expect_pending !== undefined ? { expect_pending: body.expect_pending } : {}) }));
       default:
         break;
     }

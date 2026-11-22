@@ -40,7 +40,8 @@ test("forget_dialog_names_pending_and_shared_writes_like_the_web_vault", async (
   const { forgetBodyKey } = await load("pages/popupFlow.mjs");
 
   // The four questions, as the web vault has them.
-  assert.equal(forgetBodyKey(null), "sync.forget.body");
+  // Without an answer the question still says that unsent changes, if any, are lost.
+  assert.equal(forgetBodyKey(null), "sync.forget.body_unknown");
   assert.equal(forgetBodyKey({ pending: 0, shared: false }), "sync.forget.body");
   assert.equal(forgetBodyKey({ pending: 2, shared: false }), "sync.forget.body_pending");
   assert.equal(forgetBodyKey({ pending: 0, shared: true }), "sync.forget.body_shared");
@@ -104,7 +105,22 @@ test("forget_dialog_names_pending_and_shared_writes_like_the_web_vault", async (
   const key = forgetBodyKey({ pending: 2, shared: false });
   assert.match(en[key].replace("{count}", "2"), /: 2\.$/);
 
-  // Forgetting goes on as before: after it, there is nothing left to name.
-  assert.deepEqual(await ui.request("forget_server", { server: SERVER }), { ok: true });
+  for (const lang of ["en", "nb"]) {
+    const ours = await extensionTexts(lang);
+    assert.ok(ours["sync.forget.body_unknown"].startsWith(ours["sync.forget.body"]), lang);
+    assert.match(ours["sync.forget.body_unknown"], /lost|tapt/, lang);
+  }
+
+  // A forget that would lose more than its question named does nothing: the user is asked again.
+  store.writes.pending = 3;
+  assert.deepEqual(await ui.request("forget_server", { server: SERVER, expect_pending: 2 }), { ok: false, reason: "changed" });
+  assert.deepEqual(store.forgotten, []);
+  assert.equal(server.to("/api/auth/token/revoke").length, 0, "nothing is revoked");
+  assert.deepEqual((await popup.forget(SERVER, 2)).result, { ok: false, reason: "changed" });
+  // The popup has a text for it.
+  assert.equal(typeof en["sync.error.changed"], "string");
+
+  // With the count it showed (or more room), forgetting goes on as before: after it, there is nothing left to name.
+  assert.deepEqual(await ui.request("forget_server", { server: SERVER, expect_pending: 3 }), { ok: true });
   assert.deepEqual(await ui.request("forget_preview", { server: SERVER }), { ok: true, pending: 0, shared: false });
 });

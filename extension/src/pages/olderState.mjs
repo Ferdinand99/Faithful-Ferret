@@ -10,7 +10,13 @@
 // Nothing here is a secret: the counts come from the engine's preview, and no
 // item name or value is read or shown. A refusal is shown by its code, from a
 // fixed list.
+//
+// The conflicts that accepting leaves are this device's own unsent drafts. A
+// build with saving from the extension on lists them and lets the user choose
+// (conflictCard.mjs); a build without it cannot, so there the panel says that
+// they stay as drafts that nothing sends, instead of asking for a decision.
 
+import { FEATURES } from "../shared/features.mjs";
 import { el, mount } from "../shared/dom.mjs";
 import { olderErrorKey } from "./popupFlow.mjs";
 
@@ -104,7 +110,9 @@ export function createOlderPanel({ texts, flow, onClose }) {
     say(conflicts, t("sync.older.preview_conflicts", { count: answer.conflicts }));
     /** @type {HTMLElement[]} */
     const lines = [];
-    if (answer.conflicts > 0) lines.push(el("p", { class: "ff-hint", "data-role": "older-conflicts-note" }, t("sync.older.conflicts_note")));
+    if (answer.conflicts > 0) {
+      lines.push(el("p", { class: "ff-hint", "data-role": "older-conflicts-note" }, t(FEATURES.save ? "sync.older.conflicts_note" : "sync.older.release_conflicts")));
+    }
     if (answer.manifestOlder) lines.push(el("p", { class: "ff-notice", role: "note", "data-role": "older-manifest" }, t("sync.older.manifest_older")));
     mount(notes, ...lines);
     preview.hidden = false;
@@ -138,9 +146,11 @@ export function createOlderPanel({ texts, flow, onClose }) {
     }
     /** @type {HTMLElement[]} */
     const parts = [
-      el("p", { role: "status", tabindex: "-1", "data-role": "older-done" }, t("sync.older.done", { reuploaded: done.reuploaded, conflicts: done.conflicts })),
+      el("p", { role: "status", tabindex: "-1", "data-role": "older-done" }, t(FEATURES.save ? "sync.older.done" : "sync.older.done_release", { reuploaded: done.reuploaded, conflicts: done.conflicts })),
     ];
-    if (done.conflicts > 0) parts.push(el("p", { class: "ff-hint", "data-role": "older-done-conflicts" }, t("sync.older.done_conflicts", { count: done.conflicts })));
+    if (done.conflicts > 0) {
+      parts.push(el("p", { class: "ff-hint", "data-role": "older-done-conflicts" }, FEATURES.save ? t("sync.older.done_conflicts", { count: done.conflicts }) : t("sync.older.release_conflicts")));
+    }
     if (done.unreadable > 0) parts.push(el("p", { class: "ff-hint", "data-role": "older-unreadable" }, t("sync.older.unreadable", { count: done.unreadable })));
     if (done.manifestOlder) parts.push(el("p", { class: "ff-notice", role: "note", "data-role": "older-manifest" }, t("sync.older.manifest_older")));
     const close = el("button", { type: "button", class: "ff-button ff-primary", "data-role": "older-close" }, t("sync.older.close"));

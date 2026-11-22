@@ -66,6 +66,7 @@ import { hex16 } from "../shared/b64.mjs";
 import { forgetServer } from "../shared/flows/forgetServer.mjs";
 import { createSyncEngine, SyncError } from "../shared/sync/engine.mjs";
 import { createLiveChannel } from "../shared/sync/events.mjs";
+import { FEATURES } from "../shared/features.mjs";
 import { memoryStore, unavailableMemory } from "../shared/sync/memory.mjs";
 import { permissionOf } from "./session.mjs";
 
@@ -397,7 +398,8 @@ export function createSyncHost({
       live: run.live,
       ...(isCode(health.halted) ? { halted: health.halted } : {}),
       warnings,
-      ...countsOf(run),
+      // Only a build that shows them reads the list for them (the popup asks every 1.5 seconds).
+      ...(FEATURES.save ? countsOf(run) : {}),
     };
   }
 
@@ -721,18 +723,33 @@ export function createSyncHost({
    * then the address stays, and the user can try again.
    *
    * It never runs at the same time as a sign-in or an unlock (`busy`).
+   *
+   * The question the page asked named the changes that were never sent (`forget_preview`); the page sends the count it
+   * showed (`expectPending`). When more changes wait now than the question said, nothing is forgotten (`changed`), so
+   * the user is asked again: before anything is done, and once more inside the shared flow, which counts them again
+   * right before it would remove them.
    * @param {unknown} expected the server the page showed: a different stored one is not forgotten
+   * @param {unknown} [expectPending] the count of unsent changes the page's question showed, if it showed one
    */
-  async function forget(expected) {
+  async function forget(expected, expectPending) {
     const server = await sessionHost.storedServer();
     if (server === null) return { ok: true };
     if (expected !== server) return { ok: false, reason: "another_server" };
+    const bound = typeof expectPending === "number" && Number.isSafeInteger(expectPending) && expectPending >= 0 ? expectPending : null;
     return sessionHost.exclusive(async () => {
-      stop();
       const session = await sessionHost.sessionFor(server);
       const db = await store.open();
       const accounts = await accountsFor(server, session, db);
+      if (bound !== null) {
+        let pending = 0;
+        for (const accountId of accounts) pending += count(await store.pendingWrites(db, accountId));
+        if (pending > bound) return { ok: false, reason: "changed" };
+      }
+      stop();
       await host?.lock("sign_out");
+      /** The unsent changes the flow found so far, over the accounts. */
+      let found = 0;
+      let changed = false;
       // The device is signed out at the server once (best effort: it is forgotten here whether or not the server
       // answers), and whatever is left of its key record goes after that.
       let revoked = false;
@@ -756,13 +773,21 @@ export function createSyncHost({
           store,
           serverUrl: server,
           accountId,
-          // The page asked before it sent the request.
-          confirm: async () => true,
+          // The page asked before it sent the request; the changes are counted once more against what it showed.
+          confirm: async (/** @type {{ pending: number }} */ { pending }) => {
+            found += count(pending);
+            if (bound !== null && found > bound) {
+              changed = true;
+              return false;
+            }
+            return true;
+          },
           navigate: () => {},
           // The extension has one background page: no other tab runs an engine.
           channel: null,
           locks,
         });
+        if (changed) return { ok: false, reason: "changed" };
       }
       // The shared flow keeps a failure of its sign-out step to itself: the key record is removed once more here, so
       // a failure to remove it is not lost (the address then stays, for another try).
@@ -799,7 +824,7 @@ export function createSyncHost({
     forget_server: {
       vault: false,
       worker: /** @type {const} */ ("none"),
-      run: async (/** @type {any} */ _client, /** @type {any} */ args) => forget(args?.server),
+      run: async (/** @type {any} */ _client, /** @type {any} */ args) => forget(args?.server, args?.expect_pending),
     },
     sync_items: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => itemsOf(args) },
     item_conflict: { vault: true, worker: /** @type {const} */ ("vault"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => conflictCard(args) },

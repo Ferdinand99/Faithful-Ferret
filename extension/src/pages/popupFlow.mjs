@@ -135,11 +135,12 @@ export const plainWord = (word) => word.normalize("NFC").trim().toLocaleLowerCas
 /**
  * The i18n key of the question of "Forget this server", from what it would lose (`forget_preview`): the web vault's
  * four cases. Unsent changes are lost, unless another address of the server keeps the same account; then they stay,
- * with the saved items, for that address. Without an answer the general question is asked.
+ * with the saved items, for that address. Without an answer the question says that unsent changes, if there are any,
+ * are lost.
  * @param {{ pending: number, shared: boolean } | null} preview
  */
 export function forgetBodyKey(preview) {
-  if (preview === null) return "sync.forget.body";
+  if (preview === null) return "sync.forget.body_unknown";
   const pending = preview.pending > 0;
   if (preview.shared) return pending ? "sync.forget.body_shared_pending" : "sync.forget.body_shared";
   return pending ? "sync.forget.body_pending" : "sync.forget.body";
@@ -369,10 +370,11 @@ export function createPopupFlow(request) {
     /**
      * "Forget this server", after the user confirmed it in the popup.
      * @param {string} server the server the popup showed
+     * @param {number | null} [expectPending] the count of unsent changes the question named (null: it named none)
      * @returns {Promise<{ result: { ok: boolean, reason?: string }, view: PopupView }>}
      */
-    async forget(server) {
-      const result = await request("forget_server", { server });
+    async forget(server, expectPending = null) {
+      const result = await request("forget_server", { server, ...(expectPending !== null ? { expect_pending: expectPending } : {}) });
       return { result, view: await load() };
     },
   };

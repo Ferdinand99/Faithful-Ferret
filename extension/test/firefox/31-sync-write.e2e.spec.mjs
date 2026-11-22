@@ -20,7 +20,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
-import { POPUP_URL, SLOW, extensionSignIn, helpers, pace, start, webVaultAccount } from "./e2e.mjs";
+import { POPUP_URL, SLOW, VAULT_HOST, extensionSignIn, helpers, pace, start, webVaultAccount } from "./e2e.mjs";
 import { TEST_ADDON_ID, channels, stopFixtures } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -121,6 +121,61 @@ async function search(session, query) {
   }), JSON.stringify({ v: 1, id: "s1", type: "search", body: { query } })));
   assert.equal(reply.type, "search", JSON.stringify(reply.body));
   return reply.body.handles.map((/** @type {any} */ h) => h.name).sort();
+}
+
+/**
+ * Which of `needles` the extension's own storage holds as readable text: every IndexedDB database and store, and
+ * `storage.local` and `storage.session`, read in an extension page. Bytes are read as UTF-8 as well. `control` says
+ * whether `known` (something stored in the clear: the server's host) was found.
+ * @param {import("./driver.mjs").Session} session @param {string[]} needles @param {string} known
+ * @returns {Promise<{ found: string[], control: boolean, stores: string[] }>}
+ */
+function storedText(session, needles, known) {
+  return session.content(async (/** @type {string[]} */ wanted, /** @type {string} */ control) => {
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    /** @type {string[]} */
+    const texts = [];
+    const seen = new Set();
+    /** @param {unknown} value */
+    const walk = (value) => {
+      if (value === null || value === undefined) return;
+      if (typeof value === "string") texts.push(value);
+      else if (value instanceof ArrayBuffer) texts.push(decoder.decode(new Uint8Array(value)));
+      else if (ArrayBuffer.isView(value)) texts.push(decoder.decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)));
+      else if (typeof value === "object") {
+        if (seen.has(value)) return;
+        seen.add(value);
+        for (const [key, inner] of Object.entries(value)) {
+          texts.push(key);
+          walk(inner);
+        }
+      }
+    };
+    /** @type {string[]} */
+    const stores = [];
+    for (const info of await indexedDB.databases()) {
+      if (!info.name) continue;
+      const db = await new Promise((resolve, reject) => {
+        const open = indexedDB.open(info.name);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => resolve(open.result);
+      });
+      for (const store of /** @type {IDBDatabase} */ (db).objectStoreNames) {
+        stores.push(`${info.name}/${store}`);
+        const all = await new Promise((resolve, reject) => {
+          const request = /** @type {IDBDatabase} */ (db).transaction([store], "readonly").objectStore(store).getAll();
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+        });
+        walk(all);
+      }
+      /** @type {IDBDatabase} */ (db).close();
+    }
+    walk(await browser.storage.local.get(null));
+    walk(await browser.storage.session.get(null));
+    const all = texts.join(" | ");
+    return { found: wanted.filter((needle) => all.includes(needle)), control: all.includes(control), stores };
+  }, needles, known);
 }
 
 /** The web vault's steps (its tab must be shown). */
@@ -229,6 +284,10 @@ test("pending_writes_survive_a_lock_and_a_restart_and_go_out_after_unlock", asyn
         await page.waitVisible('[data-role="sync-pending"]', SLOW);
         assert.match(await page.text('[data-role="sync-pending"]'), /: 1$/, `${channel}: one change waits`);
         assert.equal((await extensionRows(session)).some((row) => row.itemId === id), false, `${channel}: the server has not taken it`);
+        // The server's own feed, read with the web vault's session, does not have it either.
+        await session.switchTo(vaultTab);
+        assert.equal(await serverHas(session, id, 1), false, `${channel}: the server does not have the waiting change`);
+        await session.switchTo(extensionTab);
 
         // Lock, and end the browser: the change stays on this device.
         await lockExtension(session, page);
@@ -241,6 +300,11 @@ test("pending_writes_survive_a_lock_and_a_restart_and_go_out_after_unlock", asyn
       await popup(session, page);
       await page.waitVisible('[data-role="locked-view"]', SLOW);
       assert.equal((await extensionRows(session)).some((row) => row.itemId === id), false, `${channel}: nothing went out while locked`);
+      // At rest, locked, the waiting change is stored sealed: its name is nowhere in the extension's storage. The
+      // server's address is found there, so the search reads what is stored.
+      const atRest = await storedText(session, [name, "pending-user", "pending.example.net"], VAULT_HOST);
+      assert.deepEqual(atRest.found, [], `${channel}: the change is stored sealed`);
+      assert.ok(atRest.control, `${channel}: the search sees what is stored (${atRest.stores.join(", ")})`);
 
       // After the unlock the change goes out, and the server has it.
       await unlockExtension(session, page, account.password);

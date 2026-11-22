@@ -150,7 +150,7 @@ async function main() {
         cancel.setAttribute("disabled", "");
         showError(error, texts, null);
         try {
-          const { result, view: next } = await flow.forget(view.server);
+          const { result, view: next } = await flow.forget(view.server, preview?.pending ?? null);
           if (result.ok) {
             show(next);
             return;

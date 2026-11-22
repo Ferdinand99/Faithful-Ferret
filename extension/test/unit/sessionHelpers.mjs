@@ -66,6 +66,8 @@ export function portPair(name, sender) {
   const toPage = [];
   /** @type {Array<() => void>} */
   const pageDisconnect = [];
+  /** @type {Array<() => void>} */
+  const backgroundDisconnect = [];
   /** Everything the background sent to the page. @type {string[]} */
   const fromBackground = [];
   let open = true;
@@ -86,6 +88,8 @@ export function portPair(name, sender) {
       }, 0);
     },
     onMessage: { addListener: (/** @type {any} */ fn) => toBackground.push(fn) },
+    // The page went away (it closed its port): the background hears it in a later turn.
+    onDisconnect: { addListener: (/** @type {any} */ fn) => backgroundDisconnect.push(fn) },
     get disconnected() {
       return !open;
     },
@@ -100,6 +104,9 @@ export function portPair(name, sender) {
     },
     disconnect() {
       open = false;
+      setTimeout(() => {
+        for (const fn of backgroundDisconnect) fn();
+      }, 0);
     },
     onMessage: { addListener: (/** @type {any} */ fn) => toPage.push(fn) },
     onDisconnect: { addListener: (/** @type {any} */ fn) => pageDisconnect.push(fn) },

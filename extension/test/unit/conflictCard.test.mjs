@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { byRole, click, one, settle, textsOf, useDocument, withAttribute } from "./pageDom.mjs";
 import { fakeEngines, pkg } from "./sessionHelpers.mjs";
-import { syncWorld } from "./syncWorld.mjs";
+import { MP, syncWorld } from "./syncWorld.mjs";
 
 const PASSWORD = "Sentinel-pa55word-never-shown";
 const OLD_PASSWORD = "Older-sentinel-pa55";
@@ -72,7 +72,7 @@ async function itemsWorld() {
   const flow = flowModule.createSyncItemsFlow(request);
   const texts = textsOf(JSON.parse(await readFile(join(dir, "locales.en.json"), "utf8")), "en");
   const clock = { now: 1_000_000 };
-  return { ...sync, engine, cards, flowModule, request, flow, texts, clock };
+  return { ...sync, engine, fill, cards, flowModule, request, flow, texts, clock };
 }
 
 test("the_conflict_card_shows_no_password", async () => {
@@ -258,13 +258,39 @@ test("discard_needs_a_confirmation", async () => {
 });
 
 test("the_references_of_the_items_end_with_the_lock_and_the_page", async () => {
-  const { world, request, popup } = await itemsWorld();
+  const { world, engines, fill, request, popup } = await itemsWorld();
   const ref = (await request("sync_items", {})).items[0].ref;
+  assert.equal((await request("item_conflict", { ref })).ok, true);
   // Another page's session does not know this page's reference.
   const other = world.page("pages/popup.html").request;
   assert.deepEqual(await other("item_conflict", { ref }), { ok: false, reason: "not_offered" });
-  // After a lock no reference is good any more, and the types need an open vault.
+  // While locked the types need an open vault.
   await popup.lock();
   await assert.rejects(request("item_conflict", { ref }), { code: "vault_locked" });
   await assert.rejects(request("sync_items", {}), { code: "vault_locked" });
+  // After the next unlock (a new engine with the same items) the old reference is gone: the lock ended it.
+  assert.deepEqual((await popup.unlock({ password: MP })).result, { ok: true });
+  fill(engines.made.at(-1));
+  assert.deepEqual(await request("item_conflict", { ref }), { ok: false, reason: "not_offered" });
+  assert.deepEqual(await request("item_resolve", { ref, choice: "theirs" }), { ok: false, reason: "not_offered" });
+
+  // A page that goes away takes its references with it: its session is ended in the background.
+  /** @type {string[]} */
+  const ended = [];
+  const endSession = world.syncHost.endSession;
+  world.syncHost.endSession = (/** @type {string} */ session) => {
+    ended.push(session);
+    endSession(session);
+  };
+  const before = world.ports.length;
+  const leaving = world.page("pages/popup.html").request;
+  const fresh = (await leaving("sync_items", {})).items[0].ref;
+  assert.equal((await leaving("item_conflict", { ref: fresh })).ok, true);
+  const port = world.ports[before];
+  port.page.disconnect();
+  await settle();
+  assert.equal(ended.length, 1, "the background heard that the page left");
+  assert.match(ended[0], /^[0-9a-f]{32}$/);
+  // The same reference was this page's only: the page that is still open never had it.
+  assert.deepEqual(await request("item_conflict", { ref: fresh }), { ok: false, reason: "not_offered" });
 });
