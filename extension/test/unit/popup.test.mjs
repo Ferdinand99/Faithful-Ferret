@@ -256,8 +256,10 @@ test("open_site_opens_only_the_items_own_web_address", async () => {
   assert.deepEqual(world.opened, ["https://example.net/"]);
 });
 
-test("the_popup_field_border_has_at_least_3_to_1_contrast", () => {
+test("the_field_border_has_at_least_3_to_1_contrast_in_the_popup_and_the_tabs", () => {
   // WCAG 1.4.11: the border of a field against the field and against the page, in both themes.
+  // The token lives in session.css, the styles of every page: the popup and the sign-in,
+  // settings and grant tabs (where the master password and the Secret Key are typed).
   const popup = readFileSync(join(src, "styles", "popup.css"), "utf8");
   const session = readFileSync(join(src, "styles", "session.css"), "utf8");
   /** @param {string} css @param {string} name @returns {[string, string]} the light and the dark value */
@@ -276,12 +278,27 @@ test("the_popup_field_border_has_at_least_3_to_1_contrast", () => {
     const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
     return (x + 0.05) / (y + 0.05);
   };
-  const border = token(popup, "--field-border");
-  for (const behind of ["--field", "--bg", "--card"]) {
+  const border = token(session, "--field-border");
+  for (const behind of ["--field", "--bg", "--card", "--card-raised"]) {
     const ground = token(session, behind);
     for (const theme of [0, 1]) assert.ok(contrast(border[theme], ground[theme]) >= 3, `${behind} ${theme ? "dark" : "light"}: ${contrast(border[theme], ground[theme]).toFixed(2)}`);
   }
-  // The search field and the popup's inputs use it.
+  // Every field of every page uses it (.ff-input is the class of the tabs' inputs, the
+  // settings select and the sign-in text area), and so does the popup's search field.
+  assert.match(session, /\.ff-input \{[^}]*border: 1px solid var\(--field-border\)/);
   assert.match(popup, /\.ff-search \{[^}]*border: 1px solid var\(--field-border\)/);
-  assert.match(popup, /body\.ff-popup \.ff-input \{\s*border-color: var\(--field-border\)/);
+  // No other rule gives a field a weaker border.
+  const sync = readFileSync(join(src, "styles", "sync.css"), "utf8");
+  const base = readFileSync(join(src, "styles", "base.css"), "utf8");
+  for (const [name, css] of [["session", session], ["popup", popup], ["sync", sync], ["base", base]]) {
+    assert.doesNotMatch(css, /--control-border/, name);
+    for (const rule of css.matchAll(/([^{}]*\.ff-(?:input|search)[^{}]*)\{([^}]*)\}/g)) {
+      const body = rule[2];
+      if (/border(?:-color)?\s*:/.test(body)) assert.match(body, /var\(--field-border\)|transparent|none|border:\s*0\b/, `${name}: ${rule[1].trim()}`);
+    }
+  }
+  for (const page of ["signin", "settings", "grant", "popup"]) {
+    const html = readFileSync(join(src, "pages", `${page}.html`), "utf8");
+    assert.match(html, /href="\.\.\/assets\/app\.css"/, `${page} loads the shared styles`);
+  }
 });
