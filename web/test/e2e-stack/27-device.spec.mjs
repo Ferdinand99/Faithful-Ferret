@@ -4,7 +4,7 @@
 // reaches neither the admin listener nor the hand-over, and the web vault itself never sends a token header. Nothing here
 // uses a shortcut of the server: the device and the browsers use the same routes as a person's would.
 import {
-  createItem, expect, freshContext, itemIdOf, newDevice, noViolations, openList, pace, readStores, remember, rowsNamed, secrets, signInOn, SLOW, synced, test, useAccount, vaultUrl, adminUrl,
+  createItem, expect, freshContext, itemIdOf, newDevice, noViolations, openList, pace, readStores, remember, findRows, secrets, signInOn, SLOW, synced, test, useAccount, vaultUrl, adminUrl,
 } from "./support.mjs";
 import { changes, closeDevice, DEVICE_NAME, holdStream, loadCore, signInDevice, sleep } from "./deviceClient.mjs";
 import { createProof } from "../../src/auth/dpop.mjs";
@@ -47,7 +47,7 @@ test("a_device_signs_in_syncs_and_is_revoked", async ({ browser }) => {
     await createItem(page, { name, username: "device-sync-user" });
     await synced(page);
     await openList(page);
-    await expect(rowsNamed(page, name)).toHaveCount(1, { timeout: 30_000 });
+    await expect((await findRows(page, name))).toHaveCount(1, { timeout: 30_000 });
     const itemId = await itemIdOf(page, name);
 
     await pace();

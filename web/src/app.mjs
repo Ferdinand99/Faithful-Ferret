@@ -16,7 +16,10 @@ export const BASE_SERVICES = Object.freeze(["client", "i18n", "createImportWorke
  * @property {{ t(key: string, vars?: Record<string, string | number>): string, lang: string, missing: string[] }} i18n
  * @property {any} client
  * @property {Record<string, any>} services
- * @property {(path: string) => void} go
+ * @property {string} query the part of the address after `?` (a screen that keeps its filters there reads it)
+ * @property {(path: string) => void} go `/path` or `/path?query`
+ * @property {(path: string) => void} replace like `go`, without a new entry in the history (a redirect)
+ * @property {(fn: (query: string) => void) => (() => void)} watchQuery told when only the query of this screen changes (it is not built again)
  * @property {readonly Route[]} routes every route of the page, for a page that lists the others (the account menu)
  *
  * @typedef {object} Route
@@ -25,6 +28,7 @@ export const BASE_SERVICES = Object.freeze(["client", "i18n", "createImportWorke
  * @property {(ctx: RouteContext) => Node | Promise<Node>} load
  * @property {string} [menu]  the menu the page is listed in (`account`: the account page links to it); `title` is its label
  * @property {number} [menuOrder]  where it stands in that menu (lower first; 100 when not given)
+ * @property {import("./views/sidebarModel.mjs").SidebarMeta} [sidebar]  where the side menu of the vault lists the page (section, order, icon, label)
  *
  * @typedef {object} ServiceDef
  * @property {string} name
@@ -125,10 +129,13 @@ export function startApp({ root, routes, serviceDefs, client, i18n, createImport
       view = await match.route.load({
         params: match.params,
         path: match.path,
+        query: match.query ?? "",
         i18n,
         client,
         services,
         go: (/** @type {string} */ path) => router.go(path),
+        replace: (/** @type {string} */ path) => router.replace(path),
+        watchQuery: (/** @type {(query: string) => void} */ fn) => router.watchQuery(fn),
         routes,
       });
     } catch {

@@ -278,6 +278,13 @@ async function main() {
         // The page has what it needs; a popped-out window stays.
         if (!poppedOut) setTimeout(() => window.close(), 600);
       },
+      // The permission is asked for in a tab of its own: a request from the popup would close the popup.
+      onGrant: (origin) => {
+        const url = `${browser.runtime.getURL("pages/grant.html")}?${new URLSearchParams({ origin }).toString()}`;
+        void browser.tabs.create({ url }).then(() => {
+          if (!poppedOut) window.close();
+        });
+      },
     });
     mount(
       root,

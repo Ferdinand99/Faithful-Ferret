@@ -9,30 +9,35 @@
 // router.mjs), and only until the vault locks. Each reference is marked with
 // what it was made for:
 //
-//   "fill"   made by the page matching (`offer`, from the candidates of the
-//            frames of one tab) for one item in one frame of that tab. Only such
-//            a reference can fill, and only in that frame.
+//   "fill"   made by `offer` from the page matching (frames.mjs) for one item
+//            of one tab, with the frames it may be filled in: those that tie on
+//            the item's closest match, the top first, at most 4. Only such a
+//            reference can fill, and only in those frames.
 //   "copy"   made by a search of the whole vault. It can copy, show the item
 //            and open its site, never fill: an item found by searching is not
 //            an item that matches the page, and filling it there is the step a
 //            phishing page needs.
 //
 // "Fill" (`fill`): the reference must be a "fill" reference of this session for
-// the frame named; the frame is fetched again and its origin must still match
-// the item (the page matching, which uses the core's rule); then a pending
-// request `(request_id, tabId, frameId, documentId)` is made, the fill script is
-// put into that frame, and the background waits for the frame's report with the
-// same request id from the same frame and document. The report's own origin
-// (`self_origin`) can only narrow what the browser says. Then the item is
-// opened and each value goes, one at a time, in a `fill_field` to that one
-// frame, and the handle is closed. A value never passes through the popup: the
-// popup's answer is `{ ok }` or a reason.
+// this tab; the frames are fetched again and each must still be there with the
+// same origin and document and still match the item (the page matching, which
+// uses the core's rule). For each frame left a pending request `(request_id,
+// tabId, frameId, documentId)` is made and the fill script is put into that
+// frame; each report is paired with its request by id, frame and document, and
+// its own origin (`self_origin`) can only narrow what the browser says: a frame
+// whose report narrows to nothing is dropped. The first frame, the top first,
+// whose report has sign-in fields is filled, and no other (one fill action fills
+// one group); when none has, the answer is `no_fields`. A request that names a
+// frame (the menu's) looks at that frame only. Then the item is opened and each
+// value goes, one at a time, in a `fill_field` to that one frame, and the handle
+// is closed. A value never passes through the popup: the popup's answer is
+// `{ ok }` or a reason.
 //
 // A report or a fill result that names no pending request, or comes from
 // another frame or document, does nothing.
 
 import { encode } from "../shared/protocol.mjs";
-import { narrowOrigin } from "../shared/origin.mjs";
+import { confirmFrame } from "./frames.mjs";
 import { injectFill } from "./inject.mjs";
 
 /** What a reference was made for. */
@@ -40,6 +45,12 @@ export const PURPOSES = Object.freeze(["fill", "copy"]);
 
 /** The most references one page session may hold. */
 export const MAX_REFS = 4096;
+
+/** The most page sessions whose references are kept; the oldest goes first. */
+export const MAX_SESSIONS = 8;
+
+/** The most frames one "fill" reference names. */
+export const MAX_REF_FRAMES = 4;
 
 /** The most handles one answer carries (a reply stays well under the message limit). */
 export const PAGE_SIZE = 40;
@@ -71,16 +82,13 @@ export class FillError extends Error {
 }
 
 /**
- * The page matching, as this module uses it: for one tab, the frames Ferret may
- * fill (the browser's view of each frame) and the items whose saved addresses
- * match each frame by the core's rule. Only this narrow shape is used, so the
- * fill flow does not depend on how the matching is built.
+ * The page matching (frames.mjs): for one tab, each item whose saved addresses match by the core's rule, with the
+ * frames it may be filled in (the browser's view of each frame), the page's host, whether it is plain `http`, and the
+ * frames that wait for their host permission.
  *
- * @typedef {{ frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[] }} FrameCandidates
- * @typedef {{ host?: { a_label: string, unicode: string }, frames: FrameCandidates[] }} TabCandidates
- * @typedef {{ candidates(tabId: number): Promise<TabCandidates> }} CandidateSource
- *
- * @typedef {{ purpose: "fill" | "copy", itemId: string, tabId?: number, frameId?: number, documentId?: string, origin?: string }} RefEntry
+ * @typedef {import("./frames.mjs").CandidateSource} CandidateSource
+ * @typedef {{ frameId: number, documentId?: string, origin: string }} RefFrame
+ * @typedef {{ purpose: "fill" | "copy", itemId: string, tabId?: number, frames?: RefFrame[] }} RefEntry
  */
 
 /** @param {Uint8Array} bytes */
@@ -110,8 +118,10 @@ export function createRefs({ random, max = MAX_REFS }) {
       if (!own) {
         own = { byKey: new Map(), entries: new Map() };
         sessions.set(session, own);
+        // The oldest session goes when there are too many (a page that is still open asks again).
+        while (sessions.size > MAX_SESSIONS) sessions.delete(/** @type {string} */ (sessions.keys().next().value));
       }
-      const key = [purpose, entry.itemId, entry.tabId ?? "", entry.frameId ?? "", entry.documentId ?? "", entry.origin ?? ""].join("|");
+      const key = JSON.stringify([purpose, entry.itemId, entry.tabId ?? null, entry.frames ?? null]);
       const known = own.byKey.get(key);
       if (known !== undefined) return known;
       if (own.entries.size >= max) {
@@ -197,7 +207,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   requestId: string, tabId: number, frameId: number, documentId?: string, origin: string,
  *   report: Deferred,
  *   result: Deferred | null,
- * }} Pending
+ * }} Pending one frame of a fill
  *   `report` settles with `{ kinds: Set<string>, url: string }`, `result` with `{ ok: boolean, reason?: string }`
  */
 
@@ -236,8 +246,10 @@ export function createFillHost({
   resultTimeoutMs = RESULT_TIMEOUT_MS,
 }) {
   const refs = createRefs({ random });
-  /** The fill that runs now (one at a time), by its request id. @type {Map<string, Pending>} */
+  /** The frames of the fill that runs now, by request id. @type {Map<string, Pending>} */
   const pending = new Map();
+  /** One fill at a time. */
+  let filling = false;
   /** The core host, set by `attach`. @type {any} */
   let host = null;
 
@@ -357,31 +369,41 @@ export function createFillHost({
   }
 
   /**
-   * The candidates of one tab for the popup: one "fill" reference per item and frame. Without page matching there
-   * are none.
-   * @param {{ session: string, tab_id: number }} args
+   * The candidates of one tab for the popup: each item once, with a "fill" reference for it and the frames it may be
+   * filled in. Without page matching there are none.
+   * @param {{ session: string, tab_id: number, frame_id?: number }} args `frame_id` keeps that frame only (the menu's)
    */
-  async function offer({ session, tab_id: tabId }) {
+  async function offer({ session, tab_id: tabId, frame_id: frameId }) {
     const own = sessionOf(session);
-    if (source === null) return { handles: [] };
-    const found = await source.candidates(tabId);
+    if (source === null) return { handles: [], insecure: false, grant: [] };
     const byId = new Map(engine().list().map((s) => [s.id, s]));
+    const found = await source.candidates(tabId, frameId !== undefined ? { frameId } : {});
+    const insecure = found?.insecure === true;
     /** @type {any[]} */
     const handles = [];
-    for (const frame of Array.isArray(found?.frames) ? found.frames : []) {
-      for (const itemId of frame.itemIds) {
-        const s = byId.get(itemId);
-        if (!s || handles.length >= PAGE_SIZE) continue;
-        /** @type {RefEntry} */
-        const entry = { purpose: "fill", itemId, tabId, frameId: frame.frameId, origin: frame.origin, ...(frame.documentId ? { documentId: frame.documentId } : {}) };
-        handles.push(handleOf(s, refs.issue(own, "fill", entry), { insecure: frame.insecure === true, frame_id: frame.frameId }));
-      }
+    for (const item of Array.isArray(found?.items) ? found.items : []) {
+      if (handles.length >= PAGE_SIZE) break;
+      /** @type {RefFrame[]} */
+      const frames = (Array.isArray(item.frames) ? item.frames : []).slice(0, MAX_REF_FRAMES).map((f) => ({
+        frameId: f.frameId,
+        ...(typeof f.documentId === "string" ? { documentId: f.documentId } : {}),
+        origin: f.origin,
+      }));
+      if (frames.length === 0 || !ITEM_ID.test(item.itemId)) continue;
+      const known = byId.get(item.itemId);
+      /** @type {Summary} */
+      const summary = known ?? { id: item.itemId, name: item.name, username: item.username ?? "", favorite: false, type: "other", urls: [] };
+      const ref = refs.issue(own, "fill", { purpose: "fill", itemId: item.itemId, tabId, frames });
+      handles.push(handleOf(summary, ref, { insecure, frame_id: frames[0].frameId, frame_ids: frames.map((f) => f.frameId) }));
     }
-    const shown = found?.host;
+    /** @param {any} h */
+    const hostOf = (h) => ({ a_label: String(h?.a_label ?? ""), unicode: String(h?.unicode ?? "") });
+    const grant = (Array.isArray(found?.grant) ? found.grant : []).slice(0, 32).map((g) => ({ origin: g.origin, host: hostOf(g.host) }));
     return {
       handles,
-      ...(typeof shown?.unicode === "string" && shown.unicode !== "" ? { host: shown.unicode } : {}),
-      ...(typeof shown?.a_label === "string" && shown.a_label !== "" ? { host_a_label: shown.a_label } : {}),
+      insecure,
+      grant,
+      ...(found?.host ? { host: hostOf(found.host) } : {}),
     };
   }
 
@@ -483,51 +505,73 @@ export function createFillHost({
     }
   }
 
-  /** @param {{ session: string, ref: string, tab_id: number, frame_id: number }} args */
+  /**
+   * Puts the fill script into one frame of a fill and waits for its report.
+   * @param {Pending} request
+   * @returns {Promise<{ kinds: Set<string>, url: string }>}
+   */
+  async function reportOf(request) {
+    await injectFill({ scripting, tabId: request.tabId, frameId: request.frameId, documentId: request.documentId, requestId: request.requestId }).catch(() => {
+      throw new FillError("frame_gone");
+    });
+    return within(request.report.promise, reportTimeoutMs, "no_report");
+  }
+
+  /** @param {{ session: string, ref: string, tab_id: number, frame_id?: number }} args */
   async function fill({ session, ref, tab_id: tabId, frame_id: frameId }) {
     const entry = entryOf(sessionOf(session), ref, ["fill"]);
-    // Only a reference the page matching made, in this session, for this tab and this frame.
-    if (entry === null || entry.tabId !== tabId || entry.frameId !== frameId) return { ok: false, reason: "not_offered" };
+    // Only a reference the page matching made, in this session, for this tab; and a frame named must be one of its.
+    if (entry === null || entry.tabId !== tabId || !Array.isArray(entry.frames)) return { ok: false, reason: "not_offered" };
+    const wanted = frameId === undefined ? entry.frames : entry.frames.filter((f) => f.frameId === frameId);
+    if (wanted.length === 0) return { ok: false, reason: "not_offered" };
     if (source === null) return { ok: false, reason: "not_offered" };
-    if (pending.size > 0) return { ok: false, reason: "busy" };
+    if (filling) return { ok: false, reason: "busy" };
     if (host?.state() !== "unlocked") return { ok: false, reason: "vault_locked" };
     // No running sync, no item to fill: said before anything is put into the page.
     engine();
 
-    // The frame now, as the browser and the core see it: it must still be the one the reference was made for.
-    const now = await source.candidates(tabId);
-    // A lock (and a new unlock) while the frame was asked for dropped every reference: this one is gone too.
-    if (refs.get(session, ref) !== entry) return { ok: false, reason: "not_offered" };
-    const frame = (Array.isArray(now?.frames) ? now.frames : []).find((f) => f.frameId === frameId);
-    if (
-      !frame ||
-      frame.origin !== entry.origin ||
-      (entry.documentId !== undefined && frame.documentId !== entry.documentId) ||
-      !frame.itemIds.includes(entry.itemId)
-    ) {
-      return { ok: false, reason: "origin_changed" };
-    }
-    if (pending.size > 0) return { ok: false, reason: "busy" };
-    const core = client();
-
-    /** @type {Pending} */
-    const request = {
-      requestId: hex(random(new Uint8Array(16))),
-      tabId,
-      frameId,
-      ...(frame.documentId ? { documentId: frame.documentId } : {}),
-      origin: frame.origin,
-      report: deferred(),
-      result: null,
-    };
-    pending.set(request.requestId, request);
+    filling = true;
+    /** @type {Pending[]} */
+    let requests = [];
     try {
-      await injectFill({ scripting, tabId, frameId, documentId: request.documentId, requestId: request.requestId }).catch(() => {
-        throw new FillError("frame_gone");
-      });
-      const report = await within(request.report.promise, reportTimeoutMs, "no_report");
+      // The frames now, as the browser and the core see them: each must still be one the reference was made for.
+      const now = await source.candidates(tabId, frameId !== undefined ? { frameId } : {});
+      // A lock (and a new unlock) while the frames were asked for dropped every reference: this one is gone too.
+      if (refs.get(session, ref) !== entry) return { ok: false, reason: "not_offered" };
+      const fresh = (Array.isArray(now?.items) ? now.items : []).find((i) => i.itemId === entry.itemId);
+      const frames = wanted.filter((want) =>
+        (Array.isArray(fresh?.frames) ? fresh.frames : []).some(
+          (f) => f.frameId === want.frameId && f.origin === want.origin && (want.documentId === undefined || f.documentId === want.documentId),
+        ),
+      );
+      if (frames.length === 0) return { ok: false, reason: "origin_changed" };
+      const core = client();
+
+      requests = frames.map((f) => ({
+        requestId: hex(random(new Uint8Array(16))),
+        tabId,
+        frameId: f.frameId,
+        ...(f.documentId !== undefined ? { documentId: f.documentId } : {}),
+        origin: f.origin,
+        report: deferred(),
+        result: null,
+      }));
+      for (const request of requests) pending.set(request.requestId, request);
+      const reports = await Promise.allSettled(requests.map((request) => reportOf(request)));
+
+      // The first frame, the top first, whose report has sign-in fields; a frame that narrowed to nothing is dropped.
+      const chosen = reports.findIndex((r) => r.status === "fulfilled" && FILL_ORDER.some((kind) => r.value.kinds.has(kind)));
+      if (chosen < 0) {
+        if (reports.some((r) => r.status === "fulfilled")) return { ok: false, reason: "no_fields" };
+        const first = /** @type {PromiseRejectedResult} */ (reports[0]);
+        const code = /** @type {any} */ (first.reason)?.code;
+        return { ok: false, reason: typeof code === "string" ? code : "not_filled" };
+      }
+      const request = requests[chosen];
+      // The other frames' requests end here: a later report or result of theirs does nothing.
+      for (const other of requests) if (other !== request) pending.delete(other.requestId);
+      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string }>} */ (reports[chosen]).value;
       const kinds = FILL_ORDER.filter((kind) => report.kinds.has(kind));
-      if (kinds.length === 0) return { ok: false, reason: "no_fields" };
       return await withItem(entry.itemId, async (opened) => {
         let filled = 0;
         for (const kind of kinds) {
@@ -544,7 +588,8 @@ export function createFillHost({
       const code = /** @type {any} */ (error)?.code;
       return { ok: false, reason: typeof code === "string" ? code : "not_filled" };
     } finally {
-      pending.delete(request.requestId);
+      for (const request of requests) pending.delete(request.requestId);
+      filling = false;
     }
   }
 
@@ -564,10 +609,10 @@ export function createFillHost({
     }
     if (kind !== "frame_report") return undefined;
     // The frame's origin comes from the browser (the sender's address, read by the core). The script's own
-    // `self.origin` can only narrow it: an opaque or a different one ends the request.
+    // `self.origin` can only narrow it (`confirmFrame`): an opaque or a different one drops the frame.
     const fromBrowser = await client().vault.page_origin(sender.url).catch(() => null);
     if (pending.get(request.requestId) !== request) return undefined;
-    if (fromBrowser !== request.origin || narrowOrigin(fromBrowser, body.self_origin) === null) {
+    if (fromBrowser !== request.origin || !confirmFrame(request, body.self_origin)) {
       request.report.reject(new FillError("origin_changed"));
       return undefined;
     }

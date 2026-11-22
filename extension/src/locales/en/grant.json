@@ -1,0 +1,10 @@
+{
+  "grant.title": "Allow Ferret in a frame",
+  "grant.lead": "The page you are on shows a sign-in form in a frame from",
+  "grant.why": "It belongs to the same site as the page, but Ferret may fill only where you have allowed it. Allow it once, and Ferret offers your items for that frame from then on. Ferret never fills a frame of another site.",
+  "grant.allow": "Allow Ferret on this host",
+  "grant.granted": "Allowed. Go back to the page and open Ferret again.",
+  "grant.refused": "Not allowed. Ferret offers nothing in that frame.",
+  "grant.error.origin_invalid": "This page was opened without a valid address. Close it and try again from Ferret.",
+  "grant.error.vault_locked": "Unlock Ferret first, then try again from the page."
+}

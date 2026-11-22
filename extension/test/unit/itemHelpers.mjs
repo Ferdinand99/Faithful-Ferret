@@ -138,7 +138,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     load("background/handlers/copy.handler.mjs"),
     load("background/handlers/search.handler.mjs"),
     load("background/handlers/fillReport.handler.mjs"),
-    load("background/handlers/test-only/candidates.handler.mjs"),
+    load("background/handlers/candidates.handler.mjs"),
   ]);
   const fake = createFakeBrowser();
   const clock = createClock(1_763_800_000_000);
@@ -198,44 +198,61 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
    * The page in the tab: the fill script answers as the real one would. `report` decides what the frame reports, and
    * `answer` what it answers to a value. A test changes them to play a page that changed.
    */
-  const page = {
+  /**
+   * One frame of the tab, as the fill script in it would answer.
+   * @param {{ url: string, frameId: number, documentId: string, selfOrigin: string }} sender
+   * @param {string[]} [fields]
+   */
+  const frameSim = (sender, fields = ["username", "password"]) => ({
     /** The frame's own facts, as the browser gives them for its messages. */
-    sender: { url: LOGIN_URL, frameId: 0, documentId: "doc-1", selfOrigin: LOGIN_ORIGIN },
-    fields: /** @type {string[]} */ (["username", "password"]),
+    sender,
+    fields,
     /** What was filled, by kind. @type {Record<string, string>} */
-    filled: {},
+    filled: /** @type {Record<string, string>} */ ({}),
     /** Whether the frame reports at all. */
     reports: true,
     /** @type {(kind: string) => { ok: boolean, reason?: string }} */
-    answer: () => ({ ok: true }),
+    answer: (/** @type {string} */ _kind) => ({ ok: true }),
+  });
+  /** The frames of the tab by frame id; frame 0 is `page`. @type {Map<number, ReturnType<typeof frameSim>>} */
+  const frameSims = new Map();
+  const page = frameSim({ url: LOGIN_URL, frameId: 0, documentId: "doc-1", selfOrigin: LOGIN_ORIGIN });
+  frameSims.set(0, page);
+  /** @param {any} target @param {any} [options] */
+  const simOf = (target, options) => {
+    const doc = target?.documentIds?.[0] ?? options?.documentId;
+    const id = target?.frameIds?.[0] ?? options?.frameId;
+    return [...frameSims.values()].find((f) => (doc !== undefined ? f.sender.documentId === doc : f.sender.frameId === id)) ?? null;
   };
   /** Every injection: its target and what it ran. @type {any[]} */
   const injections = [];
   /** Every message the background sent to a tab: tab, the decoded message, and where it went. @type {Array<{ tabId: number, message: any, options: any }>} */
   const pushed = [];
 
-  /** A content script's message from the page's frame. @param {string} type @param {any} body */
-  const fromPage = (type, body) =>
+  /** A content script's message from a frame (the top's by default). @param {string} type @param {any} body @param {ReturnType<typeof frameSim>} [from] */
+  const fromPage = (type, body, from = page) =>
     router.onMessage(
       encode(type, body),
-      contentScriptSender(fake, page.sender.url, { tab: { id: TAB }, frameId: page.sender.frameId, documentId: page.sender.documentId }),
+      contentScriptSender(fake, from.sender.url, { tab: { id: TAB }, frameId: from.sender.frameId, documentId: from.sender.documentId }),
     );
 
   const scripting = {
     async executeScript(/** @type {any} */ injection) {
       injections.push(injection);
-      if (injection.files) return [{ frameId: page.sender.frameId }];
+      const sim = simOf(injection.target);
+      if (sim === null) return [{ error: "no frame" }];
+      if (injection.files) return [{ frameId: sim.sender.frameId }];
       const [requestId] = injection.args;
-      if (page.reports) {
+      if (sim.reports) {
         setTimeout(() => {
           void fromPage("frame_report", {
             request_id: requestId,
-            self_origin: page.sender.selfOrigin,
-            fields: page.fields.map((kind, i) => ({ kind, id: `f${i}` })),
-          });
+            self_origin: sim.sender.selfOrigin,
+            fields: sim.fields.map((kind, i) => ({ kind, id: `f${i}` })),
+          }, sim);
         }, 0);
       }
-      return [{ frameId: page.sender.frameId, result: true }];
+      return [{ frameId: sim.sender.frameId, result: true }];
     },
   };
 
@@ -245,11 +262,13 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     async sendMessage(/** @type {number} */ tabId, /** @type {string} */ raw, /** @type {any} */ options) {
       const message = decode(raw, PUSH_TYPES);
       pushed.push({ tabId, message, options });
+      const sim = simOf(null, options);
+      if (sim === null) return undefined;
       const { request_id: requestId, field, value, expect } = message.body;
       setTimeout(() => {
-        const result = expect.origin === page.sender.selfOrigin && expect.frameUrl === page.sender.url ? page.answer(field) : { ok: false, reason: "origin_changed" };
-        if (result.ok) page.filled[field] = value;
-        void fromPage("fill_result", result.ok ? { request_id: requestId, ok: true } : { request_id: requestId, ok: false, reason: result.reason });
+        const result = expect.origin === sim.sender.selfOrigin && expect.frameUrl === sim.sender.url ? sim.answer(field) : { ok: false, reason: "origin_changed" };
+        if (result.ok) sim.filled[field] = value;
+        void fromPage("fill_result", result.ok ? { request_id: requestId, ok: true } : { request_id: requestId, ok: false, reason: result.reason }, sim);
       }, 0);
       return undefined;
     },
@@ -278,6 +297,10 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   // ------------------------------------------------------------ the background
   const matching = {
     frames: frames ?? [{ frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] }],
+    /** The frames of the page's site that wait for their host permission. @type {Array<{ origin: string, host: { a_label: string, unicode: string } }>} */
+    grant: /** @type {Array<{ origin: string, host: { a_label: string, unicode: string } }>} */ ([]),
+    /** Every frame id the fill flow asked about (undefined: all frames). @type {Array<number | undefined>} */
+    askedFrames: /** @type {Array<number | undefined>} */ ([]),
     /** Every question the fill flow asked of the page matching. @type {number[]} */
     asked: /** @type {number[]} */ ([]),
     /** Runs before the page matching answers its n-th question (a test plays something that happens meanwhile). */
@@ -294,10 +317,29 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     tabs,
     source: source
       ? {
-          candidates: async (/** @type {number} */ tabId) => {
+          // The page matching's answer (frames.mjs), from the frames the test names: each item once, with the frames
+          // that match it, the top first, at most 4.
+          candidates: async (/** @type {number} */ tabId, /** @type {{ frameId?: number }} */ { frameId } = {}) => {
             matching.asked.push(tabId);
+            matching.askedFrames.push(frameId);
             await matching.before(matching.asked.length);
-            return tabId === TAB ? { host: { unicode: "login.example.net", a_label: "login.example.net" }, frames: structuredClone(matching.frames) } : { frames: [] };
+            if (tabId !== TAB) return { host: null, insecure: false, items: [], grant: [] };
+            const shown = matching.frames.filter((f) => frameId === undefined || f.frameId === frameId);
+            const list = items
+              .map((item) => ({
+                itemId: item.id,
+                name: item.name,
+                username: item.username === "" ? null : item.username,
+                how: "host",
+                frames: shown.filter((f) => f.itemIds.includes(item.id)).slice(0, 4).map((f) => ({ frameId: f.frameId, ...(f.documentId ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin })),
+              }))
+              .filter((i) => i.frames.length > 0);
+            return {
+              host: { unicode: "login.example.net", a_label: "login.example.net" },
+              insecure: matching.frames.some((f) => f.insecure === true),
+              items: list,
+              grant: structuredClone(matching.grant),
+            };
           },
         }
       : null,
@@ -358,6 +400,15 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     opens,
     handles,
     page,
+    /**
+     * Adds a frame to the tab, whose fill script answers like the top's.
+     * @param {{ url: string, frameId: number, documentId: string, selfOrigin: string }} sender @param {string[]} [fields]
+     */
+    addFrame(sender, fields) {
+      const sim = frameSim(sender, fields);
+      frameSims.set(sender.frameId, sim);
+      return sim;
+    },
     injections,
     pushed,
     opened,

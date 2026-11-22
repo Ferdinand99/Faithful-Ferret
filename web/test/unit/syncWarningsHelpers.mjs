@@ -29,7 +29,7 @@ export const textFor = (catalog, key, vars = {}) => catalog[key].replace(/{([a-z
  * @param {{ halted?: string | null, warnings?: string[] }} [start]
  */
 export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
-  const listeners = { state: new Set(), error: new Set(), copied: new Set() };
+  const listeners = { state: new Set(), error: new Set(), copied: new Set(), changed: new Set() };
   const engine = {
     halted,
     warnings: [...warnings],
@@ -74,12 +74,12 @@ export function fakeWarningsEngine({ halted = null, warnings = [] } = {}) {
       if (engine.acceptError) throw engine.acceptError;
       return engine.acceptResult;
     },
-    /** @param {"state" | "error"} event @param {(payload: any) => void} fn */
+    /** @param {"state" | "error" | "changed"} event @param {(payload: any) => void} fn */
     on(event, fn) {
       listeners[event].add(fn);
       return () => void listeners[event].delete(fn);
     },
-    /** @param {"state" | "error"} event @param {any} payload */
+    /** @param {"state" | "error" | "changed"} event @param {any} payload */
     emit(event, payload) {
       for (const fn of [...listeners[event]]) fn(payload);
     },

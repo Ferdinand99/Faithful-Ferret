@@ -72,3 +72,12 @@ jobs:
         run: node scripts/build.mjs
       - name: Run the tests in ${{ matrix.browser }}
         run: npx playwright test --project=${{ matrix.browser }}
+      # The screenshots of the menu in both themes, for a look at what the browsers drew. Not part of the repository.
+      - name: Keep the screenshots of the menu
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: menu-screenshots-${{ matrix.browser }}
+          path: web/test-results/**/shell-*.png
+          if-no-files-found: ignore
+          retention-days: 7

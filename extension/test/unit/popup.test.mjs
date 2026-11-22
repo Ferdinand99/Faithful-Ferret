@@ -107,7 +107,12 @@ test("the_list_shows_suggestions_favourites_and_all_items_and_a_search_hides_the
   const asked = [];
   /** @type {Record<string, any>} */
   const answers = {
-    candidates: { handles: [{ ref: "c1", name: "Example", username: "ola", frame_id: 0, insecure: true }, { ref: "c2", name: "Stray" }], host: "løgin.example.net", host_a_label: "xn--lgin-ura.example.net" },
+    candidates: {
+      handles: [{ ref: "c1", name: "Example", username: "ola", frame_id: 0, insecure: true }, { ref: "c2", name: "Stray" }],
+      host: { unicode: "løgin.example.net", a_label: "xn--lgin-ura.example.net" },
+      insecure: true,
+      grant: [{ origin: "https://www.example.net", host: { unicode: "www.example.net", a_label: "www.example.net" } }],
+    },
   };
   const request = async (/** @type {string} */ type, /** @type {any} */ body) => {
     asked.push([type, body]);
@@ -119,8 +124,14 @@ test("the_list_shows_suggestions_favourites_and_all_items_and_a_search_hides_the
   // Only candidates with a frame can be filled; the host is the core's, with the A-label next to it.
   assert.deepEqual(page, {
     host: "løgin.example.net (xn--lgin-ura.example.net)",
+    insecure: true,
     rows: [{ ref: "c1", name: "Example", username: "ola", favorite: false, type: "other", site: false, insecure: true, frameId: 0 }],
+    grant: [{ origin: "https://www.example.net", host: "www.example.net" }],
   });
+  // The request names no frame (all of the tab's), and a tab that shows no web page has no host.
+  assert.deepEqual(asked[0], ["candidates", { tab_id: TAB }]);
+  answers.candidates = { handles: [], insecure: false, grant: [] };
+  assert.deepEqual(await list.page(TAB), { host: "", insecure: false, rows: [], grant: [] });
   assert.equal(await list.page(null), null, "no page: nothing to ask");
   answers.candidates = undefined;
   const refused = createListFlow(async (type) => {
@@ -145,7 +156,8 @@ test("the_list_shows_suggestions_favourites_and_all_items_and_a_search_hides_the
   assert.deepEqual(await list.fill(rowsOf({ handles: [{ ref: "x", name: "x" }] })[0], TAB), { ok: false, reason: "not_offered" });
   assert.deepEqual(asked, []);
   await list.fill(/** @type {any} */ (page).rows[0], TAB);
-  assert.deepEqual(asked, [["fill", { ref: "c1", tab_id: TAB, frame_id: 0 }]]);
+  // "Fill" names no frame: the background fills the first of the item's frames that has a sign-in form.
+  assert.deepEqual(asked, [["fill", { ref: "c1", tab_id: TAB }]]);
 });
 
 test("rows_keep_only_what_the_popup_shows", () => {
@@ -242,4 +254,34 @@ test("open_site_opens_only_the_items_own_web_address", async () => {
   // The page names a reference, never an address: an unknown reference opens nothing.
   assert.deepEqual(await popup.request("open_site", { ref: "f".repeat(32) }), { ok: false, reason: "not_offered" });
   assert.deepEqual(world.opened, ["https://example.net/"]);
+});
+
+test("the_popup_field_border_has_at_least_3_to_1_contrast", () => {
+  // WCAG 1.4.11: the border of a field against the field and against the page, in both themes.
+  const popup = readFileSync(join(src, "styles", "popup.css"), "utf8");
+  const session = readFileSync(join(src, "styles", "session.css"), "utf8");
+  /** @param {string} css @param {string} name @returns {[string, string]} the light and the dark value */
+  const token = (css, name) => {
+    const m = new RegExp(String.raw`${name}:\s*light-dark\((#[0-9a-f]{6}),\s*(#[0-9a-f]{6})\)`, "i").exec(css);
+    assert.ok(m, name);
+    return [m[1], m[2]];
+  };
+  /** @param {string} hex */
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  /** @param {string} a @param {string} b */
+  const contrast = (a, b) => {
+    const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const border = token(popup, "--field-border");
+  for (const behind of ["--field", "--bg", "--card"]) {
+    const ground = token(session, behind);
+    for (const theme of [0, 1]) assert.ok(contrast(border[theme], ground[theme]) >= 3, `${behind} ${theme ? "dark" : "light"}: ${contrast(border[theme], ground[theme]).toFixed(2)}`);
+  }
+  // The search field and the popup's inputs use it.
+  assert.match(popup, /\.ff-search \{[^}]*border: 1px solid var\(--field-border\)/);
+  assert.match(popup, /body\.ff-popup \.ff-input \{\s*border-color: var\(--field-border\)/);
 });

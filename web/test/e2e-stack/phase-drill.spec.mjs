@@ -3,7 +3,7 @@
 // decrypted copy; then signing in again on the restored server. Run only by that script,
 // in two phases (drill-first, drill-restored), which hands the state of the first to the second
 // in FERRET_E2E_STATE. The data is made up for the run.
-import { adopt, createItem, expect, freshContext, leave, previousState, rowsNamed, secrets, setUpAccount, signInOn, test, vaultUrl } from "./support.mjs";
+import { adopt, createItem, expect, freshContext, leave, previousState, findRows, secrets, setUpAccount, signInOn, test, vaultUrl } from "./support.mjs";
 
 const phase = process.env.FERRET_E2E_PHASE ?? "";
 test.skip(!phase.startsWith("drill-"), "run by scripts/ferret-home.sh drill");
@@ -43,7 +43,7 @@ test("drill_sign_in_on_the_restored_server", async ({ browser }) => {
   const page = await context.newPage();
   await signInOn(page);
   // The item of the first phase came back through the encrypted copy.
-  await expect(rowsNamed(page, `Drill-${state.itemTitle}`)).toHaveCount(1, { timeout: 30_000 });
+  await expect((await findRows(page, `Drill-${state.itemTitle}`))).toHaveCount(1, { timeout: 30_000 });
   const restored = await feed(context);
   expect(restored.restore_epoch, "the restore epoch is higher than before").toBeGreaterThan(state.drillEpoch);
   expect(restored.latest_seq, "the feed ends where the backup was taken").toBe(state.drillSeq);

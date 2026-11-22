@@ -38,6 +38,15 @@ export const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 65_536;
 export const UI_PORT = "ferret-ui";
 
+/**
+ * The choices of the setting "Lock after", in seconds: 15 seconds, 30 seconds,
+ * 1 minute, 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 8 hours and
+ * 24 hours. There is no "never". The background keeps the setting and reads
+ * anything else as DEFAULT_LOCK_SECONDS.
+ */
+export const LOCK_CHOICES = Object.freeze([15, 30, 60, 300, 900, 1800, 3600, 14_400, 28_800, 86_400]);
+export const DEFAULT_LOCK_SECONDS = 900;
+
 /** Keys that no schema may carry, except where `SECRET_KEY_EXCEPTIONS` says so. */
 export const FORBIDDEN_KEYS = Object.freeze([
   "password",
@@ -101,6 +110,7 @@ const frameId = integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 const okReply = object({ ok: boolean(), reason }, { optional: ["reason"] });
 // A host name as the extension shows it (the core's `display_host`): the Unicode form, and the A-label next to it.
 const host = string({ min: 1, max: 300 });
+const displayHost = object({ a_label: host, unicode: host });
 const email = string({ min: 1, max: 254 });
 // The item types of the vault, as the core names them.
 const itemType = string({ max: 16, oneOf: ["login", "note", "card", "identity", "other"] });
@@ -116,10 +126,11 @@ const handle = object(
     type: itemType,
     // The item has a web address that "Open the site" can open.
     site: boolean(),
-    // A candidate of a page: the frame it was matched in (the one "Fill" names).
+    // A candidate of a page: the first frame it was matched in, and every frame it may be filled in (the top first).
     frame_id: frameId,
+    frame_ids: array(frameId, { max: 4 }),
   },
-  { optional: ["username", "insecure", "favorite", "type", "site", "frame_id"] },
+  { optional: ["username", "insecure", "favorite", "type", "site", "frame_id", "frame_ids"] },
 );
 const empty = object({});
 
@@ -185,18 +196,30 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
-  // `automatic` (here and in `search`): a read the page made by itself (after the sync changed something), not an action of
-  // the user, so it does not move the auto-lock's deadline. The lock is still checked.
+  // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
+  // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
+  // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`
+  // lists the frames of the same site that some item matches and that are offered nothing until their host
+  // permission is granted. `automatic` (here and in `search`): a read the page made by itself (after the sync changed
+  // something), not an action of the user, so it does not move the auto-lock's deadline. The lock is still checked.
   candidates: {
-    request: object({ tab_id: tabId, frame_id: frameId, automatic: boolean() }, { optional: ["automatic"] }),
+    request: object({ tab_id: tabId, frame_id: frameId, automatic: boolean() }, { optional: ["frame_id", "automatic"] }),
     reply: object(
       {
         handles: array(handle, { max: 100 }),
-        // The page's host as the core shows it (`display_host`), never the page's title.
-        host,
-        host_a_label: host,
+        host: displayHost,
+        insecure: boolean(),
+        grant: array(object({ origin, host: displayHost }), { max: 32 }),
       },
-      { optional: ["host", "host_a_label"] },
+      { optional: ["host"] },
+    ),
+  },
+  // The origin the grant tab was opened for, checked by the core: an `https` origin, its host and the permission.
+  grant_check: {
+    request: object({ origin }),
+    reply: object(
+      { ok: boolean(), reason, origin, host: displayHost, pattern: string({ min: 1, max: 320 }) },
+      { optional: ["reason", "origin", "host", "pattern"] },
     ),
   },
   // A search finds anything in the vault. Its handles are for copying only: "Fill" takes a handle of `candidates`.
@@ -209,8 +232,10 @@ export const UI_TYPES = defineTypes({
     ),
     reply: object({ handles: array(handle, { max: 100 }), total: integer({ min: 0, max: 1_000_000 }) }),
   },
+  // "Fill" with a reference of `candidates`. Without `frame_id` the background fills the first of the reference's frames
+  // that has a sign-in form; with it (the menu's frame) only that frame.
   fill: {
-    request: object({ ref, tab_id: tabId, frame_id: frameId }),
+    request: object({ ref, tab_id: tabId, frame_id: frameId }, { optional: ["frame_id"] }),
     reply: okReply,
   },
   copy: {
@@ -259,11 +284,12 @@ export const UI_TYPES = defineTypes({
   // "Forget this server": `server` is the one the page showed; another stored one is not forgotten.
   forget_server: { request: object({ server: serverUrl }), reply: okReply },
   settings: {
+    // The bounds are those of LOCK_CHOICES; the background accepts only the listed values.
     request: object(
-      { lock_minutes: integer({ min: 1, max: 480 }) },
-      { optional: ["lock_minutes"] },
+      { lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) },
+      { optional: ["lock_seconds"] },
     ),
-    reply: object({ lock_minutes: integer({ min: 1, max: 480 }) }),
+    reply: object({ lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) }),
   },
 });
 

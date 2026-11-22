@@ -1,7 +1,7 @@
 // A master password change. The browser that changes it keeps its session and its open vault; every other browser of the account
 // is signed out at once (it is told over the live stream, and its session no longer works); the new password opens the vault
 // everywhere, on a new browser, after a lock and on the browser that was signed out; the old password opens nothing.
-import { addNeedle, createItem, expect, freshContext, leave, newDevice, noViolations, openList, pace, readStores, remember, requireAccount, rowsNamed, secrets, signInHere, SLOW, synced, test, unlockWith, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, freshContext, leave, lockNow, newDevice, noViolations, openList, pace, readStores, remember, requireAccount, findRows, secrets, signInHere, SLOW, synced, test, unlockWith, vaultUrl } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -65,7 +65,7 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   // ---- Browser A goes on: its session and its open vault are as they were.
   expect((await a.page.request.get(`${vaultUrl}/api/auth/session`)).status(), "the browser that changed the password keeps its session").toBe(200);
   await openList(a.page);
-  await expect(rowsNamed(a.page, name)).toHaveCount(1);
+  await expect((await findRows(a.page, name))).toHaveCount(1);
 
   // ---- Browser B is signed out at once: the live stream says so, and its session is dead.
   await expect(b.page.locator('[data-role="live-status"]')).toHaveAttribute("data-state", "unauthorized", { timeout: 30_000 });
@@ -97,19 +97,19 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
 
   // ---- The new password signs in on a new browser, and the item from before the change is there.
   const fresh = await newDevice(browser);
-  await expect(rowsNamed(fresh.page, name)).toHaveCount(1, { timeout: 60_000 });
+  await expect((await findRows(fresh.page, name))).toHaveCount(1, { timeout: 60_000 });
 
   // ---- It signs in again in the browser that was signed out (it knows the account and keeps the secret key).
   await b.page.goto(`${vaultUrl}/vault/login`);
   await signInHere(b.page);
-  await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: 60_000 });
+  await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: 60_000 });
   // The write that waited in the browser while the session was over goes to the server now: the outbox is empty and the item is there.
   await synced(b.page, 90_000);
-  await expect(rowsNamed(b.page, offline)).toHaveCount(1);
+  await expect((await findRows(b.page, offline))).toHaveCount(1);
   expect((await readStores(b.page)).outbox.count).toBe(0);
 
   // ---- It opens the vault again after a lock; the old one does not.
-  await a.page.locator('[data-role="lock"]').click();
+  await lockNow(a.page);
   await expect(a.page.locator('[data-role="unlock-form"]')).toBeVisible({ timeout: 30_000 });
   await unlockWith(a.page, oldPassword);
   await expect(a.page.locator('[data-role="unlock-error"], [data-role="error"]').first()).toBeVisible({ timeout: SLOW });
@@ -117,7 +117,7 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   await a.page.locator('[data-role="password"]').fill("");
   await unlockWith(a.page, newPassword);
   await expect(a.page.locator('[data-role="list"]')).toBeVisible({ timeout: SLOW });
-  await expect(rowsNamed(a.page, name)).toHaveCount(1);
+  await expect((await findRows(a.page, name))).toHaveCount(1);
 
   for (const device of [a, b, fresh]) await device.context.close();
   leave("m3-20", { done: true });

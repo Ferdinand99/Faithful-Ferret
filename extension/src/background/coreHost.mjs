@@ -16,8 +16,8 @@
 // Boundary: an op gets the raw client. Production ops therefore live in this
 // file or in a background module that only the entry (main.mjs) imports and
 // passes in as `ops`: the session's ops (session.mjs), which hold the account
-// session over the same client, the sync's ops (sync.mjs), and the item ops of
-// the popup (fillFlow.mjs). The only other
+// session over the same client, the sync's ops (sync.mjs), the matching's
+// ops (match.mjs) and the item ops of the popup (fillFlow.mjs). The only other
 // code that passes ops in is the test build's hooks (the test build only),
 // which a release does not contain.
 //
@@ -32,9 +32,9 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
 /**
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
- * `argon2_bench` and `measure_open` are only available in the test build, which
- * passes their implementations in (`ops`); in a release they are refused like any
- * other name.
+ * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe` and `match_bench`
+ * are only available in the test build, which passes their implementations in
+ * (`ops`); in a release they are refused like any other name.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -47,6 +47,14 @@ export const CORE_OPS = Object.freeze([
   "sync_state",
   "sync_retry",
   "forget_server",
+  "page_origin",
+  "same_site",
+  "display_host",
+  "candidates_match",
+  "grant_listed",
+  "frames_probe",
+  "item_probe",
+  "match_bench",
   "fill_offer",
   "fill",
   "fill_report",
@@ -199,6 +207,13 @@ export function createCoreHost({
     return clientPromise;
   };
 
+  /**
+   * The check of the deadline that the lock module gives the host (`setGuard`): true when the vault may not be used
+   * now. Until one is set nothing is due, as in a host that is used without a lock.
+   * @type {() => boolean}
+   */
+  let guard = () => false;
+
   /** @param {LockReason} reason @returns {Promise<void>} */
   async function lock(reason) {
     if (!LOCK_REASONS.includes(reason)) throw new CoreError("bad_reason");
@@ -231,7 +246,11 @@ export function createCoreHost({
    *     moved) every call is refused with `vault_locked` before it reaches the
    *     client, and an answer that arrives after a lock is dropped. Such a client
    *     never starts a new worker after a lock, so nothing it holds can reach a
-   *     vault that was opened later. The sync engine gets one per unlock.
+   *     vault that was opened later. The sync engine gets one per unlock. Before
+   *     every call on the vault worker the deadline is checked (the guard): a
+   *     deadline that has passed locks the host and the call is refused, so a
+   *     call that comes between two messages never uses a vault whose time
+   *     has run out.
    * Without `open` (the account session, whose sign-in and unlock run on the
    * worker before the vault opens) the calls go through while the host is
    * locked; the epoch rules of `call` still decide whether the vault opens.
@@ -255,6 +274,10 @@ export function createCoreHost({
             if (typeof method !== "string" || method === "then") return undefined;
             return async (/** @type {unknown[]} */ ...args) => {
               if (!usable()) throw new CoreError("vault_locked");
+              if (open && worker === "vault" && guard()) {
+                await lock("timeout").catch(() => {});
+                throw new CoreError("vault_locked");
+              }
               const real = await client();
               if (!usable()) throw new CoreError("vault_locked");
               const started = epoch;
@@ -278,6 +301,15 @@ export function createCoreHost({
   }
 
   return {
+    /**
+     * Sets the check of the deadline (see `liveClient`). The lock module gives it; it must answer at once.
+     * @param {() => boolean} check
+     */
+    setGuard(check) {
+      if (typeof check !== "function") throw new CoreError("bad_guard");
+      guard = check;
+    },
+
     /**
      * Runs one operation. Rejects with a `CoreError` (`unknown_core_op`,
      * `vault_locked`) or with the code of the client's error; never with a

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CORE_OPS, createCoreHost } from "../../src/background/coreHost.mjs";
 import { ALARM_NAME, LOCK_AT_KEY, LOCK_EXEMPT, createLock } from "../../src/background/lock.mjs";
-import { createAlarmsAndIdle, createClock, createFakeClient, createSessionStorage } from "./backgroundHelpers.mjs";
+import { createAlarmsAndIdle, createClock, createFakeClient, createFakeTimers, createSessionStorage } from "./backgroundHelpers.mjs";
 
 const MINUTE = 60_000;
 
@@ -24,19 +24,21 @@ const probes = Object.freeze({
 });
 
 /** A lock over the fakes, with the vault unlocked unless `unlocked` is false. */
-async function setup({ unlocked = true, minutes = 15 } = {}) {
+async function setup({ unlocked = true, seconds = 900 } = {}) {
   const clock = createClock();
   const client = createFakeClient({ vault: { ferret_aaguid: () => new Uint8Array(16) } });
   const coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: probes, names: [...CORE_OPS, "unlock_probe"] });
   const storage = createSessionStorage();
   const events = createAlarmsAndIdle();
-  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: storage, now: clock.now, coreHost, minutes });
+  const local = createSessionStorage();
+  const timers = createFakeTimers(clock);
+  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: storage, storageLocal: local, timers, now: clock.now, coreHost, seconds });
   if (unlocked) {
     await coreHost.call("unlock_probe");
     // The deadline was set in the turn the host opened; let the write land.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  return { clock, client, coreHost, storage, events, lock };
+  return { clock, client, coreHost, storage, local, timers, events, lock };
 }
 
 test("lock_at_in_the_past_locks_before_the_call_runs", async () => {
@@ -134,15 +136,22 @@ test("an_alarm_with_no_lock_at_locks", async () => {
   assert.equal(coreHost.state(), "locked");
 });
 
-test("idle_locked_locks", async () => {
+test("idle_locks_when_the_system_has_been_idle_for_the_setting_and_so_does_a_screen_lock", async () => {
   const { client, coreHost, events } = await setup();
-  events.fireIdle("idle");
+  // The browser is asked to report idle after as long as the setting.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(events.idleIntervals, [900]);
   events.fireIdle("active");
-  assert.equal(coreHost.state(), "unlocked", "only the screen lock counts");
-  events.fireIdle("locked");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(coreHost.state(), "unlocked", "active is not a lock");
+  events.fireIdle("idle");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(coreHost.state(), "locked");
   assert.equal(client.locks, 1);
+  const again = await setup();
+  again.events.fireIdle("locked");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(again.coreHost.state(), "locked");
 });
 
 test("touch_moves_lock_at", async () => {
@@ -157,20 +166,6 @@ test("touch_moves_lock_at", async () => {
   // The check after the first deadline passed still lets the call through.
   clock.advance(10 * MINUTE);
   assert.equal(await lock.checkOrLock("candidates"), true);
-});
-
-test("set_minutes_changes_the_next_deadline_and_takes_one_to_480_only", async () => {
-  const { clock, storage, lock } = await setup();
-  lock.setMinutes(1);
-  lock.touch();
-  assert.equal((await deadline(storage)), clock.now() + MINUTE);
-  lock.setMinutes(480);
-  lock.touch();
-  assert.equal((await deadline(storage)), clock.now() + 480 * MINUTE);
-  for (const bad of [0, 481, -1, 1.5, NaN, Infinity, "15", null, undefined]) {
-    assert.throws(() => lock.setMinutes(/** @type {any} */ (bad)), RangeError, String(bad));
-  }
-  assert.throws(() => createLock({ ...{ alarms: createAlarmsAndIdle().alarms, idle: createAlarmsAndIdle().idle, storageSession: createSessionStorage(), now: Date.now, coreHost: createCoreHost() }, minutes: 0 }), RangeError);
 });
 
 test("every_lock_clears_the_deadline_whatever_started_it", async () => {

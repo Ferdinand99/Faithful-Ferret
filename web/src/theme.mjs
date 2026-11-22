@@ -1,9 +1,9 @@
 // The theme: light, dark, or the system's. The choice is the one word
 // "light" or "dark" in localStorage under `ferret-theme` (nothing is stored for
 // "auto"), and it is applied as `data-theme` on <html>. Storage can be blocked,
-// so every access is in a try block. Nothing secret is ever put there.
-// The same key is read by theme-init.mjs before the first paint.
-import { el } from "./dom.mjs";
+// so every access is in a try block. Nothing secret is ever put there: the choice is
+// a per-device preference, not vault data. It is made in the account menu
+// (views/sidebar.mjs); theme-init.mjs reads the same key before the first paint.
 
 export const THEME_KEY = "ferret-theme";
 export const THEMES = Object.freeze(/** @type {const} */ (["auto", "light", "dark"]));
@@ -59,43 +59,24 @@ export function storeTheme(theme, storage = pageStorage()) {
   }
 }
 
-const ICONS = Object.freeze({ auto: "icon-auto", light: "icon-sun", dark: "icon-moon" });
-
 /**
- * The switch: Auto, Light, Dark.
- * @param {{
- *   t: (key: string) => string,
- *   storage?: ThemeStorage | null,
- *   root?: Parameters<typeof applyTheme>[1],
- * }} options
- * @returns {HTMLElement}
+ * The theme choice the account menu offers: Light, Dark or System. It reads the stored word, applies a new choice to the
+ * page at once and stores it (nothing for System). The page's own `data-theme` is the one place the choice shows.
+ * @param {{ storage?: ThemeStorage | null, root?: Parameters<typeof applyTheme>[1] }} [options]
  */
-export function themeControl({ t, storage = pageStorage(), root = globalThis.document?.documentElement }) {
-  let current = readTheme(storage);
-  /** @type {Map<string, HTMLElement>} */
-  const buttons = new Map();
-  /** @param {string} theme */
-  const choose = (theme) => {
-    current = /** @type {"auto" | "light" | "dark"} */ (theme);
-    applyTheme(theme, root);
-    storeTheme(theme, storage);
-    for (const [name, button] of buttons) button.setAttribute("aria-pressed", name === current ? "true" : "false");
+export function createThemeChoice({ storage = pageStorage(), root = globalThis.document?.documentElement } = {}) {
+  return {
+    /** @returns {"auto" | "light" | "dark"} the choice now; read again on every call, so two tabs agree on the last one */
+    current: () => readTheme(storage),
+    /** Applies the stored choice to the page again (another tab changed it). */
+    sync() {
+      applyTheme(readTheme(storage), root);
+    },
+    /** @param {string} theme */
+    set(theme) {
+      if (!THEMES.includes(/** @type {any} */ (theme))) return;
+      applyTheme(theme, root);
+      storeTheme(theme, storage);
+    },
   };
-  for (const theme of THEMES) {
-    const button = el("button", { type: "button", "data-theme-set": theme, "aria-pressed": theme === current ? "true" : "false" },
-      el("span", { class: `icon ${ICONS[theme]}`, "aria-hidden": "true" }), t(`app.theme.${theme}`));
-    button.addEventListener("click", () => choose(theme));
-    buttons.set(theme, button);
-  }
-  return el("div", { class: "segmented", role: "group", "aria-label": t("app.theme.label"), "data-role": "theme" }, ...buttons.values());
-}
-
-/**
- * Fills the footer: the name and the theme switch.
- * @param {HTMLElement} footer
- * @param {{ t: (key: string) => string, storage?: ThemeStorage | null }} options
- */
-export function mountFooter(footer, { t, storage }) {
-  footer.appendChild(el("span", null, t("app.name")));
-  footer.appendChild(themeControl({ t, storage }));
 }

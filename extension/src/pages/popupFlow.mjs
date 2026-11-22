@@ -201,7 +201,8 @@ export const actionErrorKey = (reason) => `popup.error.${typeof reason === "stri
  *   frameId: number | null,
  * }} Row
  * @typedef {{ rows: Row[], total: number }} Section
- * @typedef {{ host: string, rows: Row[] }} PageSection
+ * @typedef {{ origin: string, host: string }} Grant a frame of the page's site that waits for its host permission
+ * @typedef {{ host: string, insecure: boolean, rows: Row[], grant: Grant[] }} PageSection `host` is "" when the tab shows no web page
  */
 
 /**
@@ -259,8 +260,17 @@ export function createListFlow(request) {
     async page(tabId, { automatic = false } = {}) {
       if (tabId === null) return null;
       try {
-        const reply = await request("candidates", { tab_id: tabId, frame_id: 0, ...(automatic ? { automatic: true } : {}) });
-        return { host: shownHost({ host: reply?.host, host_a_label: reply?.host_a_label }), rows: rowsOf(reply).filter((row) => row.frameId !== null) };
+        const reply = await request("candidates", { tab_id: tabId, ...(automatic ? { automatic: true } : {}) });
+        /** @param {any} h */
+        const shown = (h) => (typeof h?.unicode === "string" ? shownHost({ host: h.unicode, host_a_label: h.a_label }) : "");
+        return {
+          host: shown(reply?.host),
+          insecure: reply?.insecure === true,
+          rows: rowsOf(reply).filter((row) => row.frameId !== null),
+          grant: (Array.isArray(reply?.grant) ? reply.grant : [])
+            .filter((/** @type {any} */ g) => typeof g?.origin === "string")
+            .map((/** @type {any} */ g) => ({ origin: g.origin, host: shown(g.host) || g.origin })),
+        };
       } catch {
         return null;
       }
@@ -288,7 +298,8 @@ export function createListFlow(request) {
      */
     fill(row, tabId) {
       if (row.frameId === null) return Promise.resolve({ ok: false, reason: "not_offered" });
-      return request("fill", { ref: row.ref, tab_id: tabId, frame_id: row.frameId });
+      // No frame named: the background fills the first of the item's frames that has a sign-in form.
+      return request("fill", { ref: row.ref, tab_id: tabId });
     },
 
     /** @param {string} ref @param {string} field @returns {Promise<{ ok: boolean, reason?: string }>} */

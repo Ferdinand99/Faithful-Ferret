@@ -313,7 +313,7 @@ test("a_full_session_drops_its_oldest_copy_reference_and_never_a_fill_reference"
   let n = 0;
   const refs = createRefs({ random: (bytes) => bytes.fill((n += 1)), max: 3 });
   const session = "a".repeat(32);
-  const fill = refs.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frameId: 0, origin: LOGIN_ORIGIN });
+  const fill = refs.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frames: [{ frameId: 0, origin: LOGIN_ORIGIN }] });
   const copies = [2, 3].map((i) => refs.issue(session, "copy", { purpose: "copy", itemId: idOf(i) }));
   // A new copy reference: the oldest copy one goes, the fill one stays.
   const fourth = refs.issue(session, "copy", { purpose: "copy", itemId: idOf(4) });
@@ -326,6 +326,111 @@ test("a_full_session_drops_its_oldest_copy_reference_and_never_a_fill_reference"
   assert.notEqual(again, copies[0]);
   // A session full of fill references refuses a new one rather than drop one.
   const full = createRefs({ random: (bytes) => bytes.fill((n += 1)), max: 2 });
-  for (const frameId of [0, 1]) full.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frameId, origin: LOGIN_ORIGIN });
+  for (const frameId of [0, 1]) full.issue(session, "fill", { purpose: "fill", itemId: idOf(1), tabId: TAB, frames: [{ frameId, origin: LOGIN_ORIGIN }] });
   assert.throws(() => full.issue(session, "copy", { purpose: "copy", itemId: idOf(2) }), { code: "busy" });
+});
+
+// ------------------------------------------------------------ frames that tie on an item
+
+const FRAME_URL = "https://login.example.net/frame/login";
+
+/** The top and a frame of the top's origin that both match the login item (they tie). */
+const tied = () => [
+  { frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] },
+  { frameId: 3, documentId: "doc-3", url: FRAME_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] },
+];
+
+test("an_item_that_ties_in_two_frames_is_listed_once_and_fills_the_first_frame_with_a_form", async () => {
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  // The top has no sign-in form, the frame has one.
+  world.page.fields = [];
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  const rows = await suggestions(popup);
+  assert.equal(rows.length, 1, "the item is listed once");
+  assert.equal(rows[0].frameId, 0, "the top first");
+  assert.deepEqual(await popup.list.fill(rows[0], TAB), { ok: true });
+  // The script went into both frames; only the frame with the form got the values.
+  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }, { tabId: TAB, documentIds: ["doc-3"] }]);
+  assert.deepEqual(world.page.filled, {});
+  assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
+  assert.deepEqual(world.pushed.map((p) => p.options), [{ documentId: "doc-3" }, { documentId: "doc-3" }]);
+
+  // When both have a form, the top is filled, and only the top: one fill fills one group.
+  const both = await itemWorld({ frames: tied() });
+  await both.open();
+  const other = both.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const p2 = both.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: true });
+  assert.deepEqual(both.page.filled, { username: "ola@example.net", password: PASSWORD });
+  assert.deepEqual(other.filled, {});
+  // The frame's late report of a request that ended does nothing.
+  assert.deepEqual(both.pushed.map((p) => p.options.documentId), ["doc-1", "doc-1"]);
+});
+
+test("a_frame_whose_report_narrows_to_nothing_is_dropped_and_no_form_gives_no_fields", async () => {
+  // A sandboxed frame of the top's origin (its own origin is opaque) ties with a top that has no form.
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.page.fields = [];
+  const sandbox = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: "null" });
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill((await suggestions(popup))[0], TAB), { ok: false, reason: "no_fields" });
+  assert.deepEqual(world.pushed, [], "nothing went into the sandboxed frame");
+  assert.deepEqual(sandbox.filled, {});
+  assert.deepEqual(reveals(world), []);
+
+  // The sandbox has the form and the top has one too: the sandbox is dropped, the top is filled.
+  const second = await itemWorld({ frames: tied() });
+  await second.open();
+  second.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: "null" });
+  const p2 = second.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: true });
+  assert.deepEqual(second.pushed.map((p) => p.options.documentId), ["doc-1", "doc-1"]);
+});
+
+test("a_fill_that_names_a_frame_fills_only_that_frame", async () => {
+  // The menu's path: the request names the frame that was clicked.
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  const [row] = await suggestions(popup);
+  assert.deepEqual(await popup.request("fill", { ref: row.ref, tab_id: TAB, frame_id: 3 }), { ok: true });
+  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-3"] }]);
+  assert.deepEqual(world.page.filled, {});
+  assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
+  // The frame was checked again on its own.
+  assert.equal(world.matching.askedFrames.at(-1), 3);
+  // A frame that is not one of the reference's is refused.
+  assert.deepEqual(await popup.request("fill", { ref: row.ref, tab_id: TAB, frame_id: 9 }), { ok: false, reason: "not_offered" });
+});
+
+test("a_tied_frame_that_changed_is_left_out_and_the_others_are_still_tried", async () => {
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  const [row] = await suggestions(popup);
+  // The frame got a new document after the list: it is not the frame that was offered.
+  world.matching.frames = [tied()[0], { ...tied()[1], documentId: "doc-7" }];
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: true });
+  assert.deepEqual(world.injections.filter((i) => i.func).map((i) => i.target), [{ tabId: TAB, documentIds: ["doc-1"] }]);
+});
+
+test("the_candidates_reply_carries_the_host_the_insecure_mark_and_the_grant_list", async () => {
+  const world = await itemWorld({ frames: [{ frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, insecure: true, itemIds: [idOf(1)] }] });
+  world.matching.grant = [{ origin: "https://www.example.net", host: { a_label: "www.example.net", unicode: "www.example.net" } }];
+  await world.open();
+  const popup = world.popup();
+  const reply = await popup.request("candidates", { tab_id: TAB });
+  assert.deepEqual(reply.host, { a_label: "login.example.net", unicode: "login.example.net" });
+  assert.equal(reply.insecure, true);
+  assert.deepEqual(reply.grant, world.matching.grant);
+  assert.equal(reply.handles.length, 1);
+  assert.equal(reply.handles[0].insecure, true);
+  // A tab that shows no web page: no host, nothing offered.
+  const none = await popup.request("candidates", { tab_id: TAB + 1 });
+  assert.deepEqual(none, { handles: [], insecure: false, grant: [] });
 });

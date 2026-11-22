@@ -50,9 +50,11 @@ const initialOf = (name) => ([...name.trim()][0] ?? "?").toLocaleUpperCase();
  *   list: ListFlow,
  *   tabId: number | null,
  *   onFilled: () => void,
- * }} options `tabId` is the tab whose page the popup is about (null: none); `onFilled` runs after a fill worked
+ *   onGrant: (origin: string) => void,
+ * }} options `tabId` is the tab whose page the popup is about (null: none); `onFilled` runs after a fill worked;
+ *   `onGrant` opens the tab that asks for a frame's host permission
  */
-export function createVaultList({ texts, list, tabId, onFilled }) {
+export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   const t = texts.t;
   /** The filter by type that is on, or null. @type {string | null} */
   let type = null;
@@ -65,6 +67,8 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
   let toastTimer = null;
   /** The row menu that is open: its button and its close. @type {{ button: HTMLElement, close: () => void } | null} */
   let openMenu = null;
+  /** How many rows each section showed (after "Show more"), so a reload of the popup's own keeps them. @type {Map<string, number>} */
+  const shownOf = new Map();
 
   const count = el("span", { class: "ff-count", "data-role": "item-count" });
   const picker = el(
@@ -271,21 +275,42 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
 
   /**
    * A section of rows, with "Show more" when the vault holds more than one page.
-   * @param {{ role: string, title: string, section: import("./popupFlow.mjs").Section, more?: (offset: number) => Promise<import("./popupFlow.mjs").Section> }} o
+   * @param {{
+   *   role: string,
+   *   title: string,
+   *   section: import("./popupFlow.mjs").Section,
+   *   more?: (offset: number, automatic: boolean) => Promise<import("./popupFlow.mjs").Section>,
+   *   keep?: number,
+   *   automatic?: boolean,
+   * }} o `keep`: the rows to show again (a reload of the popup's own keeps what "Show more" showed)
+   * @returns {Promise<HTMLElement>}
    */
-  function section({ role, title, section: part, more }) {
+  async function section({ role, title, section: part, more, keep = 0, automatic = false }) {
     const rows = el("div", { class: "ff-rows", "data-role": `${role}-rows` }, ...part.rows.map(itemRow));
     const box = el("section", { class: "ff-section", "data-role": role }, heading(title, part.total, role), rows);
     let shown = part.rows.length;
-    if (more && shown < part.total) {
+    let total = part.total;
+    /** @param {boolean} quiet */
+    const next = async (quiet) => {
+      if (!more) return false;
+      const page = await more(shown, quiet);
+      rows.append(...page.rows.map(itemRow));
+      shown += page.rows.length;
+      total = page.total;
+      shownOf.set(role, shown);
+      return page.rows.length > 0;
+    };
+    // The pages the user had opened, read again (a few at most).
+    for (let pages = 0; more && shown < Math.min(keep, total) && pages < 10; pages += 1) {
+      if (!(await next(automatic).catch(() => false))) break;
+    }
+    if (more && shown < total) {
       const button = el("button", { type: "button", class: "ff-more", "data-role": `${role}-more` }, t("popup.list.more"));
       button.addEventListener("click", async () => {
         button.setAttribute("disabled", "");
         try {
-          const next = await more(shown);
-          rows.append(...next.rows.map(itemRow));
-          shown += next.rows.length;
-          if (shown >= next.total || next.rows.length === 0) button.remove();
+          await next(false);
+          if (shown >= total) button.remove();
         } catch {
           say("popup.error.unknown", undefined, true);
         }
@@ -294,6 +319,24 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
       box.append(button);
     }
     return box;
+  }
+
+  /**
+   * The frames of the page's site that wait for their host permission: each opens the tab that asks for it.
+   * @param {import("./popupFlow.mjs").Grant[]} grants
+   */
+  function grantSection(grants) {
+    return el(
+      "section",
+      { class: "ff-section", "data-role": "grant" },
+      el("div", { class: "ff-section-head" }, el("h2", { class: "ff-section-title" }, t("popup.grant.title"))),
+      el("p", { class: "ff-grant-hint" }, t("popup.grant.hint")),
+      ...grants.map((g) => {
+        const open = el("button", { type: "button", class: "ff-fill", "data-role": "grant-open", "data-origin": g.origin }, t("popup.grant.open"));
+        open.addEventListener("click", () => onGrant(g.origin));
+        return el("div", { class: "ff-row", "data-role": "grant-row" }, el("span", { class: "ff-row-text" }, el("span", { class: "ff-row-name ff-host", dir: "ltr" }, g.host)), open);
+      }),
+    );
   }
 
   /**
@@ -312,6 +355,8 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
     ]);
     if (mine !== generation) return;
     count.textContent = t("popup.vault.count", { count: found.count });
+    // A reload by the user (a new search, a filter, back from an item) starts from the first page again.
+    if (!automatic) shownOf.clear();
     /** @type {HTMLElement[]} */
     const parts = [];
     if (page !== null && page.rows.length > 0) {
@@ -325,17 +370,31 @@ export function createVaultList({ texts, list, tabId, onFilled }) {
         ),
       );
     }
+    if (page !== null && page.grant.length > 0) parts.push(grantSection(page.grant));
     if (found.favorites !== null && found.favorites.rows.length > 0) {
-      parts.push(section({ role: "favorites", title: t("popup.section.favorites"), section: found.favorites, more: (offset) => list.search({ favorites: true, type, offset }) }));
+      parts.push(
+        await section({
+          role: "favorites",
+          title: t("popup.section.favorites"),
+          section: found.favorites,
+          more: (offset, quiet) => list.search({ favorites: true, type, offset, automatic: quiet }),
+          keep: shownOf.get("favorites") ?? 0,
+          automatic,
+        }),
+      );
     }
+    const role = searching ? "results" : "all";
     parts.push(
-      section({
-        role: searching ? "results" : "all",
+      await section({
+        role,
         title: t(searching ? "popup.section.results" : "popup.section.all"),
         section: found.all,
-        more: (offset) => list.search({ query, type, offset }),
+        more: (offset, quiet) => list.search({ query, type, offset, automatic: quiet }),
+        keep: shownOf.get(role) ?? 0,
+        automatic,
       }),
     );
+    if (mine !== generation) return;
     if (found.all.rows.length === 0) parts.push(el("p", { class: "ff-empty", "data-role": "empty" }, t(searching || type !== null ? "popup.list.none_found" : "popup.list.empty")));
     mount(body, ...parts);
   }

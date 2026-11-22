@@ -56,7 +56,8 @@ export const REPORT_OP = "fill_report";
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   report?: (args: unknown) => Promise<void>,
  *   touch?: () => void,
- *   setMinutes?: (n: number) => void,
+ *   setSeconds?: (n: number) => Promise<void>,
+ *   getSeconds?: () => Promise<number>,
  * }} HandlerContext
  *   `session` (UI only) names the page's port: it is new for every port, so a
  *   reference the background gave one page is worth nothing on another.
@@ -108,7 +109,7 @@ function indexHandlers(handlers) {
 /**
  * @param {{
  *   runtime: { id?: string, getURL: (path: string) => string },
- *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setMinutes: (n: number) => void },
+ *   lock: { checkOrLock: (type: string) => Promise<boolean>, touch: () => void, setSeconds: (n: number) => Promise<void>, getSeconds: () => Promise<number> },
  *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, lock: (reason: import("./coreHost.mjs").LockReason) => Promise<void>, state: () => "locked" | "unlocked" },
  *   handlers?: readonly Handler[],
  *   onSessionEnd?: (session: string) => void,
@@ -204,7 +205,8 @@ export function createRouter({
       lock: lockHost,
       state,
       touch: () => lock.touch(),
-      setMinutes: (/** @type {number} */ n) => lock.setMinutes(n),
+      setSeconds: (/** @type {number} */ n) => lock.setSeconds(n),
+      getSeconds: () => lock.getSeconds(),
     });
     /** @type {unknown} */
     let result;

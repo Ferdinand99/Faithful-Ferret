@@ -58,5 +58,8 @@
   "popup.error.clipboard": "Ferret fikk ikke skrevet til utklippstavlen.",
   "popup.error.not_found": "Dette elementet finnes ikke lenger i hvelvet.",
   "popup.error.unknown": "Det gikk ikke. Prøv igjen.",
-  "popup.error.sync_not_running": "Synkroniseringen har ikke startet, så elementene i hvelvet er ikke her ennå. Lås og lås opp for å prøve igjen."
+  "popup.error.sync_not_running": "Synkroniseringen har ikke startet, så elementene i hvelvet er ikke her ennå. Lås og lås opp for å prøve igjen.",
+  "popup.grant.title": "Rammer som venter på tillatelsen din",
+  "popup.grant.hint": "En ramme på dette nettstedet har et innloggingsskjema som et av elementene dine passer til. Ferret kan fylle det når du tillater verten.",
+  "popup.grant.open": "Tillat"
 }

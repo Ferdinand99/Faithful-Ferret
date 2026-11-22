@@ -1,6 +1,6 @@
 // An item goes through its whole life in the interface: make, view,
 // change, delete. A deleted item does not come back after a reload.
-import { bodyText, createItem, expect, freshContext, openList, requireAccount, rowsNamed, secrets, signInOn, SLOW, test, unlockWith } from "./support.mjs";
+import { bodyText, createItem, expect, freshContext, openList, requireAccount, findRows, secrets, signInOn, SLOW, test, unlockWith } from "./support.mjs";
 
 test("crud_item_roundtrip_in_the_ui", async ({ browser }) => {
   test.setTimeout(400_000);
@@ -32,10 +32,10 @@ test("crud_item_roundtrip_in_the_ui", async ({ browser }) => {
 
   // The list shows it.
   await openList(page);
-  await expect(rowsNamed(page, secrets.itemTitle)).toHaveCount(1);
+  await expect((await findRows(page, secrets.itemTitle))).toHaveCount(1);
 
   // Change: a new name and a new password; the password field starts empty.
-  await rowsNamed(page, secrets.itemTitle).locator('[data-role="item-link"]').click();
+  await (await findRows(page, secrets.itemTitle)).locator('[data-role="item-link"]').click();
   await page.locator('[data-role="edit"]').click();
   await expect(page.locator('[data-role="edit-form"]')).toBeVisible();
   await expect(page.locator('[data-role="password"]')).toHaveValue("");
@@ -68,19 +68,19 @@ test("crud_item_roundtrip_in_the_ui", async ({ browser }) => {
   await page.locator('[data-role="delete"]').click();
   await page.locator('[data-role="dialog-confirm"]').click();
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: 30_000 });
-  await expect(rowsNamed(page, renamed)).toHaveCount(0);
+  await expect((await findRows(page, renamed))).toHaveCount(0);
   await expect(page.locator('[data-role="sync-status"]')).toHaveAttribute("data-state", "idle", { timeout: 30_000 });
 
   // After a reload and a fresh sign-in on another device it has not come back.
   await page.reload();
   await unlockWith(page, secrets.password);
   await expect(page.locator('[data-role="list"]')).toBeVisible({ timeout: SLOW });
-  await expect(rowsNamed(page, renamed)).toHaveCount(0);
+  await expect((await findRows(page, renamed))).toHaveCount(0);
   const other = await freshContext(browser);
   const second = await other.newPage();
   await signInOn(second);
-  await expect(rowsNamed(second, renamed)).toHaveCount(0);
-  await expect(rowsNamed(second, secrets.itemTitle)).toHaveCount(0);
+  await expect((await findRows(second, renamed))).toHaveCount(0);
+  await expect((await findRows(second, secrets.itemTitle))).toHaveCount(0);
   await other.close();
   await context.close();
 });

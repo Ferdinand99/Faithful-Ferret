@@ -1,7 +1,7 @@
 // Two devices of one account change the same item while one is offline. When it is back, it shows the two versions
 // field by field, and the choice (keep mine, keep the server's) holds on both devices. Nothing is merged, and the version
 // that is not kept is dropped on purpose and for good, not by accident.
-import { createItem, editItem, expect, noViolations, newDevice, openItem, openList, rowsNamed, shot, synced, test, useAccount } from "./support.mjs";
+import { createItem, editItem, expect, noViolations, newDevice, openItem, openList, findRows, shot, synced, test, useAccount } from "./support.mjs";
 
 const SEEN = 15_000;
 
@@ -33,7 +33,7 @@ test.afterAll(async () => {
 async function makeConflict(base) {
   await createItem(a.page, { name: base, username: "base-user", notes: "base-notes" });
   await openList(b.page);
-  await expect(rowsNamed(b.page, base)).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(b.page, base))).toHaveCount(1, { timeout: SEEN });
   await synced(b.page);
 
   await b.context.setOffline(true);
@@ -70,8 +70,8 @@ test("edit_same_item_in_two_browsers_shows_a_field_by_field_conflict_and_keep_mi
   await openList(b.page);
   await expect(b.page.locator('[data-role="conflict-note"]')).toHaveCount(0);
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${base}-B`)).toHaveCount(1, { timeout: SEEN });
-  await expect(rowsNamed(a.page, `${base}-A`)).toHaveCount(0);
+  await expect((await findRows(a.page, `${base}-B`))).toHaveCount(1, { timeout: SEEN });
+  await expect((await findRows(a.page, `${base}-A`))).toHaveCount(0);
   await expect(a.page.locator('[data-role="conflict-note"]')).toHaveCount(0);
   await openItem(a.page, `${base}-B`);
   await expect(a.page.locator('[data-role="item"]')).toContainText("b-user");
@@ -89,13 +89,13 @@ test("keep_theirs_drops_the_local_change_everywhere", async () => {
   // B shows the server's version; B's change is gone, and A is as it was.
   await expect(b.page.locator('[data-role="item"] h1')).toContainText(`${base}-A`, { timeout: 30_000 });
   await openList(b.page);
-  await expect(rowsNamed(b.page, `${base}-A`)).toHaveCount(1);
-  await expect(rowsNamed(b.page, `${base}-B`)).toHaveCount(0);
+  await expect((await findRows(b.page, `${base}-A`))).toHaveCount(1);
+  await expect((await findRows(b.page, `${base}-B`))).toHaveCount(0);
   await expect(b.page.locator('[data-role="conflict-note"]')).toHaveCount(0);
   await synced(b.page);
   await openList(a.page);
-  await expect(rowsNamed(a.page, `${base}-A`)).toHaveCount(1);
-  await expect(rowsNamed(a.page, `${base}-B`)).toHaveCount(0);
+  await expect((await findRows(a.page, `${base}-A`))).toHaveCount(1);
+  await expect((await findRows(a.page, `${base}-B`))).toHaveCount(0);
   await openItem(a.page, `${base}-A`);
   await expect(a.page.locator('[data-role="item"]')).toContainText("base-user");
   await shot(b.page, "10-conflict-keep-theirs");

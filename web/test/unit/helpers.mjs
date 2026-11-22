@@ -30,6 +30,14 @@ export class FakeNode {
     child.parentNode = null;
     return child;
   }
+  insertBefore(child, before) {
+    child.parentNode?.removeChild(child);
+    const at = before === null ? -1 : this.childNodes.indexOf(before);
+    child.parentNode = this;
+    if (at < 0) this.childNodes.push(child);
+    else this.childNodes.splice(at, 0, child);
+    return child;
+  }
 }
 
 export class FakeText extends FakeNode {

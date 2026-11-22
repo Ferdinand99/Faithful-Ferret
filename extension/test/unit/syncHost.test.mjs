@@ -185,6 +185,21 @@ test("engine_starts_on_unlock_and_stops_on_lock", async () => {
   assert.equal(engines.made[1].stopped, true);
 });
 
+test("a_sync_call_after_the_deadline_is_refused_and_locks_the_vault_before_any_timer_runs", async () => {
+  const { world, engines, signIn } = await syncWorld();
+  await signIn();
+  const [engine] = engines.made;
+  assert.deepEqual(await engine.options.client.vault.display_host(SERVER), { unicode: "vault.example.com", a_label: "vault.example.com" });
+  const before = world.client.calls.length;
+  // The machine slept past the deadline: no timer, alarm or message has run, and the engine reconnects and asks the worker.
+  world.clock.jump(8 * 60 * 60 * 1000);
+  assert.equal(world.coreHost.state(), "unlocked");
+  await assert.rejects(engine.options.client.vault.display_host(SERVER), { code: "vault_locked" });
+  assert.equal(world.client.calls.length, before, "the call never reached the worker");
+  assert.equal(world.coreHost.state(), "locked", "the deadline locked it");
+  assert.equal(engine.stopped, true, "and the sync stopped with it");
+});
+
 test("a_worker_that_fails_under_the_engine_locks_the_vault", async () => {
   const client = coreClient({ sync_memory_new: () => Promise.reject(Object.assign(new Error("gone"), { code: "worker_failed" })) });
   const { world, engines, signIn } = await syncWorld({ client });
@@ -545,4 +560,66 @@ test("every_sync_text_is_there_in_both_languages", async () => {
     ];
     for (const key of keys) assert.equal(typeof texts[key], "string", `${lang}: ${key}`);
   }
+});
+
+test("accounts_of_reads_the_account_ids_of_one_server_from_its_own_records", async () => {
+  const { load } = await pkg();
+  const { accountsOf } = await load("background/session.mjs");
+  const A = "a1".repeat(16);
+  const B = "b2".repeat(16);
+  const C = "c3".repeat(16);
+  /** The keys `[server, account]` of each store; other stores and other key shapes are there to be ignored. */
+  const keys = {
+    pinned: [[SERVER, A], [OTHER, C], [SERVER, "not-an-id"], "loose"],
+    sync_state: [[SERVER, B], [SERVER, A]],
+    device_secrets: [[`${SERVER}/`, C], [SERVER, B.toUpperCase()]],
+    settings: [[SERVER, C]],
+  };
+  /** @type {string[][]} */
+  const opened = [];
+  const db = {
+    db: {
+      transaction(/** @type {string[]} */ names, /** @type {string} */ mode) {
+        assert.equal(mode, "readonly", "nothing is written");
+        opened.push([...names]);
+        let pending = 0;
+        let done = false;
+        const tx = {
+          /** @type {null | (() => void)} */ oncomplete: null,
+          /** @type {null | (() => void)} */ onabort: null,
+          error: null,
+          abort() {},
+          objectStore: (/** @type {keyof typeof keys} */ name) => ({
+            getAllKeys() {
+              /** @type {any} */
+              const request = { result: undefined, onsuccess: null, onerror: null };
+              pending += 1;
+              setTimeout(() => {
+                request.result = keys[name];
+                pending -= 1;
+                request.onsuccess?.();
+                // Committed once no request is left (the work asks for the next store in the meantime).
+                setTimeout(() => {
+                  if (pending === 0 && !done) {
+                    done = true;
+                    tx.oncomplete?.();
+                  }
+                }, 0);
+              }, 0);
+              return request;
+            },
+          }),
+        };
+        return tx;
+      },
+    },
+  };
+  // The ids under this server, from its pinned records, sync states and device secrets, sorted, each once. An entry
+  // of another server (also one stored under another spelling), a key that is no account id and the settings store
+  // are not read as accounts. The address asked for is taken as an origin.
+  assert.deepEqual(await accountsOf(db, SERVER), [A, B]);
+  assert.deepEqual(opened, [["pinned", "sync_state", "device_secrets"]]);
+  assert.deepEqual(await accountsOf(db, `${SERVER}/`), [A, B]);
+  assert.deepEqual(await accountsOf(db, OTHER), [C]);
+  assert.deepEqual(await accountsOf(db, "https://none.example.net"), []);
 });

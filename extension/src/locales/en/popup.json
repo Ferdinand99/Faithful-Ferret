@@ -58,5 +58,8 @@
   "popup.error.clipboard": "Ferret could not write to the clipboard.",
   "popup.error.not_found": "This item is not in the vault any more.",
   "popup.error.unknown": "That did not work. Try again.",
-  "popup.error.sync_not_running": "The sync has not started, so the vault's items are not here yet. Lock and unlock to try again."
+  "popup.error.sync_not_running": "The sync has not started, so the vault's items are not here yet. Lock and unlock to try again.",
+  "popup.grant.title": "Frames waiting for your permission",
+  "popup.grant.hint": "A frame of this site has a sign-in form that one of your items matches. Ferret may fill it once you allow its host.",
+  "popup.grant.open": "Allow"
 }

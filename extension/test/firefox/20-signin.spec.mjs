@@ -71,7 +71,7 @@ test("a_web_page_cannot_frame_the_signin_page", async () => {
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
       const control = server.url(server.hosts[0], "/static/login.html");
       await session.navigate(server.url(server.hosts[0], "/static/blank.html"));
-      // A web page frames the sign-in tab and the popup, and one of its own pages as a control.
+      // A web page frames the sign-in tab, the popup and the settings page, and one of its own pages as a control.
       await session.content((/** @type {string[]} */ sources) => {
         for (const [id, src] of sources.map((s, i) => [`f${i}`, s])) {
           const frame = document.createElement("iframe");
@@ -79,12 +79,12 @@ test("a_web_page_cannot_frame_the_signin_page", async () => {
           frame.src = src;
           document.body.append(frame);
         }
-      }, [`${EXTENSION_ORIGIN}/pages/signin.html`, `${EXTENSION_ORIGIN}/pages/popup.html`, control]);
+      }, [`${EXTENSION_ORIGIN}/pages/signin.html`, `${EXTENSION_ORIGIN}/pages/popup.html`, control, `${EXTENSION_ORIGIN}/pages/settings.html`]);
       // The control loads: the check below can see a framed document.
       await session.waitFor(async () => (await frameDocument(session, "#f2")).uri === control, 15_000, "the control frame");
       // Give the extension's frames time to load, if they could.
       await new Promise((resolve) => setTimeout(resolve, 2_000));
-      for (const id of ["#f0", "#f1"]) {
+      for (const id of ["#f0", "#f1", "#f3"]) {
         const held = await frameDocument(session, id);
         assert.equal(held.uri.startsWith("moz-extension:"), false, `${channel}: ${id} holds ${held.uri}`);
         assert.equal(held.ferret, false, `${channel}: ${id} built a page of the extension`);

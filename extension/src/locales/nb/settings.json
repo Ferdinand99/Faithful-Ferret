@@ -1,0 +1,20 @@
+{
+  "settings.error.disconnected": "Bakgrunnen til Ferret stoppet mens den jobbet. Åpne denne siden på nytt.",
+  "settings.error.internal_error": "Innstillingen kunne ikke lagres. Ingenting ble endret.",
+  "settings.error.invalid_input": "Det er ikke et av valgene. Ingenting ble endret.",
+  "settings.error.unknown": "Det gikk ikke. Ingenting ble endret.",
+  "settings.lock.choice.15": "15 sekunder",
+  "settings.lock.choice.30": "30 sekunder",
+  "settings.lock.choice.60": "1 minutt",
+  "settings.lock.choice.300": "5 minutter",
+  "settings.lock.choice.900": "15 minutter",
+  "settings.lock.choice.1800": "30 minutter",
+  "settings.lock.choice.3600": "1 time",
+  "settings.lock.choice.14400": "4 timer",
+  "settings.lock.choice.28800": "8 timer",
+  "settings.lock.choice.86400": "24 timer",
+  "settings.lock.hint": "Hvelvet låses når du ikke har brukt Ferrets egne sider på så lenge. Aktivitet i en nettside teller ikke. Det låses også når nettleseren lukkes.",
+  "settings.lock.label": "Lås etter",
+  "settings.saved": "Lagret.",
+  "settings.title": "Innstillinger"
+}

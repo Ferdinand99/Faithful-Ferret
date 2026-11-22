@@ -11,7 +11,7 @@ const clipped = (page) =>
     const out = [];
     const width = document.documentElement.clientWidth;
     const describe = (node) => `${node.tagName.toLowerCase()}${node.getAttribute("data-role") ? `[${node.getAttribute("data-role")}]` : ""} "${(node.textContent ?? "").trim().slice(0, 40)}"`;
-    for (const node of document.querySelectorAll("#app *, #foot *")) {
+    for (const node of document.querySelectorAll("#app *")) {
       const box = node.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) continue;
       // `overflow-x: clip` on the body hides what sticks out, so the edges are measured here.
@@ -271,7 +271,7 @@ for (const locale of ["en", "nb-NO"]) {
         await page.locator('[data-role="dialog-cancel"]').click();
       });
 
-      test(`the_live_field_keeps_the_bar_and_its_own_width_the_same_in_every_state_at_${width}px`, async ({ page }) => {
+      test(`the_live_field_keeps_the_foot_of_the_menu_and_its_own_width_the_same_in_every_state_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);
         const rows = await page.evaluate(async () => {
@@ -297,8 +297,10 @@ for (const locale of ["en", "nb-NO"]) {
                   scope: common.createWipeScope(), onLocked: () => document.createElement("div"), live,
                 });
                 mount(root, frame);
+                // On a phone the menu is a drawer; its foot is measured open.
+                if (window.innerWidth < 768) frame.querySelector('[data-role="menu-open"]').click();
                 handlers.get("state")?.({ kind: sync });
-                const bar = /** @type {HTMLElement} */ (frame.querySelector(".vault-bar"));
+                const bar = /** @type {HTMLElement} */ (frame.querySelector(".side-foot"));
                 const pill = frame.querySelector('[data-role="live-status"]');
                 out.push({
                   sync, state, withLive,
@@ -316,11 +318,11 @@ for (const locale of ["en", "nb-NO"]) {
           const mine = rows.filter((row) => row.sync === sync);
           const bare = mine.find((row) => !row.withLive);
           const live = mine.filter((row) => row.withLive);
-          // The same bar in every live state, and no taller than the bar was without the field.
+          // The same foot in every live state.
           expect(new Set(live.map((row) => row.bar)).size, `bar height by live state, sync ${sync}, ${width}px: ${JSON.stringify(live.map((r) => [r.state, r.bar]))}`).toBe(1);
-          // A bar that is wrapped already without the field (the Norwegian links and a long sync text on a phone) may grow by the
-          // difference between the stacked pair and one pill, never by a row of its own.
-          expect(live[0].bar, `the field adds no row, sync ${sync}, ${width}px, bare ${bare.bar}: ${bare.parts} | live ${live[0].bar}: ${live[0].parts}`).toBeLessThanOrEqual(bare.bar <= 90 ? bare.bar : bare.bar + 20);
+          // The two pills stand in the foot of the menu: with the field the foot may take one more row than without it
+          // (the sync text and the field do not always fit side by side), never more than that.
+          expect(live[0].bar, `the field adds at most a row, sync ${sync}, ${width}px, bare ${bare.bar}: ${bare.parts} | live ${live[0].bar}: ${live[0].parts}`).toBeLessThanOrEqual(bare.bar + 40);
           // The field has one width in every state.
           expect(new Set(live.map((row) => row.pill)).size, `field width by live state, sync ${sync}, ${width}px: ${JSON.stringify(live.map((r) => [r.state, r.pill]))}`).toBe(1);
           expect(live.some((row) => row.sideways), `no sideways scroll, sync ${sync}, ${width}px`).toBe(false);
@@ -329,7 +331,7 @@ for (const locale of ["en", "nb-NO"]) {
     }
 
     for (const width of [320, 360, 1100]) {
-      test(`the_warning_banners_do_not_change_the_bar_and_nothing_sticks_out_at_${width}px`, async ({ page }) => {
+      test(`the_warning_banners_do_not_change_the_foot_of_the_menu_and_nothing_sticks_out_at_${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await pageIsReady(page, locale);
         const rows = await page.evaluate(async () => {
@@ -357,8 +359,9 @@ for (const locale of ["en", "nb-NO"]) {
                 scope: common.createWipeScope(), onLocked: () => document.createElement("div"),
               });
               mount(root, frame);
+              if (window.innerWidth < 768) frame.querySelector('[data-role="menu-open"]').click();
               handlers.get("state")?.({ kind: sync, code: "server_restored" });
-              const bar = /** @type {HTMLElement} */ (frame.querySelector(".vault-bar"));
+              const bar = /** @type {HTMLElement} */ (frame.querySelector(".side-foot"));
               out.push({
                 sync, withBanners,
                 bar: Math.round(bar.getBoundingClientRect().height * 100) / 100,
@@ -372,7 +375,7 @@ for (const locale of ["en", "nb-NO"]) {
         for (const sync of ["idle", "syncing", "halted"]) {
           const [bare, banners] = rows.filter((row) => row.sync === sync);
           expect(banners.banners, "every warning of the table has a banner").toBeGreaterThan(5);
-          expect(banners.bar, `the bar is as high with the banners as without, ${sync}, ${width}px`).toBe(bare.bar);
+          expect(banners.bar, `the foot is as high with the banners as without, ${sync}, ${width}px`).toBe(bare.bar);
           expect(banners.sideways || bare.sideways, `no sideways scroll, ${sync}, ${width}px`).toBe(false);
         }
         // The stopped text takes no more room than the longest text sync has already (the bar differs between idle and syncing
@@ -412,7 +415,7 @@ test("the_sheet_prints_dark_on_white_in_any_theme_with_the_recovery_key_on_a_pag
   await page.goto("/");
   await expect(page.locator("#app h1")).toBeVisible();
   // A chosen dark theme must not reach the paper.
-  await page.locator('[data-theme-set="dark"]').click();
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await setupSheet(page);
   const onScreen = await page.evaluate(() => getComputedStyle(document.querySelector('[data-role="sheet-secret-key"]')).color);
   await page.emulateMedia({ media: "print" });
@@ -431,14 +434,14 @@ test("the_sheet_prints_dark_on_white_in_any_theme_with_the_recovery_key_on_a_pag
       buttons: [...document.querySelectorAll("#app .btn")].filter((b) => getComputedStyle(b).display !== "none").length,
       forms: shown("form"),
       typeBack: [...document.querySelectorAll(".no-print")].filter((n) => getComputedStyle(n).display !== "none").length,
-      footer: shown("#foot"),
+      footer: document.getElementById("foot") !== null && shown("#foot"),
       marks: [...document.querySelectorAll("#app .auth-card")].filter((c) => getComputedStyle(c, "::before").display !== "none").length,
     };
   });
   expect(onScreen).not.toBe("rgb(29, 29, 31)"); // dark on screen: light text
   expect(paper.scheme).toBe("light");
   for (const color of [paper.key, paper.recovery, paper.heading]) expect(color).toBe("rgb(29, 29, 31)");
-  expect(paper.label).toBe("rgb(110, 110, 115)");
+  expect(paper.label).toBe("rgb(102, 102, 107)");
   expect(paper.page).toBe("page");
   expect(paper.app).toBe("block");
   expect(paper).toMatchObject({ buttons: 0, forms: false, typeBack: 0, footer: false, marks: 0 });
