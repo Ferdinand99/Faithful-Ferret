@@ -191,7 +191,7 @@ test("the_list_shows_the_core_host_flags_http_and_asks_for_a_frame_permission_in
       assert.match(await session.content(() => document.title), /Faithful Ferret/);
       let list = await ui("candidates", { tab_id: tabId });
       assert.deepEqual(list.host, { a_label: "evil.test", unicode: "evil.test" }, channel);
-      assert.deepEqual(list.items, []);
+      assert.deepEqual(list.handles, []);
       tabId = await visit(server.siteUrl("lookalike-homograph"));
       list = await ui("candidates", { tab_id: tabId });
       assert.deepEqual(list.host, { a_label: HOMOGRAPH_A_LABEL_HOST, unicode: HOMOGRAPH_A_LABEL_HOST }, `${channel}: a label that mixes scripts keeps its A-label`);

@@ -7,7 +7,12 @@
 //   domain entry on a private suffix) are made with the sync engine. Every row of
 //   the test sites that expects no offer gets no item for that entry (in the
 //   frame, for a row about a frame), and a row where no entry is offered gets an
-//   empty list. The rows that expect an offer are the control.
+//   empty list. The rows that expect an offer are the control. An item is
+//   listed once, with every frame that ties on its closest match.
+// - "Fill" on two rows a list cannot decide: loopback-framed (the top and its
+//   frame tie; the form is in the frame, and the value lands there) and
+//   frames-opaque (the sandboxed https frame ties with a top that has no form;
+//   its own origin is opaque, so nothing is filled: `no_fields`).
 // - 1000 items are matched within 300 ms in Firefox, and every handle is closed.
 //
 // The account is the one the sign-in specs made (or this spec makes it).
@@ -107,13 +112,44 @@ async function signedIn(channel) {
     const command = await session.waitFor(async () => (await fromBridge(() => bridge.events())).find((e) => e.kind === "command"), 15_000, "the command event");
     return /** @type {number} */ (command.tabId);
   };
-  return { session, core, ui, visit, pageTab };
+  /**
+   * The list of a tab and "Fill" on one of its rows, on one UI port (one popup session: a reference is good only on
+   * the port that got it).
+   * @param {number} tabId @param {string} name the row's name
+   */
+  const fillRow = (tabId, name) =>
+    fromBridge(async () => JSON.parse(await session.content((/** @type {number} */ tab, /** @type {string} */ wanted) => new Promise((resolve, reject) => {
+      const port = browser.runtime.connect({ name: "ferret-ui" });
+      const timer = setTimeout(() => reject(new Error("the UI port did not answer")), 120_000);
+      /** @type {Record<string, (body: any) => void>} */
+      const waiting = {};
+      port.onMessage.addListener((raw) => {
+        const reply = JSON.parse(raw);
+        waiting[reply.id]?.(reply);
+      });
+      const ask = (/** @type {string} */ id, /** @type {string} */ type, /** @type {any} */ body) => new Promise((done) => {
+        waiting[id] = done;
+        port.postMessage(JSON.stringify({ v: 1, id, type, body }));
+      });
+      (async () => {
+        const list = /** @type {any} */ (await ask("l1", "candidates", { tab_id: tab }));
+        const row = list.body.handles?.find((/** @type {any} */ h) => h.name === wanted);
+        if (!row) return { list: list.body, fill: null };
+        const fill = /** @type {any} */ (await ask("f1", "fill", { ref: row.ref, tab_id: tab }));
+        return { list: list.body, fill: fill.body };
+      })().then((result) => {
+        clearTimeout(timer);
+        port.disconnect();
+        resolve(JSON.stringify(result));
+      }, reject);
+    }), tabId, name)));
+  return { session, core, ui, visit, pageTab, fillRow };
 }
 
 test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
   const server = await fixtures();
   for (const channel of channels()) {
-    const { session, core, ui, visit, pageTab } = await signedIn(channel);
+    const { session, core, ui, visit, pageTab, fillRow } = await signedIn(channel);
     try {
       // The entries (the extension writes no items in this release; the test build's probe uses the sync engine).
       const tag = `${channel}-${Date.now().toString(36)}`;
@@ -127,7 +163,7 @@ test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
       const keyOf = (/** @type {string} */ name) => Object.keys(named).find((k) => named[k] === name);
       // The engine has them once the login page is offered the host and the domain entry.
       let tabId = await visit(server.siteUrl("login"));
-      await session.waitFor(async () => ours((await ui("candidates", { tab_id: tabId })).items).length === 2, 30_000, "the new entries");
+      await session.waitFor(async () => ours((await ui("candidates", { tab_id: tabId })).handles).length === 2, 30_000, "the new entries");
 
       // The same-site frame of another origin: the host entry matches it, so the list names it for the grant (and
       // offers nothing in it yet). It is granted once in the grant tab, as a person does, so the rows that fill in
@@ -135,7 +171,7 @@ test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
       tabId = await visit(server.siteUrl("framed-same-site"));
       const waiting = await ui("candidates", { tab_id: tabId });
       assert.deepEqual(waiting.grant.map((/** @type {any} */ g) => g.origin), [server.origin("login")], `${channel}: the frame waits for its permission`);
-      assert.deepEqual(ours(waiting.items).filter((i) => i.frame_id !== 0), [], `${channel}: nothing in the frame before the grant`);
+      assert.deepEqual(ours(waiting.handles).filter((i) => i.frame_ids.some((/** @type {number} */ id) => id !== 0)), [], `${channel}: nothing in the frame before the grant`);
       const grantTab = await session.newTab();
       await session.switchTo(grantTab);
       await session.navigate(`${EXTENSION_ORIGIN}/pages/grant.html?${new URLSearchParams({ origin: server.origin("login") })}`);
@@ -153,19 +189,24 @@ test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
         if (rows.length === 0) continue;
         tabId = await visit(server.siteUrl(site.id));
         const list = await ui("candidates", { tab_id: tabId });
-        const items = ours(list.items);
+        const items = ours(list.handles);
         const where = `${channel} ${site.id}`;
         for (const [outcome, key] of rows) {
           const found = items.filter((i) => keyOf(i.name) === key);
+          assert.ok(found.length <= 1, `${where}: the ${key} entry is listed once (${JSON.stringify(list)})`);
+          /** @param {any} i */
+          const inFrame = (i) => i.frame_ids.some((/** @type {number} */ id) => id !== 0);
           if (outcome === "no_offer") assert.deepEqual(found, [], `${where}: the ${key} entry is not offered`);
-          if (outcome === "no_offer_in_frame") assert.deepEqual(found.filter((i) => i.frame_id !== 0), [], `${where}: the ${key} entry is not offered in a frame`);
-          if (outcome === "fill") assert.ok(found.some((i) => i.frame_id === 0), `${where}: the ${key} entry is offered (${JSON.stringify(list)})`);
-          if (outcome === "fill_in_frame") {
-            // A frame of the top's own origin matches exactly as the top does; on such a tie the list names the top
-            // (the list cannot see which of the two holds the form).
-            const sameOrigin = site.expect.frameOrigin === site.origin;
-            assert.ok(found.some((i) => i.frame_id !== 0 || sameOrigin), `${where}: the ${key} entry is offered for the frame (${JSON.stringify(list)})`);
+          if (outcome === "no_offer_in_frame") {
+            // A frame whose origin is not the top's is never named. A frame of the top's origin that the browser's facts
+            // cannot refuse (the sandboxed https frame of frames-opaque) may tie with the top: it is named only beside
+            // the top, and the fill below proves that nothing goes into it.
+            const sameOrigin = site.expect.frameOrigin === undefined || site.expect.frameOrigin === site.origin;
+            if (sameOrigin) assert.ok(found.every((i) => i.frame_ids[0] === 0), `${where}: the ${key} entry is named for the top first`);
+            else assert.deepEqual(found.filter(inFrame), [], `${where}: the ${key} entry is not offered in a frame`);
           }
+          if (outcome === "fill") assert.ok(found.some((i) => i.frame_id === 0), `${where}: the ${key} entry is offered (${JSON.stringify(list)})`);
+          if (outcome === "fill_in_frame") assert.ok(found.length === 1 && inFrame(found[0]), `${where}: the ${key} entry is offered for the frame (${JSON.stringify(list)})`);
           if (outcome === "offer_with_warning") {
             assert.ok(found.some((i) => i.frame_id === 0), `${where}: the ${key} entry is offered`);
             assert.equal(list.insecure, true, `${where}: with the warning`);
@@ -179,6 +220,24 @@ test("every_no_offer_row_of_the_fixtures_gives_an_empty_list", async () => {
         }
       }
       assert.ok(checked >= 40 && empty >= 8, `${channel}: ${checked} expectations, ${empty} empty lists`);
+
+      // loopback-framed: the top and the frame tie on the loopback entry; the form is in the frame, and it is filled.
+      tabId = await visit(server.siteUrl("loopback-framed"));
+      const looped = await fillRow(tabId, named.loopback);
+      assert.deepEqual(looped.fill, { ok: true }, `${channel} loopback-framed: ${JSON.stringify(looped)}`);
+      const [frame] = await session.findAll("#login-frame");
+      await session.switchToFrame(frame);
+      try {
+        assert.equal(await session.content(() => /** @type {HTMLInputElement} */ (document.getElementById("login-user")).value), "ola", `${channel}: the value is in the frame`);
+      } finally {
+        await session.switchToTopFrame();
+      }
+
+      // frames-opaque: the sandboxed https frame ties with the top (same address origin), but its own origin is
+      // opaque, so its report narrows to nothing and it is dropped; the top has no form: nothing is filled.
+      tabId = await visit(server.siteUrl("frames-opaque"));
+      const opaque = await fillRow(tabId, named.host);
+      assert.deepEqual(opaque.fill, { ok: false, reason: "no_fields" }, `${channel} frames-opaque: ${JSON.stringify(opaque)}`);
     } finally {
       await session.quit();
     }

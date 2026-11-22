@@ -1,14 +1,17 @@
 // Which frames of a tab are offered items, and the list a page is offered
 // (design document, sections 10.4 and 10.5): the frame rules over the browser's
-// frames, every site rule from the core, the core host's match with references
-// per popup session, and the grant tab for a same-site frame of another origin.
+// frames, every site rule from the core, the core host's match (no handle and no
+// reference leaves it), the fill flow's references per popup session on top of
+// it, and the grant tab for a same-site frame of another origin.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CORE_OPS, createCoreHost } from "../../src/background/coreHost.mjs";
 import candidatesHandler from "../../src/background/handlers/candidates.handler.mjs";
-import { candidates, confirmFrame, fillableFrames, grantUrl, isSecureOrigin, MAX_FRAMES, permissionPattern } from "../../src/background/frames.mjs";
+import grantHandler from "../../src/background/handlers/grant.handler.mjs";
+import { createFillHost } from "../../src/background/fillFlow.mjs";
+import { candidates, confirmFrame, createCandidateSource, fillableFrames, grantUrl, isSecureOrigin, MAX_FRAMES, permissionPattern } from "../../src/background/frames.mjs";
 import { createLock } from "../../src/background/lock.mjs";
 import { createGrantList, createMatchHost } from "../../src/background/match.mjs";
 import { createRouter } from "../../src/background/router.mjs";
@@ -159,9 +162,6 @@ async function world({ items = [], rule = (page, saved) => (new URL(page).origin
       },
     },
   };
-  const coreHost = createCoreHost({ createClient: () => client, ops: { ...matchHost.ops, ...opener }, names: [...CORE_OPS, "unlock_probe"] });
-  matchHost.attach(coreHost);
-  await coreHost.call("unlock_probe");
   const webNavigation = navigation(frames);
   const permissions = {
     asked: /** @type {string[][]} */ ([]),
@@ -170,14 +170,30 @@ async function world({ items = [], rule = (page, saved) => (new URL(page).origin
       return origins.every((o) => granted.includes(o));
     },
   };
+  /** @type {any} */
+  let coreHost = null;
   const call = (/** @type {string} */ op, /** @type {unknown} */ args) => coreHost.call(op, args);
+  // The fill flow over the real page matching: it makes the popup's references from the matching's answer.
+  const fillHost = createFillHost({
+    syncHost: { engine: () => /** @type {any} */ (source) },
+    clipboard: { copy: async () => {} },
+    scripting: { executeScript: async () => [] },
+    tabs: { sendMessage: async () => undefined, create: async () => undefined },
+    source: createCandidateSource({ webNavigation, permissions, call }),
+  });
+  coreHost = createCoreHost({ createClient: () => client, ops: { ...matchHost.ops, ...fillHost.ops, ...opener }, names: [...CORE_OPS, "unlock_probe"] });
+  matchHost.attach(coreHost);
+  fillHost.attach(coreHost);
+  await coreHost.call("unlock_probe");
   const frameCore = {
     page_origin: async (/** @type {string} */ url) => /** @type {any} */ (await call("page_origin", { url })).origin,
     same_site: async (/** @type {string} */ a, /** @type {string} */ b) => /** @type {any} */ (await call("same_site", { a, b })).same,
   };
   /** @param {{ session?: string, frameId?: number }} [o] */
   const list = (o = {}) => candidates(TAB, { coreHost: { call }, frames: (tabId) => fillableFrames(tabId, { webNavigation, core: frameCore }), permissions, ...o });
-  return { client, coreHost, matchHost, source, matches, webNavigation, permissions, call, list, core };
+  /** The popup's list over the candidates handler, in one popup session. @param {string} session @param {Record<string, unknown>} [body] */
+  const offer = (session, body = {}) => candidatesHandler.handle({ tab_id: TAB, ...body }, /** @type {any} */ ({ type: "candidates", call, state: () => "unlocked", channel: "ui", sender: {}, session }));
+  return { client, coreHost, matchHost, fillHost, source, matches, webNavigation, permissions, call, list, offer, core };
 }
 
 // ------------------------------------------------------------ the tests
@@ -193,7 +209,11 @@ test("top_frame_candidates_use_the_core_match", async () => {
   ];
   const w = await world({ items, rule });
   const list = await w.list({ session: "s1" });
-  assert.deepEqual(list.items.map((i) => [i.name, i.username, i.how, i.frameId]), [["The core matched it", "kari", "domain", 0]]);
+  assert.deepEqual(list.items.map((i) => [i.name, i.username, i.how, i.frames.map((f) => f.frameId)]), [["The core matched it", "kari", "domain", [0]]]);
+  // The list names the item by its id and the frame by the browser's facts: no handle and no reference.
+  assert.deepEqual(list.items[0].frames, [{ frameId: 0, documentId: "doc-0", url: `${LOGIN}/`, origin: LOGIN }]);
+  assert.equal(list.items[0].itemId, itemId(2));
+  assert.equal("ref" in list.items[0], false);
   assert.equal(list.insecure, false);
   assert.deepEqual(list.grant, []);
   // The core was asked with the top's own address, once per batch, about the items that have an address.
@@ -269,7 +289,10 @@ test("a_same_site_frame_with_another_origin_asks_for_its_host_permission_in_the_
   assert.deepEqual(before.grant, [{ origin: LOGIN, host: { a_label: "login.example.net", unicode: "login.example.net" } }]);
   assert.deepEqual(w.permissions.asked, [["https://login.example.net/*"]]);
   assert.deepEqual(w.matches.map((m) => m.url), [`${WWW}/`, `${LOGIN}/`], "the frame's own address is matched");
-  assert.equal(w.matchHost.refs.size(), 0, "no reference is made for a frame that waits for its permission");
+  // The popup's list gets no reference for a frame that waits for its permission.
+  const popupBefore = await w.offer("a".repeat(32));
+  assert.deepEqual(popupBefore.handles, []);
+  assert.equal(w.fillHost.refs.size(), 0);
 
   // A same-site frame of another origin that no item matches asks for nothing (no permission without a use).
   const idle = await world({ items: [{ id: itemId(5), name: "Shop", urls: ["https://shop.example.net/"] }], frames });
@@ -277,7 +300,7 @@ test("a_same_site_frame_with_another_origin_asks_for_its_host_permission_in_the_
   assert.deepEqual(quiet.grant, []);
   assert.deepEqual(quiet.items, []);
   // ... and the grant tab refuses that origin: no list named it.
-  const idleCheck = await candidatesHandler.handle({ origin: LOGIN }, /** @type {any} */ ({ type: "grant_check", call: idle.call, state: () => "unlocked", channel: "ui", sender: {} }));
+  const idleCheck = await grantHandler.handle({ origin: LOGIN }, /** @type {any} */ ({ type: "grant_check", call: idle.call, state: () => "unlocked", channel: "ui", sender: {} }));
   assert.deepEqual(idleCheck, { ok: false, reason: "origin_invalid" });
 
   // The grant tab is opened for the origin, checks it with the core and asks for the host's pattern on a click.
@@ -292,7 +315,7 @@ test("a_same_site_frame_with_another_origin_asks_for_its_host_permission_in_the_
   const flow = createGrantFlow({
     request: async (type, body) => {
       encode(type, body);
-      const reply = await candidatesHandler.handle(body, /** @type {any} */ ({ ...handlerCtx, type }));
+      const reply = await grantHandler.handle(body, /** @type {any} */ ({ ...handlerCtx, type }));
       encode(type, reply, { reply: true, id: "x1" });
       return reply;
     },
@@ -322,19 +345,24 @@ test("a_same_site_frame_with_another_origin_asks_for_its_host_permission_in_the_
   const w2 = await world({ items, frames, granted: ["https://login.example.net/*"] });
   const after = await w2.list();
   assert.deepEqual(after.grant, []);
-  assert.deepEqual(after.items.map((i) => [i.name, i.frameId]), [["Login", 41]]);
+  assert.deepEqual(after.items.map((i) => [i.name, i.frames.map((f) => f.frameId)]), [["Login", [41]]]);
   // An item that matches the top by its registrable domain and the frame by its host is offered for the frame,
-  // where its form is: the closest answer of the core wins, the top first on a tie.
+  // where its form is: the closest answer of the core wins. On a tie every frame that ties is named, the top first.
   const rule = (/** @type {string} */ page, /** @type {string} */ saved) => (new URL(page).host === new URL(saved).host ? "host" : siteOf(page) === siteOf(saved) ? "domain" : null);
   const both = await (await world({ items, frames, granted: ["https://login.example.net/*"], rule })).list();
-  assert.deepEqual(both.items.map((i) => [i.name, i.how, i.frameId]), [["Login", "host", 41]]);
+  assert.deepEqual(both.items.map((i) => [i.name, i.how, i.frames.map((f) => f.frameId)]), [["Login", "host", [41]]]);
   const tie = await (await world({ items: [{ id: itemId(9), name: "Site", urls: ["https://shop.example.net/"] }], frames, granted: ["https://login.example.net/*"], rule })).list();
-  assert.deepEqual(tie.items.map((i) => [i.how, i.frameId]), [["domain", 0]]);
+  assert.deepEqual(tie.items.map((i) => [i.how, i.frames.map((f) => f.frameId)]), [["domain", [0, 41]]]);
   // A frame of the top's own origin needs no grant (activeTab covers it), and nothing is asked.
   const w3 = await world({ items, frames: [[0, -1, `${LOGIN}/`], [42, 0, `${LOGIN}/inner`]] });
   const own = await w3.list();
   assert.deepEqual(w3.permissions.asked, []);
-  assert.deepEqual(own.items.map((i) => i.frameId), [0]);
+  assert.deepEqual(own.items.map((i) => i.frames.map((f) => f.frameId)), [[0, 42]], "a frame of the top's origin ties with the top");
+  // Each item once, with at most 4 frames, the top first.
+  const many = await world({ items, frames: [[0, -1, `${LOGIN}/`], ...[51, 52, 53, 54, 55].map((id) => /** @type {[number, number, string]} */ ([id, 0, `${LOGIN}/f${id}`]))] });
+  const listed = await many.list();
+  assert.equal(listed.items.length, 1);
+  assert.deepEqual(listed.items[0].frames.map((f) => f.frameId), [0, 51, 52, 53]);
 });
 
 test("opaque_frames_and_frames_with_an_http_ancestor_are_skipped", async () => {
@@ -420,20 +448,11 @@ test("http_page_gets_only_http_entries_and_the_insecure_flag", async () => {
   const loop = await (await world({ items: [{ id: itemId(3), name: "Local", urls: ["http://127.0.0.1/"] }], frames: [[0, -1, "http://127.0.0.1/"]] })).list();
   assert.equal(loop.insecure, false);
   assert.deepEqual(loop.items.map((i) => i.name), ["Local"]);
-  // The flag reaches the popup on the wire.
-  const reply = encode("candidates", wireOf(list), { reply: true, id: "r1" });
-  assert.equal(decode(reply, UI_TYPES, { reply: true }).body.insecure, true);
+  // The flag reaches the popup on the wire, on the list and on each row.
+  const reply = decode(encode("candidates", await w.offer("b".repeat(32)), { reply: true, id: "r1" }), UI_TYPES, { reply: true }).body;
+  assert.equal(reply.insecure, true);
+  assert.deepEqual(reply.handles.map((/** @type {any} */ h) => [h.name, h.insecure]), [["Http entry", true]]);
 });
-
-/** What the handler sends for a list. @param {any} list */
-function wireOf(list) {
-  return {
-    ...(list.host ? { host: list.host } : {}),
-    insecure: list.insecure,
-    items: list.items.map((/** @type {any} */ i) => ({ ref: i.ref, name: i.name, ...(i.username !== null ? { username: i.username } : {}), how: i.how, frame_id: i.frameId })),
-    grant: list.grant,
-  };
-}
 
 test("refs_are_random_per_popup_session_and_handles_never_leave_the_core_host", async () => {
   const items = [
@@ -441,44 +460,40 @@ test("refs_are_random_per_popup_session_and_handles_never_leave_the_core_host", 
     { id: itemId(2), name: "Kari", urls: [`${LOGIN}/`] },
   ];
   const w = await world({ items });
-  const a = await w.list({ session: "popup-a" });
-  const b = await w.list({ session: "popup-b" });
-  assert.equal(a.items.length, 2);
-  for (const item of [...a.items, ...b.items]) {
+  const sa = "a".repeat(32);
+  const sb = "b".repeat(32);
+  const a = await w.offer(sa);
+  const b = await w.offer(sb);
+  assert.equal(a.handles.length, 2);
+  for (const item of [...a.handles, ...b.handles]) {
     assert.match(item.ref, /^[0-9a-f]{32}$/);
     assert.equal(items.some((i) => i.id === item.ref), false, "a reference is not the item id");
   }
-  assert.deepEqual(new Set([...a.items, ...b.items].map((i) => i.ref)).size, 4, "every list gets new references");
-  assert.equal(a.items.find((i) => i.name === "Kari")?.username, null, "no user name is null, not an empty text");
+  assert.deepEqual(new Set([...a.handles, ...b.handles].map((i) => i.ref)).size, 4, "each session gets references of its own");
+  assert.equal(a.handles.find((/** @type {any} */ i) => i.name === "Kari")?.username, undefined, "no user name is left out");
 
-  // A reference answers only for its session, kind, tab and frame.
-  const ref = a.items[0].ref;
-  const want = { kind: "fill", tabId: TAB, frameId: 0 };
-  assert.deepEqual(w.matchHost.refs.lookup("popup-a", ref, want), { kind: "fill", itemId: itemId(2), tabId: TAB, frameId: 0, documentId: "doc-0", url: `${LOGIN}/`, origin: LOGIN });
-  assert.equal(w.matchHost.refs.lookup("popup-b", ref, want), null);
-  assert.equal(w.matchHost.refs.lookup("popup-a", ref, { ...want, kind: "copy" }), null);
-  assert.equal(w.matchHost.refs.lookup("popup-a", ref, { ...want, frameId: 5 }), null);
-  assert.equal(w.matchHost.refs.lookup("popup-a", ref, { ...want, tabId: 8 }), null);
-  assert.equal(w.matchHost.refs.lookup("popup-a", ref.toUpperCase(), want), null);
-  // A new list in the same session replaces its references; the other session keeps its own.
-  const a2 = await w.list({ session: "popup-a" });
-  assert.equal(w.matchHost.refs.lookup("popup-a", ref, want), null);
-  assert.ok(w.matchHost.refs.lookup("popup-a", a2.items[0].ref, want));
-  assert.ok(w.matchHost.refs.lookup("popup-b", b.items[0].ref, want));
+  // A reference names its item, its tab and its frames, in its own session only.
+  const ref = a.handles[0].ref;
+  assert.deepEqual(w.fillHost.refs.get(sa, ref), { purpose: "fill", itemId: itemId(2), tabId: TAB, frames: [{ frameId: 0, documentId: "doc-0", origin: LOGIN }] });
+  assert.equal(w.fillHost.refs.get(sb, ref), null);
+  assert.equal(w.fillHost.refs.get(sa, ref.toUpperCase()), null);
+  // A new list in the same session keeps the same reference for the same item and frames.
+  const a2 = await w.offer(sa);
+  assert.equal(a2.handles[0].ref, ref);
   // A lock forgets every reference.
   await w.coreHost.lock("manual");
-  assert.equal(w.matchHost.refs.size(), 0);
-  assert.equal(w.matchHost.refs.lookup("popup-b", b.items[0].ref, want), null);
+  assert.equal(w.fillHost.refs.size(), 0);
+  assert.equal(w.fillHost.refs.get(sb, b.handles[0].ref), null);
 
   // Nothing of a handle leaves the core host: the op's answer has no handle, and every handle is closed.
   assert.equal(w.source.opened, 6);
   assert.equal(w.source.closed, 6);
   const handles = w.matches.flatMap((m) => m.handles);
-  const text = JSON.stringify([a, b, a2]);
-  assert.doesNotMatch(text, /handle/);
+  const text = JSON.stringify([a, b, a2]).replace(/"ref":"[0-9a-f]{32}"/g, "");
+  assert.doesNotMatch(text, /"handle"/);
   for (const h of handles) assert.equal(new RegExp(`\\b${h}\\b`).test(text), false, `handle ${h} in the answer`);
   // A locked vault refuses the match without opening anything.
-  await assert.rejects(w.list({ session: "popup-c" }), (/** @type {any} */ e) => e.code === "vault_locked");
+  await assert.rejects(w.list(), (/** @type {any} */ e) => e.code === "vault_locked");
   assert.equal(w.source.opened, 6);
   // An item that cannot be opened is left out, and the rest is still closed.
   const w3 = await world({ items });
@@ -500,7 +515,7 @@ test("refs_are_random_per_popup_session_and_handles_never_leave_the_core_host", 
     runtime: fake.runtime,
     lock,
     coreHost: w.coreHost,
-    handlers: [{ types: ["candidates"], channel: "ui", handle: async (/** @type {any} */ _b, /** @type {any} */ ctx) => { sessions.push(ctx.session); return { insecure: false, items: [], grant: [] }; } }],
+    handlers: [{ types: ["candidates"], channel: "ui", handle: async (/** @type {any} */ _b, /** @type {any} */ ctx) => { sessions.push(ctx.session); return { handles: [], insecure: false, grant: [] }; } }],
   });
   // The router checks the lock before a message that needs the vault: open it again (with a deadline).
   await w.coreHost.call("unlock_probe");
@@ -531,7 +546,7 @@ test("the_host_shown_comes_from_display_host_not_from_the_tab_title", async () =
   // The handler's reply carries the core's host and nothing of a tab: frames.mjs never asks for one.
   const code = readFileSync(join(extensionRoot, "src/background/frames.mjs"), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(code, /\btitle\b|tabs\.|getTab|\.favIconUrl/);
-  const handlerCode = readFileSync(join(extensionRoot, "src/background/handlers/candidates.handler.mjs"), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  const handlerCode = readFileSync(join(extensionRoot, "src/background/fillFlow.mjs"), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(handlerCode, /\btitle\b|\.tabs\b/);
 });
 
@@ -541,26 +556,24 @@ test("the_candidates_handler_answers_on_the_wire_and_its_reply_fits_the_protocol
     { id: itemId(2), name: "N".repeat(300), urls: [`${LOGIN}/`] },
   ];
   const w = await world({ items, frames: [[0, -1, `${WWW}/`], [61, 0, `${LOGIN}/`]], rule: () => "host" });
-  const previous = /** @type {any} */ (globalThis).browser;
-  /** @type {any} */ (globalThis).browser = { webNavigation: w.webNavigation, permissions: w.permissions };
-  try {
-    const ctx = /** @type {any} */ ({ type: "candidates", call: w.call, state: () => "unlocked", channel: "ui", sender: {}, session: "port-1" });
-    const reply = await candidatesHandler.handle({ tab_id: TAB }, ctx);
-    const wire = decode(encode("candidates", reply, { reply: true, id: "r1" }), UI_TYPES, { reply: true }).body;
-    assert.deepEqual(wire.host, { a_label: "www.example.net", unicode: "www.example.net" });
-    assert.equal(wire.items.length, 2);
-    assert.equal(wire.items.find((/** @type {any} */ i) => i.username === undefined).name.length, 256, "a long name is cut to the protocol's bound");
-    assert.deepEqual(wire.grant.map((/** @type {any} */ g) => g.origin), [LOGIN]);
-    for (const item of wire.items) assert.ok(w.matchHost.refs.lookup("port-1", item.ref, { kind: "fill", tabId: TAB, frameId: item.frame_id }));
-    // Only the frame the menu names.
-    const one = await candidatesHandler.handle({ tab_id: TAB, frame_id: 61 }, ctx);
-    assert.deepEqual(one.items, []);
-    assert.deepEqual(one.grant.map((/** @type {any} */ g) => g.origin), [LOGIN]);
-  } finally {
-    /** @type {any} */ (globalThis).browser = previous;
-  }
-  assert.deepEqual(candidatesHandler.types, ["candidates", "grant_check"]);
+  const session = "c".repeat(32);
+  const reply = await w.offer(session);
+  const wire = decode(encode("candidates", reply, { reply: true, id: "r1" }), UI_TYPES, { reply: true }).body;
+  assert.deepEqual(wire.host, { a_label: "www.example.net", unicode: "www.example.net" });
+  // The frame of another origin waits for its permission: the items are not offered there yet, the grant names it.
+  assert.equal(wire.handles.length, 2);
+  assert.deepEqual(wire.handles.map((/** @type {any} */ h) => h.frame_id), [0, 0]);
+  assert.equal(Math.max(...wire.handles.map((/** @type {any} */ h) => h.name.length)), 128, "a long name is cut for the list");
+  assert.deepEqual(wire.grant.map((/** @type {any} */ g) => g.origin), [LOGIN]);
+  for (const item of wire.handles) assert.equal(w.fillHost.refs.get(session, item.ref)?.purpose, "fill");
+  // Only the frame the menu names.
+  const one = await w.offer(session, { frame_id: 61 });
+  assert.deepEqual(one.handles, []);
+  assert.deepEqual(one.grant.map((/** @type {any} */ g) => g.origin), [LOGIN]);
+  assert.deepEqual(candidatesHandler.types, ["candidates"]);
   assert.equal(candidatesHandler.channel, "ui");
+  assert.deepEqual(grantHandler.types, ["grant_check"]);
+  assert.equal(grantHandler.channel, "ui");
 });
 
 test("the_grant_tab_asks_only_for_an_origin_a_list_named_and_only_for_a_while", async () => {
@@ -588,7 +601,7 @@ test("the_grant_tab_asks_only_for_an_origin_a_list_named_and_only_for_a_while", 
   // Through the background: listed by a list, refused once the vault locks.
   const items = [{ id: itemId(1), name: "Login", urls: [`${LOGIN}/`] }];
   const w = await world({ items, frames: [[0, -1, `${WWW}/`], [41, 0, `${LOGIN}/`]] });
-  const check = (/** @type {string} */ origin) => candidatesHandler.handle({ origin }, /** @type {any} */ ({ type: "grant_check", call: w.call, state: () => "unlocked", channel: "ui", sender: {} }));
+  const check = (/** @type {string} */ origin) => grantHandler.handle({ origin }, /** @type {any} */ ({ type: "grant_check", call: w.call, state: () => "unlocked", channel: "ui", sender: {} }));
   assert.equal((await check(LOGIN)).ok, false, "not before a list named it");
   await w.list();
   assert.equal((await check(LOGIN)).ok, true);

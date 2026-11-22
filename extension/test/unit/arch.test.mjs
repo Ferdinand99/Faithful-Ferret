@@ -30,6 +30,9 @@ async function built({ manifest = "mv3", variant = "release", extra = {} } = {})
   }
 }
 
+/** The handler files of a release, in the order of the register. */
+const RELEASE_HANDLERS = Object.freeze(["candidates.handler.mjs", "copy.handler.mjs", "fill.handler.mjs", "fillReport.handler.mjs", "grant.handler.mjs", "lock.handler.mjs", "search.handler.mjs", "session.handler.mjs", "settings.handler.mjs", "sync.handler.mjs"]);
+
 /** Only the exact files of the WASM package: a look-alike path (our own file under js/) is not part of it. @param {string} path */
 const insideWasmPackage = (path) => WASM_FILES.includes(path);
 
@@ -202,7 +205,7 @@ test("the_router_the_lock_and_the_handlers_cannot_reach_the_core_host", async ()
   try {
     const graph = readGraph(files, { skip: insideWasmPackage });
     const handlers = [...files.keys()].filter((p) => p.startsWith("background/handlers/") && p.endsWith(".handler.mjs"));
-    assert.equal(handlers.length, 5);
+    assert.deepEqual(handlers.sort(), RELEASE_HANDLERS.map((name) => `background/handlers/${name}`));
     const reached = reach(graph.edges, ["background/router.mjs", "background/lock.mjs", ...handlers]);
     assert.equal(reached.has(CORE_HOST), false);
     assert.equal([...reached].some(insideWasmPackage), false);
@@ -257,20 +260,12 @@ test("the_handler_register_lists_every_handler_file_in_order_and_refuses_strays"
   });
   try {
     const text = /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
-    assert.deepEqual(importsOf(text).specifiers, ["./handlers/alpha.handler.mjs", "./handlers/candidates.handler.mjs", "./handlers/lock.handler.mjs", "./handlers/session.handler.mjs", "./handlers/settings.handler.mjs", "./handlers/sync.handler.mjs", "./handlers/zeta.handler.mjs"]);
-    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6\]\);/);
+    assert.deepEqual(importsOf(text).specifiers, ["alpha.handler.mjs", ...RELEASE_HANDLERS, "zeta.handler.mjs"].map((name) => `./handlers/${name}`));
+    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6, handler7, handler8, handler9, handler10, handler11]\);/);
   } finally {
     env.cleanup();
   }
-  const none = await built({
-    extra: {
-      "src/background/handlers/candidates.handler.mjs": null,
-      "src/background/handlers/lock.handler.mjs": null,
-      "src/background/handlers/session.handler.mjs": null,
-      "src/background/handlers/settings.handler.mjs": null,
-      "src/background/handlers/sync.handler.mjs": null,
-    },
-  });
+  const none = await built({ extra: Object.fromEntries(RELEASE_HANDLERS.map((name) => [`src/background/handlers/${name}`, null])) });
   try {
     assert.match(/** @type {Buffer} */ (none.files.get("background/handlers.gen.mjs")).toString("utf8"), /export const HANDLERS = Object\.freeze\(\[\]\);/);
   } finally {
@@ -334,7 +329,8 @@ test("background_exposes_nothing_on_globalThis", async () => {
       // The test build also listens for the content script's reports (the fill probe) and for its own
       // content-script probe, and the lifetime log listens for the heartbeat.
       assert.equal(onMessage.length, variant === "test" ? 3 : 1);
-      assert.deepEqual(counts, { alarm: variant === "test" ? 2 : 1, idle: 1 });
+      // The lock and the clipboard listen for their alarms (and the test build's lifetime log for its heartbeat).
+      assert.deepEqual(counts, { alarm: variant === "test" ? 3 : 2, idle: 1 });
       assert.equal(session.has("lock_at"), false, "a new page starts locked");
 
       // And it routes: the UI port is accepted from an extension page, with no handler yet.
@@ -408,8 +404,8 @@ test("anything_in_a_test_only_folder_is_left_out_of_a_release_and_refused_by_the
     for (const path of Object.keys(extra)) assert.equal(test_.files.has(path.slice("src/".length)), true, path);
     // A test-only handler is registered in the test build and not in the release.
     const registerOf = (/** @type {Map<string, Buffer>} */ files) => /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
-    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, ["./handlers/candidates.handler.mjs", "./handlers/lock.handler.mjs", "./handlers/session.handler.mjs", "./handlers/settings.handler.mjs", "./handlers/sync.handler.mjs", "./handlers/test-only/probe.handler.mjs"]);
-    assert.deepEqual(importsOf(registerOf(release.files)).specifiers, ["./handlers/candidates.handler.mjs", "./handlers/lock.handler.mjs", "./handlers/session.handler.mjs", "./handlers/settings.handler.mjs", "./handlers/sync.handler.mjs"]);
+    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, [...RELEASE_HANDLERS, "test-only/probe.handler.mjs"].map((name) => `./handlers/${name}`));
+    assert.deepEqual(importsOf(registerOf(release.files)).specifiers, RELEASE_HANDLERS.map((name) => `./handlers/${name}`));
     // The release check refuses such a path even if the build were bypassed.
     for (const path of ["background/test-only/x.mjs", "pages/test-only/x.html", "background/handlers/test-only/x.handler.mjs"]) {
       const problems = releaseProblems(new Map([...release.files, [path, Buffer.from("export {};\n")]]), readInternalHosts());

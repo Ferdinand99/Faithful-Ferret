@@ -36,9 +36,10 @@
 //
 // The items: the core host opens the vault's items in batches, asks the core
 // which of them match each chosen frame and closes every handle again. What
-// comes back is a reference per item, random and new for each popup session
-// and good only for filling the frame it was made for, with the item's name and
-// user name. A handle never leaves the core host.
+// comes back is, per item, its id, name and user name and the frames it may be
+// filled in (those that tie on its closest match, the top first, at most 4). A
+// handle never leaves the core host, and there is no reference here: the fill
+// flow (fillFlow.mjs) makes the popup's references from this answer.
 
 import { narrowOrigin } from "../shared/origin.mjs";
 
@@ -48,7 +49,7 @@ export const MAX_FRAMES = 32;
 export const MAX_CANDIDATES = 100;
 /** The longest address that is looked at (the core refuses a longer one anyway). */
 const MAX_URL = 8192;
-const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ITEM_ID = /^[0-9a-f]{32}$/;
 
 // The loopback origins as the core writes them: lower case, IPv4 in dotted form, IPv6 in brackets, the port only
 // when it is not 80. Not a rule about names: `localhost` and the loopback addresses only.
@@ -67,12 +68,12 @@ const LOOPBACK = /^http:\/\/(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]
  * }} WebNavigation
  * @typedef {{ a_label: string, unicode: string }} Host
  * @typedef {{
- *   ref: string,
+ *   itemId: string,
  *   name: string,
  *   username: string | null,
  *   how: "host" | "domain" | "exact",
- *   frameId: number,
- * }} Candidate
+ *   frames: FillableFrame[],
+ * }} Candidate `frames`: where the item may be filled, the top first (at most 4)
  * @typedef {{ origin: string, host: Host }} GrantNeeded a frame of the same site that waits for its host permission
  * @typedef {{
  *   host: Host | null,
@@ -81,7 +82,7 @@ const LOOPBACK = /^http:\/\/(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]
  *   grant: GrantNeeded[],
  * }} CandidateList `host` is null when the tab shows no web page (then everything else is empty)
  * @typedef {{
- *   candidates(tabId: number, options?: { frameId?: number, session?: string }): Promise<CandidateList>,
+ *   candidates(tabId: number, options?: { frameId?: number }): Promise<CandidateList>,
  * }} CandidateSource what the fill flow, the shortcut and the menu use
  * @typedef {{ call(op: string, args?: unknown): Promise<unknown> }} CoreHostCall
  */
@@ -209,7 +210,7 @@ export async function fillableFrames(tabId, { webNavigation, core }) {
  * sandboxed frame reports "null" and is refused, and so is a frame whose origin
  * changed. The report never adds anything the browser did not say.
  *
- * @param {FillableFrame} frame
+ * @param {{ origin: string }} frame the frame as the browser gave it (only its origin is read)
  * @param {unknown} selfOrigin `frame_report.self_origin`
  * @returns {boolean}
  */
@@ -245,13 +246,6 @@ async function displayHost(coreHost, url) {
   return { a_label: aLabel, unicode };
 }
 
-/** A new popup session id when the caller has none. */
-function newSession() {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * The items a tab is offered. The host shown is the core's `display_host` of
  * the top's address (never the tab's title); `insecure` says the top is plain
@@ -265,13 +259,11 @@ function newSession() {
  *   coreHost: CoreHostCall,
  *   frames: (tabId: number) => Promise<FillableFrame[]>,
  *   permissions?: { contains(p: { origins: string[] }): Promise<boolean> },
- *   session?: string,
  *   frameId?: number,
- * }} deps `frames` is `fillableFrames` with its browser and core; `session` the popup session the references
- *   belong to (a new one when it is left out); `frameId` keeps only that frame (the menu's frame)
+ * }} deps `frames` is `fillableFrames` with its browser and core; `frameId` keeps only that frame (the menu's frame)
  * @returns {Promise<CandidateList>}
  */
-export async function candidates(tabId, { coreHost, frames, permissions, session, frameId }) {
+export async function candidates(tabId, { coreHost, frames, permissions, frameId }) {
   const all = await frames(tabId);
   const top = all.find((f) => f.frameId === 0);
   if (top === undefined) return { host: null, insecure: false, items: [], grant: [] };
@@ -305,11 +297,8 @@ export async function candidates(tabId, { coreHost, frames, permissions, session
   }
   if (asked.length === 0) return { host, insecure, items: [], grant: [] };
 
-  const id = typeof session === "string" && ID.test(session) ? session : newSession();
   const reply = /** @type {any} */ (
     await coreHost.call("candidates_match", {
-      session: id,
-      tab_id: tabId,
       frames: asked.map((f) => ({
         frame_id: f.frameId,
         ...(f.documentId !== undefined ? { document_id: f.documentId } : {}),
@@ -319,20 +308,31 @@ export async function candidates(tabId, { coreHost, frames, permissions, session
       })),
     })
   );
-  const usable = new Set(asked.filter((f) => !f.waiting).map((f) => f.frameId));
+  /** The frames an item may be filled in, by id: only frames that were asked for and do not wait for a permission. */
+  const usable = new Map(asked.filter((f) => !f.waiting).map((f) => [f.frameId, /** @type {FillableFrame} */ ({ frameId: f.frameId, ...(f.documentId !== undefined ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin })]));
   /** @type {Candidate[]} */
-  const items = (Array.isArray(reply?.items) ? reply.items : [])
-    .filter(
-      (/** @type {any} */ item) =>
-        typeof item?.ref === "string" &&
-        ID.test(item.ref) &&
-        typeof item.name === "string" &&
-        (item.username === null || typeof item.username === "string") &&
-        ["host", "domain", "exact"].includes(item.how) &&
-        usable.has(item.frame_id),
-    )
-    .slice(0, MAX_CANDIDATES)
-    .map((/** @type {any} */ item) => ({ ref: item.ref, name: item.name, username: item.username, how: item.how, frameId: item.frame_id }));
+  const items = [];
+  for (const item of Array.isArray(reply?.items) ? reply.items : []) {
+    if (items.length >= MAX_CANDIDATES) break;
+    if (
+      typeof item?.item_id !== "string" ||
+      !ITEM_ID.test(item.item_id) ||
+      typeof item.name !== "string" ||
+      !(item.username === null || typeof item.username === "string") ||
+      !["host", "domain", "exact"].includes(item.how) ||
+      !Array.isArray(item.frame_ids)
+    ) {
+      continue;
+    }
+    /** @type {FillableFrame[]} */
+    const where = [];
+    for (const id of item.frame_ids) {
+      const frame = usable.get(id);
+      if (frame !== undefined && !where.includes(frame)) where.push(frame);
+    }
+    if (where.length === 0) continue;
+    items.push({ itemId: item.item_id, name: item.name, username: item.username, how: item.how, frames: where.slice(0, 4) });
+  }
 
   // The frames waiting for their permission that some item matches, one entry per origin.
   const matchedWaiting = new Set(Array.isArray(reply?.grant_frames) ? reply.grant_frames : []);
@@ -343,4 +343,33 @@ export async function candidates(tabId, { coreHost, frames, permissions, session
     grant.push({ origin: frame.origin, host: await displayHost(coreHost, frame.url) });
   }
   return { host, insecure, items, grant };
+}
+
+/**
+ * The page matching as one object, for the fill flow: the frames from the
+ * browser (`webNavigation`), the site rules and the match from the core (over
+ * the core host's operations), and the host permissions the browser holds.
+ *
+ * @param {{
+ *   webNavigation: WebNavigation,
+ *   permissions?: { contains(p: { origins: string[] }): Promise<boolean> },
+ *   call: CoreHostCall["call"],
+ * }} deps
+ * @returns {CandidateSource}
+ */
+export function createCandidateSource({ webNavigation, permissions, call }) {
+  /** @type {FrameCore} */
+  const core = {
+    page_origin: async (url) => /** @type {any} */ (await call("page_origin", { url })).origin,
+    same_site: async (a, b) => /** @type {any} */ (await call("same_site", { a, b })).same === true,
+  };
+  return {
+    candidates: (tabId, { frameId } = {}) =>
+      candidates(tabId, {
+        coreHost: { call },
+        frames: (id) => fillableFrames(id, { webNavigation, core }),
+        ...(permissions ? { permissions } : {}),
+        ...(frameId !== undefined ? { frameId } : {}),
+      }),
+  };
 }

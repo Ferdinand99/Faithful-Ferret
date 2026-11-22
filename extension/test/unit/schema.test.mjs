@@ -223,9 +223,9 @@ test("every UI request and reply round-trips with a sample body", () => {
     candidates: [
       { tab_id: 1, frame_id: 0 },
       {
+        handles: [{ ref: "h1", name: "Example", username: "me", insecure: false, favorite: true, type: "login", site: true, frame_id: 0 }],
         host: { a_label: "login.example.net", unicode: "login.example.net" },
         insecure: false,
-        items: [{ ref: "h1", name: "Example", username: "me", how: "host", frame_id: 0 }],
         grant: [{ origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" } }],
       },
     ],
@@ -233,9 +233,11 @@ test("every UI request and reply round-trips with a sample body", () => {
       { origin: "https://sso.example.net" },
       { ok: true, origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" }, pattern: "https://sso.example.net/*" },
     ],
-    search: [{ query: "ex" }, { handles: [] }],
+    search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],
+    item: [{ ref: "h1" }, { ok: true, name: "Example", username: "me", type: "login", favorite: false, urls: ["https://example.com/login"], copyable: ["username", "password", "totp"] }],
+    open_site: [{ ref: "h1" }, { ok: false, reason: "no_site" }],
     settings: [{ lock_seconds: 900 }, { lock_seconds: 900 }],
     sync_state: [{}, { running: true, status: "idle", live: "live", halted: "server_restored", warnings: ["rev_lower_than_local"] }],
     sync_retry: [{}, { ok: false, reason: "sync_still_halted" }],
