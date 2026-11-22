@@ -75,7 +75,8 @@ function auditFields(selector = "[data-fixture-expect]") {
     const input = /** @type {HTMLInputElement} */ (el);
     if (input.disabled) reasons.add("disabled");
     if (input.readOnly) reasons.add("readonly");
-    if (input.hidden) reasons.add("hidden");
+    // The attribute alone hides nothing (author CSS can show the field); it counts only when the field is not displayed.
+    if (input.hidden && getComputedStyle(el).display === "none") reasons.add("hidden");
     if (el.getAttribute("aria-hidden") === "true") reasons.add("aria-hidden");
     if (getComputedStyle(el).display === "none") reasons.add("display");
     for (let node = /** @type {Element | null} */ (el); node; node = parentOf(node)) {

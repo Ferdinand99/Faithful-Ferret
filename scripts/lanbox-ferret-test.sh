@@ -39,6 +39,8 @@
 # first three octets of the network, default 172.30.250) put another stack beside it: every name above
 # then has the suffix in place of "e2e", and only the resources labelled owner=ferret-<suffix> are touched.
 # With DEV_RUN set (and DEV_TITLE), every container of the stack gets the labels dev.run and dev.title.
+# The server image is built with at most FERRET_E2E_CARGO_JOBS (1 to 4, default 4) parallel cargo jobs: the
+# build host is shared.
 #
 #   scripts/lanbox-ferret-test.sh e2e-up       build and start a fresh, empty stack
 #   scripts/lanbox-ferret-test.sh e2e-run [args]  run the Playwright tests of web/ in a container on the
@@ -69,6 +71,12 @@
 #                                          start the app (the clock offset is kept)
 #   scripts/lanbox-ferret-test.sh e2e-code <e-mail>  make a one-time sign-in code for the account while the app runs
 #                                          (`ferret sign-in-code issue`) and print it
+#   scripts/lanbox-ferret-test.sh e2e-chromium  start a Playwright browser server (Chromium, trusting the
+#                                          stack's CA) on the stack's network, for a test that drives the web vault
+#                                          in Chromium while it drives something else: prints its address
+#                                          (ws://ferret-e2e-chromium:3000/). Its client package, playwright-core from
+#                                          web/package-lock.json (checked against the lock's integrity), is in the
+#                                          volume ferret-e2e-pwcore, which a test container mounts read-only on /pw
 #   scripts/lanbox-ferret-test.sh e2e-down     remove the stack and its image
 #
 # docker/.env (not in git; on a Unix host it is made with mode 600) holds
@@ -127,7 +135,11 @@ if ! printf '%s' "$e2e_subnet" | grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'
   echo "lanbox-ferret-test: FERRET_E2E_SUBNET is the first three octets of a /28, for example 172.30.250" >&2
   exit 2
 fi
-export FERRET_E2E_SUFFIX="$e2e_suffix" FERRET_E2E_SUBNET="$e2e_subnet"
+case "${FERRET_E2E_CARGO_JOBS:-4}" in
+  1 | 2 | 3 | 4) ;;
+  *) echo "lanbox-ferret-test: FERRET_E2E_CARGO_JOBS is 1 to 4 (the build host is shared)" >&2; exit 2 ;;
+esac
+export FERRET_E2E_SUFFIX="$e2e_suffix" FERRET_E2E_SUBNET="$e2e_subnet" FERRET_E2E_CARGO_JOBS="${FERRET_E2E_CARGO_JOBS:-4}"
 e2e_project="ferret-$e2e_suffix"
 e2e_label="owner=ferret-$e2e_suffix"
 e2e_composefile=docker/compose.ferret-e2e.yml
@@ -154,6 +166,9 @@ e2e_snapshot_volume=ferret-e2e-snapshot
 e2e_backups_volume="ferret-$e2e_suffix-backups"
 e2e_monitor="ferret-$e2e_suffix-monitor"
 e2e_monitor_image="ferret-$e2e_suffix-monitor:latest"
+# The Playwright browser server of `e2e-chromium`, and the volume with its client package.
+e2e_chromium="ferret-$e2e_suffix-chromium"
+e2e_pwcore_volume="ferret-$e2e_suffix-pwcore"
 # With DEV_RUN set (lower-case letters, digits and dashes, at most 63, as for scripts/lanbox.sh), every
 # container of the stack and every helper container it starts gets the label dev.run=$DEV_RUN, and
 # dev.title=$DEV_TITLE when that is set too, next to the label owner=ferret-<suffix>. Without DEV_RUN nothing is added.
@@ -860,6 +875,83 @@ e2e_run() {
     playwright_run "$@"
 }
 
+# A Playwright browser server on the stack's network (see e2e-chromium in the head of this file). The
+# client package is fetched in a container of its own on the default network (the only step with the
+# internet), checked against the integrity that web/package-lock.json records, and unpacked into a
+# labelled volume; the server runs the same package with the Chromium of the runner image (the same
+# Playwright version as web/package.json), trusts the stack's CA through an NSS database, publishes no
+# port and is removed with the rest of the stack (e2e-down removes everything with the stack's label).
+e2e_chromium() {
+  e2e_require_running
+  e2e_runner_image
+  local pem fetch
+  pem="$(e2e_ca)"
+  dk rm -f "$e2e_chromium" >/dev/null 2>&1 || true
+  dk volume rm "$e2e_pwcore_volume" >/dev/null 2>&1 || true
+  dk volume create --label "$e2e_label" "$e2e_pwcore_volume" >/dev/null
+  # The script for the container is in single quotes on purpose.
+  # shellcheck disable=SC2016
+  fetch='const lock = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const entry = lock.packages && lock.packages["node_modules/playwright-core"];
+if (!entry || !/^https:\/\/registry\.npmjs\.org\//.test(entry.resolved) || !/^sha512-/.test(entry.integrity)) throw new Error("web/package-lock.json has no usable playwright-core entry");
+fetch(entry.resolved, { signal: AbortSignal.timeout(120000) }).then((r) => {
+  if (!r.ok) throw new Error(entry.resolved + " answered " + r.status);
+  return r.arrayBuffer();
+}).then((b) => {
+  const buf = Buffer.from(b);
+  const sum = "sha512-" + require("crypto").createHash("sha512").update(buf).digest("base64");
+  if (sum !== entry.integrity) throw new Error("playwright-core: integrity mismatch");
+  process.stdout.write(buf);
+}).catch((e) => { console.error("e2e-chromium: " + e.message); process.exit(1); });'
+  # shellcheck disable=SC2016
+  dk run --rm -i --init \
+    --name "$e2e_chromium-fetch" \
+    --label "$e2e_label" "${e2e_dev_labels[@]}" \
+    --network bridge \
+    --cpus 1 --memory 1g \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --read-only \
+    --tmpfs /work:exec,size=256m \
+    --tmpfs /tmp:size=64m \
+    -v "$e2e_pwcore_volume:/pw" \
+    -w /work \
+    -e FETCH="$fetch" \
+    "$runner_image" \
+    sh -c 'node -e "$FETCH" > /work/core.tgz && mkdir -p /pw/node_modules/playwright-core && tar -xzf /work/core.tgz -C /pw/node_modules/playwright-core --strip-components=1 --no-same-owner && chmod -R a+rX /pw' \
+    < web/package-lock.json >&2
+  # shellcheck disable=SC2016
+  dk run -d --rm --init \
+    --name "$e2e_chromium" \
+    --label "$e2e_label" "${e2e_dev_labels[@]}" \
+    --network "$e2e_network" \
+    --cpus 2 --memory 3g --shm-size 1g \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --tmpfs /tmp:exec,size=1g \
+    -v "$e2e_pwcore_volume:/pw:ro" \
+    -e FERRET_E2E_CA_PEM="$pem" \
+    "$runner_image" \
+    sh -c 'set -e
+printf "%s\n" "$FERRET_E2E_CA_PEM" > /tmp/e2e-ca.crt
+mkdir -p "$HOME/.pki/nssdb"
+certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
+certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n ferret-e2e -i /tmp/e2e-ca.crt
+exec node /pw/node_modules/playwright-core/cli.js run-server --port 3000 --host 0.0.0.0' >/dev/null
+  # Up once it takes connections on its port.
+  local _
+  for _ in $(seq 1 60); do
+    if dk exec "$e2e_chromium" node -e 'require("net").connect(3000, "127.0.0.1").on("connect", () => process.exit(0)).on("error", () => process.exit(1))' >/dev/null 2>&1; then
+      echo "ws://$e2e_chromium:3000/"
+      return 0
+    fi
+    sleep 1
+  done
+  dk logs "$e2e_chromium" >&2 2>&1 || true
+  echo "e2e-chromium: the browser server did not start" >&2
+  exit 1
+}
+
 # The token in the push address of the app (the tests look for it in what the server shows and logs).
 e2e_push_token() { dk exec "$e2e_app" printenv FERRET_BACKUP_PUSH_URL | sed 's#.*/##'; }
 
@@ -1122,6 +1214,9 @@ case "${1:-}" in
     ;;
   e2e-down)
     e2e_down
+    ;;
+  e2e-chromium)
+    e2e_chromium
     ;;
   e2e-evil)
     shift

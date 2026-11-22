@@ -14,14 +14,30 @@
 #                                 docker/ext-runner.Dockerfile. The step has no
 #                                 network at all (--network none).
 #   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up]
-#                                 the same runner against the end-to-end stack: runs
-#                                 `lanbox-ferret-test.sh e2e-up` (not with --no-up, for
-#                                 a stack that is already up), takes the stack's CA
-#                                 from `e2e-ca` and joins the stack's network, the
-#                                 only network that step has (that network is not
-#                                 internal, so the step can reach whatever it
-#                                 reaches). Afterwards run
-#                                 `scripts/lanbox-ferret-test.sh e2e-down`.
+#                                 the same runner against the end-to-end stack: starts a
+#                                 stack of its own with `lanbox-ferret-test.sh e2e-up`
+#                                 (a compose project, network, host names and volumes
+#                                 named for this run, FERRET_E2E_SUFFIX=x<8 hex>, on a
+#                                 free FERRET_E2E_SUBNET), so two runs never touch each
+#                                 other's stack, and removes it again (`e2e-down`) when
+#                                 the run ends. It takes the stack's CA from `e2e-ca`,
+#                                 starts the stack's Chromium browser server
+#                                 (`e2e-chromium`) and joins the stack's network, the
+#                                 only network that step has. With FERRET_E2E_SUFFIX
+#                                 set, it uses that stack (started with `e2e-up` unless
+#                                 --no-up) and leaves it up: run
+#                                 `scripts/lanbox-ferret-test.sh e2e-down` afterwards.
+#                                 --no-up without FERRET_E2E_SUFFIX uses the stack with
+#                                 the default names (one user at a time). At most two
+#                                 e2e runs at once, counted inside the limit of two
+#                                 Firefox runs. A per-run stack that a killed run left
+#                                 (older than six hours) is removed by the next run.
+#   scripts/lanbox-ext.sh gate [--channel release|esr] [--manifest mv3|mv2]
+#                                 the extension's gate run: the firefox step and then
+#                                 the e2e step (default manifest mv2, the Firefox
+#                                 build), with the screenshots the e2e specs take
+#                                 unpacked into test-results/out/gate-shots/ (or
+#                                 $FERRET_EXT_OUT_DIR/gate-shots/). Fails if either fails.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
 #                                 the lifetime measurement of the background page: every
 #                                 scenario in both manifest versions, a window of 17
@@ -95,15 +111,16 @@ dev_args() {
 }
 
 usage() {
-  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | measure [options]" >&2
+  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | measure [options]" >&2
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  (e2e only: --no-up)" >&2
+  echo "  options of gate: --channel release|esr  --manifest mv3|mv2" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N" >&2
   exit 2
 }
 
 mode="${1:-}"
 case "$mode" in
-  unit | lint | firefox | e2e | measure) shift ;;
+  unit | lint | firefox | e2e | gate | measure) shift ;;
   *) usage ;;
 esac
 
@@ -117,8 +134,8 @@ scenario_list=""
 window_minutes=""
 while [ "$#" -gt 0 ]; do
   case "$mode:$1" in
-    firefox:--channel | e2e:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
-    firefox:--manifest | e2e:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
+    firefox:--channel | e2e:--channel | gate:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
+    firefox:--manifest | e2e:--manifest | gate:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
     firefox:--grep | e2e:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
     firefox:--headed | e2e:--headed) headed=1; shift ;;
     e2e:--no-up) no_up=1; shift ;;
@@ -129,6 +146,8 @@ while [ "$#" -gt 0 ]; do
 done
 case "$channel" in "" | release | esr) ;; *) usage ;; esac
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
+# The gate runs the Firefox build: MV2 with a persistent background, unless --manifest names another.
+if [ "$mode" = gate ] && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
 # A measure run covers both manifest versions unless --manifest names one.
 measure_manifests="mv3,mv2"
 if [ "$mode" = measure ] && [ "$manifest_given" = 1 ]; then measure_manifests="$manifest"; fi
@@ -184,7 +203,7 @@ fi'
       --exclude='extension/node_modules' \
       --exclude='extension/dist' \
       extension web/wasm.lock.json web/src scripts/check-ext-release.sh scripts/lanbox-ext.sh \
-      scripts/check-lanbox-ext-labels.sh docker/ext-runner.Dockerfile \
+      scripts/check-lanbox-labels.sh docker/ext-runner.Dockerfile \
       .github/workflows \
       docs/design/phase-1-security-design.md
   }
@@ -211,7 +230,17 @@ if ! docker "${docker_args[@]}" image inspect "$runner_image" > /dev/null 2>&1; 
 fi
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# The end-to-end stack this run started for itself (see the e2e step), removed again on exit.
+own_stack=""
+stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
+# shellcheck disable=SC2317  # called by the trap
+cleanup() {
+  if [ -n "$own_stack" ]; then
+    FERRET_E2E_SUFFIX="$own_stack" bash "$stack" e2e-down >&2 || echo "lanbox-ext.sh: e2e-down of the stack $own_stack failed; run FERRET_E2E_SUFFIX=$own_stack $stack e2e-down" >&2
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
 
 # Step 1, the only one with a network: fetch the published WASM package named in
 # web/wasm.lock.json and check its SHA-256. The archive comes back on stdout. The
@@ -248,18 +277,90 @@ network=none
 e2e_ca=""
 e2e_token=""
 e2e_evil_url=""
-if [ "$mode" = e2e ]; then
-  stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
+e2e_suffix=""
+e2e_chromium_ws=""
+e2e_volume_args=()
+
+# A /28 for this run's stack network, the first three octets: 172.30.<n> with n from 200 to 239,
+# starting at a random n, that overlaps no network the Docker host has. Prints nothing when every
+# one is taken.
+free_subnet() {
+  local used ids start i n net bits a b c d base size lo hi taken
+  used=()
+  ids="$(docker "${docker_args[@]}" network ls -q 2> /dev/null || true)"
+  if [ -n "$ids" ]; then
+    # shellcheck disable=SC2086
+    while read -r net; do
+      [ -n "$net" ] && used+=("$net")
+    done < <(docker "${docker_args[@]}" network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' $ids 2> /dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' || true)
+  fi
+  start=$((16#$(head -c 1 /dev/urandom | od -An -tx1 | tr -d ' \n') % 40))
+  for i in $(seq 0 39); do
+    n=$((200 + (start + i) % 40))
+    lo=$(((172 << 24) + (30 << 16) + (n << 8)))
+    hi=$((lo + 15))
+    taken=0
+    for net in "${used[@]+"${used[@]}"}"; do
+      IFS=./ read -r a b c d bits <<< "$net"
+      base=$(((a << 24) + (b << 16) + (c << 8) + d))
+      size=$((1 << (32 - bits)))
+      base=$((base - base % size))
+      if [ "$lo" -le $((base + size - 1)) ] && [ "$hi" -ge "$base" ]; then taken=1; break; fi
+    done
+    if [ "$taken" = 0 ]; then
+      echo "172.30.$n"
+      return 0
+    fi
+  done
+}
+
+# A run that was killed hard (no exit trap: SIGKILL, a lost Docker context, a reboot) leaves its
+# per-run stack behind. Before a run starts its own, every per-run stack (label owner=ferret-x<8 hex>)
+# with a container older than STALE_HOURS is removed with e2e-down. No run lasts that long.
+STALE_HOURS=6
+sweep_stale_stacks() {
+  local now owner created suffix stale=()
+  now="$(date +%s)"
+  while read -r owner created; do
+    [[ $owner =~ ^ferret-(x[0-9a-f]{8})$ ]] || continue
+    # CreatedAt reads "2026-11-22 13:05:01 +0100 CET"; the date, time and offset are enough.
+    created="$(date -d "$(cut -d' ' -f1-3 <<< "$created")" +%s 2> /dev/null || echo "$now")"
+    if [ $((now - created)) -gt $((STALE_HOURS * 3600)) ]; then stale+=("${BASH_REMATCH[1]}"); fi
+  done < <(docker "${docker_args[@]}" ps -a --filter label=owner --format '{{.Label "owner"}} {{.CreatedAt}}' 2> /dev/null || true)
+  for suffix in $(printf '%s\n' "${stale[@]+"${stale[@]}"}" | sort -u); do
+    echo "lanbox-ext.sh: removing the stack ferret-$suffix that a killed run left (older than $STALE_HOURS hours)" >&2
+    FERRET_E2E_SUFFIX="$suffix" bash "$stack" e2e-down >&2 || true
+  done
+}
+
+# The end-to-end stack: one of this run's own (FERRET_E2E_SUFFIX unset, no --no-up), so two runs on
+# the build host never remove each other's stack, or the stack the caller names.
+e2e_setup() {
+  if [ -z "${FERRET_E2E_SUFFIX:-}" ] && [ "$no_up" -eq 0 ]; then
+    sweep_stale_stacks
+    FERRET_E2E_SUFFIX="x$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    FERRET_E2E_SUBNET="$(free_subnet)"
+    [ -n "$FERRET_E2E_SUBNET" ] || { echo "lanbox-ext.sh: no free 172.30.200-239 /28 for the stack's network" >&2; exit 1; }
+    export FERRET_E2E_SUFFIX FERRET_E2E_SUBNET
+    # From here on the stack is removed on exit, also when e2e-up fails half way.
+    own_stack="$FERRET_E2E_SUFFIX"
+    echo "lanbox-ext.sh: this run's stack is ferret-$FERRET_E2E_SUFFIX (network $FERRET_E2E_SUBNET.0/28)" >&2
+  fi
+  e2e_suffix="${FERRET_E2E_SUFFIX:-e2e}"
   if [ "$no_up" -eq 0 ]; then
     bash "$stack" e2e-up >&2
   fi
   e2e_ca="$(bash "$stack" e2e-ca)"
   # The setup token of the stack (made up by e2e-up): the sign-in specs make the stack's first account with it.
   e2e_token="$(bash "$stack" e2e-token)"
-  network=ferret-e2e-net
+  # The stack's Chromium (a Playwright browser server), for the spec that drives the web vault in it; its
+  # client package is in a volume of the stack, mounted read-only.
+  e2e_chromium_ws="$(bash "$stack" e2e-chromium)"
+  e2e_volume_args=(-v "ferret-$e2e_suffix-pwcore:/pw:ro")
+  network="ferret-$e2e_suffix-net"
   # The control port of the stack's malicious proxy, on the stack's network (the sync specs switch its modes).
   e2e_evil_url="http://ferret-e2e-evil:9000"
-fi
+}
 
 tar -cf "$work/in.tar" \
   --exclude='extension/node_modules' \
@@ -268,20 +369,26 @@ tar -cf "$work/in.tar" \
 tar -rf "$work/in.tar" -C "$work" wasm.tar.gz
 
 # The tests container for the channels in $1 (a comma list). $2 goes into the name
-# and the label (see dev_args). Fills the array `run`.
+# and the label (see dev_args). $3 is the step of run.sh (firefox, e2e or measure; the
+# mode by default), $4 is 1 when the e2e step hands its screenshots back as a tar
+# archive on stdout. Fills the array `run`.
 make_run() {
+  local step="${3:-$mode}" shots="${4:-0}" net=none
+  if [ "$step" = e2e ]; then net="$network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
     "${dev_args_out[@]}"
-    --network "$network"
+    --network "$net")
+  if [ "$step" = e2e ]; then run+=("${e2e_volume_args[@]}"); fi
+  run+=(
     --cpus "$cpus"
     --memory "$memory"
     --shm-size 2g
     --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID
     --security-opt no-new-privileges:true
     -e CI=1
-    -e FERRET_EXT_STEP="$mode"
+    -e FERRET_EXT_STEP="$step"
     -e FERRET_CHANNELS="$1"
     -e FERRET_MANIFEST="$manifest"
     -e FERRET_GREP="$grep_name"
@@ -289,6 +396,9 @@ make_run() {
     -e FERRET_E2E_CA_PEM="$e2e_ca"
     -e FERRET_E2E_SETUP_TOKEN="$e2e_token"
     -e FERRET_E2E_EVIL_URL="$e2e_evil_url"
+    -e FERRET_E2E_SUFFIX="$e2e_suffix"
+    -e FERRET_E2E_CHROMIUM_WS="$e2e_chromium_ws"
+    -e FERRET_EXT_SHOTS="$shots"
     -e FERRET_MEASURE_MANIFESTS="$measure_manifests"
     -e FERRET_MEASURE_SCENARIOS="$scenario_list"
     -e FERRET_MEASURE_MINUTES="$window_minutes"
@@ -298,13 +408,43 @@ make_run() {
     --tmpfs /home/ferret:uid=10001,gid=10001,size=1g
     -w /work
     "$runner_image"
-    sh -c 'tar -x --no-same-owner -C /work && exec sh /work/extension/test/firefox/run.sh "$0"' "$mode")
+    sh -c 'tar -x --no-same-owner -C /work && exec sh /work/extension/test/firefox/run.sh "$0"' "$step")
 }
 
-if [ "$mode" != measure ]; then
+if [ "$mode" = firefox ]; then
   make_run "${channel:-release,esr}" ""
   "${run[@]}" < "$work/in.tar"
   exit 0
+fi
+
+if [ "$mode" = e2e ]; then
+  e2e_setup
+  make_run "${channel:-release,esr}" ""
+  "${run[@]}" < "$work/in.tar"
+  exit 0
+fi
+
+if [ "$mode" = gate ]; then
+  # The firefox step, then the e2e step on a stack of this run's own; the screenshots of the e2e
+  # step come back as a tar archive on its stdout and are unpacked, also after a failure.
+  out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
+  mkdir -p "$out_dir"
+  status=0
+  make_run "${channel:-release,esr}" "gate-firefox" firefox
+  "${run[@]}" < "$work/in.tar" || { status=$?; echo "lanbox-ext.sh: gate: the firefox step failed ($status)" >&2; }
+  e2e_setup
+  make_run "${channel:-release,esr}" "gate-e2e" e2e 1
+  rc=0
+  "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
+  if [ -s "$work/shots.tar" ]; then
+    tar -x --no-same-owner -C "$out_dir" -f "$work/shots.tar" || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "lanbox-ext.sh: gate: the e2e step failed ($rc)" >&2
+    status=$rc
+  fi
+  echo "lanbox-ext.sh: gate: screenshots are in $out_dir/gate-shots/ (exit status $status)" >&2
+  exit "$status"
 fi
 
 # measure: one container per channel, side by side (two Firefox at a time, never

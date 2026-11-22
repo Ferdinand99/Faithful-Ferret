@@ -20,6 +20,8 @@ const BASE_CSS = `
 body { font: 16px/1.4 sans-serif; margin: 16px; background: #fff; color: #111; }
 form { display: block; margin: 0 0 24px; }
 input { display: block; box-sizing: border-box; width: 240px; height: 28px; margin: 4px 0; }
+/* The rule above would show an input with the hidden attribute; keep the browser's own meaning of it. */
+[hidden] { display: none; }
 iframe { display: block; width: 420px; height: 180px; margin: 8px 0; border: 1px solid #888; }
 h1 { font-size: 20px; margin: 0 0 12px; }
 `;

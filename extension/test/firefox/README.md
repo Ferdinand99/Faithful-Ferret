@@ -6,11 +6,34 @@ in the runner image `docker/ext-runner.Dockerfile`.
 ```
 scripts/lanbox-ext.sh firefox [--channel release|esr] [--manifest mv3|mv2] [--grep <name>] [--headed]
 scripts/lanbox-ext.sh e2e     [--channel ...] [--manifest ...] [--grep <name>] [--no-up]
+scripts/lanbox-ext.sh gate    [--channel ...] [--manifest ...]
 ```
 
 Both run on the LANBox build VM. The Firefox step has no network (`e2e`: only the
 end-to-end stack's network). The WASM package is fetched and checked in a step of
 its own. A skipped spec, or a run in which no test passed, fails the run.
+
+`e2e` starts an end-to-end stack of its own for every run (compose project, network,
+host names and volumes named `ferret-x<8 hex>`), so two runs never remove each
+other's stack, and removes it when the run ends. It also starts the stack's Chromium
+browser server (`lanbox-ferret-test.sh e2e-chromium`), which the end-to-end spec
+drives with Playwright for the web vault's part. `gate` runs the `firefox` step and
+then the `e2e` step (MV2 by default) and unpacks the screenshots the e2e specs take
+into `test-results/out/gate-shots/<channel>/`.
+
+At most two `e2e` runs at a time, counted inside the limit of two Firefox runs on the
+build host (each also builds the server image, with at most four cargo jobs, and
+runs a Chromium). The stack with the default names (`ferret-e2e`: `--no-up`, the web
+vault's `lanbox-ferret-test.sh e2e-run`) stays for one user at a time. A run that is
+killed hard (no exit trap) leaves its `ferret-x<8 hex>` stack; the next `e2e` run
+removes any such stack older than six hours, and one can be removed at once with
+`FERRET_E2E_SUFFIX=x<8 hex> scripts/lanbox-ferret-test.sh e2e-down` (find them with
+`docker ps -a --format '{{.Label "owner"}}' | grep '^ferret-x'`).
+
+The adversarial specs (`70-phishing`, `71-clickjacking`) and the end-to-end spec
+(`80-end-to-end`) share `adversary.mjs`: a signed-in Firefox with the test sites'
+entries, the real popup about a page's tab, a UI port that stays open across steps,
+and a walk through every frame of a page to see where a password went.
 
 ## The runner image
 

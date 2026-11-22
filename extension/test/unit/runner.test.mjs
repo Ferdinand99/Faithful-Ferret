@@ -12,9 +12,9 @@ import { repoRoot } from "./buildHelpers.mjs";
 const read = (/** @type {string} */ path) => readFileSync(join(repoRoot, ...path.split("/")), "utf8");
 
 test("the_runner_container_is_named_and_labelled", () => {
-  const result = spawnSync("bash", [join(repoRoot, "scripts", "check-lanbox-ext-labels.sh")], { encoding: "utf8" });
+  const result = spawnSync("bash", [join(repoRoot, "scripts", "check-lanbox-labels.sh"), "ext"], { encoding: "utf8" });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-  assert.match(result.stderr + result.stdout, /check-lanbox-ext-labels: ok/);
+  assert.match(result.stderr + result.stdout, /check-lanbox-labels: ok \(ext\)/);
 });
 
 /**
@@ -100,22 +100,22 @@ test("firefox_steps_have_no_network_outside_the_test_networks", () => {
   assert.ok(fetchStep.includes("--read-only") && fetchStep.includes("no-new-privileges:true"));
   assert.deepEqual(testStep.filter((a) => a === "--network"), ["--network"], "one network option");
 
-  // e2e: the only network of the test step is the stack's.
+  // e2e: the only network of the test step is the stack's, a stack of the run's own that is removed at the end.
   const e2e = runExt(["e2e"]);
   assert.equal(e2e.status, 0, e2e.output);
-  assert.deepEqual(e2e.stack, ["e2e-up", "e2e-ca", "e2e-token"]);
+  assert.deepEqual(e2e.stack, ["e2e-up", "e2e-ca", "e2e-token", "e2e-chromium", "e2e-down"]);
   const e2eRuns = e2e.calls.filter((call) => call.includes("run"));
-  assert.equal(flagValue(e2eRuns[1], "--network"), "ferret-e2e-net");
+  assert.match(flagValue(e2eRuns[1], "--network"), /^ferret-x[0-9a-f]{8}-net$/);
   assert.ok(e2eRuns[1].includes("FERRET_E2E_CA_PEM=PEM"), "the stack's CA reaches the test step");
   assert.ok(e2eRuns[1].includes("FERRET_E2E_SETUP_TOKEN=TOKEN"), "the stack's setup token reaches the test step");
   assert.ok(runs[1].includes("FERRET_E2E_SETUP_TOKEN="), "and no token outside e2e");
   assert.equal(e2eRuns[0].includes("--network"), false);
-  assert.deepEqual(runExt(["e2e", "--no-up"]).stack, ["e2e-ca", "e2e-token"], "--no-up leaves the stack alone");
+  assert.deepEqual(runExt(["e2e", "--no-up"]).stack, ["e2e-ca", "e2e-token", "e2e-chromium"], "--no-up leaves the stack alone");
 
   // Nothing ever joins the host's network or another container's, or publishes a port.
   for (const call of [...firefox.calls, ...e2e.calls]) {
     const network = call.includes("--network") ? flagValue(call, "--network") : undefined;
-    assert.ok(network === undefined || network === "none" || network === "ferret-e2e-net", `network ${network}`);
+    assert.ok(network === undefined || network === "none" || /^ferret-x[0-9a-f]{8}-net$/.test(network), `network ${network}`);
     assert.ok(!call.some((a) => a === "-p" || a === "--publish" || a === "--publish-all" || a.startsWith("--network=") || a === "--privileged"), call.join(" "));
   }
 

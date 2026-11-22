@@ -128,7 +128,9 @@ const evil = e2e.services["ferret-e2e-evil"];
 const monitor = e2e.services["ferret-e2e-monitor"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
-if (Object.keys(app.build?.args || {}).sort().join() !== "FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock, nothing else");
+if (Object.keys(app.build?.args || {}).sort().join() !== "CARGO_JOBS,FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and CARGO_JOBS, nothing else");
+// The build host is shared: the server build runs at most 4 jobs at a time.
+if (!/^[1-4]$/.test(String(app.build.args.CARGO_JOBS))) fail("CARGO_JOBS of the app build must be 1 to 4, got " + app.build.args.CARGO_JOBS);
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("app cap_add");
 if ((app.tmpfs || []).some((t) => t.startsWith("/data"))) fail("the data directory is the named volume, not tmpfs");
 if (!/^caddy:[0-9.]+-alpine@sha256:[0-9a-f]{64}$/.test(tls.image)) fail("the TLS terminator image must be pinned by digest");

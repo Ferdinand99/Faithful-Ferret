@@ -23,7 +23,13 @@
 //   origin_changed     the frame's origin changes between the choice and the fill:
 //                      the fill fails with origin_changed and nothing is filled
 //   turns_hostile      the page changes after the choice (turnHostile(), also on
-//                      window blur): the fill is refused
+//                      window blur): the password is never filled; `expect.user`
+//                      names the field that still gets the user name (a clear
+//                      user name field the engine anchors on, as on the first
+//                      step of a two-step sign-in), or is null: nothing at all
+//   covered_after_report  the page is clear when the fill script reports its fields
+//                      and covers the password field after that (when the user
+//                      name is filled): the password is not filled
 //   shows_host         the popup shows the host name, never the page's title
 //
 // `expect.domain_entry` and `expect.http_entry` say what the other entries do
@@ -542,11 +548,12 @@ document.getElementById("shadow-ok-host").attachShadow({ mode: "open" }).innerHT
  * @param {string} reason what the browser says about the field afterwards
  * @param {string} action the script of turnHostile()
  * @param {string} [outcome]
+ * @param {string | null} [user] the field that still gets the user name, or null
  */
-function turning(id, summary, reason, action, outcome = "turns_hostile") {
+function turning(id, summary, reason, action, outcome = "turns_hostile", user = null) {
   add({
     id, origin: "login", path: `/t/${id}.html`, summary,
-    expect: { outcome, reason },
+    expect: { outcome, reason, user },
     render: ({ url }) => page({
       id,
       body: `<h1>Example sign-in</h1>
@@ -565,13 +572,39 @@ turning("blur-opacity", "Turns almost invisible (opacity 0.01 on a parent) when 
   'document.getElementById("wrap").style.opacity = "0.01";');
 
 turning("blur-overlay", "Slides a transparent cover over the password field when the window loses focus.", "covered",
-  'var r = document.getElementById("login-pass").getBoundingClientRect(); var c = document.createElement("div"); c.id = "cover"; c.style.cssText = "position: fixed; z-index: 10; background: transparent; left: " + r.left + "px; top: " + r.top + "px; width: " + r.width + "px; height: " + r.height + "px"; document.body.append(c);');
+  'var r = document.getElementById("login-pass").getBoundingClientRect(); var c = document.createElement("div"); c.id = "cover"; c.style.cssText = "position: fixed; z-index: 10; background: transparent; left: " + r.left + "px; top: " + r.top + "px; width: " + r.width + "px; height: " + r.height + "px"; document.body.append(c);',
+  "turns_hostile", "login-user");
 
 turning("blur-swap", "Replaces the password field with a new, invisible one (same id) when the window loses focus.", "opacity",
-  'var old = document.getElementById("login-pass"); var fresh = old.cloneNode(false); fresh.style.opacity = "0"; old.replaceWith(fresh);');
+  'var old = document.getElementById("login-pass"); var fresh = old.cloneNode(false); fresh.style.opacity = "0"; old.replaceWith(fresh);',
+  "turns_hostile", "login-user");
 
 turning("blur-navigate", "Navigates the whole page to a foreign origin when the window loses focus.", "origin",
   "location.href = evilLogin;", "origin_changed");
+
+add({
+  id: "late-overlay", origin: "login", path: "/t/late-overlay.html",
+  summary: "A clear sign-in form that slides a transparent cover over the password field once the user name field gets a value: after the fill script reported the fields, before the password is filled. fixtureState() says whether the cover is up.",
+  expect: { outcome: "covered_after_report", reason: "covered" },
+  render: () => page({
+    id: "late-overlay",
+    body: `<h1>Example sign-in</h1>
+${loginForm()}
+<script>
+var covered = false;
+document.getElementById("login-user").addEventListener("input", function () {
+  if (covered) return;
+  covered = true;
+  var r = document.getElementById("login-pass").getBoundingClientRect();
+  var c = document.createElement("div");
+  c.id = "cover";
+  c.style.cssText = "position: fixed; z-index: 10; background: transparent; left: " + r.left + "px; top: " + r.top + "px; width: " + r.width + "px; height: " + r.height + "px";
+  document.body.append(c);
+});
+window.fixtureState = function () { return { covered: covered }; };
+</script>`,
+  }),
+});
 
 add({
   id: "forged-events", origin: "login", path: "/t/forged-events.html",
