@@ -3092,6 +3092,106 @@
       "expect_error": null
     },
     {
+      "id": "url-match/match/155",
+      "title": "\"https://example.com/a^b\" (exact) against \"https://example.com/a%5Eb\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a^b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f615e62",
+        "match": "exact",
+        "page": "https://example.com/a%5Eb",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6125354562"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/156",
+      "title": "\"https://example.com/a%5Eb\" (exact) against \"https://example.com/a^b\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a%5Eb",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6125354562",
+        "match": "exact",
+        "page": "https://example.com/a^b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f615e62"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/157",
+      "title": "\"https://example.com/a|b\" (exact) against \"https://example.com/a%7Cb\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a|b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f617c62",
+        "match": "exact",
+        "page": "https://example.com/a%7Cb",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6125374362"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/158",
+      "title": "\"https://example.com/a%7Cb\" (exact) against \"https://example.com/a|b\" is none",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a%7Cb",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f6125374362",
+        "match": "exact",
+        "page": "https://example.com/a|b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f617c62"
+      },
+      "expect": {
+        "result": "none"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "url-match/match/159",
+      "title": "\"https://example.com/a|b\" (exact) against \"https://example.com/a|b\" is exact",
+      "op": "url.match",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "entry": "https://example.com/a|b",
+        "entry_utf8": "68747470733a2f2f6578616d706c652e636f6d2f617c62",
+        "match": "exact",
+        "page": "https://example.com/a|b",
+        "page_utf8": "68747470733a2f2f6578616d706c652e636f6d2f617c62"
+      },
+      "expect": {
+        "result": "exact"
+      },
+      "expect_error": null
+    },
+    {
       "id": "url-match/page_origin/001",
       "title": "origin of \"https://example.com\" is https://example.com",
       "op": "url.page_origin",

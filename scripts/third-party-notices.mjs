@@ -22,6 +22,9 @@
 // Source that was written from other projects (a port of a parser, a reader of another product's file
 // format, test data of the same shape) is listed under `adapted`: the origin, the licence, the files,
 // and what was changed. Each listed file starts with an SPDX line and "Modified by Faithful Ferret".
+//
+// Data from other projects (the EFF word list of the password generator) is listed under `data`: the
+// origin, the licence, the holder, the files, and what was changed. A data file has no header.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -187,6 +190,51 @@ export function adaptedEntries(extra, readText) {
       continue;
     }
     entries.push({ licenseId: a.license, text: terms, label, origin: a.origin, source: a.source, copyright: a.copyright, files: a.files, note: a.note });
+  }
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  return entries;
+}
+
+/**
+ * The data files of `extra.data`: files of this repository that hold data from another project (a word
+ * list, for example), under a licence that is not a software licence. Each entry names the origin, the
+ * licence, the holder and the files, and says what was changed ("Modified by Faithful Ferret", also for a
+ * file that is kept as it was next to one derived from it); each file must exist; the licence text is read
+ * from `licenseFile`. A data file carries no header of its own, so none is asked for. Throws when an entry
+ * is incomplete, a file is missing or the note does not say what was changed.
+ * @param {{ data?: any[] }} extra
+ * @param {(path: string) => string} readText
+ */
+export function dataEntries(extra, readText) {
+  const problems = [];
+  const entries = [];
+  for (const d of extra.data ?? []) {
+    const label = d.name ?? "(no name)";
+    const given = (key) => typeof d[key] === "string" && d[key].trim() !== "";
+    if (!["name", "origin", "source", "license", "licenseFile", "copyright", "note"].every(given) || !Array.isArray(d.files) || d.files.length === 0) {
+      problems.push(`${label}: a data entry needs name, origin, source, license, licenseFile, copyright, note and files`);
+      continue;
+    }
+    if (!d.note.includes("Modified by Faithful Ferret")) {
+      problems.push(`${label}: the note must say what was changed, starting from "Modified by Faithful Ferret"`);
+      continue;
+    }
+    let broken = false;
+    for (const file of d.files) {
+      try {
+        readText(file);
+      } catch {
+        problems.push(`${label}: ${file} is listed and does not exist`);
+        broken = true;
+      }
+    }
+    if (broken) continue;
+    const text = clean(readText(d.licenseFile));
+    if (text === "" || hasPlaceholder(text)) {
+      problems.push(`${label}: ${d.licenseFile} is empty or has a licence template placeholder`);
+      continue;
+    }
+    entries.push({ licenseId: d.license, text, label, origin: d.origin, source: d.source, copyright: d.copyright, files: d.files, note: d.note });
   }
   if (problems.length > 0) throw new Error(problems.join("\n"));
   return entries;
@@ -360,7 +408,7 @@ function section(title, groups) {
 const block = (title, lines, text) => [RULE, title, RULE, "", ...lines, "", text, "", ""].join("\n");
 
 /** The whole file. Same input, same text: no dates, no paths. */
-export function render({ product, intro = [], rust, npm = [], vendored = [], fontLicense, adapted = [] }) {
+export function render({ product, intro = [], rust, npm = [], vendored = [], fontLicense, adapted = [], data = [] }) {
   const head = [
     "THIRD-PARTY NOTICES",
     "",
@@ -409,6 +457,19 @@ export function render({ product, intro = [], rust, npm = [], vendored = [], fon
     }
     parts.push(lines.join("\n"));
   }
+  if (data.length > 0) {
+    const lines = [RULE, `Data from other projects (${data.length} ${data.length === 1 ? "entry" : "entries"})`, RULE, ""];
+    for (const d of data) {
+      lines.push(d.label, `  Origin: ${d.origin}`, `  Source: ${d.source}`, `  Licence: ${d.licenseId}`, `  Copyright: ${d.copyright}`, `  Files: ${d.files.join(", ")}`, `  ${d.note}`, "");
+    }
+    const seen = new Set();
+    for (const d of data) {
+      if (seen.has(d.licenseId)) continue;
+      seen.add(d.licenseId);
+      lines.push(`--- ${d.licenseId} ---`, "", d.text, "", "");
+    }
+    parts.push(lines.join("\n"));
+  }
   const text = parts.join("").replace(/\n+$/, "\n");
   if (hasPlaceholder(text)) throw new Error("THIRD-PARTY-NOTICES would contain an unfilled licence template (<year>, <owner> or <copyright holders>).");
   return text;
@@ -444,6 +505,7 @@ function main() {
     vendored: vendoredEntries(extra, JSON.parse(optional("web/vendor/MANIFEST.json") ?? '{"files":[]}'), (path) => readFileSync(join(root, path), "utf8")),
     fontLicense,
     adapted: adaptedEntries(extra, (path) => readFileSync(join(root, path), "utf8")),
+    data: dataEntries(extra, (path) => readFileSync(join(root, path), "utf8")),
   });
   const target = join(root, options.out ?? "THIRD-PARTY-NOTICES");
   if (options.check) {

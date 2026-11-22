@@ -355,6 +355,18 @@ max = 1
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R4). The decrypted item body (CBOR), its views and the plaintext export: after the AEAD has accepted the data, in the user's own worker. Branches are on the CBOR structure and the type of a field, loads copy bytes of slices at `base + index`, tables are the hexadecimal digits and the escapes of the JSON and CSV writers, divisions are pointer differences over element sizes and row counts. Bytes of a password or a note are copied, not used as an address."
 
 [[allow]]
+function = "^ferret_core::generator::ct_pick$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The load at base + k of the walk over the whole class or alphabet, k being the loop counter; every entry is read and the one at the random index is selected with subtle, so the address does not depend on the index."
+
+[[allow]]
+function = "^ferret_core::generator::uniform_index$"
+instruction = "i64\\.div_u"
+max = 1
+reason = "APPROVED: The one division is floor(2^32 / n) of a public size n (a class, the alphabet, the prefix of the shuffle, the 7 776 words, 10 digits), done once per call before any draw. The random draw is never divided: it is compared with the public limit and reduced by a multiplication with the reciprocal and one correction selected with subtle."
+
+[[allow]]
 function = "^ferret_core::integrity::checkpoint::verify_checkpoint$"
 instruction = "br_table"
 max = 1
@@ -727,6 +739,42 @@ max = 1
 reason = "Wrapping the vault key: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit."
 
 [[allow]]
+function = "^generate_passphrase externref shim multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_passphrase with the passphrase generator inlined: the br_table is the match on the options and the error kind; the i32 load at a constant address plus the loop counter is the walk over the four allowed separators (a public option); the i64 load at a constant address plus the loop counter is the walk over the whole word table (every entry is read, the chosen one is selected with subtle); the division by 12 is the element size of the list of picked words. The random index is never an address."
+
+[[allow]]
+function = "^generate_passphrase externref shim multivalue shim$"
+instruction = "i32\\.div_u"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_passphrase with the passphrase generator inlined: the br_table is the match on the options and the error kind; the i32 load at a constant address plus the loop counter is the walk over the four allowed separators (a public option); the i64 load at a constant address plus the loop counter is the walk over the whole word table (every entry is read, the chosen one is selected with subtle); the division by 12 is the element size of the list of picked words. The random index is never an address."
+
+[[allow]]
+function = "^generate_passphrase externref shim multivalue shim$"
+instruction = "i32\\.load\\(const-add\\)"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_passphrase with the passphrase generator inlined: the br_table is the match on the options and the error kind; the i32 load at a constant address plus the loop counter is the walk over the four allowed separators (a public option); the i64 load at a constant address plus the loop counter is the walk over the whole word table (every entry is read, the chosen one is selected with subtle); the division by 12 is the element size of the list of picked words. The random index is never an address."
+
+[[allow]]
+function = "^generate_passphrase externref shim multivalue shim$"
+instruction = "i64\\.load\\(const-add\\)"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_passphrase with the passphrase generator inlined: the br_table is the match on the options and the error kind; the i32 load at a constant address plus the loop counter is the walk over the four allowed separators (a public option); the i64 load at a constant address plus the loop counter is the walk over the whole word table (every entry is read, the chosen one is selected with subtle); the division by 12 is the element size of the list of picked words. The random index is never an address."
+
+[[allow]]
+function = "^generate_password externref shim multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_password with the password generator inlined: the br_table is the match on the options and the error kind, and the load at base + index is the walk over the whole prefix in the constant-time swap of the shuffle (index = loop counter). The random index is never an address; see the entries of ferret_core::generator."
+
+[[allow]]
+function = "^generate_password externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of generate_password with the password generator inlined: the br_table is the match on the options and the error kind, and the load at base + index is the walk over the whole prefix in the constant-time swap of the shuffle (index = loop counter). The random index is never an address; see the entries of ferret_core::generator."
+
+[[allow]]
 function = "^sync_memory_prune externref shim multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 3
@@ -815,6 +863,12 @@ function = "^vault_encrypt_item externref shim multivalue shim$"
 instruction = "br_table"
 max = 10
 reason = "APPROVED: The export shim of encrypt_item with the glue of the call inlined. The hits are serde-wasm-bindgen matching the field names and value kinds of the draft (now including the folders list) and the matches of the code it calls, whose entries are above. This is the structure of the call from JavaScript; no key byte decides a branch."
+
+[[allow]]
+function = "^vault_items_with_field_value multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: wasm-bindgen's shim of Vault.items_with_field_value with the loop over the handles inlined: the load at base + index reads the list of handles that the caller gave (public numbers), index being the loop counter. The field values are compared by ct_eq in the core, which has no hit."
 
 [[allow]]
 function = "^vault_make_checkpoint externref shim multivalue shim$"

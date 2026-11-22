@@ -240,6 +240,8 @@ pub enum Error {
     GenerationExhausted,
     /// The folder names of an item break a rule.
     Folder(FolderError),
+    /// The options of the password or passphrase generator are out of range.
+    GeneratorOptions,
 }
 
 impl Error {
@@ -320,6 +322,7 @@ impl Error {
         Error::Folder(FolderError::BadCharacter),
         Error::Folder(FolderError::TooMany),
         Error::Folder(FolderError::Duplicate),
+        Error::GeneratorOptions,
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -411,6 +414,7 @@ impl Error {
                 FolderError::TooMany => "folder_too_many",
                 FolderError::Duplicate => "folder_duplicate",
             },
+            Error::GeneratorOptions => "generator_options",
         }
     }
 }
