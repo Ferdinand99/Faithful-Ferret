@@ -9,6 +9,7 @@
 // The pieces the frame needs from outside (the sync and live pills, what Lock and
 // Sign out do) are handed in; the frame owns the rest of the page.
 import { el, mount } from "../dom.mjs";
+import { focusNode, popMenu, within } from "./popMenu.mjs";
 import { currentEntry, initialsOf, sidebarModel } from "./sidebarModel.mjs";
 
 /** Where Help leads (the project's public documentation). */
@@ -19,78 +20,6 @@ export const PHONE_QUERY = "(max-width: 767.98px)";
 
 let sequence = 0;
 let folderMenus = 0;
-
-/** @param {any} node */
-const focusNode = (node) => {
-  if (typeof node?.focus === "function") node.focus();
-};
-
-/** Whether `node` is `ancestor` or stands below it. @param {any} node @param {any} ancestor */
-function within(node, ancestor) {
-  for (let one = node; one; one = one.parentNode) if (one === ancestor) return true;
-  return false;
-}
-
-/**
- * A menu that opens from a button: `aria-expanded` on the button, arrow keys,
- * Home and End inside, and a way to close it that puts the focus back.
- * @param {{ trigger: HTMLElement, menu: HTMLElement, items: () => HTMLElement[], onOpen?: () => void }} options
- */
-function popMenu({ trigger, menu, items, onOpen }) {
-  let open = false;
-  /** @param {boolean} value */
-  const set = (value) => {
-    open = value;
-    menu.hidden = !value;
-    trigger.setAttribute("aria-expanded", value ? "true" : "false");
-  };
-  /** @param {"first" | "last" | null} focus */
-  const show = (focus) => {
-    onOpen?.();
-    set(true);
-    const list = items();
-    focusNode(focus === "last" ? list[list.length - 1] : list[0]);
-  };
-  set(false);
-  trigger.addEventListener("click", () => {
-    if (open) {
-      set(false);
-      return;
-    }
-    show("first");
-  });
-  trigger.addEventListener("keydown", (/** @type {any} */ event) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault?.();
-      if (!open) show(event.key === "ArrowUp" ? "last" : "first");
-    }
-  });
-  menu.addEventListener("keydown", (/** @type {any} */ event) => {
-    const list = items();
-    const at = list.findIndex((node) => node === event.target || within(event.target, node));
-    /** @param {number} to */
-    const move = (to) => {
-      event.preventDefault?.();
-      focusNode(list[(to + list.length) % list.length]);
-    };
-    if (event.key === "ArrowDown") move(at + 1);
-    else if (event.key === "ArrowUp") move(at <= 0 ? list.length - 1 : at - 1);
-    else if (event.key === "Home") move(0);
-    else if (event.key === "End") move(list.length - 1);
-    else if (event.key === "Tab") set(false); // the focus goes on to the next control by itself
-  });
-  return {
-    trigger,
-    menu,
-    isOpen: () => open,
-    /** @param {boolean} [returnFocus] */
-    close(returnFocus = false) {
-      if (!open) return;
-      set(false);
-      if (returnFocus) focusNode(trigger);
-    },
-  };
-}
 
 /**
  * @typedef {object} SidebarOptions

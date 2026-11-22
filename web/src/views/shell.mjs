@@ -15,6 +15,7 @@ import { autoLockFor } from "../lock.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
 import { createWipeScope, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 import { menuRoutes } from "./account.mjs";
+import { menuPathOf } from "./listModel.mjs";
 import { sidebarView } from "./sidebar.mjs";
 import { countItems } from "./sidebarModel.mjs";
 import { standbyView } from "./standby.mjs";
@@ -255,7 +256,12 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
   }
 
   // The entry of the screen that is open says so (aria-current), and follows the address.
-  const pathNow = () => String(win?.location?.hash ?? "").replace(/^#/, "");
+  // The list keeps its filters after a "?": the part before it is the page, and the list with the favourites on belongs to the Favourites entry.
+  const pathNow = () => {
+    const raw = String(win?.location?.hash ?? "").replace(/^#/, "");
+    const cut = raw.indexOf("?");
+    return cut < 0 ? raw : menuPathOf(raw.slice(0, cut), raw.slice(cut + 1));
+  };
   chrome.markCurrent(pathNow());
   if (typeof win?.addEventListener === "function") {
     const onHash = () => {
@@ -413,7 +419,16 @@ export async function enterVault(ctx) {
   const autoLock = autoLockFor(session, sync);
 
   const open = session.current?.() ?? null;
-  const onUnlocked = () => go(path);
+  // After an unlock the same screen comes back, with the filters of its address (the list keeps them there).
+  const onUnlocked = () => {
+    const hash = String(globalThis.location?.hash ?? "");
+    const cut = hash.indexOf("?");
+    try {
+      go(cut < 0 ? path : `${path}${hash.slice(cut)}`);
+    } catch {
+      go(path);
+    }
+  };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
   const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
   if (!open) return { locked: lockedScreen() };

@@ -96,3 +96,27 @@ test("the_menu_is_built_from_the_routes_and_a_page_with_no_routes_has_no_entries
     assert.equal(find(bare, "nav-generator").getAttribute("href"), null);
   });
 });
+
+test("the_list_with_the_favourites_on_belongs_to_the_favourites_entry_whatever_else_is_chosen", async () => {
+  await withDom(async () => {
+    const win = pageWindow("#/items");
+    const { current } = frame(win);
+    win.go("#/items?fav=1");
+    assert.deepEqual(current(), ["nav-favorites"]);
+    win.go("#/items?type=login&fav=1&sort=changed");
+    assert.deepEqual(current(), ["nav-favorites"]);
+    win.go("#/items?type=login");
+    assert.deepEqual(current(), ["nav-items"], "a filter that is not the favourites is the list of all items");
+    win.go("#/items?sort=changed&dir=asc");
+    assert.deepEqual(current(), ["nav-items"]);
+  });
+});
+
+test("the_favourites_route_opens_the_list_with_the_chip_on_and_does_not_stay_in_the_history", async () => {
+  await withDom(async () => {
+    const replaced = [];
+    const node = favoritesRoute.load({ replace: (path) => replaced.push(path) });
+    assert.deepEqual(replaced, ["/items?fav=1"]);
+    assert.ok(node);
+  });
+});

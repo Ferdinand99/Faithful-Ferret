@@ -3,7 +3,7 @@
 // code from before the restore are dead after it; an import window that was open during a restore writes nothing, and a new one
 // opens on the restored server. The host script (scripts/lanbox-ferret-e2e-gate.sh m3) makes the backup and puts it back.
 import { request } from "@playwright/test";
-import { API_HEADERS, bulkJson, createItem, expect, feedOf, hostStep, leave, listNames, memory, newDevice, noViolations, openImport, chooseImportFile, openList, remember, requireAccount, rowsNamed, runChosenImport, secrets, signInHere, startHeldImport, synced, syncBanner, test, vaultUrl } from "./support.mjs";
+import { API_HEADERS, bulkJson, createItem, expect, feedOf, hostStep, leave, memory, newDevice, noViolations, openImport, chooseImportFile, openList, remember, requireAccount, findRows, runChosenImport, secrets, signInHere, startHeldImport, synced, syncBanner, test, vaultUrl } from "./support.mjs";
 import { fileURLToPath } from "node:url";
 
 test.describe.configure({ mode: "serial" });
@@ -63,7 +63,7 @@ test("backup_wipe_restore_and_every_item_is_back", async ({ browser }) => {
   for (const name of kept) await createItem(a.page, { name, username: "in-the-backup", password: `Pw-${tag}-${name}!` });
   await synced(a.page);
   await openList(b.page);
-  for (const name of kept) await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: 60_000 });
+  for (const name of kept) await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: 60_000 });
   await synced(b.page);
 
   // What the second test looks at afterwards: a session cookie that works now, and a one-time code that is pending now.
@@ -104,14 +104,12 @@ test("backup_wipe_restore_and_every_item_is_back", async ({ browser }) => {
   await openList(a.page);
   await openList(b.page);
   for (const name of kept) {
-    await expect(rowsNamed(a.page, name)).toHaveCount(1);
-    await expect(rowsNamed(b.page, name)).toHaveCount(1);
+    await expect((await findRows(a.page, name))).toHaveCount(1);
+    await expect((await findRows(b.page, name))).toHaveCount(1);
   }
   const server = await newDevice(browser);
-  for (const name of kept) await expect(rowsNamed(server.page, name), "the restored server holds the item").toHaveCount(1, { timeout: 90_000 });
-  await expect(rowsNamed(server.page, lost), "what came after the backup is not on the restored server").toHaveCount(0);
-  const names = await listNames(server.page);
-  expect(names.filter((n) => kept.includes(n)).length).toBe(kept.length);
+  for (const name of kept) await expect((await findRows(server.page, name)), "the restored server holds the item").toHaveCount(1, { timeout: 90_000 });
+  await expect((await findRows(server.page, lost)), "what came after the backup is not on the restored server").toHaveCount(0);
 
   // The first browser says what it knows that the server lost, and puts it back; a new browser then sees that too.
   await openRestoredPage(a.page);
@@ -122,8 +120,7 @@ test("backup_wipe_restore_and_every_item_is_back", async ({ browser }) => {
   await expect(server.page.locator('[data-role="unlock"]')).toBeVisible({ timeout: 30_000 });
   await server.context.close();
   const again = await newDevice(browser);
-  await expect(rowsNamed(again.page, lost), "the browser put the item back").toHaveCount(1, { timeout: 90_000 });
-  expect(await listNames(again.page)).toContain(lost);
+  await expect((await findRows(again.page, lost)), "the browser put the item back").toHaveCount(1, { timeout: 90_000 });
   for (const device of [a, b, c, again]) await device.context.close();
   remember();
   leave("m3-25-a", { set: shared.set });
@@ -168,7 +165,7 @@ test("a_restore_while_an_import_window_is_open_writes_nothing_from_the_old_windo
   const seqAfterRestore = feed.latest_seq;
   await fresh.page.waitForTimeout(5_000);
   expect((await feedOf(fresh.context)).latest_seq, "the old window wrote nothing on the restored server").toBe(seqAfterRestore);
-  expect((await listNames(fresh.page)).filter((n) => n.startsWith(`Bulk-restore-${tag}`)), "no item of the dead import is there").toEqual([]);
+  await expect(await findRows(fresh.page, `Bulk-restore-${tag}`), "no item of the dead import is there").toHaveCount(0);
 
   // A new window opens on the restored server (the page asks for the password again) and an import goes through.
   const before = (await memory(fresh.page)).items;

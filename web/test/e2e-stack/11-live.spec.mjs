@@ -1,6 +1,6 @@
 // Live updates: a change in one browser shows in the other within two seconds, the event stream is closed by the server
 // when the session ends, and only the tab that runs the sync of a browser has a stream (the other tabs are on standby).
-import { createItem, expect, newDevice, noViolations, openList, readStores, rowsNamed, shot, synced, test, unlockWith, secrets, useAccount, vaultUrl, signOutOn } from "./support.mjs";
+import { createItem, expect, newDevice, noViolations, openList, readStores, findRows, shot, synced, test, unlockWith, secrets, useAccount, vaultUrl, signOutOn } from "./support.mjs";
 
 test.describe.configure({ mode: "serial" });
 noViolations();
@@ -53,7 +53,7 @@ test("a_change_in_one_browser_shows_in_the_other_within_2_seconds", async ({ bro
       await createItem(a.page, { name, username: "live-user" });
       expect((await stored).status()).toBe(200);
       const from = Date.now();
-      await expect(rowsNamed(b.page, name)).toHaveCount(1, { timeout: 2_000 });
+      await expect((await findRows(b.page, name))).toHaveCount(1, { timeout: 2_000 });
       expect(Date.now() - from, "the other browser shows it within 2 seconds").toBeLessThan(2_000);
       await openList(a.page);
     }
