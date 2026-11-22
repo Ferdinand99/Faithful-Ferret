@@ -11,7 +11,7 @@
 import { el, mount } from "../dom.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges } from "./common.mjs";
 import { favouriteDraft, folderLabels, groupFields, tileLetter, tileType } from "./itemModel.mjs";
-import { popMenu, within } from "./popMenu.mjs";
+import { focusNode, popMenu, within } from "./popMenu.mjs";
 
 /** What a hidden value looks like. */
 const DOTS = "••••••••";
@@ -55,6 +55,9 @@ export async function itemView({
   const slots = new Map();
   /** The menu of the ⋮ button, when the item has one; closed on a press outside it and on a lock. @type {ReturnType<typeof popMenu> | null} */
   let moreMenu = null;
+  /** The ⋮ button of the page as built last, and whether the next build should give it the focus (the favourite switch rebuilds the header). @type {HTMLElement | null} */
+  let moreButton = null;
+  let refocusMore = false;
 
   /** @param {string} text */
   function say(text) {
@@ -305,6 +308,7 @@ export async function itemView({
 
     const actions = el("div", { class: "actions item-actions", "data-role": "actions" });
     moreMenu = null;
+    moreButton = null;
     if (editable) {
       const del = el("button", { type: "button", class: "btn btn-danger i-trash", "data-role": "delete" }, t("vault.item.trash"));
       del.addEventListener("click", async () => {
@@ -342,17 +346,20 @@ export async function itemView({
       const menu = el("div", { class: "side-menu item-menu", role: "menu", "aria-label": t("vault.item.more", { name }), "data-role": "more-menu" }, ...entries);
       const pop = popMenu({ trigger: more, menu, items: () => entries, escape: true });
       moreMenu = pop;
+      moreButton = more;
       favorite.addEventListener("click", async () => {
         pop.close(true);
         if (!touch()) return;
         // The newest revision: a change that came in since the page was drawn is not overwritten (the engine refuses a stale one).
         const now = engine.list().find((/** @type {any} */ i) => i.id === id);
         const draft = favouriteDraft({ favorite: view.favorite === true });
+        // The page is built again when the engine says the item changed (once, not twice); the focus then goes back to the ⋮ button.
+        refocusMore = true;
         try {
           await engine.update(id, draft, now?.rev);
           say(t(draft.favorite ? "vault.item.favorited" : "vault.item.unfavorited"));
-          await load();
         } catch (error) {
+          refocusMore = false;
           say(describeError(t, error));
         }
       });
@@ -377,6 +384,11 @@ export async function itemView({
       host,
       ...cards,
       view.has_totp ? el("p", { class: "aside", "data-role": "totp-note" }, t("vault.item.totp_note")) : null].filter((node) => node !== null));
+    if (refocusMore) {
+      refocusMore = false;
+      // The button that had the focus was in the header that is gone: the new one takes it, so a keyboard user keeps their place.
+      focusNode(moreButton ?? root.querySelector?.('[data-role="back"]'));
+    }
   }
 
   /**

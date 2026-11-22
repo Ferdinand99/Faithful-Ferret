@@ -125,7 +125,9 @@ async function sideBySide(channel) {
  * @param {ReturnType<typeof helpers>} page @param {import("./driver.mjs").Session} session @param {string} name
  */
 async function webVaultCreate(page, session, name) {
-  await page.click('[data-role="nav-new"]');
+  await page.click('[data-role="nav-items"]');
+  await page.waitVisible('[data-role="new-item"]');
+  await page.click('[data-role="new-item"]');
   await page.waitVisible('[data-role="edit-form"]');
   await page.type('[data-role="name"]', name);
   await page.type('[data-role="username"]', "sync-user");

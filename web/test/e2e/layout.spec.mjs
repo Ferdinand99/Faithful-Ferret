@@ -441,7 +441,7 @@ test("the_sheet_prints_dark_on_white_in_any_theme_with_the_recovery_key_on_a_pag
   expect(onScreen).not.toBe("rgb(29, 29, 31)"); // dark on screen: light text
   expect(paper.scheme).toBe("light");
   for (const color of [paper.key, paper.recovery, paper.heading]) expect(color).toBe("rgb(29, 29, 31)");
-  expect(paper.label).toBe("rgb(110, 110, 115)");
+  expect(paper.label).toBe("rgb(102, 102, 107)");
   expect(paper.page).toBe("page");
   expect(paper.app).toBe("block");
   expect(paper).toMatchObject({ buttons: 0, forms: false, typeBack: 0, footer: false, marks: 0 });

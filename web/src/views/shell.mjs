@@ -21,7 +21,7 @@ import { countItems } from "./sidebarModel.mjs";
 import { standbyView } from "./standby.mjs";
 import { isBannerCode, syncBanner } from "./syncBanner.mjs";
 import { unlockScreen } from "./unlock.mjs";
-import { createThemeChoice } from "../theme.mjs";
+import { THEME_KEY, createThemeChoice } from "../theme.mjs";
 import { createUiPrefs } from "../uiPrefs.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
@@ -272,6 +272,22 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     };
     win.addEventListener("hashchange", onHash);
     scope.add(() => win.removeEventListener?.("hashchange", onHash));
+  }
+  // Another tab changed the theme: this page follows at once, and the account menu shows the new choice. (The event is only
+  // delivered to the other tabs, never to the one that made the change.)
+  if (typeof win?.addEventListener === "function") {
+    const onStorage = (/** @type {{ key?: string | null }} */ event) => {
+      // A frame that has left the page stops listening.
+      if (/** @type {any} */ (root).isConnected === false) {
+        win.removeEventListener?.("storage", onStorage);
+        return;
+      }
+      if (event?.key !== THEME_KEY && event?.key !== null && event?.key !== undefined) return;
+      theme.sync?.();
+      chrome.refreshTheme();
+    };
+    win.addEventListener("storage", onStorage);
+    scope.add(() => win.removeEventListener?.("storage", onStorage));
   }
   // The numbers beside "All items" and "Favourites" follow the items.
   scope.add(listenWhileShown(root, engine, "changed", () => chrome.setCounts(countItems(items(), MANIFEST_ID))));

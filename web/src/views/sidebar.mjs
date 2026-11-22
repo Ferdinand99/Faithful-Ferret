@@ -325,6 +325,8 @@ export function sidebarView({
       render();
     },
     markCurrent: (/** @type {string} */ next) => markCurrent(next),
+    /** The theme choice was changed elsewhere (another tab): the checked entry follows. */
+    refreshTheme: paintTheme,
     refs: { menuButton, closeButton, collapseButton, accountButton, switcher, lockItem, signOutItem, settingsItem, helpItem, accountMenu, themeItems },
     state: () => ({ drawerOpen, accountOpen: account.isOpen(), collapsed: side.getAttribute("data-collapsed") === "true" }),
     openDrawer: () => {

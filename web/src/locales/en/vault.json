@@ -81,7 +81,6 @@
   "vault.mark.read_only": "Read only",
   "vault.nav.items": "Items",
   "vault.nav.label": "Vault",
-  "vault.nav.new": "New item",
   "vault.new.title": "New item",
   "vault.notice.damaged": "The newest version of this item from the server cannot be opened. The last good version is shown. The item cannot be changed or deleted until that is sorted out.",
   "vault.notice.discard_change": "Discard my change",

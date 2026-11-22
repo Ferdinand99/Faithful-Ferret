@@ -81,7 +81,6 @@
   "vault.mark.read_only": "Skrivebeskyttet",
   "vault.nav.items": "Elementer",
   "vault.nav.label": "Hvelv",
-  "vault.nav.new": "Nytt element",
   "vault.new.title": "Nytt element",
   "vault.notice.damaged": "Den nyeste versjonen av dette elementet fra tjeneren kan ikke åpnes. Den siste gode versjonen vises. Elementet kan ikke endres eller slettes før dette er ordnet.",
   "vault.notice.discard_change": "Forkast endringen min",

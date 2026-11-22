@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { editView } from "../../src/views/edit.mjs";
 import { itemView } from "../../src/views/item.mjs";
-import { all, click, coded, fakeClient, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
+import { FakeElement, all, click, coded, fakeClient, fakeEngine, find, fire, settle, t, textOf, walk, withDom } from "./vaultHelpers.mjs";
 
 const ID = "11".repeat(16);
 const PASSWORD = "pw-SECRET-1";
@@ -517,5 +517,65 @@ test("the_menu_is_driven_from_the_keyboard", async () => {
     await fire(menu, "keydown", { key: "Escape", target: find(root, "favorite") });
     assert.equal(menu.hidden, true);
     assert.equal(focused.at(-1), "more");
+  });
+});
+
+test("after_the_favourite_switch_the_focus_is_on_the_new_menu_button_and_the_page_is_built_once", async () => {
+  await withDom(async () => {
+    const focused = [];
+    const saved = FakeElement.prototype.focus;
+    FakeElement.prototype.focus = function focus() {
+      focused.push(this.getAttribute("data-role"));
+    };
+    try {
+      const { root, engine } = await open();
+      const opens = () => engine.calls.filter((c) => c[0] === "open").length;
+      await click(find(root, "more"));
+      const oldMore = find(root, "more");
+      const before = opens();
+      focused.length = 0;
+      await click(find(root, "favorite"));
+      await settle();
+      assert.equal(opens(), before, "nothing is built until the engine says the item changed");
+      // The engine says so: the header is built again, and its menu button has the focus.
+      engine.items[0] = { ...ENTRY, favorite: true, rev: 3 };
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.equal(opens(), before + 1, "one rebuild");
+      assert.notEqual(find(root, "more"), oldMore, "the header is a new one");
+      assert.equal(focused.at(-1), "more");
+      // A later rebuild (another device's change) does not take the focus.
+      focused.length = 0;
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.deepEqual(focused, []);
+    } finally {
+      if (saved === undefined) delete FakeElement.prototype.focus;
+      else FakeElement.prototype.focus = saved;
+    }
+  });
+});
+
+test("a_refused_favourite_switch_leaves_the_focus_alone_for_the_next_rebuild", async () => {
+  await withDom(async () => {
+    const focused = [];
+    const saved = FakeElement.prototype.focus;
+    FakeElement.prototype.focus = function focus() {
+      focused.push(this.getAttribute("data-role"));
+    };
+    try {
+      const { root, engine } = await open();
+      await click(find(root, "more"));
+      engine.failWith = coded("item_changed");
+      await click(find(root, "favorite"));
+      await settle();
+      focused.length = 0;
+      engine.emit("changed", { ids: [ID] });
+      await settle();
+      assert.deepEqual(focused, []);
+    } finally {
+      if (saved === undefined) delete FakeElement.prototype.focus;
+      else FakeElement.prototype.focus = saved;
+    }
   });
 });

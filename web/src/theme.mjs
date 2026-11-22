@@ -68,6 +68,10 @@ export function createThemeChoice({ storage = pageStorage(), root = globalThis.d
   return {
     /** @returns {"auto" | "light" | "dark"} the choice now; read again on every call, so two tabs agree on the last one */
     current: () => readTheme(storage),
+    /** Applies the stored choice to the page again (another tab changed it). */
+    sync() {
+      applyTheme(readTheme(storage), root);
+    },
     /** @param {string} theme */
     set(theme) {
       if (!THEMES.includes(/** @type {any} */ (theme))) return;

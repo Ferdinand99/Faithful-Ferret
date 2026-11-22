@@ -129,7 +129,7 @@
 .vault-ui .star {
   margin-inline-start: 0.25rem;
   margin-inline-end: 0;
-  color: var(--brand);
+  color: var(--brand-text);
 }
 
 .vault-ui .marks {

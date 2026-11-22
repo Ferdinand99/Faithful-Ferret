@@ -26,7 +26,7 @@ async function ready(page) {
 
 /**
  * Builds one screen in the real frame, in #app. `which`: item, edit, new, trash-empty, trash-full, devices-empty, list-empty,
- * list-favourites-empty. `opts.name` and `opts.url` make long values.
+ * list-favourites-empty, list-populated (two rows, the Favourites chip on). `opts.name` and `opts.url` make long values.
  */
 async function scene(page, which, opts = {}) {
   await page.evaluate(async ({ which, opts }) => {
@@ -48,11 +48,17 @@ async function scene(page, which, opts = {}) {
       folders: opts.folders ?? [],
     };
     const entry = { id: "a1".repeat(16), name: view.name, type: "login", favorite: false, urls: [], username: "ada@example.com", rev: 3 };
+    const second = { id: "d4".repeat(16), name: "Bank", type: "note", favorite: true, urls: [], username: "ola", rev: 1, modified: Date.now() - 86_400_000 };
+    const handlers = new Set();
     const engine = {
-      list: () => (which === "list-empty" ? [] : [entry]),
-      on: () => () => {},
+      list: () => (which === "list-empty" ? [] : which === "list-populated" ? [{ ...entry, favorite: true, modified: Date.now() }, second] : [entry]),
+      on: (event, fn) => { if (event === "changed") handlers.add(fn); return () => handlers.delete(fn); },
       open: async () => ({ handle: 1, view, close: async () => {} }),
-      update: async (id, draft, rev) => { window.__calls.updates.push([id, structuredClone(draft), rev]); },
+      update: async (id, draft, rev) => {
+        window.__calls.updates.push([id, structuredClone(draft), rev]);
+        // Like the real engine: the item changed.
+        for (const fn of [...handlers]) fn({ ids: [id] });
+      },
       create: async (draft) => { window.__calls.creates.push(structuredClone(draft)); return "b2".repeat(16); },
       remove: async (id) => { window.__calls.removes.push(id); },
       trash: async () => (which === "trash-full" ? [{ id: "c3".repeat(16), name: "Old router", deletedAt: Date.now() - 86_400_000 }] : []),
@@ -85,7 +91,7 @@ async function scene(page, which, opts = {}) {
       });
     } else {
       const { listView } = await import("/app/views/list.mjs");
-      const query = which === "list-favourites-empty" ? "fav=1" : "";
+      const query = which === "list-favourites-empty" || which === "list-populated" ? "fav=1" : "";
       content = listView({ engine, router: { go }, t, nav: { query, set() {}, watch: () => () => {} }, locale: i18n.lang });
     }
     const frame = shellView({
@@ -175,6 +181,9 @@ test.describe("one item on a desktop", () => {
     await more.click();
     await page.locator('[data-role="favorite"]').click();
     await expect.poll(() => page.evaluate(() => window.__calls.updates)).toEqual([["a1".repeat(16), { favorite: true }, 3]]);
+    // The header is built again after the change; the keyboard user stays on the menu button.
+    await expect(page.getByRole("button", { name: "More actions for GitHub" })).toBeFocused();
+    await expect(page.locator('[data-role="more-menu"]')).toBeHidden();
   });
 
   test("move_to_trash_asks_first_and_removes_through_the_engine", async ({ page }) => {
@@ -465,10 +474,17 @@ for (const scheme of ["light", "dark"]) {
   test.describe(`contrast in the ${scheme} theme`, () => {
     test.use({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
 
-    for (const which of ["item", "edit", "list-empty", "trash-full", "trash-empty", "devices-empty"]) {
+    for (const which of ["item", "edit", "list-populated", "list-empty", "trash-full", "trash-empty", "devices-empty"]) {
       test(`the_${which}_page_reads_at_aa`, async ({ page }) => {
         await ready(page);
         await scene(page, which, which === "item" ? { folders: ["Home"] } : {});
+        if (which === "list-populated") {
+          // The chosen chip, a row that is ticked (so the bar for several rows is up), and the open menu of a row.
+          await expect(page.locator('[data-role="favorites-chip"]')).toHaveAttribute("aria-pressed", "true");
+          await page.locator('[data-role="select"]').first().check();
+          await expect(page.locator('[data-role="bulk"]')).toBeVisible();
+          await page.locator('[data-role="row-menu"]').first().click();
+        }
         if (which === "item") {
           await page.getByRole("button", { name: "Show Password" }).click();
           await page.getByRole("button", { name: "More actions for GitHub" }).click();

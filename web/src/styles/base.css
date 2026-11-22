@@ -22,13 +22,14 @@
   --pressed: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.08));
   --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   --line-strong: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.14));
-  --control-border: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.26));
+  /* The edge of a text field and of a box: the only thing that shows where it is, so at least 3:1 on the card, the page and the field itself (WCAG 1.4.11). */
+  --field-line: light-dark(#86868b, #76767b);
   --bar: light-dark(rgba(245, 245, 247, 0.76), rgba(11, 11, 13, 0.72));
   --blur-bar: blur(20px) saturate(180%);
 
   /* Text */
   --text: light-dark(#1d1d1f, #f5f5f7);
-  --muted: light-dark(#6e6e73, #a1a1a6);
+  --muted: light-dark(#66666b, #a1a1a6);
   --faint: light-dark(#aeaeb2, #6e6e73);
   --placeholder: light-dark(#737378, #8a8a8f);
   --on-inverse: light-dark(#ffffff, #0b0b0d);
@@ -472,7 +473,7 @@ textarea {
   min-height: 44px;
   margin: 0;
   padding: 10px 14px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--field-line);
   border-radius: 12px;
   background-color: var(--field);
   color: var(--text);
@@ -551,7 +552,7 @@ input[type="radio"] {
   width: 20px;
   height: 20px;
   margin: 0;
-  border: 1.5px solid var(--control-border);
+  border: 1.5px solid var(--field-line);
   border-radius: 6px;
   background-color: var(--field);
   background-position: center;
@@ -766,7 +767,7 @@ fieldset {
   :root {
     --line: light-dark(rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
     --line-strong: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
-    --control-border: light-dark(rgba(0, 0, 0, 0.6), rgba(255, 255, 255, 0.6));
+    --field-line: light-dark(#5c5c61, #a6a6ab);
     --muted: light-dark(#3a3a3c, #d1d1d6);
     --bar: var(--bg);
   }

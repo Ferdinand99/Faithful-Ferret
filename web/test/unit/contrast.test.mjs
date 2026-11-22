@@ -108,6 +108,7 @@ const TINTS = [
   ["--neutral-text", "--neutral-fill"],
   ["--brand-text", "--brand-fill"],
   ["--text", "--brand-fill"],
+  ["--muted", "--brand-fill"], // the secondary text of a ticked row
 ];
 
 for (const theme of /** @type {const} */ (["light", "dark"])) {
@@ -132,6 +133,16 @@ for (const theme of /** @type {const} */ (["light", "dark"])) {
     for (const tint of ["--tint-login", "--tint-note", "--tint-card", "--tint-identity", "--tint-other", "--brand"]) {
       const got = ratio(token("--on-inverse", theme), token(tint, theme));
       assert.ok(got >= 4.5, `${theme}: the letter on ${tint} is ${got.toFixed(2)}:1, needs 4.5:1`);
+    }
+  });
+
+  test(`${theme}_the_edge_of_a_field_and_of_a_box_reaches_3_to_1_on_every_surface_it_sits_on`, () => {
+    const bg = token("--bg", theme);
+    for (const edge of ["--field-line"]) {
+      for (const surface of SURFACES) {
+        const got = ratio(token(edge, theme), over(token(surface, theme), bg));
+        assert.ok(got >= 3, `${theme}: ${edge} on ${surface} is ${got.toFixed(2)}:1, needs 3:1`);
+      }
     }
   });
 

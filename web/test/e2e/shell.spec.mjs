@@ -24,7 +24,7 @@ async function mountShell(page, options = {}) {
     host.style.display = "flex";
     host.style.flexDirection = "column";
     host.style.minHeight = "100vh";
-    document.body.insertBefore(host, document.getElementById("foot"));
+    document.body.appendChild(host);
     const prefs = createUiPrefs();
     if (opts.collapsed !== undefined) prefs.setCollapsed(opts.collapsed);
     for (const id of opts.pinned ?? []) prefs.pin(id);
