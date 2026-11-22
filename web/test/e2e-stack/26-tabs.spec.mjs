@@ -2,7 +2,7 @@
 // form comes back whole; locking the tab that holds the vault hands it to the tab that waits, and a tab that is out of view does not
 // take it; a tab that does not answer is warned about, and a waiting tab that nobody sees does not stand in the way. The last
 // scenario puts a copy of the server's data back over a server that has purged the tombstones the copy still holds.
-import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
+import { addNeedle, createItem, expect, feedOf, freshContext, hostStep, itemIdOf, leave, lockNow, newDevice, noViolations, openItem, openList, putCheckpointOnTop, readStores, rowsNamed, secrets, serverRev, signInHere, signInOn, SLOW, synced, test, unlockWith, untilStartAccepted, useAccount, vaultUrl } from "./support.mjs";
 
 // The scenarios do not depend on each other (each makes its own browsers), so one that fails does not skip the rest.
 noViolations();
@@ -155,7 +155,7 @@ test("locking_the_owner_tab_hands_over_to_the_other", async ({ browser }) => {
     expect(await locksHeld(holder)).toBe(1);
 
     // The tab that holds the vault locks: the tab in view that waits gets the vault, and starts its engine; the hidden one does not.
-    await holder.locator('[data-role="lock"]').click();
+    await lockNow(holder);
     await expect(list(b)).toBeVisible({ timeout: 90_000 });
     await expect(b.locator('[data-role="live-status"]')).toHaveAttribute("data-state", "live", { timeout: 60_000 });
     await expect(notice(c)).toBeVisible();
@@ -170,7 +170,7 @@ test("locking_the_owner_tab_hands_over_to_the_other", async ({ browser }) => {
     expect(await locksHeld(c), "still one").toBe(1);
 
     // B locks: C starts. No tab ever held two locks.
-    await b.locator('[data-role="lock"]').click();
+    await lockNow(b);
     await expect(list(c)).toBeVisible({ timeout: 90_000 });
     await expect(c.locator('[data-role="live-status"]')).toHaveAttribute("data-state", "live", { timeout: 60_000 });
     expect(await locksHeld(c), "one tab holds the vault, the last").toBe(1);
