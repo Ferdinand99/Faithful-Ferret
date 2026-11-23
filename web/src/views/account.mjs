@@ -95,6 +95,13 @@ export function accountView({ t, routes, email = null, fresh = () => null, reaut
     adminRow = el("div", { class: "stack", "data-role": "admin-row" }, el("div", { class: "actions" }, link), failed);
   }
 
+  // What this vault uses that others made and asked to be named for (the addresses are text: the page makes no link off this origin).
+  const credits = el("div", { class: "stack", "data-role": "credits" },
+    el("h2", null, t("security.account.credits_heading")),
+    el("p", { "data-role": "credit-eff" }, t("security.account.credits_eff")),
+    el("p", { class: "aside", "data-role": "credit-eff-source" }, t("security.account.credits_eff_source")),
+    el("p", { class: "aside", "data-role": "credit-eff-licence" }, t("security.account.credits_eff_licence")));
+
   mount(root, ...[
     el("h1", null, t("security.account.heading")),
     email ? el("p", { "data-role": "account-email" }, t("security.account.signed_in", { email })) : null,
@@ -103,6 +110,7 @@ export function accountView({ t, routes, email = null, fresh = () => null, reaut
     pages.length > 0 ? list : el("p", { "data-role": "account-menu-empty" }, t("security.account.menu_empty")),
     reauthRow,
     adminRow,
+    credits,
   ].filter((node) => node !== null));
   return root;
 }

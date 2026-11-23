@@ -1,4 +1,8 @@
 {
+  "security.account.credits_eff": "The passphrase generator in the vault's core draws its words from the EFF large word list by the Electronic Frontier Foundation, used under the CC BY 3.0 US licence. The dice numbers were removed from the list; the words are unchanged.",
+  "security.account.credits_eff_licence": "Licence: CC BY 3.0 US, https://creativecommons.org/licenses/by/3.0/us/",
+  "security.account.credits_eff_source": "Word list: https://www.eff.org/dice",
+  "security.account.credits_heading": "Credits",
   "security.account.heading": "Account",
   "security.account.intro": "Settings that change how your vault opens ask for your master password again first.",
   "security.account.menu_empty": "There are no account pages in this version.",

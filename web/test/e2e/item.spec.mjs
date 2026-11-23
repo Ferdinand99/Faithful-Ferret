@@ -26,7 +26,8 @@ async function ready(page) {
 
 /**
  * Builds one screen in the real frame, in #app. `which`: item, edit, new, trash-empty, trash-full, devices-empty, list-empty,
- * list-favourites-empty, list-populated (two rows, the Favourites chip on). `opts.name` and `opts.url` make long values.
+ * list-favourites-empty, list-populated (two rows, the Favourites chip on). `opts.name` and `opts.url` make long values;
+ * `opts.history` (a number) gives the item that many earlier passwords, "old-password-<n>", newest first.
  */
 async function scene(page, which, opts = {}) {
   await page.evaluate(async ({ which, opts }) => {
@@ -46,6 +47,7 @@ async function scene(page, which, opts = {}) {
       ],
       urls: [{ url: opts.url ?? "https://github.com/login", matching: "host" }],
       folders: opts.folders ?? [],
+      password_history: Array.from({ length: opts.history ?? 0 }, (_, i) => ({ until: Date.UTC(2026, 10, 20 - i, 12, 0) })),
     };
     const entry = { id: "a1".repeat(16), name: view.name, type: "login", favorite: false, urls: [], username: "ada@example.com", rev: 3 };
     const second = { id: "d4".repeat(16), name: "Bank", type: "note", favorite: true, urls: [], username: "ola", rev: 1, modified: Date.now() - 86_400_000 };
@@ -67,6 +69,7 @@ async function scene(page, which, opts = {}) {
     const client = { vault: {
       reveal_item_field: async (_handle, index) => ["ada@example.com", "correct-horse-battery-1", "RC-1234"][index],
       reveal_item_notes: async () => "the notes",
+      reveal_password_history: async (_handle, index) => `old-password-${index}`,
     } };
     const session = { current: () => null, onLock() {}, info: async () => null };
     const clipboard = { writeText: async (text) => { window.__calls.copied.push(text); } };
@@ -135,6 +138,34 @@ test.describe("one item on a desktop", () => {
     expect(await text()).not.toContain(PASSWORD);
     await page.getByRole("button", { name: "Hide Recovery code" }).click();
     expect(await text()).not.toContain("RC-1234");
+  });
+
+  test("previous_passwords_are_hidden_until_shown_one_at_a_time_and_copy_works", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item", { history: 3 });
+    const card = page.locator('[data-card="history"]');
+    await expect(card.locator("h2")).toHaveText("Previous passwords (3)");
+    await expect(card.locator('[data-role="field"]')).toHaveCount(3);
+    const text = () => page.locator('[data-role="item"]').innerText();
+    for (const n of [0, 1, 2]) expect(await text()).not.toContain(`old-password-${n}`);
+    await card.locator('[data-role="reveal"]').first().click();
+    await expect(card.locator('[data-role="value"][data-key="h0"]')).toHaveText("old-password-0");
+    await card.locator('[data-role="reveal"]').nth(1).click();
+    await expect(card.locator('[data-role="value"][data-key="h1"]')).toHaveText("old-password-1");
+    expect(await text()).not.toContain("old-password-0");
+    // Showing the current password hides the old one, and the other way round.
+    await page.getByRole("button", { name: "Show Password" }).click();
+    await expect(page.locator('[data-role="value"][data-key="f1"]')).toHaveText(PASSWORD);
+    expect(await text()).not.toContain("old-password-1");
+    await card.locator('[data-role="copy"]').nth(2).click();
+    expect(await page.evaluate(() => window.__calls.copied)).toEqual(["old-password-2"]);
+    expect(await text()).not.toContain("old-password-2");
+  });
+
+  test("an_item_without_history_has_no_previous_passwords_card", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item");
+    await expect(page.locator('[data-card="history"]')).toHaveCount(0);
   });
 
   test("copy_works_from_the_keyboard_and_the_value_is_not_put_on_the_page", async ({ page }) => {
@@ -477,7 +508,7 @@ for (const scheme of ["light", "dark"]) {
     for (const which of ["item", "edit", "list-populated", "list-empty", "trash-full", "trash-empty", "devices-empty"]) {
       test(`the_${which}_page_reads_at_aa`, async ({ page }) => {
         await ready(page);
-        await scene(page, which, which === "item" ? { folders: ["Home"] } : {});
+        await scene(page, which, which === "item" ? { folders: ["Home"], history: 2 } : {});
         if (which === "list-populated") {
           // The chosen chip, a row that is ticked (so the bar for several rows is up), and the open menu of a row.
           await expect(page.locator('[data-role="favorites-chip"]')).toHaveAttribute("aria-pressed", "true");

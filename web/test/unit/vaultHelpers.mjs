@@ -181,7 +181,7 @@ export function fakeEngine({ items = [], views = {}, secrets = {} } = {}) {
 }
 
 /** The worker client's reveal calls over the fake engine's open handles. */
-export function fakeClient(engine, { notes = {} } = {}) {
+export function fakeClient(engine, { notes = {}, history = {} } = {}) {
   const calls = [];
   return {
     calls,
@@ -192,6 +192,14 @@ export function fakeClient(engine, { notes = {} } = {}) {
         const id = engine.handles.get(handle);
         if (id === undefined) throw coded("invalid_handle");
         return engine.secrets[id][index];
+      },
+      async reveal_password_history(handle, index) {
+        calls.push(["reveal_password_history", handle, index]);
+        const id = engine.handles.get(handle);
+        if (id === undefined) throw coded("invalid_handle");
+        const value = history[id]?.[index];
+        if (value === undefined) throw coded("invalid_input");
+        return value;
       },
       async reveal_item_notes(handle) {
         calls.push(["reveal_item_notes", handle]);
