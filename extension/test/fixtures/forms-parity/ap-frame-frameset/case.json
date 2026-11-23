@@ -1,0 +1,46 @@
+{
+  "id": "ap-frame-frameset",
+  "class": "positive",
+  "category": "frame",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-frame-frameset/",
+  "frame": {
+    "id": "#login-frame",
+    "host": "forms.example.net",
+    "path": "/ap-frame-frameset/inner.html",
+    "kind": "same-site"
+  },
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!apframefra-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

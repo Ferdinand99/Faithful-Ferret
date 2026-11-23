@@ -87,7 +87,7 @@ covered or off-screen one that must never be filled).
 
 ## The detection matrix
 
-`scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>]`
+`scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>]`
 runs `95-matrix.e2e.spec.mjs` on the end-to-end stack: the extension signed in to it, a vault with a few
 entries, and every case of the corpus in `test/fixtures/forms/` (see its README). The fill phase opens each
 page with the real shortcut, asks the extension for the page's entries, fills them and reads every input of

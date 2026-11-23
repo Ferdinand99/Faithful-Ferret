@@ -71,7 +71,9 @@ if [ "$mode" = matrix ]; then
   # Every case in two channels takes a while; the limit is for one channel.
   step_timeout="${FERRET_STEP_TIMEOUT:-5400}"
   test_timeout=5400000
-  FERRET_MATRIX_OUT="${FERRET_MATRIX_OUT:-/work/test-results/out/u2-matrix}"
+  # The autofill-parity suite reports into a folder of its own, so a run of it never overwrites the corpus's reports.
+  if [ "${FERRET_MATRIX_SET:-corpus}" = parity ]; then matrix_out_default=/work/test-results/out/u2-matrix-parity; else matrix_out_default=/work/test-results/out/u2-matrix; fi
+  FERRET_MATRIX_OUT="${FERRET_MATRIX_OUT:-$matrix_out_default}"
   export FERRET_MATRIX_OUT
   mkdir -p "$FERRET_MATRIX_OUT"
 fi

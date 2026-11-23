@@ -1,0 +1,23 @@
+{
+  "id": "ap-harmless-sign-in-with",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-sign-in-with/",
+  "frame": null,
+  "steps": [
+    {
+      "click": "#provider1"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

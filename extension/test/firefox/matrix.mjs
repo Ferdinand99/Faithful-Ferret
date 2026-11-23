@@ -22,14 +22,20 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { FORMS_DIR } from "./fixtures-server.mjs";
-import { VAULT_USERNAME, loadCorpus } from "./matrixReport.mjs";
+import { VAULT_USERNAME, followsRules, loadCorpus } from "./matrixReport.mjs";
 import { recentCodes } from "./totp.mjs";
 
 /** Where the hold-out set is added to the repository when the time comes. */
 export const HOLDOUT_DIR = resolve(FORMS_DIR, "..", "forms-holdout");
 
-/** @param {"corpus" | "holdout"} set */
-export const formsDirFor = (set) => (set === "holdout" ? HOLDOUT_DIR : FORMS_DIR);
+/** The own-written autofill-parity suite: one page per form of a public catalogue of autofill test pages. */
+export const PARITY_DIR = resolve(FORMS_DIR, "..", "forms-parity");
+
+/** @param {"corpus" | "holdout" | "parity"} set */
+export const formsDirFor = (set) => (set === "holdout" ? HOLDOUT_DIR : set === "parity" ? PARITY_DIR : FORMS_DIR);
+
+/** What every id of a set starts with before its category. @param {"corpus" | "holdout" | "parity"} set */
+export const idPrefixFor = (set) => (set === "parity" ? "ap-" : "");
 
 /**
  * The entries of the matrix's vault: what the extension should offer where. `rule` is what a fill is judged by
@@ -67,9 +73,9 @@ export function caseUrl(c, server) {
   return `${scheme}://${c.host}${port === standard ? "" : `:${port}`}${c.path}`;
 }
 
-/** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout"} set @param {string} [grep] */
+/** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout" | "parity"} set @param {string} [grep] */
 export function casesOf(set, grep = "") {
-  const all = loadCorpus(formsDirFor(set));
+  const all = loadCorpus(formsDirFor(set), { prefix: idPrefixFor(set) });
   return grep === "" ? all : all.filter((c) => c.id.includes(grep));
 }
 
@@ -607,7 +613,9 @@ export async function generatorCase(w, c) {
     if (want.confirm && first !== "" && valueOf(want.confirm) === first) filled.push(want.confirm);
     // Every other field of the page that holds the generated value is a stray fill.
     const stray = first === "" ? [] : rows.filter((r) => `#${r.id}` !== want.new && `#${r.id}` !== want.confirm && r.value === first).map((r) => `#${r.id}`);
-    result.observed = { ...result.observed, generated: { filled, stray } };
+    // Password rules of the page (a case that states them): checked here, where the value is; only the verdict is kept.
+    const rulesOk = want.rules && first !== "" ? followsRules(first, want.rules) : undefined;
+    result.observed = { ...result.observed, generated: { filled, stray, ...(rulesOk === undefined ? {} : { rules_ok: rulesOk }) } };
     result.ran.generated = true;
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);

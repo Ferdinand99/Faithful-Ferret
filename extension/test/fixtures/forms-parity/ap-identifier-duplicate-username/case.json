@@ -1,0 +1,50 @@
+{
+  "id": "ap-identifier-duplicate-username",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-identifier-duplicate-username/",
+  "frame": null,
+  "prepare": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "wait": 400
+    }
+  ],
+  "steps": [
+    {
+      "type": "#p",
+      "text": "Zq7!apidentifi-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#u2"
+  ],
+  "fields": {},
+  "source": "own"
+}

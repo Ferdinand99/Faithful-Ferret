@@ -1,0 +1,49 @@
+{
+  "id": "ap-login-reveal-added-hidden",
+  "class": "positive",
+  "category": "login",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-login-reveal-added-hidden/",
+  "frame": null,
+  "prepare": [
+    {
+      "click": "#show"
+    },
+    {
+      "wait": 1000
+    }
+  ],
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!aploginrev-Vm4$"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

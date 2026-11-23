@@ -1,0 +1,54 @@
+{
+  "id": "ap-signup-rules-mixed",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-signup-rules-mixed/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna_h"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": "#pw2",
+      "rules": {
+        "minlength": 10,
+        "require": [
+          "lower",
+          "upper",
+          "digit"
+        ]
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna_h",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw",
+    "#pw2"
+  ],
+  "fields": {
+    "#pw": "new_password",
+    "#pw2": "confirm_password"
+  },
+  "source": "own"
+}
