@@ -1,6 +1,44 @@
-{ "id": "ho-spa-pushstate-en", "class": "positive", "category": "spa", "lang": "en",
-  "host": "forms.example.net", "path": "/ho-spa-pushstate-en/", "frame": null,
-  "steps": [ { "type": "#handle", "text": "tove" }, { "type": "#secret", "text": "Lane-Backlog-3320" }, { "click": "#spa-go" }, { "wait": 500 } ],
-  "expect": { "fill": { "entry": "forms", "fields": { "#handle": "username", "#secret": "password" } },
-              "capture": { "offer": "save", "username": "tove", "password_from": "#secret", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-spa-pushstate-en",
+  "class": "positive",
+  "category": "spa",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-spa-pushstate-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#handle",
+      "text": "tove"
+    },
+    {
+      "type": "#secret",
+      "text": "Lane-Backlog-3320"
+    },
+    {
+      "click": "#spa-go"
+    },
+    {
+      "wait": 500
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#handle": "username",
+        "#secret": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "tove",
+      "password_from": "#secret",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

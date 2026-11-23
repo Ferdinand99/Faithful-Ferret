@@ -1,6 +1,41 @@
-{ "id": "ho-login-nl-aria", "class": "positive", "category": "login", "lang": "nl",
-  "host": "forms.example.net", "path": "/ho-login-nl-aria/", "frame": null,
-  "steps": [ { "type": "#email-address", "text": "femke.de.vries@example.net" }, { "type": "#wachtwoord", "text": "Tulpenveld-8841-k" }, { "click": "#inloggen" } ],
-  "expect": { "fill": { "entry": "forms", "fields": { "#email-address": "username", "#wachtwoord": "password" } },
-              "capture": { "offer": "save", "username": "femke.de.vries@example.net", "password_from": "#wachtwoord", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-login-nl-aria",
+  "class": "positive",
+  "category": "login",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/ho-login-nl-aria/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email-address",
+      "text": "femke.de.vries@example.net"
+    },
+    {
+      "type": "#wachtwoord",
+      "text": "Tulpenveld-8841-k"
+    },
+    {
+      "click": "#inloggen"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#email-address": "username",
+        "#wachtwoord": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "femke.de.vries@example.net",
+      "password_from": "#wachtwoord",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

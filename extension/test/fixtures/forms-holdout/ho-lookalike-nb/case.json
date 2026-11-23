@@ -1,6 +1,40 @@
-{ "id": "ho-lookalike-nb", "class": "special", "category": "lookalike", "lang": "nb",
-  "host": "forms.xn--exmple-4nf.net", "path": "/ho-lookalike-nb/", "frame": null,
-  "steps": [ { "type": "#lu", "text": "ola" }, { "type": "#lp", "text": "{{password:forms}}" }, { "click": "#lgo" } ],
-  "expect": { "fill": null, "allow": [],
-              "capture": { "offer": "save", "username": "ola", "password_from": "#lp", "origin": "https://forms.xn--exmple-4nf.net", "reuse": "reuse", "info": "lookalike" } },
-  "must_stay_empty": ["#lu", "#lp"], "fields": {}, "source": "own" }
+{
+  "id": "ho-lookalike-nb",
+  "class": "special",
+  "category": "lookalike",
+  "lang": "nb",
+  "host": "forms.xn--exmple-4nf.net",
+  "path": "/ho-lookalike-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#lu",
+      "text": "ola"
+    },
+    {
+      "type": "#lp",
+      "text": "{{password:forms}}"
+    },
+    {
+      "click": "#lgo"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [],
+    "capture": {
+      "offer": "save",
+      "username": "ola",
+      "password_from": "#lp",
+      "origin": "https://forms.xn--exmple-4nf.net",
+      "reuse": true
+    },
+    "generated": null
+  },
+  "must_stay_empty": [
+    "#lu",
+    "#lp"
+  ],
+  "fields": {},
+  "source": "own"
+}

@@ -1,7 +1,61 @@
-{ "id": "ho-signup-names-fr", "class": "positive", "category": "signup", "lang": "fr",
-  "host": "forms.example.net", "path": "/ho-signup-names-fr/", "frame": null,
-  "steps": [ { "type": "#prenom", "text": "Camille" }, { "type": "#nom", "text": "Durand" }, { "type": "#courriel", "text": "camille.durand@example.net" }, { "type": "#naissance", "text": "04/09/1990" }, { "type": "#mdp", "text": "Marronnier-Violet-3306" }, { "type": "#mdp2", "text": "Marronnier-Violet-3306" }, { "click": "#valider" } ],
-  "expect": { "fill": null,
-              "generated": { "new": "#mdp", "confirm": "#mdp2" },
-              "capture": { "offer": "save", "username": "camille.durand@example.net", "password_from": "#mdp", "origin": "https://forms.example.net" } },
-  "must_stay_empty": ["#prenom", "#nom", "#naissance"], "fields": { "#mdp": "new_password", "#mdp2": "new_password" }, "source": "own" }
+{
+  "id": "ho-signup-names-fr",
+  "class": "positive",
+  "category": "signup",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/ho-signup-names-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#prenom",
+      "text": "Camille"
+    },
+    {
+      "type": "#nom",
+      "text": "Durand"
+    },
+    {
+      "type": "#courriel",
+      "text": "camille.durand@example.net"
+    },
+    {
+      "type": "#naissance",
+      "text": "04/09/1990"
+    },
+    {
+      "type": "#mdp",
+      "text": "Marronnier-Violet-3306"
+    },
+    {
+      "type": "#mdp2",
+      "text": "Marronnier-Violet-3306"
+    },
+    {
+      "click": "#valider"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#mdp",
+      "confirm": "#mdp2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "camille.durand@example.net",
+      "password_from": "#mdp",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#prenom",
+    "#nom",
+    "#naissance"
+  ],
+  "fields": {
+    "#mdp": "new_password",
+    "#mdp2": "new_password"
+  },
+  "source": "own"
+}

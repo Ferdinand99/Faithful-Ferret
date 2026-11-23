@@ -1,5 +1,34 @@
-{ "id": "ho-planted-swap-showpw-nl", "class": "negative", "category": "planted", "lang": "nl",
-  "host": "forms.example.net", "path": "/ho-planted-swap-showpw-nl/", "frame": null,
-  "steps": [ { "type": "#gebruiker", "text": "ola" }, { "click": "#toon" }, { "type": "#ww", "text": "Zichtbaar-Wachtwoord-612" }, { "click": "#aanmelden" } ],
-  "expect": { "fill": null, "no_offer": true },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-planted-swap-showpw-nl",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "nl",
+  "host": "forms.example.net",
+  "path": "/ho-planted-swap-showpw-nl/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#gebruiker",
+      "text": "ola"
+    },
+    {
+      "click": "#toon"
+    },
+    {
+      "type": "#ww",
+      "text": "Zichtbaar-Wachtwoord-612"
+    },
+    {
+      "click": "#aanmelden"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

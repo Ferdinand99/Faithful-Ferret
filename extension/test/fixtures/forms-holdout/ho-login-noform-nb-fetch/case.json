@@ -1,6 +1,44 @@
-{ "id": "ho-login-noform-nb-fetch", "class": "positive", "category": "login-noform", "lang": "nb",
-  "host": "forms.example.net", "path": "/ho-login-noform-nb-fetch/", "frame": null,
-  "steps": [ { "type": "#brukernavn", "text": "anna.berg@example.net" }, { "type": "#passord", "text": "Fjordblaa-5520-q" }, { "click": "#logginn" }, { "wait": 400 } ],
-  "expect": { "fill": { "entry": "forms", "fields": { "#brukernavn": "username", "#passord": "password" } },
-              "capture": { "offer": "save", "username": "anna.berg@example.net", "password_from": "#passord", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-login-noform-nb-fetch",
+  "class": "positive",
+  "category": "login-noform",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/ho-login-noform-nb-fetch/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#brukernavn",
+      "text": "anna.berg@example.net"
+    },
+    {
+      "type": "#passord",
+      "text": "Fjordblaa-5520-q"
+    },
+    {
+      "click": "#logginn"
+    },
+    {
+      "wait": 400
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#brukernavn": "username",
+        "#passord": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna.berg@example.net",
+      "password_from": "#passord",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

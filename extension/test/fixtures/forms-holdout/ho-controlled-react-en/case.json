@@ -1,6 +1,44 @@
-{ "id": "ho-controlled-react-en", "class": "positive", "category": "controlled", "lang": "en",
-  "host": "forms.example.net", "path": "/ho-controlled-react-en/", "frame": null,
-  "steps": [ { "type": "#cu", "text": "gunnar.ness@example.net" }, { "type": "#cp", "text": "Controlled-Beacon-6027" }, { "click": "#cgo" }, { "wait": 400 } ],
-  "expect": { "fill": { "entry": "forms", "fields": { "#cu": "username", "#cp": "password" } },
-              "capture": { "offer": "save", "username": "gunnar.ness@example.net", "password_from": "#cp", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-controlled-react-en",
+  "class": "positive",
+  "category": "controlled",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-controlled-react-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#cu",
+      "text": "gunnar.ness@example.net"
+    },
+    {
+      "type": "#cp",
+      "text": "Controlled-Beacon-6027"
+    },
+    {
+      "click": "#cgo"
+    },
+    {
+      "wait": 400
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#cu": "username",
+        "#cp": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "gunnar.ness@example.net",
+      "password_from": "#cp",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

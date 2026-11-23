@@ -1,5 +1,45 @@
-{ "id": "ho-noise-search-newsletter-nb", "class": "negative", "category": "noise", "lang": "nb",
-  "host": "forms.example.net", "path": "/ho-noise-search-newsletter-nb/", "frame": null,
-  "steps": [ { "type": "#sok", "text": "ola" }, { "type": "#nyhet", "text": "ola@example.net" }, { "type": "#kommnavn", "text": "ola" }, { "click": "#abonner" } ],
-  "expect": { "fill": null, "no_offer": true },
-  "must_stay_empty": ["#sok", "#nyhet", "#komm", "#kommnavn"], "fields": { "#sok": "search", "#nyhet": "newsletter", "#komm": "comment", "#kommnavn": "name" }, "source": "own" }
+{
+  "id": "ho-noise-search-newsletter-nb",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/ho-noise-search-newsletter-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#sok",
+      "text": "ola"
+    },
+    {
+      "type": "#nyhet",
+      "text": "ola@example.net"
+    },
+    {
+      "type": "#kommnavn",
+      "text": "ola"
+    },
+    {
+      "click": "#abonner"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#sok",
+    "#nyhet",
+    "#komm",
+    "#kommnavn"
+  ],
+  "fields": {
+    "#sok": "search",
+    "#nyhet": "other",
+    "#komm": "other",
+    "#kommnavn": "other"
+  },
+  "source": "own"
+}

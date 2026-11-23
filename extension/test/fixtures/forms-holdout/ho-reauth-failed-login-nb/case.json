@@ -1,5 +1,48 @@
-{ "id": "ho-reauth-failed-login-nb", "class": "negative", "category": "reauth-failed", "lang": "nb",
-  "host": "forms.example.net", "path": "/ho-reauth-failed-login-nb/", "frame": null,
-  "steps": [ { "type": "#bruker", "text": "ola" }, { "type": "#pass", "text": "FeilPassord-000" }, { "click": "#go" }, { "wait": 2500 }, { "type": "#bruker", "text": "ola" }, { "type": "#pass", "text": "FeilIgjen-111" }, { "click": "#go" }, { "wait": 2500 } ],
-  "expect": { "fill": null, "no_offer": true },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-reauth-failed-login-nb",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/ho-reauth-failed-login-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#bruker",
+      "text": "ola"
+    },
+    {
+      "type": "#pass",
+      "text": "FeilPassord-000"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "type": "#bruker",
+      "text": "ola"
+    },
+    {
+      "type": "#pass",
+      "text": "FeilIgjen-111"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 2500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

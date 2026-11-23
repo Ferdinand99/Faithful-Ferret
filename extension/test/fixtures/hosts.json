@@ -17,7 +17,9 @@
     "forms.example.net",
     "www.forms.example.net",
     "forms-evil.test",
-    "www.forms.example.org"
+    "www.forms.example.org",
+    "shop.forms.example.org",
+    "forms.xn--exmple-4nf.net"
   ],
   "e2e": ["vault-e2e.test", "admin-e2e.test"]
 }

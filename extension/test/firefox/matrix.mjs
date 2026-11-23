@@ -25,7 +25,7 @@ import { FORMS_DIR } from "./fixtures-server.mjs";
 import { VAULT_USERNAME, loadCorpus } from "./matrixReport.mjs";
 import { recentCodes } from "./totp.mjs";
 
-/** Where the hold-out set is added to the repository when the time comes. */
+/** The hold-out set: cases written without sight of the detection code. */
 export const HOLDOUT_DIR = resolve(FORMS_DIR, "..", "forms-holdout");
 
 /** @param {"corpus" | "holdout"} set */
@@ -69,7 +69,7 @@ export function caseUrl(c, server) {
 
 /** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout"} set @param {string} [grep] */
 export function casesOf(set, grep = "") {
-  const all = loadCorpus(formsDirFor(set));
+  const all = loadCorpus(formsDirFor(set), { holdout: set === "holdout" });
   return grep === "" ? all : all.filter((c) => c.id.includes(grep));
 }
 

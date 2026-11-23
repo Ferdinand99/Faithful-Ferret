@@ -27,6 +27,9 @@ export const VAULT_USERNAME = "ola";
 /** The languages a case may be written in. */
 export const LANGUAGES = Object.freeze(["en", "nb", "de", "fr", "nl"]);
 
+/** The hold-out set also has a case in Spanish. */
+export const HOLDOUT_LANGUAGES = Object.freeze([...LANGUAGES, "es"]);
+
 /** The field kinds a case may name in `fields`. */
 export const FIELD_KINDS = Object.freeze([
   "username", "email", "current_password", "new_password", "confirm_password",
@@ -81,12 +84,14 @@ const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v)
 const isId = (v) => typeof v === "string" && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(v);
 
 /**
- * What is wrong with a case.json (an empty list for a good one). `folder` is the case's folder name.
+ * What is wrong with a case.json (an empty list for a good one). `folder` is the case's folder name. `holdout`: the
+ * hold-out set names its cases `ho-<own name>-...` (its ids start with that, not with the category) and has a Spanish case.
  * @param {unknown} c
  * @param {string} folder
+ * @param {{ holdout?: boolean }} [options]
  * @returns {string[]}
  */
-export function caseProblems(c, folder) {
+export function caseProblems(c, folder, { holdout = false } = {}) {
   /** @type {string[]} */
   const p = [];
   if (!isObject(c)) return ["case.json is not an object"];
@@ -97,9 +102,10 @@ export function caseProblems(c, folder) {
   if (!cat) p.push(`unknown category ${JSON.stringify(c.category)}`);
   else {
     if (c.class !== cat.class) p.push(`class ${JSON.stringify(c.class)} but the category ${c.category} is ${cat.class}`);
-    if (typeof c.id === "string" && !c.id.startsWith(`${c.category}-`)) p.push(`the id does not start with ${c.category}-`);
+    const prefix = holdout ? "ho-" : `${c.category}-`;
+    if (typeof c.id === "string" && !c.id.startsWith(prefix)) p.push(`the id does not start with ${prefix}`);
   }
-  if (!LANGUAGES.includes(c.lang)) p.push(`lang ${JSON.stringify(c.lang)}`);
+  if (!(holdout ? HOLDOUT_LANGUAGES : LANGUAGES).includes(c.lang)) p.push(`lang ${JSON.stringify(c.lang)}`);
   if (typeof c.host !== "string" || !/^[a-z0-9.-]+$/.test(c.host)) p.push("host");
   if (c.scheme !== undefined && c.scheme !== "https" && c.scheme !== "http") p.push("scheme");
   if (typeof c.path !== "string" || !c.path.startsWith(`/${folder}/`)) p.push(`path must start with /${folder}/`);
@@ -166,16 +172,17 @@ export function caseProblems(c, folder) {
  * Every case of a corpus directory, with the folder (`dir`) it came from.
  * A folder whose name starts with an underscore is not a case (the self-test page).
  * @param {string} dir
+ * @param {{ holdout?: boolean }} [options]
  * @returns {Array<Record<string, any> & { dir: string }>}
  */
-export function loadCorpus(dir) {
+export function loadCorpus(dir, options = {}) {
   /** @type {Array<Record<string, any> & { dir: string }>} */
   const cases = [];
   if (!existsSync(dir)) return cases;
   for (const name of readdirSync(dir).sort()) {
     const folder = join(dir, name);
     if (name.startsWith("_") || !statSync(folder).isDirectory()) continue;
-    const problems = caseProblems(JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), name);
+    const problems = caseProblems(JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), name, options);
     if (problems.length > 0) throw new Error(`corpus: ${name}/case.json: ${problems.join("; ")}`);
     cases.push({ ...JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), dir: folder });
   }

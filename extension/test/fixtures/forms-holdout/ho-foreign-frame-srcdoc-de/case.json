@@ -1,6 +1,39 @@
-{ "id": "ho-foreign-frame-srcdoc-de", "class": "negative", "category": "foreign-frame", "lang": "de",
-  "host": "forms.example.net", "path": "/ho-foreign-frame-srcdoc-de/",
-  "frame": { "id": "eingebettet", "host": "forms.example.net", "path": "/ho-foreign-frame-srcdoc-de/", "kind": "srcdoc" },
-  "steps": [ { "type": "#sbenutzer", "text": "ola" }, { "type": "#skennwort", "text": "Eingebettet-Geheim-310" }, { "click": "#sgo" } ],
-  "expect": { "fill": null, "no_offer": true },
-  "must_stay_empty": ["#sbenutzer", "#skennwort"], "fields": {}, "source": "own" }
+{
+  "id": "ho-foreign-frame-srcdoc-de",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-foreign-frame-srcdoc-de/",
+  "frame": {
+    "id": "#eingebettet",
+    "host": "forms.example.net",
+    "path": "/ho-foreign-frame-srcdoc-de/",
+    "kind": "srcdoc"
+  },
+  "steps": [
+    {
+      "type": "#sbenutzer",
+      "text": "ola"
+    },
+    {
+      "type": "#skennwort",
+      "text": "Eingebettet-Geheim-310"
+    },
+    {
+      "click": "#sgo"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#sbenutzer",
+    "#skennwort"
+  ],
+  "fields": {},
+  "source": "own"
+}

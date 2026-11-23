@@ -73,6 +73,8 @@ export const ORIGINS = Object.freeze({
   formsWww: { scheme: "https", host: "www.forms.example.net", listener: "https" },
   formsHttp: { scheme: "http", host: "forms.example.net", listener: "http" },
   formsEvil: { scheme: "https", host: "forms-evil.test", listener: "https" },
+  // The same foreign site under the name the hold-out set's pages use.
+  foreign: { scheme: "https", host: "forms-evil.test", listener: "https" },
   formsOrg: { scheme: "https", host: "www.forms.example.org", listener: "https" },
   // The loopback address over http: a secure context, and the one place where
   // an http page may be an ancestor. An IP host, so it is not in hosts.json.

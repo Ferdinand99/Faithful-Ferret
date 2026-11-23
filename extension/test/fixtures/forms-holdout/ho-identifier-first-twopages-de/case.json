@@ -1,7 +1,45 @@
-{ "id": "ho-identifier-first-twopages-de", "class": "positive", "category": "identifier-first", "lang": "de",
-  "host": "forms.example.net", "path": "/ho-identifier-first-twopages-de/", "frame": null,
-  "steps": [ { "type": "#mail", "text": "kari.nordmann@example.net" }, { "click": "#weiter" }, { "wait": 500 }, { "type": "#kennwort", "text": "Zweiseitig-Kennwort-17" }, { "click": "#anmelden" } ],
-  "expect": { "fill": null,
-              "allow": ["#mail", "#kennwort"],
-              "capture": { "offer": "save", "username": "kari.nordmann@example.net", "password_from": "#kennwort", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-identifier-first-twopages-de",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-identifier-first-twopages-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mail",
+      "text": "kari.nordmann@example.net"
+    },
+    {
+      "click": "#weiter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "type": "#kennwort",
+      "text": "Zweiseitig-Kennwort-17"
+    },
+    {
+      "click": "#anmelden"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#mail",
+      "#kennwort"
+    ],
+    "capture": {
+      "offer": "save",
+      "username": "kari.nordmann@example.net",
+      "password_from": "#kennwort",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

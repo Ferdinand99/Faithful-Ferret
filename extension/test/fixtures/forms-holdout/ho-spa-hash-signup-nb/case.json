@@ -1,7 +1,43 @@
-{ "id": "ho-spa-hash-signup-nb", "class": "positive", "category": "spa", "lang": "nb",
-  "host": "forms.example.net", "path": "/ho-spa-hash-signup-nb/", "frame": null,
-  "steps": [ { "type": "#epost", "text": "silje.haugen@example.net" }, { "generate_fill": true }, { "click": "#opprett" }, { "wait": 400 } ],
-  "expect": { "fill": null,
-              "generated": { "new": "#nyttpw", "confirm": "#nyttpw2" },
-              "capture": { "offer": "save", "username": "silje.haugen@example.net", "password_from": "#nyttpw", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": { "#nyttpw": "new_password", "#nyttpw2": "new_password" }, "source": "own" }
+{
+  "id": "ho-spa-hash-signup-nb",
+  "class": "positive",
+  "category": "spa",
+  "lang": "nb",
+  "host": "forms.example.net",
+  "path": "/ho-spa-hash-signup-nb/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#epost",
+      "text": "silje.haugen@example.net"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#opprett"
+    },
+    {
+      "wait": 400
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#nyttpw",
+      "confirm": "#nyttpw2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "silje.haugen@example.net",
+      "password_from": "#nyttpw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#nyttpw": "new_password",
+    "#nyttpw2": "new_password"
+  },
+  "source": "own"
+}

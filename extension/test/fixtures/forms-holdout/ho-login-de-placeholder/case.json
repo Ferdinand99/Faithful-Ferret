@@ -1,6 +1,41 @@
-{ "id": "ho-login-de-placeholder", "class": "positive", "category": "login", "lang": "de",
-  "host": "forms.example.net", "path": "/ho-login-de-placeholder/", "frame": null,
-  "steps": [ { "type": "#benutzer", "text": "kari.nordmann@example.net" }, { "type": "#kennwort", "text": "Sonnenblume-2291-x" }, { "key": "Enter" } ],
-  "expect": { "fill": { "entry": "forms", "fields": { "#benutzer": "username", "#kennwort": "password" } },
-              "capture": { "offer": "save", "username": "kari.nordmann@example.net", "password_from": "#kennwort", "origin": "https://forms.example.net" } },
-  "must_stay_empty": [], "fields": {}, "source": "own" }
+{
+  "id": "ho-login-de-placeholder",
+  "class": "positive",
+  "category": "login",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-login-de-placeholder/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#benutzer",
+      "text": "kari.nordmann@example.net"
+    },
+    {
+      "type": "#kennwort",
+      "text": "Sonnenblume-2291-x"
+    },
+    {
+      "key": "Enter"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#benutzer": "username",
+        "#kennwort": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "kari.nordmann@example.net",
+      "password_from": "#kennwort",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}
