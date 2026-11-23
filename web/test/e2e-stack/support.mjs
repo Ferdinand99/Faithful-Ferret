@@ -672,6 +672,19 @@ export function leave(name, data) {
   writeFileSync(`${outDir}/${name}.json`, JSON.stringify(data));
 }
 
+/**
+ * Adds values to the list of needles an earlier scenario left (or starts it), for the host script's search of the data. The list is
+ * the JSON array of { name, value } that `leave("needles", ...)` wrote; a name that is already there is replaced.
+ * @param {{ name: string, value: string }[]} more
+ */
+export function leaveMore(more) {
+  const file = `${outDir}/needles.json`;
+  /** @type {{ name: string, value: string }[]} */
+  const list = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
+  const names = new Set(more.map((entry) => entry.name));
+  leave("needles", [...list.filter((entry) => !names.has(entry.name)), ...more.filter((entry) => entry.value.length >= 8)]);
+}
+
 /** Parses the state a previous phase left (passed in by the host script). */
 export function previousState() {
   const raw = process.env.FERRET_E2E_STATE;

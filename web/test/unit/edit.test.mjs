@@ -492,3 +492,39 @@ test("every_input_still_has_its_label_and_the_save_still_sends_the_same_draft", 
     assert.equal(draft.favorite, false);
   });
 });
+
+test("editing_the_password_in_the_web_vault_keeps_the_old_one", async () => {
+  // A new password on an existing item asks the core to move the old one into the item's previous passwords; the form
+  // never holds, reads or sends an old value (the draft has no key for one).
+  await withDom(async () => {
+    const { root, engine, client } = await edit();
+    type(root, "password", "pw-NEW-9");
+    await submit(find(root, "edit-form"));
+    const [kind, id, draft] = engine.calls.at(-1);
+    assert.equal(kind, "update");
+    assert.equal(id, ID);
+    assert.equal(draft.keep_password_history, true);
+    assert.deepEqual(draft.fields, [{ id: "username" }, { id: "password", value: "pw-NEW-9" }, { id: "pin" }]);
+    assert.deepEqual(client.calls, [], "no old value was revealed to the form");
+    assert.ok(!JSON.stringify(draft).includes(PASSWORD), "the draft carries no old value");
+  });
+  // An edit that leaves the password alone asks for nothing; a new item has no history to keep.
+  await withDom(async () => {
+    const { root, engine } = await edit();
+    type(root, "name", "Bank 2");
+    await submit(find(root, "edit-form"));
+    assert.ok(!("keep_password_history" in engine.calls.at(-1)[2]));
+  });
+  await withDom(async () => {
+    const { root, engine } = await edit({ id: null });
+    type(root, "name", "Bank");
+    type(root, "password", "pw-NEW-9");
+    await submit(find(root, "edit-form"));
+    assert.ok(!("keep_password_history" in engine.calls.at(-1)[1]));
+  });
+  // The form says what happens to the old password.
+  await withDom(async () => {
+    const { root } = await edit();
+    assert.ok(textOf(find(root, "password").parentNode ?? root).includes("vault.edit.password_history"));
+  });
+});

@@ -34,6 +34,13 @@
 // needs no permission), and named for the grant only when some item matches
 // it: a frame no item could fill never asks for a permission.
 //
+// Before a value goes into a frame below the top, every document above it is
+// asked whether the frame is shown there, and asking a document needs its
+// origin's permission too. A frame below a middle frame of another origin than
+// the top is therefore checked only when that origin's permission is granted
+// (with the optional permission for `https` pages, every one is); without it,
+// the frame is marked `unchecked` and the fill refuses it (`frame_unchecked`).
+//
 // The items: the core host opens the vault's items in batches, asks the core
 // which of them match each chosen frame and closes every handle again. What
 // comes back is, per item, its id, name and user name and the frames it may be
@@ -57,8 +64,10 @@ const LOOPBACK = /^http:\/\/(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]
 
 /**
  * @typedef {{ frameId: number, documentId?: string }} FrameRef one frame's document, as the browser names it
- * @typedef {{ frameId: number, documentId?: string, url: string, origin: string, ancestors: FrameRef[] }} FillableFrame
- *   `ancestors`: the frames above it, its parent first and the top last (none for the top)
+ * @typedef {{ frameId: number, documentId?: string, url: string, origin: string, ancestors: FrameRef[], unchecked?: true }} FillableFrame
+ *   `ancestors`: the frames above it, its parent first and the top last (none for the top); `unchecked`: a frame
+ *   above it (not the top) has another origin than the top and no host permission, so the fill cannot ask that
+ *   document whether the frame is shown, and refuses the frame (`frame_unchecked`)
  * @typedef {{
  *   page_origin(url: string): Promise<string>,
  *   same_site(a: string, b: string): Promise<boolean>,
@@ -290,13 +299,10 @@ export async function candidates(tabId, { coreHost, frames, permissions, frameId
   const asked = [];
   /** @type {Map<string, boolean>} origin -> whether its permission is granted */
   const permitted = new Map();
-  for (const frame of chosen) {
-    if (frame.origin === top.origin) {
-      asked.push({ ...frame, waiting: false });
-      continue;
-    }
+  /** Whether the host permission of a frame's origin is granted (asked once per origin). @param {FillableFrame} frame */
+  const permittedFor = async (frame) => {
     // Only an `https` origin can be granted (the optional permission is `https://*/*`).
-    if (!frame.origin.startsWith("https://")) continue;
+    if (!frame.origin.startsWith("https://")) return false;
     if (!permitted.has(frame.origin)) {
       const frameHost = await displayHost(coreHost, frame.url);
       let granted = false;
@@ -307,7 +313,15 @@ export async function candidates(tabId, { coreHost, frames, permissions, frameId
       }
       permitted.set(frame.origin, granted);
     }
-    asked.push({ ...frame, waiting: permitted.get(frame.origin) !== true });
+    return permitted.get(frame.origin) === true;
+  };
+  for (const frame of chosen) {
+    if (frame.origin === top.origin) {
+      asked.push({ ...frame, waiting: false });
+      continue;
+    }
+    if (!frame.origin.startsWith("https://")) continue;
+    asked.push({ ...frame, waiting: !(await permittedFor(frame)) });
   }
   if (asked.length === 0) return { host, insecure, items: [], grant: [] };
 
@@ -322,15 +336,30 @@ export async function candidates(tabId, { coreHost, frames, permissions, frameId
       })),
     })
   );
+  // A frame whose middle frames (the ones above it, the top left out) have another origin than the top can be checked
+  // only with the permission of each such origin.
+  const byId = new Map(all.map((f) => [f.frameId, f]));
+  /** @param {FillableFrame} frame @returns {Promise<boolean>} */
+  const checkable = async (frame) => {
+    for (const above of frame.ancestors) {
+      if (above.frameId === 0) continue;
+      const middle = byId.get(above.frameId);
+      if (middle === undefined) return false;
+      if (middle.origin === top.origin) continue;
+      if (!(await permittedFor(middle))) return false;
+    }
+    return true;
+  };
   /** The frames an item may be filled in, by id: only frames that were asked for and do not wait for a permission. */
-  const usable = new Map(
-    asked
-      .filter((f) => !f.waiting)
-      .map((f) => [
-        f.frameId,
-        /** @type {FillableFrame} */ ({ frameId: f.frameId, ...(f.documentId !== undefined ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin, ancestors: f.ancestors }),
-      ]),
-  );
+  const usable = new Map();
+  for (const f of asked) {
+    if (f.waiting) continue;
+    const unchecked = !(await checkable(f));
+    usable.set(
+      f.frameId,
+      /** @type {FillableFrame} */ ({ frameId: f.frameId, ...(f.documentId !== undefined ? { documentId: f.documentId } : {}), url: f.url, origin: f.origin, ancestors: f.ancestors, ...(unchecked ? { unchecked: true } : {}) }),
+    );
+  }
   /** @type {Candidate[]} */
   const items = [];
   for (const item of Array.isArray(reply?.items) ? reply.items : []) {

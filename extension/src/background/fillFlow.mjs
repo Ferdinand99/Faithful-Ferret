@@ -33,6 +33,11 @@
 // `fill_field` to that one frame, and the handle is closed. A value never passes
 // through the popup: the popup's answer is `{ ok }` or a reason.
 //
+// Which frame: the first one, the top first, whose report has a sign-in field
+// (a user name or a password). A frame whose report has only a one-time code is
+// filled only when no frame has a sign-in field: a code field on its own is not
+// a sign-in form.
+//
 // "Shown on the page": the fill script checks a field only inside its own
 // frame. For a frame below the top, the field must also be shown in every
 // document above it: the frame's script gives the field's points, and in the
@@ -42,7 +47,10 @@
 // documents comes from the browser). A frame that fails is not filled
 // (`frame_hidden`). The check runs when the frame is chosen and again right
 // before each value is sent, so a frame that is hidden or covered after its
-// report gets nothing more. Each step has a time limit: a page that never
+// report gets nothing more. A frame below a middle frame whose document Ferret
+// may not ask (another origin than the top, without that origin's host
+// permission; see frames.mjs) cannot be checked, and is not filled either
+// (`frame_unchecked`). Each step has a time limit: a page that never
 // answers cannot keep the fill flow busy.
 //
 // A report or a fill result that names no pending request, or comes from
@@ -53,7 +61,7 @@
 // document. The write path reads it when a change form is submitted there. It
 // holds item ids only, in memory, and every lock clears it.
 
-import { encode } from "../shared/protocol.mjs";
+import { FRAME_UNCHECKED, encode } from "../shared/protocol.mjs";
 import { confirmFrame } from "./frames.mjs";
 import { frameChainShown, injectFill } from "./inject.mjs";
 
@@ -223,7 +231,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  * @typedef {{ promise: Promise<any>, resolve: (value: any) => void, reject: (error: Error) => void }} Deferred
  * @typedef {{
  *   requestId: string, tabId: number, frameId: number, documentId?: string, origin: string,
- *   ancestors: FrameRef[],
+ *   ancestors: FrameRef[], unchecked?: boolean,
  *   report: Deferred,
  *   result: Deferred | null,
  * }} Pending one frame of a fill
@@ -583,14 +591,14 @@ export function createFillHost({
       // A lock (and a new unlock) while the frames were asked for dropped every reference: this one is gone too.
       if (refs.get(session, ref) !== entry) return { ok: false, reason: "not_offered" };
       const fresh = (Array.isArray(now?.items) ? now.items : []).find((i) => i.itemId === entry.itemId);
-      /** @type {Array<RefFrame & { ancestors: FrameRef[] }>} */
+      /** @type {Array<RefFrame & { ancestors: FrameRef[], unchecked: boolean }>} */
       const frames = [];
       for (const want of wanted) {
         const seen = (Array.isArray(fresh?.frames) ? fresh.frames : []).find(
           (f) => f.frameId === want.frameId && f.origin === want.origin && (want.documentId === undefined || f.documentId === want.documentId),
         );
         // The documents above the frame, as the browser gives them now.
-        if (seen !== undefined) frames.push({ ...want, ancestors: Array.isArray(seen.ancestors) ? seen.ancestors : [] });
+        if (seen !== undefined) frames.push({ ...want, ancestors: Array.isArray(seen.ancestors) ? seen.ancestors : [], unchecked: seen.unchecked === true });
       }
       if (frames.length === 0) return { ok: false, reason: "origin_changed" };
       const core = client();
@@ -602,6 +610,7 @@ export function createFillHost({
         ...(f.documentId !== undefined ? { documentId: f.documentId } : {}),
         origin: f.origin,
         ancestors: f.ancestors,
+        unchecked: f.unchecked,
         report: deferred(),
         result: null,
       }));
@@ -609,17 +618,22 @@ export function createFillHost({
       const reports = await Promise.allSettled(requests.map((request) => reportOf(request)));
 
       // The first frame, the top first, whose report has sign-in fields and which is shown in every document above it;
-      // a frame that narrowed to nothing is dropped.
+      // a frame whose report has only a code comes after every frame with a sign-in field. A frame that narrowed to
+      // nothing is dropped.
+      /** @param {number} i @param {(kinds: Set<string>) => boolean} test */
+      const reportHas = (i, test) => reports[i].status === "fulfilled" && test(/** @type {PromiseFulfilledResult<{ kinds: Set<string> }>} */ (reports[i]).value.kinds);
+      const signIn = (/** @type {Set<string>} */ kinds) => kinds.has("username") || kinds.has("password");
+      const order = [...reports.keys()].filter((i) => reportHas(i, signIn)).concat([...reports.keys()].filter((i) => reportHas(i, (kinds) => !signIn(kinds) && kinds.has("totp"))));
       let chosen = -1;
-      /** Why a frame with sign-in fields was passed over, the first such reason. @type {string | null} */
+      /** Why a frame with sign-in fields was passed over, the first such reason (a frame reason before any other). @type {string | null} */
       let passed = null;
-      for (let i = 0; i < reports.length && chosen < 0; i += 1) {
-        const r = reports[i];
-        const first = r.status === "fulfilled" ? FILL_ORDER.find((kind) => r.value.kinds.has(kind)) : undefined;
-        if (first === undefined) continue;
-        const problem = await shownOnPage(requests[i], first);
+      for (const i of order) {
+        if (chosen >= 0) break;
+        const r = /** @type {PromiseFulfilledResult<{ kinds: Set<string> }>} */ (reports[i]);
+        const first = /** @type {string} */ (FILL_ORDER.find((kind) => r.value.kinds.has(kind)));
+        const problem = requests[i].unchecked === true ? FRAME_UNCHECKED : await shownOnPage(requests[i], first);
         if (problem === null) chosen = i;
-        else if (passed === null || problem === "frame_hidden") passed = problem;
+        else if (passed === null || problem === "frame_hidden" || (problem === FRAME_UNCHECKED && passed !== "frame_hidden")) passed = problem;
       }
       if (chosen < 0) {
         if (passed !== null) return { ok: false, reason: passed };

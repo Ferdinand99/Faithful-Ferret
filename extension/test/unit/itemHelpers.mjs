@@ -117,6 +117,7 @@ function viewOf(item) {
  *   frames?: Array<{
  *     frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[],
  *     ancestors?: Array<{ frameId: number, documentId?: string }>,
+ *     unchecked?: boolean,
  *   }>,
  *   source?: boolean,
  *   reportTimeoutMs?: number,
@@ -381,6 +382,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
                   origin: f.origin,
                   // The documents above the frame (a frame of the top by default).
                   ancestors: f.ancestors ?? (f.frameId === 0 ? [] : [{ frameId: 0, documentId: "doc-1" }]),
+                  // A frame below a middle frame whose document may not be asked (frames.mjs).
+                  ...(f.unchecked === true ? { unchecked: true } : {}),
                 })),
               }))
               .filter((i) => i.frames.length > 0);

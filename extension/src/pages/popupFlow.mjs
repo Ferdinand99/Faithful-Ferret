@@ -27,6 +27,7 @@
 // the page can be filled; an item found by a search can be copied, shown and
 // its site opened, never filled.
 
+import { FRAME_UNCHECKED } from "../shared/protocol.mjs";
 import { shownHost } from "./ui.mjs";
 import { unlockWith } from "./signinFlow.mjs";
 
@@ -219,8 +220,9 @@ export const ACTION_ERRORS = Object.freeze([
   "sync_not_running",
 ]);
 
-/** The i18n key of the text of a refused action. @param {unknown} reason */
-export const actionErrorKey = (reason) => `popup.error.${typeof reason === "string" && ACTION_ERRORS.includes(reason) ? reason : "unknown"}`;
+/** The i18n key of the text of a refused action (a frame that could not be checked has its text in the frames catalog). @param {unknown} reason */
+export const actionErrorKey = (reason) =>
+  reason === FRAME_UNCHECKED ? "frames.error.frame_unchecked" : `popup.error.${typeof reason === "string" && ACTION_ERRORS.includes(reason) ? reason : "unknown"}`;
 
 /**
  * @typedef {{
