@@ -6,14 +6,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createFillEngine, MIN_SIDE } from "../../src/content/fill.mjs";
+import { COVERAGE_PASS, createFillEngine, MIN_SIDE } from "../../src/content/fill.mjs";
 import { importsOf, reach, readGraph } from "./importGraph.mjs";
 import {
   addInput, addLoginForm, addText, BACKGROUND_SENDER, createPage, decodeSent, EXTENSION_BASE, fillMessage, RUNTIME_ID,
 } from "./fakeDom.mjs";
 
 /** Starts an engine on a page. `begin()` reports and returns the fields. */
-function setup(options = {}, build = addLoginForm) {
+function setup(options = {}, build = addLoginForm, engineOptions = {}) {
   const page = createPage(options);
   const parts = build(page.document);
   const sent = /** @type {string[]} */ ([]);
@@ -23,6 +23,7 @@ function setup(options = {}, build = addLoginForm) {
     send: (raw) => { sent.push(raw); },
     runtimeId: RUNTIME_ID,
     extensionBase: EXTENSION_BASE,
+    ...engineOptions,
   });
   const api = {
     ...page,
@@ -840,25 +841,197 @@ test("an_input_in_a_disabled_fieldset_is_not_filled", () => {
   assert.deepEqual(before.begin(), []);
 });
 
-test("a_cover_that_hit_testing_cannot_see_is_not_detected_today", () => {
+test("a_cover_that_hit_testing_cannot_see_is_detected_by_the_coverage_pass", () => {
   // The hit test sees what a click would reach. It does not see a cover with
   // pointer-events: none, nor paint outside a box (a box-shadow spread, an
-  // outline, a drop-shadow). This test pins that limit, which the design
-  // document states; a later change that closes it should change this test on purpose.
-  const t = setup();
+  // outline, a drop-shadow). The extra pass is on, and with it off the limit of
+  // hit testing alone stands.
+  assert.equal(COVERAGE_PASS, true);
+  const build = (/** @type {object} */ options) => {
+    const t = setup({}, addLoginForm, options);
+    t.begin();
+    const cover = t.document.createElement("div");
+    t.document.body.append(cover);
+    cover.rect = { left: 90, top: 150, width: 260, height: 52 };
+    cover.z = 10;
+    cover.style["pointer-events"] = "none";
+    cover.style["background-color"] = "rgb(255, 255, 255)";
+    const painter = t.document.createElement("div");
+    t.document.body.append(painter);
+    painter.rect = { left: 10, top: 400, width: 20, height: 20 };
+    painter.style["box-shadow"] = "rgb(255, 255, 255) 0px 0px 0px 9999px";
+    return t;
+  };
+  const on = build({});
+  assert.deepEqual(on.fill(), { request_id: "req-1", ok: false, reason: "covered" });
+  assert.equal(nativeValue(on.pass), "");
+  const off = build({ coveragePass: false });
+  assert.deepEqual(off.fill(), { request_id: "req-1", ok: true });
+  assert.equal(nativeValue(off.pass), "s3cret");
+});
+
+const COVERAGE_ON = Object.freeze({ coveragePass: true });
+
+/**
+ * Adds a div to `parent` with a rectangle (or none) and styles.
+ * @param {any} document @param {{ left: number, top: number, width: number, height: number } | null} rect @param {Record<string, string>} style @param {any} [parent]
+ */
+function painter(document, rect, style, parent = document.body) {
+  const element = parent.append(document.createElement("div"));
+  if (rect !== null) element.rect = rect;
+  Object.assign(element.style, style);
+  return element;
+}
+
+/**
+ * A sign-in form and one more element with these styles, placed after the request began: the fill's answer.
+ * @param {{ left: number, top: number, width: number, height: number } | null} rect
+ * @param {Record<string, string>} style
+ * @param {object} [engineOptions]
+ */
+function fillWith(rect, style, engineOptions = COVERAGE_ON) {
+  const t = setup({}, addLoginForm, engineOptions);
   t.begin();
-  const cover = t.document.createElement("div");
-  t.document.body.append(cover);
-  cover.rect = { left: 90, top: 150, width: 260, height: 52 };
-  cover.z = 10;
-  cover.style["pointer-events"] = "none";
-  const painter = t.document.createElement("div");
-  t.document.body.append(painter);
-  painter.style["box-shadow"] = "0 0 0 9999px white";
-  painter.style.outline = "9999px solid white";
-  painter.style.filter = "drop-shadow(0 0 9999px white)";
-  assert.deepEqual(t.fill(), { request_id: "req-1", ok: true });
-  assert.equal(nativeValue(t.pass), "s3cret");
+  painter(t.document, rect, style);
+  return { t, answer: t.fill() };
+}
+
+const FILLED = { request_id: "req-1", ok: true };
+const COVERED = { request_id: "req-1", ok: false, reason: "covered" };
+const WHITE = "rgb(255, 255, 255)";
+
+test("the_coverage_pass_refuses_a_pointer_events_none_cover", () => {
+  const OVER_FIELD = { left: 90, top: 150, width: 260, height: 52 };
+  // A cover that clicks go through, with a background of its own, over the field.
+  for (const [name, style] of /** @type {Array<[string, Record<string, string>]>} */ ([
+    ["a background colour", { "background-color": WHITE }],
+    ["a translucent background of half or more", { "background-color": "rgba(255, 255, 255, 0.6)" }],
+    ["a background image", { "background-image": 'url("https://cdn.example/cover.png")' }],
+  ])) {
+    const { t, answer } = fillWith(OVER_FIELD, { "pointer-events": "none", ...style });
+    assert.deepEqual(answer, COVERED, name);
+    assert.equal(nativeValue(t.pass), "", name);
+    // A request that starts under the cover reports no password.
+    const later = setup({}, addLoginForm, COVERAGE_ON);
+    painter(later.document, OVER_FIELD, { "pointer-events": "none", ...style });
+    assert.ok(!kinds(later.begin()).includes("password"), name);
+    // With the pass off the limit stands (a test pins it).
+    assert.deepEqual(fillWith(OVER_FIELD, { "pointer-events": "none", ...style }, { coveragePass: false }).answer, FILLED, `${name}, pass off`);
+  }
+
+  // Not a cover.
+  const ELSEWHERE = { left: 500, top: 150, width: 260, height: 52 };
+  for (const [name, rect, style] of /** @type {Array<[string, typeof OVER_FIELD, Record<string, string>]>} */ ([
+    ["no background", OVER_FIELD, { "pointer-events": "none" }],
+    ["a transparent background", OVER_FIELD, { "pointer-events": "none", "background-color": "transparent" }],
+    ["a thin background", OVER_FIELD, { "pointer-events": "none", "background-color": "rgba(255, 255, 255, 0.3)" }],
+    ["a faded element", OVER_FIELD, { "pointer-events": "none", "background-color": WHITE, opacity: "0.3" }],
+    ["a hidden element", OVER_FIELD, { "pointer-events": "none", "background-color": WHITE, visibility: "hidden" }],
+    ["an element that is not drawn", OVER_FIELD, { "pointer-events": "none", "background-color": WHITE, display: "none" }],
+    ["somewhere else", ELSEWHERE, { "pointer-events": "none", "background-color": WHITE }],
+    ["a background that clicks reach (the hit test decides)", ELSEWHERE, { "background-color": WHITE }],
+  ])) {
+    assert.deepEqual(fillWith(rect, style).answer, FILLED, name);
+  }
+
+  // A panel with a background that lies below the field (clicks reach the field, so the hit test says it is not covered).
+  const panel = setup({}, addLoginForm, COVERAGE_ON);
+  panel.pass.z = 5;
+  painter(panel.document, OVER_FIELD, { "background-color": WHITE }).z = 1;
+  panel.begin();
+  assert.deepEqual(panel.fill(), FILLED);
+
+  // An ancestor of the field never covers it, whatever it has.
+  const wrapped = setup({}, (/** @type {any} */ document) => {
+    const wrap = painter(document, { left: 0, top: 0, width: 1000, height: 600 }, { "pointer-events": "none", "background-color": WHITE, "box-shadow": `${WHITE} 0px 0px 0px 9999px` });
+    return addLoginForm(document, wrap);
+  }, COVERAGE_ON);
+  wrapped.begin();
+  assert.deepEqual(wrapped.fill(), FILLED);
+
+  // What the pass found is kept for one call only: take the cover away and the next request fills.
+  const moving = setup({}, addLoginForm, COVERAGE_ON);
+  const cap = painter(moving.document, OVER_FIELD, { "pointer-events": "none", "background-color": WHITE });
+  assert.ok(!kinds(moving.begin()).includes("password"));
+  moving.document.body.remove(cap);
+  assert.deepEqual(kinds(moving.begin()), ["username", "password"]);
+  assert.deepEqual(moving.fill(), FILLED);
+
+  // The same for the element that holds a frame: a cover over the framed field in the parent page.
+  const cover = { left: 400, top: 100, width: 400, height: 300 };
+  assert.equal(framePage(() => {}, COVERAGE_ON).shown(), "shown");
+  assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none", "background-color": WHITE }); }, COVERAGE_ON).shown(), "covered");
+  assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none" }); }, COVERAGE_ON).shown(), "shown", "no background");
+  assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none", "background-color": WHITE }); }, { coveragePass: false }).shown(), "shown", "pass off");
+});
+
+test("the_coverage_pass_refuses_a_box_shadow_cover", () => {
+  const AWAY = { left: 10, top: 400, width: 20, height: 20 };
+  // Paint that hit testing cannot see, from an element that is itself nowhere near the field.
+  for (const [name, rect, style] of /** @type {Array<[string, typeof AWAY, Record<string, string>]>} */ ([
+    ["a large spread", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px` }],
+    ["a large spread, colour last", AWAY, { "box-shadow": "0 0 0 9999px white" }],
+    ["a large spread on an element of no size", { left: 10, top: 400, width: 0, height: 0 }, { "box-shadow": `${WHITE} 0px 0px 0px 9999px` }],
+    ["a large spread after a soft layer", AWAY, { "box-shadow": `rgba(0, 0, 0, 0.2) 0px 0px 4px 0px, ${WHITE} 0px 0px 0px 9999px` }],
+    ["a shadow moved onto the field", { left: 500, top: 150, width: 260, height: 52 }, { "box-shadow": `${WHITE} -400px 0px 0px 0px` }],
+    ["an outline", AWAY, { "outline-style": "solid", "outline-width": "9999px", "outline-offset": "0px", "outline-color": WHITE }],
+    ["an outline with an offset", AWAY, { "outline-style": "solid", "outline-width": "300px", "outline-offset": "100px", "outline-color": "rgb(0, 0, 0)" }],
+    ["a drop shadow moved onto the field", { left: -300, top: 150, width: 260, height: 52 }, { filter: `drop-shadow(${WHITE} 400px 0px 0px)` }],
+    ["a drop shadow with a wide blur", AWAY, { filter: `drop-shadow(${WHITE} 0px 0px 9999px)` }],
+  ])) {
+    const { t, answer } = fillWith(rect, style);
+    assert.deepEqual(answer, COVERED, name);
+    assert.equal(nativeValue(t.pass), "", name);
+    assert.deepEqual(fillWith(rect, style, { coveragePass: false }).answer, FILLED, `${name}, pass off`);
+  }
+
+  // Not a cover.
+  for (const [name, rect, style] of /** @type {Array<[string, typeof AWAY, Record<string, string>]>} */ ([
+    ["a soft shadow", AWAY, { "box-shadow": "rgba(0, 0, 0, 0.2) 0px 0px 0px 9999px" }],
+    ["an inset shadow", AWAY, { "box-shadow": `inset ${WHITE} 0px 0px 0px 9999px` }],
+    ["a card shadow", { left: 500, top: 150, width: 260, height: 52 }, { "box-shadow": "rgba(0, 0, 0, 0.9) 0px 2px 8px 0px" }],
+    ["a hairline around a card beside the field", { left: 500, top: 150, width: 260, height: 52 }, { "box-shadow": "rgb(221, 221, 221) 0px 0px 0px 1px" }],
+    ["a shadow too small to reach the field", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 20px` }],
+    ["a thin outline", AWAY, { "outline-style": "solid", "outline-width": "2px", "outline-offset": "0px", "outline-color": WHITE }],
+    ["no outline style", AWAY, { "outline-style": "none", "outline-width": "9999px", "outline-color": WHITE }],
+    ["a faint outline", AWAY, { "outline-style": "solid", "outline-width": "9999px", "outline-offset": "0px", "outline-color": "rgba(0, 0, 0, 0.3)" }],
+    ["a faint drop shadow", AWAY, { filter: "drop-shadow(rgba(0, 0, 0, 0.3) 0px 0px 9999px)" }],
+    ["a large spread of a hidden element", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, visibility: "hidden" }],
+    ["a large spread of an element that is not drawn", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, display: "none" }],
+    ["a large spread of a faded element", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, opacity: "0.5" }],
+    ["the hole of a ring that holds the field", { left: 0, top: 100, width: 600, height: 200 }, { "pointer-events": "none", "outline-style": "solid", "outline-width": "9999px", "outline-offset": "0px", "outline-color": WHITE }],
+  ])) {
+    assert.deepEqual(fillWith(rect, style).answer, FILLED, name);
+  }
+
+  // The field's own outline, a neighbour's focus ring and the shadow of an ancestor are no cover.
+  const ring = setup({}, addLoginForm, COVERAGE_ON);
+  Object.assign(ring.user.style, { "outline-style": "solid", "outline-width": "2px", "outline-offset": "0px", "outline-color": "rgb(13, 110, 253)" });
+  Object.assign(ring.pass.style, { "outline-style": "solid", "outline-width": "3px", "outline-offset": "0px", "outline-color": "rgb(13, 110, 253)" });
+  ring.begin();
+  assert.deepEqual(ring.fill(), FILLED);
+  const card = setup({}, (/** @type {any} */ document) => {
+    const wrap = painter(document, { left: 0, top: 0, width: 1000, height: 600 }, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, "outline-style": "solid", "outline-width": "999px", "outline-color": WHITE });
+    return addLoginForm(document, wrap);
+  }, COVERAGE_ON);
+  card.begin();
+  assert.deepEqual(card.fill(), FILLED);
+});
+
+test("a_floating_label_is_not_a_cover", () => {
+  const FIELD = { left: 100, top: 160, width: 240, height: 32 };
+  // A label over the empty field that clicks pass through and that has no background of its own (the common form).
+  assert.deepEqual(fillWith(FIELD, { "pointer-events": "none" }).answer, FILLED, "no background");
+  assert.deepEqual(fillWith(FIELD, { "pointer-events": "none", "background-color": "rgba(0, 0, 0, 0)" }).answer, FILLED, "a transparent background");
+  // A label that sits on the border, with a background that hides the border behind it: a small part of the field.
+  const notch = { left: 108, top: 152, width: 60, height: 16 };
+  assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE }).answer, FILLED, "a notch with a background");
+  assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE, filter: `drop-shadow(${WHITE} 0px 0px 2px)` }).answer, FILLED, "a notch with a glow");
+  assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE, "box-shadow": `${WHITE} 0px 0px 0px 2px` }).answer, FILLED, "a notch with a rim");
+  // The threshold: a label that holds a quarter of the field's area or its centre is a cover.
+  assert.deepEqual(fillWith({ left: 100, top: 160, width: 50, height: 32 }, { "pointer-events": "none", "background-color": WHITE }).answer, FILLED, "under a quarter");
+  assert.deepEqual(fillWith({ left: 100, top: 160, width: 70, height: 32 }, { "pointer-events": "none", "background-color": WHITE }).answer, COVERED, "over a quarter");
+  assert.deepEqual(fillWith({ left: 200, top: 170, width: 40, height: 10 }, { "pointer-events": "none", "background-color": WHITE }).answer, COVERED, "over the centre");
 });
 
 test("a_report_has_at_most_three_fields_and_nothing_is_sent_before_begin", () => {
@@ -955,8 +1128,9 @@ const PASS_POINTS = /** @type {Array<[number, number]>} */ ([[220, 176], [160, 1
  * A parent page with its own form and an iframe at (400, 100), 400 × 300, that holds frame `FRAME` (as
  * `runtime.getFrameId` says), beside the form.
  * @param {(page: ReturnType<typeof createPage> & { iframe: any }) => void} [arrange] changes the page before the question
+ * @param {object} [engineOptions] more options of the engine
  */
-function framePage(arrange = () => {}) {
+function framePage(arrange = () => {}, engineOptions = {}) {
   const FRAME = 17179869185;
   const page = createPage({ url: "https://www.example.net/" });
   addLoginForm(page.document);
@@ -977,6 +1151,7 @@ function framePage(arrange = () => {}) {
       if (id === undefined) throw new Error("not a frame");
       return id;
     },
+    ...engineOptions,
   });
   arrange({ ...page, iframe });
   return {
