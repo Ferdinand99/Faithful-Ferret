@@ -1,0 +1,31 @@
+{
+  "id": "ap-identifier-passkeys-implicit",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-identifier-passkeys-implicit/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#email": "username"
+      }
+    },
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

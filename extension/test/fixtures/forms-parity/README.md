@@ -57,7 +57,7 @@ where it can see it; a report holds only the verdict.
 | identity-simple, -aria-expanded, -datalist | `ap-harmless-identity-simple`, `-aria-expanded`, `-datalist` |
 | search | `ap-harmless-search` |
 | data-1p-ignore-body, -elements | `ap-login-data-1p-ignore-body`, `ap-login-data-1p-ignore-elements` |
-| the five passkey pages | `ap-harmless-passkeys-index`, `-register`, `-explicit`, `-implicit`, `-code` |
+| the five passkey pages | `ap-harmless-passkeys-index`, `-register`, `-explicit`, `-code` (negative) and `ap-identifier-passkeys-implicit` (a user name field with `username webauthn` and no password: the user name is filled) |
 | other-inputs | `ap-harmless-other-inputs` |
 | single-page and multi-page multi-step form | `ap-harmless-steps-single-page`, `ap-harmless-steps-multi-page` |
 | device-trust, device-trust-notifications | `ap-harmless-device-trust`, `ap-harmless-device-trust-notifications` |
@@ -65,8 +65,9 @@ where it can see it; a report holds only the verdict.
 | clue | `ap-identifier-player-id` |
 | recipe | `ap-login-recipe-search-type` |
 
-Passkey, SSH-key, device-trust, save-item, TOTP-setup and similar pages are negative cases: nothing is filled and
-no offer is made (`expect.no_offer`). The payment pages are in the `card` category, where an offer is always unsafe.
+Passkey, SSH-key, device-trust, save-item, TOTP-setup and similar pages are negative cases: no offer is made
+(`expect.no_offer`) and nothing is filled, except that a user name in the e-mail box of a bare `webauthn` page is
+allowed (`expect.allow`: a fill or no fill both pass). The payment pages are in the `card` category, where an offer is always unsafe.
 
 ## Choices that are ours
 

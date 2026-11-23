@@ -17,13 +17,14 @@
   ],
   "expect": {
     "fill": null,
+    "allow": [
+      "#email"
+    ],
     "generated": null,
     "capture": null,
     "no_offer": true
   },
-  "must_stay_empty": [
-    "#email"
-  ],
+  "must_stay_empty": [],
   "fields": {},
   "source": "own"
 }
