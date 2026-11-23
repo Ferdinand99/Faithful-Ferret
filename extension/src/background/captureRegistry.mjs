@@ -40,7 +40,7 @@ const LABEL = /^[a-z0-9.-]+$/;
  * @typedef {{
  *   registerContentScripts(scripts: object[]): Promise<void>,
  *   unregisterContentScripts(filter: { ids: string[] }): Promise<void>,
- *   getRegisteredContentScripts(filter: { ids: string[] }): Promise<Array<{ id: string }>>,
+ *   getRegisteredContentScripts(filter: { ids: string[] }): Promise<Array<{ id: string, js?: string[], matches?: string[], allFrames?: boolean, runAt?: string, persistAcrossSessions?: boolean }>>,
  * }} Scripting
  * @typedef {{ contains(wanted: { origins: string[] }): Promise<boolean> }} Permissions
  */
@@ -165,12 +165,27 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
     }
   };
 
-  const registered = async () => {
+  /** The registration the browser holds under the script's id, or null. */
+  const found = async () => {
     try {
-      return (await scripting.getRegisteredContentScripts({ ids: [CAPTURE_SCRIPT_ID] })).some((s) => s?.id === CAPTURE_SCRIPT_ID);
+      return (await scripting.getRegisteredContentScripts({ ids: [CAPTURE_SCRIPT_ID] })).find((s) => s?.id === CAPTURE_SCRIPT_ID) ?? null;
     } catch {
-      return false;
+      return null;
     }
+  };
+
+  const registered = async () => (await found()) !== null;
+
+  /**
+   * Whether a registration the browser holds is the current definition (the file names without a leading slash, the match
+   * patterns in any order). A browser that does not report a field leaves the registration to be made again.
+   * @param {Record<string, unknown>} held
+   */
+  const current = (held) => {
+    const want = /** @type {Record<string, any>} */ (definition());
+    const names = (/** @type {unknown} */ list) => (Array.isArray(list) ? JSON.stringify(list.map((x) => String(x).replace(/^\//, "")).sort()) : null);
+    return names(held.js) === names(want.js) && names(held.matches) === names(want.matches) &&
+      held.allFrames === want.allFrames && held.runAt === want.runAt && held.persistAcrossSessions === want.persistAcrossSessions;
   };
 
   const unregister = async () => {
@@ -187,6 +202,16 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
     // A script left by an earlier version is replaced, so the definition is the current one.
     await unregister();
     await scripting.registerContentScripts([definition()]);
+  };
+
+  /**
+   * A start that finds the current definition registered leaves it alone: an event page wakes often, and taking the script away
+   * and putting it back leaves a moment in which a loading tab gets none.
+   */
+  const ensure = async () => {
+    const held = await found();
+    if (held !== null && current(held)) return;
+    await register();
   };
 
   /** Switches the setting off and the script away. @param {"capture_off" | "permission_removed"} reason */
@@ -213,7 +238,7 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
         const [on, permission] = [await setting(), await permitted()];
         if (on && permission) {
           try {
-            await register();
+            await ensure();
           } catch {
             // The script could not be registered: capture is off until it can be.
             await turnOff("capture_off");
