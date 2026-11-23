@@ -17,9 +17,39 @@ const ALLOWED = {
   "permissions.getAll": () => browser.permissions.getAll(),
   "tabs.query": (/** @type {any[]} */ args) => browser.tabs.query(args[0] ?? {}),
   // What the offers store of the background holds for a tab: the offers' metadata and the SHA-256 of each
-  // password, never a password. The extension keeps no offers yet, so the answer says there is nothing to read.
-  offers_peek: () => ({ available: false, offers: [] }),
+  // password, never a password. A build without saving passwords has no store, and says there is nothing to read.
+  offers_peek: (/** @type {any[]} */ args) => testCore("offers_peek", { tab_id: args[0]?.tab_id, session: freshSession() }).catch(() => ({ available: false, offers: [] })),
 };
+
+/** A popup session of the bridge's own: the offers it is told of are the ones it reads. */
+function freshSession() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * One operation of the test build's core port (the test build's own ops: this page is one of the extension's top-level
+ * pages, which the port accepts).
+ * @param {string} op @param {Record<string, unknown>} args
+ * @returns {Promise<any>}
+ */
+function testCore(op, args) {
+  return new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-test-core" });
+    const timer = setTimeout(() => {
+      port.disconnect();
+      reject(new Error(`bridge: ${op} did not answer`));
+    }, 30_000);
+    port.onMessage.addListener((/** @type {any} */ reply) => {
+      clearTimeout(timer);
+      port.disconnect();
+      if (reply?.ok === true) resolve(reply.value);
+      else reject(new Error(`bridge: ${op}: ${reply?.code}`));
+    });
+    port.postMessage({ id: "1", op, args });
+  });
+}
 
 /** What the registered command and the menu item saw. @type {Record<string, unknown>[]} */
 const events = [];

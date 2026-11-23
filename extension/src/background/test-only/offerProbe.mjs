@@ -1,11 +1,12 @@
-// What the Firefox tests of the write path need from the background, in the
-// test build only (a folder named test-only: a release leaves it out). Until
-// the background has its store of offers, the test build has this small one:
+// What the Firefox tests of the write path and of the capture need from the
+// background, in the test build only (a folder named test-only: a release leaves
+// it out). Besides the background's own store of offers (offers.mjs) the test
+// build has this small one:
 //
-//   captures      the offers of the test build: what a test planted, under a
-//                 random offer id, for one popup session, cleared at every lock
-//                 (the sync reads them through its `captures`, as it will read
-//                 the real store)
+//   captures      the offers a test planted, under a random offer id, for one
+//                 popup session, cleared at every lock (the sync reads them
+//                 through its `captures` after the real store's, which is asked
+//                 first)
 //
 // Core operations, called over the test build's core port:
 //
@@ -13,6 +14,12 @@
 //                 site, a user name and a password of the test's own making),
 //                 as the capture of a submitted form would be held; it answers
 //                 the offer id and nothing else
+//   offers_peek   what the background's store holds for a tab, for the test
+//                 bridge (the detection matrix and the capture specs read it):
+//                 each ready offer with its kind, origin, user name, the
+//                 SHA-256 of the password it took and, with the vault open,
+//                 what the write path makes of it. Never a password. The
+//                 session is the bridge's own, made for the call
 //   offer_bench   seals `n` items in the open vault (kept in memory here, never
 //                 stored or sent), every other one with the password of the
 //                 capture for another host, then times the real classification
@@ -89,11 +96,45 @@ async function captureOf(client, args) {
 }
 
 /**
- * @param {{ now?: () => number }} [deps]
+ * @param {{ now?: () => number, offers?: any, call?: ((op: string, args?: unknown) => Promise<any>) | null }} [deps]
+ *   `offers`: the background's store of offers, or null; `call`: the core host's, to classify an offer
  */
-export function createOfferProbe({ now = () => performance.now() } = {}) {
+export function createOfferProbe({ now = () => performance.now(), offers = null, call = null } = {}) {
   /** @type {Readonly<Record<string, import("../coreHost.mjs").CoreOp>>} */
   const ops = Object.freeze({
+    offers_peek: {
+      vault: false,
+      worker: "none",
+      async run(_client, args) {
+        if (offers === null) return { available: false, offers: [] };
+        if (!whole(args?.tab_id, 0, 2_147_483_647) || typeof args?.session !== "string" || !HEX16.test(args.session)) throw fail("invalid_input");
+        const listed = offers.forTab(args.tab_id, args.session);
+        const found = [];
+        for (const meta of listed) {
+          const capture = offers.peek(meta.offer_id, args.session);
+          if (capture === null) continue;
+          /** What the write path makes of the offer, when the vault is open. @type {any} */
+          const classified = call === null ? null : await call("offer_classify", { session: args.session, offer_id: meta.offer_id }).catch(() => null);
+          const target = classified?.ok === true && Array.isArray(classified.targets) ? classified.targets[0] : undefined;
+          const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(capture.password)));
+          found.push({
+            offer_id: meta.offer_id,
+            kind: meta.kind,
+            generated: meta.generated,
+            type: classified?.ok === true ? classified.action : "unclassified",
+            origin: capture.origin,
+            username: capture.username,
+            username_from: capture.usernameFrom,
+            password_sha256: hex(digest),
+            ...(classified?.ok === true && classified.reused.length > 0 ? { reuse: true } : {}),
+            ...(typeof target?.name === "string" ? { target_name: target.name } : {}),
+            ...(typeof target?.how === "string" ? { target_match: target.how } : {}),
+          });
+        }
+        return { available: true, size: offers.size(), offers: found };
+      },
+    },
+
     offer_plant: {
       vault: true,
       worker: "vault",

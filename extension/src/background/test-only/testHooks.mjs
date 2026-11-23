@@ -4,7 +4,7 @@
 //  * the core operations `argon2_bench` and `measure_open`, the matching's
 //    probes `frames_probe`, `item_probe` and `match_bench` (matchProbe.mjs),
 //    and the write path's `offer_plant` and `offer_bench` with the test build's
-//    own offers (offerProbe.mjs);
+//    own offers, and `offers_peek` over the background's store (offerProbe.mjs);
 //  * a port for the test pages to call core operations by name;
 //  * the lifetime log of the background page and the scenarios of the lifetime
 //    measurement (measureLog.mjs, measureScenario.mjs), with a port to start
@@ -167,13 +167,14 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
  *   runtime: { id?: string, getURL: (path: string) => string },
  *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, addOps: (ops: any) => void, state: () => string, onLocked: (listener: () => void) => unknown },
  *   now: () => number,
+ *   offers?: any,
  *   engine?: () => any,
- * }} deps `engine`: the sync engine of the open vault, or null
+ * }} deps `engine`: the sync engine of the open vault, or null; `offers`: the store of offers, or null
  */
-export function install({ browser, runtime, coreHost, now, engine = () => null }) {
+export function install({ browser, runtime, coreHost, now, offers = null, engine = () => null }) {
   coreHost.addOps(ops);
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
-  coreHost.addOps(createOfferProbe().ops);
+  coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args) }).ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());

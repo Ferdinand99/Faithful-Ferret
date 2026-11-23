@@ -45,6 +45,12 @@ import { LOCK_EXEMPT } from "./lock.mjs";
 export const REPORT_OP = "fill_report";
 
 /**
+ * The one core operation a content script's capture of a submitted form (and its two small reports) may reach. The
+ * router names the type and the sender it checked, so a handler can hand on only the body of the message it got.
+ */
+export const CAPTURE_OP = "capture_event";
+
+/**
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
@@ -55,13 +61,15 @@ export const REPORT_OP = "fill_report";
  *   state: () => "locked" | "unlocked",
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   report?: (args: unknown) => Promise<void>,
+ *   capture?: (body: unknown) => Promise<void>,
  *   touch?: () => void,
  *   setSeconds?: (n: number) => Promise<void>,
  *   getSeconds?: () => Promise<number>,
  * }} HandlerContext
  *   `session` (UI only) names the page's port: it is new for every port, so a
  *   reference the background gave one page is worth nothing on another.
- *   `report` (content only) hands a report to `REPORT_OP`.
+ *   `report` (content only) hands a report to `REPORT_OP`. `capture` (content only) hands the body of a capture message to
+ *   `CAPTURE_OP`, with the type and the sender the router has checked.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
 
@@ -277,8 +285,18 @@ export function createRouter({
       if (!(await allowed(message.type))) return undefined;
       /** @type {HandlerContext} */
       // A report handler can read the state and hand the report on to the one report operation, and nothing else: no
-      // other call, no lock.
-      const ctx = Object.freeze({ channel: "content", type: message.type, sender: from, state, report });
+      // other call, no lock. A capture handler can hand the body of its own message to the one capture operation; the
+      // type and the sender are the router's.
+      const ctx = Object.freeze({
+        channel: "content",
+        type: message.type,
+        sender: from,
+        state,
+        report,
+        capture: async (/** @type {unknown} */ body) => {
+          await call(CAPTURE_OP, { type: message.type, sender: from, body });
+        },
+      });
       try {
         await handler.handle(message.body, ctx);
       } catch {

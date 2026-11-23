@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { build } from "../../scripts/build.mjs";
-import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
+import { LOCK_CHOICES, captureErrorKey, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
 import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
@@ -117,4 +117,79 @@ test("the_settings_request_has_the_bounds_of_the_choices", () => {
   assert.ok(UI_TYPES.settings);
   for (const seconds of LOCK_CHOICES) assert.doesNotThrow(() => encode("settings", { lock_seconds: seconds }), String(seconds));
   assert.throws(() => encode("settings", { lock_minutes: 15 }), "the old key is not known any more");
+});
+
+test("turning_on_offer_to_save_asks_for_https_access_in_the_settings_tab_and_explains_why", async () => {
+  /** @type {string[]} */
+  const order = [];
+  /** @type {Array<{ origins: string[] }>} */
+  const asked = [];
+  const answer = (/** @type {any} */ body) => {
+    order.push(`request ${JSON.stringify(body)}`);
+    return { ok: true, on: body.enable === true, permission: true, never: [] };
+  };
+  const make = (/** @type {boolean} */ grant) =>
+    createSettingsFlow(
+      async (type, body) => {
+        encode(type, body);
+        return answer(body);
+      },
+      {
+        requestPermission: async (wanted) => {
+          order.push("permission");
+          asked.push(wanted);
+          return grant;
+        },
+      },
+    );
+
+  // Off until the user turns it on: reading the setting asks the browser for nothing.
+  const flow = make(true);
+  assert.deepEqual(await flow.capture.load(), { ok: true, on: false, permission: true, never: [] });
+  assert.deepEqual(asked, []);
+  // Turning it on asks for https pages, first and in the click, and only then tells the background.
+  assert.deepEqual(await flow.capture.turnOn(), { ok: true, on: true, permission: true, never: [] });
+  assert.deepEqual(asked, [{ origins: ["https://*/*"] }]);
+  assert.deepEqual(order.slice(-2), ["permission", 'request {"enable":true}']);
+  // The user says no: the background is only asked what is true (nothing is switched on) and the reason is shown.
+  order.length = 0;
+  const refused = await make(false).capture.turnOn();
+  assert.equal(refused.ok, false);
+  assert.equal(/** @type {any} */ (refused).reason, "permission_refused");
+  assert.equal(order.some((line) => line.includes('"enable":true')), false);
+  // No way to ask (the page was given no request function): the same, nothing is switched on.
+  const none = await createSettingsFlow(async () => ({ ok: true, on: false, permission: false, never: [] })).capture.turnOn();
+  assert.equal(/** @type {any} */ (none).reason, "permission_refused");
+  // A permission request that fails is a refusal too.
+  const failing = createSettingsFlow(async () => ({ ok: true, on: false, permission: false, never: [] }), { requestPermission: async () => Promise.reject(new Error("x")) });
+  assert.equal(/** @type {any} */ (await failing.capture.turnOn()).reason, "permission_refused");
+  // A background that answers with something odd is not believed; a refusal shows its reason.
+  const odd = createSettingsFlow(async () => ({ on: "yes" }), {});
+  assert.deepEqual(await odd.capture.load(), { ok: false, reason: "unknown" });
+  const gone = createSettingsFlow(async () => Promise.reject(new UiError("not_available")), {});
+  assert.deepEqual(await gone.capture.load(), { ok: false, reason: "not_available" });
+  assert.equal(captureErrorKey("not_available"), "capture.error.not_available");
+  assert.equal(captureErrorKey("<b>"), "capture.error.unknown");
+
+  // The texts explain why in both languages: what is asked for, what is read, how long it is kept, that nothing is saved
+  // without a click, and that open tabs need a reload.
+  const read = (/** @type {string} */ lang) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "capture.json"), "utf8"));
+  const [en, nb] = [read("en"), read("nb")];
+  assert.deepEqual(Object.keys(en).sort(), Object.keys(nb).sort());
+  for (const [lang, texts] of [["en", en], ["nb", nb]]) {
+    for (const key of Object.keys(texts)) assert.ok(typeof texts[key] === "string" && texts[key].length > 0, `${lang}: ${key}`);
+    for (const key of ["capture.title", "capture.switch", "capture.why", "capture.reload", "capture.on", "capture.off", "capture.never.title", "capture.never.empty", "capture.never.hint", "capture.never.remove", "capture.never.remove.label", "capture.never.clear"]) {
+      assert.ok(texts[key], `${lang}: ${key}`);
+    }
+    for (const reason of ["disconnected", "not_available", "permission_missing", "permission_refused", "register_failed", "unknown"]) {
+      assert.ok(texts[captureErrorKey(reason)], `${lang}: ${reason}`);
+    }
+  }
+  assert.match(en["capture.why"], /https/);
+  assert.match(en["capture.why"], /five minutes/);
+  assert.match(en["capture.why"], /without your click/);
+  assert.match(en["capture.reload"], /reload/);
+  assert.match(nb["capture.why"], /https/);
+  assert.match(nb["capture.why"], /fem minutter/);
+  assert.match(nb["capture.reload"], /laster dem på nytt/);
 });
