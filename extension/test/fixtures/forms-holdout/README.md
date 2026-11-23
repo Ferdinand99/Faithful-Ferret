@@ -1,6 +1,13 @@
-# Hold-out set: index
+# The hold-out set
 
-39 cases, written blind from the category list (plan 6.1) and the forms README only. Category names are my own short names (the README says they come from `matrixReport.mjs`, which I did not see); each id is `ho-<category>-...`. All cases use host `forms.example.net` over https unless the table says otherwise. Capture "save" means a new user name is typed; "update" means user `ola` with a different password (target entry `forms`).
+39 cases of the corpus' schema (see ../forms/README.md), written without sight of the detection code or of the corpus, from the list
+of categories and the `case.json` schema only. They measure how well the detection does on pages it was not shaped by: the
+fill and the capture must each reach 90 % (no floor per category), and no run may fill or offer anything unsafe. Each id is
+`ho-<the author's category>-...`; the runner maps the author's category names to the corpus' and the few schema details the
+list left open (see test/firefox/README.md, "The hold-out set"). Nothing an expectation says was changed.
+
+All cases use the host `forms.example.net` over https unless the table says otherwise. "Save" means that a new user name is typed;
+"update" means the user name `ola` with a different password (target entry `forms`).
 
 | id | category | description | expected outcome |
 |---|---|---|---|
@@ -43,35 +50,3 @@
 | ho-lookalike-nb | lookalike | nb, host `forms.xn--exmple-4nf.net` (Cyrillic "а" lookalike, A-label), real entry's password typed | no fill of real entry; save for the lookalike origin with reuse warning |
 | ho-domain-subhost-en | domain-subhost | en, host `shop.forms.example.org` (domain entry is `app.forms.example.org`) | never update; save as new with info line |
 | ho-cross-action-de | cross-action | de, form `action` points at the foreign origin (`{{origin:foreign}}`) | offer origin is the page's own: save greta.vogel@example.net for `https://forms.example.net` |
-
-## Count per category vs plan minimum
-
-Plan total 130 (80 positive, 45 negative, 5 special); hold-out target 25+, written 39 (22 positive, 14 negative, 3 special).
-
-| category (plan row) | plan minimum | hold-out |
-|---|---|---|
-| login (form, en/nb/de/fr/nl) | 15 | 3 |
-| login-noform | 8 | 2 |
-| identifier-first | 6 | 2 |
-| signup | 14 | 3 |
-| change | 8 | 2 |
-| reset | 4 | 2 |
-| shadow | 6 | 2 |
-| frame (same area) | 3 | 1 |
-| spa | 6 | 2 |
-| controlled | 5 | 1 |
-| otp (split + single) | 5 | 2 |
-| noise (search, newsletter, contact, comment, address, coupon, language) | 10 | 2 |
-| card-pin | 4 | 1 |
-| otp-as-password | 3 | 1 |
-| hidden | 7 | 2 |
-| planted (planted value, swap, show-password) | 5 | 2 |
-| foreign-frame | 5 | 2 |
-| http | 3 | 1 |
-| reauth-failed | 5 | 2 |
-| flood (flood, oversize, landing without script) | 3 | 1 |
-| lookalike | 3 | 1 |
-| domain-subhost | 1 | 1 |
-| cross-action | 1 | 1 |
-
-Not covered by any case: sandboxed frame, `about:blank` frame, loopback over http, oversize values, post-login landing page without script, a "document.open" blank frame, split sign-up/identifier-first over `http`.

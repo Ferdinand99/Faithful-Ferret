@@ -12,6 +12,8 @@
 //    8. "Not now" ends one offer and blocks nothing; "Never" ends one and stops the offers of that site (the settings list shows
 //       the host and removes it);
 //    9. a save made while the server cannot be reached says it waits, survives a lock, and goes out after the unlock.
+// - the_vault_still_syncs_after_the_https_access_is_taken_back: turning "Offer to save passwords" off takes the access to https
+//   pages back; an item made in the web vault afterwards still reaches the extension and the popup asks for no new access.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
@@ -141,6 +143,7 @@ test("full_u2_flow_end_to_end", async () => {
       assert.ok(generated.length >= 8, `${channel}: a generated password`);
 
       // 2. The save card: named, put in the folder, saved.
+      const beforeSave = JSON.stringify(await w.vaultState());
       const saveHandle = await popupWithCard(w, tabId, "save");
       assert.equal(await w.page.text('[data-role="offer-title"]'), "Save in Ferret?", channel);
       assert.equal(await w.page.visible('[data-role="offer-generated"]'), true, `${channel}: the card says the password was made by Ferret`);
@@ -155,8 +158,11 @@ test("full_u2_flow_end_to_end", async () => {
       await w.page.waitVisible('[data-role="offer-result"]', SLOW);
       assert.ok(["Saved.", "Saved. Waiting for sync."].includes(await w.page.text('[data-role="offer-result"]')), channel);
       await w.session.closeTab().catch(() => {});
+      void saveHandle;
       await w.session.switchTo(w.pageTab);
       assert.deepEqual((await offersPeek(w, tabId)).offers, [], `${channel}: the offer is used up`);
+      // The positive control of the matrix's vault check: when the person does click "Save", the item list changes.
+      await w.session.waitFor(async () => JSON.stringify(await w.vaultState()) !== beforeSave, 30_000, "the item list changes after the click");
 
       // 3. The web vault shows the item: name, the page's address, the folder, the user name and the generated password.
       const href = await vaultItemHref(w, name);
@@ -332,6 +338,52 @@ test("full_u2_flow_end_to_end", async () => {
       await w.session.switchTo(w.vaultTab);
       await w.session.waitFor(() => serverHas(w.session, /** @type {string} */ (newId), 1), 90_000, `${channel}: the server took the save after the unlock`);
       assert.ok(await vaultItemHref(w, `E2E-offline-${tag}`), `${channel}: the web vault lists the save that waited`);
+    } finally {
+      await w.quit();
+    }
+  }
+});
+
+test("the_vault_still_syncs_after_the_https_access_is_taken_back", async () => {
+  for (const channel of channels()) {
+    const w = await readyWorld(channel);
+    try {
+      const granted = await w.fromBridge(() => w.bridge.invoke("permissions.getAll"));
+      assert.equal((granted.origins ?? []).includes("https://*/*"), true, `${channel}: the click asked for the access and got it`);
+      // The person turns the setting off in the settings tab: the access goes with it.
+      await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
+      await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+      const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
+      await w.session.click(toggle);
+      await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "false"), 15_000, "the switch off");
+      await w.session.waitFor(async () => !((await w.fromBridge(() => w.bridge.invoke("permissions.getAll"))).origins ?? []).includes("https://*/*"), 15_000, "the access removed");
+      await w.session.switchTo(w.pageTab);
+
+      // The vault still syncs: an item made in the web vault reaches the extension, and the popup asks for no new access.
+      const before = await w.vaultState();
+      assert.equal(before.running, true, `${channel}: the sync engine runs`);
+      const name = `After-access-${randomBytes(3).toString("hex")}`;
+      await w.session.switchTo(w.vaultTab);
+      await w.page.click('[data-role="nav-items"]');
+      await w.page.waitVisible('[data-role="new-item"]');
+      await w.page.click('[data-role="new-item"]');
+      await w.page.waitVisible('[data-role="edit-form"]');
+      await w.page.type('[data-role="name"]', name);
+      await w.page.type('[data-role="username"]', `after-${randomBytes(3).toString("hex")}`);
+      await w.page.type('[data-role="password"]', `Pw-${randomBytes(6).toString("hex")}`);
+      await w.page.type('[data-role="url"]', "https://after-access.example.org/");
+      await w.page.click('[data-role="save"]');
+      await w.session.waitFor(async () => (await w.page.text('[data-role="item"] h1')).includes(name), 30_000, "the saved item");
+      await w.session.switchTo(w.pageTab);
+      await w.session.waitFor(async () => (await w.vaultState()).rows.length > before.rows.length, 60_000, `${channel}: the extension took the item the web vault made`);
+      const handle = await w.session.newWindow();
+      await w.session.switchTo(handle);
+      await w.session.navigate(`${EXTENSION_ORIGIN}/pages/popup.html`);
+      await w.page.ready();
+      await w.page.waitVisible('[data-role="sync"][data-state="idle"]', SLOW);
+      assert.equal(await w.page.visible('[data-role="grant"]'), false, `${channel}: the popup asks for no access to the server again`);
+      await w.session.closeTab().catch(() => {});
+      await w.session.switchTo(w.pageTab);
     } finally {
       await w.quit();
     }

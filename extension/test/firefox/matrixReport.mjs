@@ -361,8 +361,10 @@ function captureCheck(r) {
   if (offers.length === 0) return { status: "fail", reason: "no offer" };
   if (offers.length > 1) return { status: "fail", reason: `${offers.length} offers for one submission` };
   const [o] = offers;
-  if (o.type !== want.offer) return { status: "fail", reason: `offer is ${o.type}, not ${want.offer}` };
-  if (o.username !== want.username) return { status: "fail", reason: "the user name of the offer is wrong" };
+  // What the offer holds goes into the reason (the names are test data, never a password), so a miss can be understood from the report.
+  const held = `user name ${o.username === null ? "none" : JSON.stringify(o.username)}${o.generated === true ? ", made by Ferret" : ""}`;
+  if (o.type !== want.offer) return { status: "fail", reason: `offer is ${o.type}, not ${want.offer} (${held})` };
+  if (o.username !== want.username) return { status: "fail", reason: `the user name of the offer is wrong (${held})` };
   if (o.password_field !== want.password_from) return { status: "fail", reason: `the password came from ${o.password_field}, not ${want.password_from}` };
   if (o.origin !== want.origin) return { status: "fail", reason: `the origin of the offer is ${o.origin}` };
   if (want.reuse === true && o.reuse !== true) return { status: "fail", reason: "no reuse warning" };

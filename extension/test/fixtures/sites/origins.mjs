@@ -76,6 +76,9 @@ export const ORIGINS = Object.freeze({
   // The same foreign site under the name the hold-out set's pages use.
   foreign: { scheme: "https", host: "forms-evil.test", listener: "https" },
   formsOrg: { scheme: "https", host: "www.forms.example.org", listener: "https" },
+  // The hold-out set: another host of the domain entry's registrable domain, and a look-alike of the corpus' host (a Cyrillic a).
+  formsShopOrg: { scheme: "https", host: "shop.forms.example.org", listener: "https" },
+  formsHomograph: { scheme: "https", host: "forms.xn--exmple-4nf.net", listener: "https" },
   // The loopback address over http: a secure context, and the one place where
   // an http page may be an ancestor. An IP host, so it is not in hosts.json.
   loopback: { scheme: "http", host: "127.0.0.1", listener: "http", ip: true },
