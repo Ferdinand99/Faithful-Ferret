@@ -48,7 +48,7 @@
   "popup.error.not_offered": "Dette elementet tilbys ikke lenger for denne siden. Åpne popupen på nytt.",
   "popup.error.origin_changed": "Siden endret seg, så ingenting ble fylt inn. Åpne popupen på nytt på siden.",
   "popup.error.busy": "Ferret holder på med en annen utfylling. Prøv igjen om et øyeblikk.",
-  "popup.error.frame_gone": "Ferret nådde ikke siden. Last den inn på nytt og prøv igjen.",
+  "popup.error.frame_gone": "Ferret nådde ikke siden. Åpne Ferret på nytt på denne siden, eller bruk fyll-snarveien der, med skjemaet i synsfeltet.",
   "popup.error.no_report": "Siden svarte ikke. Last den inn på nytt og prøv igjen.",
   "popup.error.no_fields": "Ferret fant ikke noe innloggingsfelt den kan fylle på denne siden.",
   "popup.error.no_value": "Dette elementet har ingenting å fylle inn der.",
