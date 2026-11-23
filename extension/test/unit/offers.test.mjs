@@ -836,6 +836,28 @@ test("a_navigation_reported_just_before_the_capture_counts_for_it_but_the_own_do
   await own.send();
   own.clock.advance(20_000);
   assert.deepEqual(own.offers.forTab(TAB), []);
+  // A browser that gives the navigation signals no document id: the same frame at the same address is the document itself.
+  const noId = world();
+  await noId.offers.onSignal(TAB, { type: "committed", frameId: 0, url: PAGE });
+  await noId.offers.onSignal(TAB, { type: "completed", frameId: 0, url: PAGE });
+  await noId.send();
+  noId.clock.advance(20_000);
+  assert.deepEqual(noId.offers.forTab(TAB), [], "a signal with no document id for the capturing frame's own address");
+  // A signal with another document id at the same address is a new document (a reload after the submit): that is an outcome.
+  const reload = world();
+  await reload.offers.onSignal(TAB, { type: "committed", frameId: 0, url: PAGE, documentId: "doc-reloaded" });
+  await reload.offers.onSignal(TAB, { type: "completed", frameId: 0, url: PAGE, documentId: "doc-reloaded" });
+  await reload.send();
+  reload.clock.advance(SETTLE_MS);
+  assert.equal(reload.offers.forTab(TAB).length, 1, "another document id at the same address");
+  // The same frame at another address with no document id is the page the person landed on (positive control for the fallback).
+  const landed = world();
+  await landed.offers.onSignal(TAB, { type: "committed", frameId: 0, url: "https://login.example.net/home" });
+  await landed.offers.onSignal(TAB, { type: "completed", frameId: 0, url: "https://login.example.net/home" });
+  landed.clock.advance(200);
+  await landed.send();
+  landed.clock.advance(SETTLE_MS);
+  assert.equal(landed.offers.forTab(TAB).length, 1, "another address with no document id");
 });
 
 test("a_new_document_of_the_same_frame_may_capture_within_two_seconds_of_the_one_before", async () => {

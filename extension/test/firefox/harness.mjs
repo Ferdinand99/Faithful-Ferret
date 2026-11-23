@@ -65,6 +65,20 @@ export function channels() {
   return /** @type {("release" | "esr")[]} */ (wanted);
 }
 
+/**
+ * The factor the timing bounds of the footprint specs are loosened by: 1 on a quiet machine (the build host, the gate), at most 2 on
+ * the shared CI runners. Anything else (a word, `Infinity`, `1e9`, a negative number) is refused, because a large factor would
+ * switch the bounds off without a word.
+ * @param {string | undefined} [raw]
+ * @returns {number}
+ */
+export function timingSlack(raw = process.env.FERRET_TIMING_SLACK) {
+  if (raw === undefined || raw === "") return 1;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1 || value > 2) throw new Error(`harness: FERRET_TIMING_SLACK is a number from 1 to 2, not ${JSON.stringify(raw)}`);
+  return value;
+}
+
 /** @returns {"mv3" | "mv2"} */
 export function defaultManifest() {
   const value = process.env.FERRET_MANIFEST ?? "mv3";
