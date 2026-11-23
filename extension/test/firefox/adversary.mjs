@@ -256,7 +256,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
    * page it was given on: a person who has gone on to another page presses it again there.
    * @param {string} url the address, for the messages
    */
-  const grant = async (url) => {
+  const pressShortcutOn = async (url) => {
     await session.switchTo(pageTab);
     await fromBridge(() => bridge.clearEvents());
     // The shortcut goes to the tab the browser window shows, which is not always the one WebDriver drives (closing a
@@ -283,7 +283,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     await session.switchTo(pageTab);
     await session.navigate(url);
     await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
-    return grant(url);
+    return pressShortcutOn(url);
   };
 
   // The entries, with the sync engine of the extension (the release writes no items).
@@ -393,7 +393,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** Closes the session; the device is revoked by the next world (or the next run's stack is a new one). */
   const quit = () => session.quit();
 
-  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, grant, popup, named, passwords, totps, keyOf, tag, origins, quit };
+  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, pressShortcutOn, popup, named, passwords, totps, keyOf, tag, origins, quit };
 }
 
 /**

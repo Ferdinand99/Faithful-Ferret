@@ -389,7 +389,7 @@ async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) 
   // The shortcut's permission (activeTab) is for the page it was pressed on. A case whose steps lead to another page is
   // one where the person goes on and presses the shortcut again on the page they fill.
   const now = await w.session.currentUrl();
-  if (now !== opened) tabId = await pressed(() => w.grant(now));
+  if (now !== opened) tabId = await pressed(() => w.pressShortcutOn(now));
   return tabId;
 }
 
