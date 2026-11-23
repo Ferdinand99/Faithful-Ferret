@@ -554,8 +554,10 @@ export const CONTENT_TYPES = defineTypes({
             id: string({ min: 1, max: 64, pattern: ID }),
             // The `maxlength` of a new or confirm field, for a generated fill; left out when the field has none.
             max: integer({ min: 0, max: 1_000_000 }),
+            // The classes of characters the field refuses by its `passwordrules` or `pattern` (at most three of the four).
+            forbid: array(string({ max: 8, oneOf: ["lower", "upper", "digit", "symbol"] }), { max: 3 }),
           },
-          { optional: ["max"] },
+          { optional: ["max", "forbid"] },
         ),
         { max: 64 },
       ),

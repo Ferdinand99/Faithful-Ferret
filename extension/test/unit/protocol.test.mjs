@@ -200,9 +200,10 @@ test("fill_field_is_the_only_type_with_a_value_and_it_holds_one_value", () => {
 });
 
 test("a content script cannot send a message type that carries a value", () => {
-  // The two content types carry ids, a flag and one origin, nothing else.
+  // The two content types carry ids, a flag, one origin, a length and the names of classes of characters, nothing else.
   assert.deepEqual(keysOf(CONTENT_TYPES.frame_report.request).sort(), [
     "fields",
+    "forbid",
     "group",
     "id",
     "kind",

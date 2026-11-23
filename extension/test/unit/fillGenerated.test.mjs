@@ -289,6 +289,45 @@ test("fill_generated_respects_maxlength_and_refuses_below_8", async () => {
   assert.deepEqual(strict.world.pushed, []);
 });
 
+test("fill_generated_leaves_out_the_classes_a_field_refuses", async () => {
+  // A field that refuses symbols: the core makes the password again with symbols off, same generation, length kept.
+  const { world, popup, made } = await signUpWorld();
+  world.page.forbid = { new_password: ["symbol"], confirm_password: ["symbol"] };
+  const reply = await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB });
+  assert.deepEqual(reply, { ok: true, length: 20, offer: true });
+  assert.equal(world.made.length, 2);
+  assert.deepEqual(world.made[1].options, { ...world.made[0].options, symbols: false });
+  const shown = await popup.request("generate", { current: true });
+  assert.equal(shown.generation_id, made.generation_id, "the same generation");
+  assert.deepEqual(world.pushed.map((p) => p.message.body.value), [shown.value, shown.value]);
+
+  // The classes of both fields count, and a limit goes with them.
+  const both = await signUpWorld();
+  both.world.page.forbid = { new_password: ["symbol"], confirm_password: ["upper", "digit"] };
+  both.world.page.limits = { new_password: 12 };
+  assert.deepEqual(await both.popup.request("fill_generated", { generation_id: both.made.generation_id, tab_id: TAB }), { ok: true, length: 12, offer: true });
+  assert.deepEqual(both.world.made[1].options, { ...both.world.made[0].options, length: 12, symbols: false, upper: false, digits: false });
+
+  // A field that says nothing changes nothing; a passphrase is as it is.
+  const quiet = await signUpWorld();
+  assert.deepEqual(await quiet.popup.request("fill_generated", { generation_id: quiet.made.generation_id, tab_id: TAB }), { ok: true, length: 20, offer: true });
+  assert.equal(quiet.world.made.length, 1);
+  const phrase = await itemWorld({ generated: true });
+  await phrase.open();
+  const spoken = await phrase.popup().request("generate", PASSPHRASE_OPTIONS);
+  phrase.page.forbid = { new_password: ["symbol"] };
+  assert.equal((await phrase.popup().request("fill_generated", { generation_id: spoken.generation_id, tab_id: TAB })).ok, true);
+  assert.equal(phrase.made.length, 1);
+
+  // Nothing left to make a password of (the page refuses a class the user switched on, and the user had only that one): refused.
+  const poor = await itemWorld({ generated: true });
+  await poor.open();
+  const digits = await poor.popup().request("generate", { ...PASSWORD_OPTIONS, lower: false, upper: false, symbols: false });
+  poor.page.forbid = { new_password: ["digit"] };
+  assert.deepEqual(await poor.popup().request("fill_generated", { generation_id: digits.generation_id, tab_id: TAB }), { ok: false, reason: "field_too_short" });
+  assert.deepEqual(poor.pushed, []);
+});
+
 test("fill_generated_creates_an_offer_marked_generated_and_shows_the_save_card_at_once", async () => {
   const { world, popup, made } = await signUpWorld();
   assert.deepEqual(world.offered.calls, [], "nothing is offered by making a value");

@@ -1117,6 +1117,13 @@ test("a_click_through_picture_over_most_of_the_viewport_is_decoration_and_a_smal
     assert.deepEqual(over(MOST), FILLED, `${name} over 90 percent of it`);
     assert.deepEqual(over(HALF), COVERED, `${name} over half of it (it holds the field)`);
   }
+  // A gradient of opaque colours is a colour (a white sheet), whatever its size; a faint one stays decoration (above).
+  for (const style of [{ "background-image": "linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))" }, { "background-image": "linear-gradient(rgb(255, 255, 255), rgba(255, 255, 255, 0.2))" }]) {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    painter(t.document, PAGE, { "pointer-events": "none", ...style }, t.document.body, "div");
+    assert.deepEqual(t.fill(), style["background-image"].includes("0.2") ? FILLED : COVERED, JSON.stringify(style));
+  }
   // An opaque colour, a video or an image is no decoration, whatever its size.
   for (const [name, tag, style] of /** @type {Array<[string, string, Record<string, string>]>} */ ([
     ["a white layer", "div", { "background-color": WHITE }],
@@ -1309,7 +1316,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   const walk = (dir) => readdirSync(join(dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const files = new Map(walk(src).filter((p) => /\.(?:mjs|js)$/.test(p)).map((p) => [posix.normalize(p.slice(src.length + 1).split("\\").join("/")), Buffer.from(readFileSync(p))]));
 
-  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
+  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
   const FORBIDDEN_TEXT = /\bsubtle\b|SubtleCrypto|importKey|deriveKey|deriveBits|WebAssembly|\bWorker\b|indexedDB|localStorage|sessionStorage|\.storage\b|background\/|pkg-web|client\.mjs|\bargon2|\bhkdf\b|\bsha-?256\b/i;
   /** @param {Map<string, Buffer>} map @returns {string[]} */
   const problems = (map) => {
@@ -1333,7 +1340,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.deepEqual(problems(files), []);
   // Not vacuous: the content files exist, reach the protocol, and the reader sees their imports.
   assert.ok(files.has("content/fill.mjs") && files.has("content/entry.mjs"));
-  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs"]);
+  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs", "./passwordRules.mjs"]);
   assert.deepEqual(importsOf(files.get("content/entry.mjs")?.toString("utf8") ?? "").specifiers, ["./fill.mjs"]);
 
   // The check finds what it is for.
