@@ -360,27 +360,36 @@ export const shortcutWentToAnExtensionPage = (error) => /gave no activeTab/.test
 
 /**
  * Opens a case's page and does its `prepare` steps. Returns the tab's id. `count.n` counts the times the real shortcut
- * went to the bridge tab and the page was opened again (twice at most).
- * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count]
+ * went to the bridge tab and the page was opened again (twice at most). `beforePrepare` runs with the tab's id after the
+ * page is open and before the `prepare` steps (the capture phase clears the tab's offers and kept user names there, so that
+ * what the steps leave, such as the user name of a first step, still counts for the case).
+ * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count] @param {(tabId: number) => Promise<void>} [beforePrepare]
  */
-async function openCase(w, c, count = { n: 0 }) {
+async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) {
   // The real shortcut goes to the tab the window shows, and now and then that is still the bridge tab: try again,
   // and count it. Any other failure, also a command that reached the page and gave no activeTab, fails at once.
-  /** @type {number} */
-  let tabId = 0;
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      tabId = await w.visit(caseUrl(c, w.server));
-      break;
-    } catch (error) {
-      if (attempt >= 3 || !shortcutWentToAnExtensionPage(error)) throw error;
-      count.n += 1;
-      await sleep(1000);
+  /** @param {() => Promise<number>} press */
+  const pressed = async (press) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await press();
+      } catch (error) {
+        if (attempt >= 3 || !shortcutWentToAnExtensionPage(error)) throw error;
+        count.n += 1;
+        await sleep(1000);
+      }
     }
-  }
+  };
+  let tabId = await pressed(() => w.visit(caseUrl(c, w.server)));
   // A frame may load after the page does.
   if (c.frame) await sleep(1200);
+  await beforePrepare(tabId);
+  const opened = await w.session.currentUrl();
   await runSteps(w.session, c.prepare ?? [], { passwords: w.passwords, typed: {} });
+  // The shortcut's permission (activeTab) is for the page it was pressed on. A case whose steps lead to another page is
+  // one where the person goes on and presses the shortcut again on the page they fill.
+  const now = await w.session.currentUrl();
+  if (now !== opened) tabId = await pressed(() => w.grant(now));
   return tabId;
 }
 
@@ -492,9 +501,13 @@ export async function captureCase(w, c) {
   const result = { case: c, ran: { fill: false, capture: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
   const count = { n: 0 };
   try {
-    const tabId = await openCase(w, c, count);
-    // The tab may hold the offers of the case before it: a case starts with none.
-    const first = await offersPeek(w, tabId, true);
+    // The tab may hold the offers of the case before it: a case starts with none (before its own prepare steps, whose
+    // result, such as the user name typed in a first step, belongs to the case).
+    /** @type {{ available: boolean, offers: Array<Record<string, any>> }} */
+    let first = { available: false, offers: [] };
+    const tabId = await openCase(w, c, count, async (id) => {
+      first = await offersPeek(w, id, true);
+    });
     if (!first.available) {
       result.error = NO_OFFERS;
       return result;

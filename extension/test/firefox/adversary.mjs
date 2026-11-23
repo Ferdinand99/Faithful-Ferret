@@ -252,14 +252,13 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   };
 
   /**
-   * Loads a page in the page tab and presses the real shortcut there (activeTab). Returns the tab's id.
-   * @param {string} url
+   * Presses the real shortcut on the page the tab shows (activeTab) and returns the tab's id. The permission lasts for the
+   * page it was given on: a person who has gone on to another page presses it again there.
+   * @param {string} url the address, for the messages
    */
-  const visit = async (url) => {
+  const grant = async (url) => {
     await session.switchTo(pageTab);
     await fromBridge(() => bridge.clearEvents());
-    await session.navigate(url);
-    await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
     // The shortcut goes to the tab the browser window shows, which is not always the one WebDriver drives (closing a
     // popup window selects another tab): make the page's tab the shown one of the front window first.
     await session.switchTo(pageTab);
@@ -274,6 +273,17 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
     // the page at all, and every row would read as "nothing offered"; that is a failure of the run, said here.
     assert.ok(typeof command.tabUrl === "string" && /^https?:/.test(command.tabUrl), `${channel}: the shortcut on ${url} gave no activeTab (${JSON.stringify(command)})`);
     return /** @type {number} */ (command.tabId);
+  };
+
+  /**
+   * Loads a page in the page tab and presses the real shortcut there (activeTab). Returns the tab's id.
+   * @param {string} url
+   */
+  const visit = async (url) => {
+    await session.switchTo(pageTab);
+    await session.navigate(url);
+    await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
+    return grant(url);
   };
 
   // The entries, with the sync engine of the extension (the release writes no items).
@@ -383,7 +393,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** Closes the session; the device is revoked by the next world (or the next run's stack is a new one). */
   const quit = () => session.quit();
 
-  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, popup, named, passwords, totps, keyOf, tag, origins, quit };
+  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, grant, popup, named, passwords, totps, keyOf, tag, origins, quit };
 }
 
 /**
