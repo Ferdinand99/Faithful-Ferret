@@ -105,14 +105,17 @@ test("an_item_saved_in_the_extension_shows_in_the_web_vault_within_two_seconds",
       const name = `Ext-save-${randomBytes(4).toString("hex")}`;
       const folder = `E2E ${randomBytes(3).toString("hex")}`;
       const password = `Pw-${randomBytes(8).toString("hex")}`;
+      // A user name of this run: the account is shared by the channels, and an item with an earlier run's name would be
+      // (rightly) an update target.
+      const username = `e2e-saver-${randomBytes(3).toString("hex")}`;
       const session_ = uiSession();
-      const { offer_id: offerId } = await core("offer_plant", { session: session_, frame_url: PAGE_URL, kind: "signup", username: "e2e-saver", password });
+      const { offer_id: offerId } = await core("offer_plant", { session: session_, frame_url: PAGE_URL, kind: "signup", username, password });
       const classified = await core("offer_classify", { session: session_, offer_id: offerId });
       assert.equal(classified.action, "save", `${channel}: ${JSON.stringify(classified)}`);
-      const saved = await core("offer_save", { session: session_, offer_id: offerId, name, username: "e2e-saver", folder });
+      const saved = await core("offer_save", { session: session_, offer_id: offerId, name, username, folder });
       assert.equal(saved.ok, true, `${channel}: ${JSON.stringify(saved)}`);
       // Used once.
-      assert.deepEqual(await core("offer_save", { session: session_, offer_id: offerId, name, username: "e2e-saver", folder }), { ok: false, reason: "not_offered" });
+      assert.deepEqual(await core("offer_save", { session: session_, offer_id: offerId, name, username, folder }), { ok: false, reason: "not_offered" });
 
       await session.switchTo(vaultTab);
       await session.navigate(`${await session.currentUrl().then((u) => u.split("#")[0])}#/items`);
@@ -132,7 +135,7 @@ test("an_item_saved_in_the_extension_shows_in_the_web_vault_within_two_seconds",
       assert.deepEqual(await allText(session, '[data-role="folder-chip"]'), [folder], channel);
       const labels = await allText(session, '[data-role="field"] .label');
       assert.ok(labels.some((l) => l.includes("User name")) && labels.some((l) => l.includes("Password")), `${channel}: ${JSON.stringify(labels)}`);
-      assert.ok((await allText(session, '[data-role="value"]')).includes("e2e-saver"), channel);
+      assert.ok((await allText(session, '[data-role="value"]')).includes(username), channel);
       await session.switchTo(extensionTab);
     } finally {
       await session.quit();
