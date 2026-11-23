@@ -58,7 +58,13 @@ async function popupWithCard(w, tabId, kind) {
   await w.session.switchTo(handle);
   await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
   await w.page.ready();
-  await w.page.waitVisible('[data-role="offer-card"]', SLOW);
+  try {
+    await w.page.waitVisible('[data-role="offer-card"]', 30_000);
+  } catch (error) {
+    const body = await w.session.content(() => (document.body.textContent ?? "").replace(/\s+/g, " ").slice(0, 600));
+    const listed = await offersPeek(w, tabId);
+    throw new Error(`no offer card in the popup about tab ${tabId}: ${String(error)}; the popup shows: ${body}; the store holds ${JSON.stringify(listed.offers.map((o) => [o.type, o.origin]))}`);
+  }
   await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="offer-card"] [data-role="offer-actions"], [data-role="offer-gone"]') !== null), SLOW, "the card");
   const shown = await w.session.content(() => document.querySelector('[data-role="offer-card"]')?.getAttribute("data-kind") ?? "");
   assert.equal(shown, kind, `the card is a ${kind} card: ${await w.session.content(() => (document.querySelector('[data-role="offer-card"]')?.textContent ?? "").slice(0, 300))}`);
