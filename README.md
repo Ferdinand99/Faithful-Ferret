@@ -21,7 +21,7 @@
 > session has ended (see [What works today](#what-works-today)). v0.8.0 added a password generator, a comparison of a
 > stored field with a given value, and password history to the core. v0.9.0 shows the previous passwords of an item in
 > the web vault, makes the side menu's "Import and export" reach both pages, and teaches the Firefox extension to
-> work out what a form is for before it fills. <!-- TODO(release): name the gate release and its extension version here, and keep v0.9.0 above only as the last release before it. -->
+> work out what a form is for before it fills. <!-- TODO(release): name the release and its extension version here, and keep v0.9.0 above only as the last release before it. -->
 > The Firefox extension now also offers to save a new password or update a changed one, and has a password generator
 > in its popup; the web vault has no generator screen yet. The extension is not on the Firefox add-ons store. A health
 > check is next. Ferret is a
