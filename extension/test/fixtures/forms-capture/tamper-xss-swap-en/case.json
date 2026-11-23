@@ -1,0 +1,38 @@
+{
+  "id": "tamper-xss-swap-en",
+  "class": "negative",
+  "category": "tamper",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/tamper-xss-swap-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!adversarial-Vm4$"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

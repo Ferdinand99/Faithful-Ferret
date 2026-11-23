@@ -13,6 +13,15 @@
 //   fill phase ran every positive case with a fill (the one-time-code cases too), filled at least as many of them as
 //   the extension did before the detection module (FILL_BASELINE), and made no unsafe fill. It compares rates and the
 //   unsafe fills, never the gate: a fill-only run has no gate.
+// - The gate's own tests, each about the numbers of the run it follows, in every channel of the run. A run of a part
+//   (FERRET_MATRIX_PART) asserts the part it measured; a run of some cases (FERRET_MATRIX_GREP) has no gate, so the rate tests
+//   pass with a note saying so, and the gate script (lanbox-ext.sh gate) runs the whole sets. A test about the other set passes
+//   with a note too (a skipped test would fail the run):
+//     matrix_detection_is_at_least_95_percent_for_fill_and_capture_in_release_and_esr   (corpus)
+//     no_positive_category_is_below_80_percent                                           (corpus)
+//     holdout_detection_is_at_least_90_percent                                           (hold-out)
+//     matrix_has_zero_unsafe_fills_and_zero_unsafe_offers                                (every run)
+//     false_offers_on_benign_negatives_are_reported                                      (every run with a capture part)
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -166,7 +175,7 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
 
 test("matrix_fill_rate_is_at_least_the_baseline", (t) => {
   if (SET !== "corpus" || GREP !== "" || PART === "capture") {
-    t.skip("the baseline is about a fill phase over the whole corpus");
+    t.diagnostic("the baseline is about a fill phase over the whole corpus: nothing to compare in this run");
     return;
   }
   assert.ok(runs.size > 0, "the matrix ran (see the test before)");
@@ -179,5 +188,100 @@ test("matrix_fill_rate_is_at_least_the_baseline", (t) => {
     assert.deepEqual(fillNotRun, [], `${channel}: fill cases that did not run`);
     assert.ok(matrix.fill.passed / matrix.fill.total >= FILL_BASELINE.passed / FILL_BASELINE.total, `${channel}: fill ${matrix.fill.passed}/${matrix.fill.total} is below the baseline ${FILL_BASELINE.passed}/${FILL_BASELINE.total}`);
     assert.deepEqual(matrix.unsafeFills, [], `${channel}: unsafe fills`);
+  }
+});
+
+// ------------------------------------------------------------------------ the gate's tests
+
+/**
+ * The numbers of the run, per channel, or null (with a note) when the test is not about this run: another set, or some cases
+ * only (a run of some cases has no gate).
+ * @param {import("node:test").TestContext} t @param {"corpus" | "holdout"} set
+ * @returns {Array<[string, ReturnType<typeof computeMatrix>]> | null}
+ */
+function numbersOf(t, set) {
+  if (SET !== set) {
+    t.diagnostic(`this test is about the ${set} set; this run is ${SET}`);
+    return null;
+  }
+  if (GREP !== "") {
+    t.diagnostic(`a run of the cases matching ${JSON.stringify(GREP)} has no gate`);
+    return null;
+  }
+  assert.ok(runs.size > 0, "the matrix ran (see the test before)");
+  return channels().map((channel) => {
+    const matrix = runs.get(channel);
+    assert.ok(matrix, `${channel}: the matrix ran`);
+    return [channel, matrix];
+  });
+}
+
+/** @param {{ passed: number, total: number }} p */
+const share = (p) => `${p.passed}/${p.total}`;
+
+test("matrix_detection_is_at_least_95_percent_for_fill_and_capture_in_release_and_esr", (t) => {
+  const numbers = numbersOf(t, "corpus");
+  if (numbers === null) return;
+  for (const [channel, m] of numbers) {
+    if (PART !== "capture") assert.ok(m.fill.rate !== null && m.fill.rate >= 0.95, `${channel}: fill ${share(m.fill)} is below 95 % (${m.misses.filter((x) => x.part === "fill").map((x) => x.id).join(", ")})`);
+    if (PART !== "fill") {
+      assert.ok(m.capture.rate !== null && m.capture.rate >= 0.95, `${channel}: capture ${share(m.capture)} is below 95 % (${m.misses.filter((x) => x.part === "capture").map((x) => x.id).join(", ")})`);
+      // The generator pass is a measure of its own at the same level.
+      assert.ok(m.generated.rate !== null && m.generated.rate >= 0.95, `${channel}: generator ${share(m.generated)} is below 95 %`);
+    }
+  }
+});
+
+test("no_positive_category_is_below_80_percent", (t) => {
+  const numbers = numbersOf(t, "corpus");
+  if (numbers === null) return;
+  for (const [channel, m] of numbers) {
+    const categories = Object.entries(m.perCategory);
+    assert.ok(categories.length > 0, `${channel}: the report has categories`);
+    const low = categories.filter(([, v]) => v.rate === null || v.rate < 0.8).map(([name, v]) => `${name} ${v.passed}/${v.total}`);
+    assert.deepEqual(low, [], `${channel}: categories below 80 %`);
+  }
+});
+
+test("holdout_detection_is_at_least_90_percent", (t) => {
+  const numbers = numbersOf(t, "holdout");
+  if (numbers === null) return;
+  for (const [channel, m] of numbers) {
+    if (PART !== "capture") assert.ok(m.fill.rate !== null && m.fill.rate >= 0.9, `${channel}: hold-out fill ${share(m.fill)} is below 90 % (${m.misses.filter((x) => x.part === "fill").map((x) => x.id).join(", ")})`);
+    if (PART !== "fill") assert.ok(m.capture.rate !== null && m.capture.rate >= 0.9, `${channel}: hold-out capture ${share(m.capture)} is below 90 % (${m.misses.filter((x) => x.part === "capture").map((x) => x.id).join(", ")})`);
+  }
+});
+
+test("matrix_has_zero_unsafe_fills_and_zero_unsafe_offers", () => {
+  // Also for a run of some cases: safety does not wait for a gate. A case that did not run counts as failed.
+  assert.ok(runs.size > 0, "the matrix ran (see the test before)");
+  for (const channel of channels()) {
+    const m = runs.get(channel);
+    assert.ok(m, `${channel}: the matrix ran`);
+    assert.deepEqual(m.unsafeFills.map((x) => `${x.id}: ${x.reason}${x.field ? ` in ${x.field}` : ""}`), [], `${channel}: unsafe fills`);
+    assert.deepEqual(m.unsafeOffers.map((x) => `${x.id}: ${x.reason}`), [], `${channel}: unsafe offers`);
+    assert.deepEqual(m.notRun, [], `${channel}: cases that did not run`);
+  }
+});
+
+test("false_offers_on_benign_negatives_are_reported", (t) => {
+  assert.ok(runs.size > 0, "the matrix ran (see the test before)");
+  if (PART === "fill") {
+    t.diagnostic("a fill-only run reads no offers");
+    return;
+  }
+  const text = readFileSync(join(OUT, "matrix.md"), "utf8");
+  assert.ok(text.includes("false offers (harmless negatives)"), "matrix.md has the line");
+  for (const channel of channels()) {
+    const m = runs.get(channel);
+    assert.ok(m, `${channel}: the matrix ran`);
+    if (m.falseOffers.rate !== null) assert.ok(Array.isArray(m.falseOffers.cases), `${channel}: the report lists them`);
+    // The frozen corpus has none; the hold-out set only reports them (its pages were written without sight of the detection).
+    if (SET === "corpus" && GREP === "") {
+      assert.ok(m.falseOffers.rate !== null, `${channel}: the corpus has harmless negative cases that ran`);
+      assert.deepEqual(m.falseOffers.cases, [], `${channel}: false offers on harmless pages`);
+    } else if (m.falseOffers.cases.length > 0) {
+      t.diagnostic(`${channel}: false offers on ${m.falseOffers.cases.join(", ")}`);
+    }
   }
 });

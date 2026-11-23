@@ -1328,6 +1328,34 @@ test("a_control_deeper_in_the_password_fields_wrapper_is_a_toggle_and_an_offscre
   world.settle();
   assert.equal(JSON.stringify(world.sent).includes("honeypot-name"), false);
   assert.equal(captures(world).length, 1);
+
+  // A text field wholly below the window with a value the page wrote is no user name either, and the field the person typed in
+  // (before it in the page) is the user name instead.
+  const below = createWorld();
+  const g = /** @type {any} */ ({});
+  g.form = below.document.body.append(below.document.createElement("form", { id: "login" }));
+  g.user = addInput(below.document, g.form, { type: "text", name: "username", id: "user" }, { top: 100 });
+  const honeypot = addInput(below.document, g.form, { type: "text", name: "alt", id: "alt", autocomplete: "username" }, { top: 4000 });
+  g.pass = addInput(below.document, g.form, { type: "password", name: "password", id: "pass" }, { top: 160 });
+  for (const el of [g.user, honeypot, g.pass]) el.form = g.form;
+  honeypot.value = "honeypot@example.net";
+  below.start();
+  below.type(g.user, "anna");
+  below.type(g.pass, PASSWORD);
+  below.submit(g.form);
+  below.settle();
+  assert.equal(JSON.stringify(below.sent).includes("honeypot@example.net"), false, "the honeypot's value is not sent");
+  assert.equal(captures(below)[0]?.username, "anna", "the typed user name is the one sent");
+  // The same field once the person typed in it (it scrolled into reach) counts, and so does a password field below the window.
+  const typedBelow = createWorld();
+  const h = loginForm(typedBelow);
+  h.user.rect = { left: 100, top: 4000, width: 240, height: 32 };
+  typedBelow.start();
+  typedBelow.type(h.user, "anna");
+  typedBelow.type(h.pass, PASSWORD);
+  typedBelow.submit(h.form);
+  typedBelow.settle();
+  assert.equal(captures(typedBelow)[0]?.username, "anna", "a user name the person typed in below the window");
 });
 
 test("the_capture_script_stops_and_reads_nothing_after_it", () => {

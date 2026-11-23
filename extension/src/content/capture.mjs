@@ -134,6 +134,10 @@ export function createCapture({ window, document, send, clock, forms }) {
     try {
       const box = el.getBoundingClientRect();
       if (box.width < MIN_SIDE || box.height < MIN_SIDE || box.right <= 0 || box.bottom <= 0 || box.left >= window.innerWidth) return false;
+      // A text field wholly below the window that the person never typed in is one the page put out of sight (a honeypot with a
+      // value of its own): it is no user name. A password field there stays (an untyped one drops the capture anyway, and a page
+      // whose form is below the first screen must still be told apart from a failed sign-in), and so does one the person typed in.
+      if (box.top >= window.innerHeight && el.type !== "password" && !typed.has(el)) return false;
       if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
       for (let node = el, depth = 0; node && depth < 20; node = node.getRootNode().host, depth += 1) {
         if (node.closest('[aria-hidden="true"], [inert]')) return false;

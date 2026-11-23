@@ -21,7 +21,7 @@
 // its code) and an offer by the SHA-256 of its password.
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { FORMS_DIR } from "./fixtures-server.mjs";
+import { CAPTURE_FORMS_DIR, FORMS_DIR } from "./fixtures-server.mjs";
 import { VAULT_USERNAME, loadCorpus } from "./matrixReport.mjs";
 import { recentCodes } from "./totp.mjs";
 
@@ -65,6 +65,12 @@ export function caseUrl(c, server) {
   const port = scheme === "https" ? server.ports.https : server.ports.http;
   const standard = scheme === "https" ? 443 : 80;
   return `${scheme}://${c.host}${port === standard ? "" : `:${port}`}${c.path}`;
+}
+
+/** The cases of the adversarial capture specs (fixtures/forms-capture), whose id contains `grep`. @param {string} [grep] */
+export function captureCasesOf(grep = "") {
+  const all = loadCorpus(CAPTURE_FORMS_DIR);
+  return grep === "" ? all : all.filter((c) => c.id.includes(grep));
 }
 
 /** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout"} set @param {string} [grep] */
