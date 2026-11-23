@@ -35,6 +35,8 @@ import { createOffers } from "./offers.mjs";
 
 /** The reports of the capture script the router hands over. */
 const EVENT_TYPES = Object.freeze(["form_capture", "form_gone", "page_ready"]);
+/** How far inside a frame's corner the parent-side check looks (CSS pixels): a frame smaller than this is not shown. */
+const INSET = 8;
 /** How long the parent-side check of a frame may take. */
 const SHOWN_TIMEOUT_MS = 3000;
 
@@ -50,9 +52,11 @@ const saveFeature = () => {
 };
 
 /**
- * Whether the frame's content is shown in every document above it. The points are in the frame's own viewport; the
- * frame's script is not needed (nothing is injected into the frame itself: its size comes from a call into it), and
- * every document above is asked, as for a fill.
+ * Whether the frame is shown in every document above it. The question goes to the documents above, never to the frame's
+ * own document (a submitted form moves its frame on at once, and a document that is gone cannot be asked): each parent,
+ * from the nearest up to the top, says whether the element that holds the frame is shown at a point a little inside the
+ * frame's corner, passes the ancestor and size rules and is not covered, and hands the point on in its own coordinates.
+ * A frame too small to hold that point (a hidden one) fails.
  * @param {{ executeScript: (injection: any) => Promise<any> }} scripting
  * @param {number} tabId
  * @param {import("./offers.mjs").FrameFact} frame
@@ -61,12 +65,8 @@ const saveFeature = () => {
 async function frameIsShown(scripting, tabId, frame) {
   if (frame.frameId === 0) return true;
   if (frame.ancestors.length === 0 || frame.ancestors.at(-1)?.frameId !== 0) return false;
-  const target = typeof frame.documentId === "string" && frame.documentId !== "" ? { tabId, documentIds: [frame.documentId] } : { tabId, frameIds: [frame.frameId] };
-  const own = await scripting.executeScript({ target, func: () => [Math.floor(innerWidth / 2), Math.floor(innerHeight / 2)] });
-  const middle = Array.isArray(own) && own.length === 1 ? own[0]?.result : null;
-  if (!Array.isArray(middle) || middle.length !== 2 || !middle.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e7)) return false;
   /** @type {Array<[number, number]>} */
-  let points = [[middle[0], middle[1]]];
+  let points = [[INSET, INSET]];
   let child = frame.frameId;
   for (const parent of frame.ancestors) {
     const answer = await frameShownIn({ scripting, tabId, parent, childFrameId: child, points });
