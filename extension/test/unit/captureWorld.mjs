@@ -132,7 +132,15 @@ export function createWorld({ url } = {}) {
     of: (typeName) => sent.filter((m) => m.type === typeName),
     click: (/** @type {any} */ el, /** @type {Record<string, unknown>} */ init) => fire(el, "click", init),
     enter: (/** @type {any} */ el) => fire(el, "keydown", { key: "Enter" }),
-    submit: (/** @type {any} */ form, /** @type {Record<string, unknown>} */ init) => fire(form, "submit", init),
+    /**
+     * A submit event. A person's submit comes after a click or an Enter, so by default a trusted click on the page's body
+     * (no control, no trigger of its own) goes first; `gesture: false` leaves it out (a page that submits by itself).
+     */
+    submit: (/** @type {any} */ form, /** @type {Record<string, unknown>} */ init = {}) => {
+      const { gesture = true, ...rest } = init;
+      if (gesture !== false && rest.trusted !== false) fire(world.document.body, "click");
+      return fire(form, "submit", rest);
+    },
     /** Lets the burst of triggers of one submission run (the capture reads the page one task later). */
     settle: () => clock.advance(0),
   };

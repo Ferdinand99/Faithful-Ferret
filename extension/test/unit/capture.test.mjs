@@ -176,6 +176,46 @@ test("no_mutation_observer_before_a_trusted_event_in_a_password_field", () => {
   assert.equal(captures(world).length, 1);
 });
 
+test("a_submit_the_page_fires_itself_is_no_submission_without_a_trusted_click_or_enter", () => {
+  // `form.requestSubmit()` makes the browser fire a trusted `submit` event, so a page can do it on a timer or on blur.
+  const world = createWorld();
+  const { user, pass, form, go } = loginForm(world);
+  world.start();
+  world.type(user, "anna");
+  world.type(pass, PASSWORD);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "a trusted submit with no click or Enter before it");
+  // A click that a script made is no gesture.
+  world.click(world.document.body, { trusted: false });
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "after a click from a script");
+  // The person's click is one, for two seconds (a page that checks the form with a request first).
+  world.click(world.document.body);
+  world.clock.advance(2001);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "a click more than two seconds earlier");
+  world.click(world.document.body);
+  world.clock.advance(1500);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 1, "a click one and a half seconds earlier (positive control)");
+  assert.equal(captures(world)[0].password, PASSWORD);
+  // Enter pressed anywhere is one too (on a button, which is no field: no trigger of its own).
+  world.clock.advance(2001);
+  world.fire(go, "keydown", { key: "Enter" });
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 2, "Enter on a button, then the submit");
+  // The person typed, and the page fires the submit on its own a moment later, long after the last click: nothing.
+  world.clock.advance(10_000);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 2, "a submit ten seconds after the last gesture");
+});
+
 test("submit_click_and_enter_each_capture_once", () => {
   // In a form: a click on the submit button and the submit event that follows it are one submission. So are Enter and
   // the submit event it causes, and a submit event alone. A second submission within two seconds gives nothing.
@@ -1492,6 +1532,8 @@ test("the_built_capture_script_starts_on_https_only_and_sends_what_the_extension
       fire("input", el);
     }
   }
+  // The person clicks (the body: no control), and the form is submitted.
+  fire("click", document.body);
   fire("submit", form);
   clock.advance(0);
   const messages = raw.map((r) => decode(r, CONTENT_TYPES));

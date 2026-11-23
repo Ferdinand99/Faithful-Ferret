@@ -29,8 +29,10 @@
 //   password the extension generated for it; no value the page could have set goes up. A sign-in form is never sent so.
 // - Only fields the person could see count (a hidden, honeypot, zero-size, off-screen, covered or `aria-hidden` field
 //   takes no role); the detection module gives roles to the fields passed by `shown` only.
-// - A submission is a trusted `submit` event, a trusted click on a submit control or on an element with the submit words
-//   of patterns.mjs, or a trusted Enter in a field. A control that shows or hides the password, or that sits in the
+// - A submission is a trusted `submit` event that follows a trusted click or a trusted Enter within two seconds (a page can
+//   make the browser fire a trusted `submit` itself with `requestSubmit()`, on a timer or on blur, so a `submit` alone proves
+//   nothing; a person's own submit is always preceded by a click or an Enter), a trusted click on a submit control or on an
+//   element with the submit words of patterns.mjs, or a trusted Enter in a field. A control that shows or hides the password, or that sits in the
 //   password field's wrapper, never counts. The page is looked at in the trigger itself (this script's listener is on the
 //   window, in the capture phase, and runs before the page's own handlers): which groups and fields the person could see
 //   is decided there, so a form that the page hides, replaces or covers in its own submit or click handler is still the
@@ -58,6 +60,8 @@ const MAX_USER = 512;
 const MAX_PASSWORD = 1024;
 /** One capture per frame, and one identifier step per frame, in this many milliseconds. */
 const MIN_GAP = 2000;
+/** How soon after a trusted click or Enter a `submit` event still counts (ms): a page may check the form with a request first. */
+const GESTURE_MS = 2000;
 /** The smallest side of a field that counts as shown (as in the fill engine). */
 const MIN_SIDE = 8;
 const SENT_KINDS = new Set(["login", "signup", "change", "reset", "identifier"]);
@@ -88,6 +92,8 @@ export function createCapture({ window, document, send, clock, forms }) {
   let waiting = null;
   let lastCapture = -Infinity;
   let lastIdentifier = -Infinity;
+  /** When the person last clicked or pressed Enter in this document (a trusted event); a `submit` counts only soon after one. */
+  let lastGesture = -Infinity;
   let readySent = false;
   let stopped = false;
   /** Whether an input was recorded in this document (a trusted one, or any in a password field). */
@@ -363,15 +369,17 @@ export function createCapture({ window, document, send, clock, forms }) {
   });
   on("submit", (event) => {
     const form = targetOf(event);
-    if (event.isTrusted && form && form.localName === "form") trigger("submit", form);
+    if (event.isTrusted && form && form.localName === "form" && clock.now() - lastGesture <= GESTURE_MS) trigger("submit", form);
   });
   on("click", (event) => {
     if (!event.isTrusted) return;
+    lastGesture = clock.now();
     const control = controlOf(targetOf(event));
     if (control && (isSubmitControl(control) || SUBMIT.test(controlText(control)))) trigger("click", control);
   });
   on("keydown", (event) => {
     const el = targetOf(event);
+    if (event.isTrusted && event.key === "Enter") lastGesture = clock.now();
     if (event.isTrusted && event.key === "Enter" && !event.isComposing && el && el.localName === "input") trigger("enter", el);
   });
 
