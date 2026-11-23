@@ -55,6 +55,11 @@
 //
 // A report or a fill result that names no pending request, or comes from
 // another frame or document, does nothing.
+//
+// Each value that lands is noted in the fill context (fillContext.mjs, when the
+// background has one): which item's value of which kind went into which
+// document. The write path reads it when a change form is submitted there. It
+// holds item ids only, in memory, and every lock clears it.
 
 import { FRAME_UNCHECKED, encode } from "../shared/protocol.mjs";
 import { confirmFrame } from "./frames.mjs";
@@ -242,12 +247,14 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   scripting: { executeScript: (injection: any) => Promise<any[]> },
  *   tabs: { sendMessage: (tabId: number, message: string, options: Record<string, unknown>) => Promise<unknown>, create: (info: { url: string }) => Promise<unknown> },
  *   source?: CandidateSource | null,
+ *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void } | null,
  *   now?: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   timers?: { setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void },
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
- * }} options `source` is the page matching (null: no page has candidates, so nothing can be filled)
+ * }} options `source` is the page matching (null: no page has candidates, so nothing can be filled); `fillContext`
+ *   notes what was filled where (null: nothing is noted)
  */
 export function createFillHost({
   syncHost,
@@ -255,6 +262,7 @@ export function createFillHost({
   scripting,
   tabs,
   source = null,
+  fillContext = null,
   now = Date.now,
   random = (bytes) => {
     globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
@@ -652,6 +660,9 @@ export function createFillHost({
           const result = await push(request, kind, value, report.url);
           if (!result.ok) return { ok: false, reason: typeof result.reason === "string" ? result.reason : "not_filled" };
           filled += 1;
+          fillContext?.record({
+            tabId, frameId: request.frameId, ...(request.documentId !== undefined ? { documentId: request.documentId } : {}), url: report.url, fieldKind: kind, itemId: entry.itemId,
+          });
         }
         return filled > 0 ? { ok: true } : { ok: false, reason: "no_value" };
       });
@@ -714,7 +725,7 @@ export function createFillHost({
     refs,
 
     /**
-     * Joins the core host: every lock drops the references and ends a fill that runs.
+     * Joins the core host: every lock drops the references, ends a fill that runs and clears the fill context.
      * @param {{ state(): string, liveClient(options?: { open?: boolean }): any, onLocked(listener: () => void): unknown }} coreHost
      */
     attach(coreHost) {
@@ -722,6 +733,7 @@ export function createFillHost({
       coreHost.onLocked(() => {
         refs.clear();
         cancelAll("vault_locked");
+        fillContext?.clear();
       });
     },
 
