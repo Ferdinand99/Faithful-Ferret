@@ -4,6 +4,7 @@
 //
 //   /sse                  an event every `sseIntervalMs` (10 s by default)
 //   /static/login.html    one sign-in form (user name and password)
+//   /static/signup.html   one sign-up form (e-mail, a new password with a maxlength of 24, and its confirmation)
 //   /static/blank.html    an empty page
 //   /static/frames.html   one page with an iframe of each kind that has an opaque or special origin
 //                         (srcdoc, sandboxed without allow-same-origin, about:blank) and one ordinary one
@@ -101,6 +102,20 @@ const LOGIN_HTML = `<!doctype html>
     <label>User name <input id="username" name="username" type="text" autocomplete="username"></label>
     <label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>
     <button id="submit" type="submit">Sign in</button>
+  </form>
+</body>
+</html>
+`;
+
+const SIGNUP_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture sign-up</title></head>
+<body>
+  <form id="signup" method="post" action="/static/login-done.html">
+    <label>E-mail <input id="email" name="email" type="email" autocomplete="email"></label>
+    <label>Password <input id="new-password" name="password" type="password" autocomplete="new-password" maxlength="24"></label>
+    <label>Repeat the password <input id="confirm-password" name="password2" type="password" autocomplete="new-password"></label>
+    <button id="submit" type="submit">Create account</button>
   </form>
 </body>
 </html>
@@ -231,6 +246,8 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
       res.on("close", () => { clearInterval(timer); streams.delete(res); });
     } else if (path === "/static/login.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(LOGIN_HTML);
+    } else if (path === "/static/signup.html") {
+      res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(SIGNUP_HTML);
     } else if (path === "/static/frames.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(FRAMES_HTML);
     } else if (path === "/static/blank.html" || path === "/static/login-done.html") {

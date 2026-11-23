@@ -94,7 +94,9 @@ const LOOPBACK = /^http:\/\/(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]
  * }} CandidateList `host` is null when the tab shows no web page (then everything else is empty)
  * @typedef {{
  *   candidates(tabId: number, options?: { frameId?: number }): Promise<CandidateList>,
- * }} CandidateSource what the fill flow, the shortcut and the menu use
+ *   frames?(tabId: number, options?: { frameId?: number }): Promise<GeneratorFrames>,
+ * }} CandidateSource what the fill flow, the shortcut and the menu use; `frames` is for the generated password only
+ * @typedef {{ host: Host | null, insecure: boolean, frames: FillableFrame[] }} GeneratorFrames
  * @typedef {{ call(op: string, args?: unknown): Promise<unknown> }} CoreHostCall
  */
 
@@ -396,6 +398,61 @@ export async function candidates(tabId, { coreHost, frames, permissions, frameId
 }
 
 /**
+ * The frames of a tab a generated password may be filled in (no item takes part, so no match is asked): the frames
+ * that may be offered items (`fillableFrames`), of the top's origin, or of another `https` origin whose host
+ * permission is granted; each marked `unchecked` when a frame above it (not the top) is of another origin with no
+ * permission, as for a fill. `frameId` keeps that frame only (the menu's frame). The top first.
+ *
+ * @param {number} tabId
+ * @param {{
+ *   coreHost: CoreHostCall,
+ *   frames: (tabId: number) => Promise<FillableFrame[]>,
+ *   permissions?: { contains(p: { origins: string[] }): Promise<boolean> },
+ *   frameId?: number,
+ * }} deps
+ * @returns {Promise<GeneratorFrames>}
+ */
+export async function generatorFrames(tabId, { coreHost, frames, permissions, frameId }) {
+  const all = await frames(tabId);
+  const top = all.find((f) => f.frameId === 0);
+  if (top === undefined) return { host: null, insecure: false, frames: [] };
+  const host = await displayHost(coreHost, top.url);
+  const insecure = !isSecureOrigin(top.origin);
+  /** @type {Map<string, boolean>} origin -> whether its permission is granted */
+  const permitted = new Map();
+  /** @param {FillableFrame} frame */
+  const permittedFor = async (frame) => {
+    if (frame.origin === top.origin) return true;
+    if (!frame.origin.startsWith("https://")) return false;
+    if (!permitted.has(frame.origin)) {
+      let granted = false;
+      try {
+        const frameHost = await displayHost(coreHost, frame.url);
+        granted = (await permissions?.contains({ origins: [permissionPattern(frameHost)] })) === true;
+      } catch {
+        granted = false;
+      }
+      permitted.set(frame.origin, granted);
+    }
+    return permitted.get(frame.origin) === true;
+  };
+  const byId = new Map(all.map((f) => [f.frameId, f]));
+  /** @type {FillableFrame[]} */
+  const out = [];
+  for (const frame of frameId === undefined ? all : all.filter((f) => f.frameId === frameId)) {
+    if (!(await permittedFor(frame))) continue;
+    let unchecked = frame.unchecked === true;
+    for (const above of frame.ancestors) {
+      if (unchecked || above.frameId === 0) continue;
+      const middle = byId.get(above.frameId);
+      if (middle === undefined || !(await permittedFor(middle))) unchecked = true;
+    }
+    out.push(unchecked ? { ...frame, unchecked: true } : frame);
+  }
+  return { host, insecure, frames: out };
+}
+
+/**
  * The page matching as one object, for the fill flow: the frames from the
  * browser (`webNavigation`), the site rules and the match from the core (over
  * the core host's operations), and the host permissions the browser holds.
@@ -416,6 +473,13 @@ export function createCandidateSource({ webNavigation, permissions, call }) {
   return {
     candidates: (tabId, { frameId } = {}) =>
       candidates(tabId, {
+        coreHost: { call },
+        frames: (id) => fillableFrames(id, { webNavigation, core }),
+        ...(permissions ? { permissions } : {}),
+        ...(frameId !== undefined ? { frameId } : {}),
+      }),
+    frames: (tabId, { frameId } = {}) =>
+      generatorFrames(tabId, {
         coreHost: { call },
         frames: (id) => fillableFrames(id, { webNavigation, core }),
         ...(permissions ? { permissions } : {}),

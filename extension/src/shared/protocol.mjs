@@ -57,11 +57,13 @@ export const FORBIDDEN_KEYS = Object.freeze([
 ]);
 
 /**
- * The only place a forbidden key name is allowed: `fill_field` carries the one
- * value that is filled into a page.
+ * The only places a forbidden key name is allowed: `fill_field` carries the one
+ * value that is filled into a page, and the reply of `generate` carries the
+ * password or passphrase the core has just made, for the popup to show.
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
+  generate: Object.freeze(["value"]),
 });
 
 /**
@@ -108,6 +110,9 @@ const requestId = string({ min: 1, max: 64, pattern: ID });
 const ref = string({ min: 1, max: 64, pattern: ID });
 const reason = string({ min: 1, max: 64, pattern: REASON });
 const field = string({ max: 16, oneOf: ["username", "password", "totp"] });
+// What a frame can report and what can be pushed into it: the sign-in kinds, and, for a generated password, the new and
+// the confirm field of a sign-up, change or reset form.
+const fillKind = string({ max: 16, oneOf: ["username", "password", "totp", "new_password", "confirm_password"] });
 // A canonical origin is at most 300 bytes. "null" (an opaque origin) fits.
 const origin = string({ min: 1, max: 300 });
 const serverUrl = string({ min: 1, max: 300 });
@@ -142,6 +147,8 @@ const handle = object(
   { optional: ["username", "insecure", "favorite", "type", "site", "frame_id", "frame_ids"] },
 );
 const empty = object({});
+// A generation: a random name for a value that the background keeps for a while.
+const generationId = string({ min: 1, max: 64, pattern: ID });
 const count = integer({ min: 0, max: 1_000_000 });
 // One version of an item in conflict, as a page may see it.
 const conflictSide = object(
@@ -367,6 +374,57 @@ export const UI_TYPES = defineTypes({
   },
   // "Discard the draft" of an item whose change the server refused.
   item_discard: { request: object({ ref }), reply: okReply },
+  // The generator (design document, section 10.2). `generate` asks the core for a new password or passphrase with the
+  // options the popup keeps in its own storage, and answers the value with a random `generation_id` under which the
+  // background keeps it until the vault locks or 15 minutes have passed (`expires_at`, milliseconds since 1970). With
+  // `current` it shows the value the background still holds (the popup was closed and opened again) and makes nothing
+  // new. The reply of `generate` is the only reply that carries a value; the popup never sends it back: "Fill" and
+  // "Copy" name the `generation_id`.
+  generate: {
+    request: object(
+      {
+        current: boolean(),
+        kind: string({ max: 16, oneOf: ["password", "passphrase"] }),
+        length: integer({ min: 4, max: 128 }),
+        lower: boolean(),
+        upper: boolean(),
+        digits: boolean(),
+        symbols: boolean(),
+        min_each: integer({ min: 0, max: 8 }),
+        avoid_ambiguous: boolean(),
+        words: integer({ min: 3, max: 20 }),
+        separator: string({ max: 1, oneOf: ["-", ".", "_", " "] }),
+        capitalize: boolean(),
+        number: boolean(),
+      },
+      {
+        optional: ["current", "kind", "length", "lower", "upper", "digits", "symbols", "min_each", "avoid_ambiguous", "words", "separator", "capitalize", "number"],
+      },
+    ),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        generation_id: generationId,
+        value: string({ max: 1024 }),
+        kind: string({ max: 16, oneOf: ["password", "passphrase"] }),
+        // The core's entropy estimate, in whole bits, for the strength line.
+        bits: integer({ min: 0, max: 100_000 }),
+        expires_at: integer({ min: 0, max: 8_640_000_000_000_000 }),
+      },
+      { optional: ["reason", "generation_id", "value", "kind", "bits", "expires_at"] },
+    ),
+  },
+  // "Fill" with a generated value: the `generation_id`, the tab and (the menu's) frame, never the value. The background
+  // fills the new and the confirm field of a sign-up, change or reset form of that tab, and never a password in use.
+  // `length` is the length that was filled (a field's `maxlength` can make it shorter than the value the popup shows:
+  // the popup asks `generate { current: true }` again); `offer`: the background now holds an offer to save it.
+  fill_generated: {
+    request: object({ generation_id: generationId, tab_id: tabId, frame_id: frameId }, { optional: ["frame_id"] }),
+    reply: object({ ok: boolean(), reason, length: integer({ min: 0, max: 1024 }), offer: boolean() }, { optional: ["reason", "length", "offer"] }),
+  },
+  // "Copy" of a generated value: the background writes the clipboard itself and clears it 30 seconds later.
+  generate_copy: { request: object({ generation_id: generationId }), reply: okReply },
   settings: {
     // The bounds are those of LOCK_CHOICES; the background accepts only the listed values.
     request: object(
@@ -387,10 +445,15 @@ export const CONTENT_TYPES = defineTypes({
       request_id: requestId,
       self_origin: origin,
       fields: array(
-        object({
-          kind: string({ max: 16, oneOf: ["username", "password", "totp"] }),
-          id: string({ min: 1, max: 64, pattern: ID }),
-        }),
+        object(
+          {
+            kind: fillKind,
+            id: string({ min: 1, max: 64, pattern: ID }),
+            // The `maxlength` of a new or confirm field, for a generated fill; left out when the field has none.
+            max: integer({ min: 0, max: 1_000_000 }),
+          },
+          { optional: ["max"] },
+        ),
         { max: 64 },
       ),
     }),
@@ -408,7 +471,7 @@ export const PUSH_TYPES = defineTypes({
   fill_field: {
     request: object({
       request_id: requestId,
-      field,
+      field: fillKind,
       value: string({ max: 2048 }),
       expect: object({ origin, frameUrl: url }),
     }),

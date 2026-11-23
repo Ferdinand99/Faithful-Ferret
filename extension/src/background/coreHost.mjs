@@ -18,7 +18,7 @@
 // passes in as `ops`: the session's ops (session.mjs), which hold the account
 // session over the same client, the sync's ops (sync.mjs, with the offer ops
 // over offerWrite.mjs), the matching's ops (match.mjs) and the item ops of the
-// popup (fillFlow.mjs). The only other
+// popup (fillFlow.mjs) and the generator's (generator.mjs). The only other
 // code that passes ops in is the test build's hooks (the test build only),
 // which a release does not contain.
 //
@@ -37,8 +37,9 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * `match_bench`, `offer_plant` and `offer_bench` are only available in the test
  * build, which passes their implementations in (`ops`); in a release they are
  * refused like any other name. The offer ops (`offer_classify`, `offer_save`,
- * `offer_update`, `folder_names`) refuse with `not_available` in a build without
- * the `save` feature.
+ * `offer_update`, `folder_names`) and the generator's (`generate`, `generate_copy`,
+ * `fill_generated`) refuse with `not_available` in a build without the `save`
+ * feature.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -80,6 +81,9 @@ export const CORE_OPS = Object.freeze([
   "folder_names",
   "offer_plant",
   "offer_bench",
+  "generate",
+  "generate_copy",
+  "fill_generated",
 ]);
 
 /**

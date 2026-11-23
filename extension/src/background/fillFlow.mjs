@@ -60,6 +60,18 @@
 // background has one): which item's value of which kind went into which
 // document. The write path reads it when a change form is submitted there. It
 // holds item ids only, in memory, and every lock clears it.
+//
+// A generated password (`fill_generated`, with the feature `save` on) goes the
+// same way with no item: the popup names a `generation_id` of the generator
+// (generator.mjs), the frames of the tab that may take a fill are asked for
+// their fields in the mode "generated", and only the new and the confirm field
+// of a sign-up, change or reset form are reported; a sign-in form and a password
+// in use are not. The same frame rules apply (the check that the frame is
+// shown, now and again before each value, and the origin and address the
+// extension expects). The shortest `maxlength` of the two fields decides the
+// length: a password is made again by the core at that length, never shorter
+// than 8 (`field_too_short`), and a passphrase is never cut. After the fill the
+// background holds an offer to save the value, marked as generated.
 
 import { FRAME_UNCHECKED, encode } from "../shared/protocol.mjs";
 import { confirmFrame } from "./frames.mjs";
@@ -86,6 +98,12 @@ export const RESULT_TIMEOUT_MS = 3000;
 
 /** The kinds of value one fill puts in, in this order. */
 const FILL_ORDER = Object.freeze(["username", "password", "totp"]);
+
+/** The kinds of value a generated fill puts in, in this order: the new password, then its confirmation. */
+const GENERATED_ORDER = Object.freeze(["new_password", "confirm_password"]);
+
+/** The most frames one generated fill asks. */
+const MAX_GENERATED_FRAMES = 8;
 
 /** The item types the popup names; any other type is "other". */
 const ITEM_TYPES = Object.freeze(["login", "note", "card", "identity"]);
@@ -231,11 +249,12 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  * @typedef {{ promise: Promise<any>, resolve: (value: any) => void, reject: (error: Error) => void }} Deferred
  * @typedef {{
  *   requestId: string, tabId: number, frameId: number, documentId?: string, origin: string,
- *   ancestors: FrameRef[], unchecked?: boolean,
+ *   ancestors: FrameRef[], unchecked?: boolean, mode?: "generated",
  *   report: Deferred,
  *   result: Deferred | null,
  * }} Pending one frame of a fill
- *   `report` settles with `{ kinds: Set<string>, url: string }`, `result` with `{ ok: boolean, reason?: string }`
+ *   `report` settles with `{ kinds: Set<string>, url: string, limits: Map<string, number> }` (`limits`: the `maxlength` of
+ *   the fields of a generated fill that have one), `result` with `{ ok: boolean, reason?: string }`
  */
 
 /**
@@ -248,13 +267,20 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   tabs: { sendMessage: (tabId: number, message: string, options: Record<string, unknown>) => Promise<unknown>, create: (info: { url: string }) => Promise<unknown> },
  *   source?: CandidateSource | null,
  *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void } | null,
+ *   generator?: { get(id: unknown): { value: string, kind: string, expiresAt: number } | null, fit(id: string, limit: number): Promise<{ ok: boolean }> } | null,
+ *   offers?: { onGenerated(meta: GeneratedMeta): unknown } | null,
  *   now?: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   timers?: { setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void },
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
  * }} options `source` is the page matching (null: no page has candidates, so nothing can be filled); `fillContext`
- *   notes what was filled where (null: nothing is noted)
+ *   notes what was filled where (null: nothing is noted); `generator` holds the generated values (null: no generated
+ *   fill); `offers` is given what was filled so it can hold an offer to save it (null: no offer is made)
+ * @typedef {{
+ *   tabId: number, frameId: number, documentId?: string, url: string, origin: string, generationId: string,
+ *   value: string, expiresAt: number,
+ * }} GeneratedMeta what the store of offers is told after a generated fill: the frame and the value, in memory only
  */
 export function createFillHost({
   syncHost,
@@ -263,6 +289,8 @@ export function createFillHost({
   tabs,
   source = null,
   fillContext = null,
+  generator = null,
+  offers = null,
   now = Date.now,
   random = (bytes) => {
     globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
@@ -543,7 +571,14 @@ export function createFillHost({
    * @returns {Promise<{ kinds: Set<string>, url: string }>}
    */
   async function reportOf(request) {
-    const injected = injectFill({ scripting, tabId: request.tabId, frameId: request.frameId, documentId: request.documentId, requestId: request.requestId }).catch(() => {
+    const injected = injectFill({
+      scripting,
+      tabId: request.tabId,
+      frameId: request.frameId,
+      documentId: request.documentId,
+      requestId: request.requestId,
+      ...(request.mode !== undefined ? { mode: request.mode } : {}),
+    }).catch(() => {
       throw new FillError("frame_gone");
     });
     // A page that never lets the script in (a blocked main thread) is a frame that did not report.
@@ -676,6 +711,120 @@ export function createFillHost({
   }
 
   /**
+   * "Fill" with a generated value: the new and the confirm field of a sign-up, change or reset form of the tab (see the
+   * top of this file). Nothing but the `generation_id` comes from the popup; the value comes from the generator.
+   * @param {{ session: string, generation_id: string, tab_id: number, frame_id?: number }} args
+   */
+  async function fillGenerated({ session, generation_id: generationId, tab_id: tabId, frame_id: frameId }) {
+    sessionOf(session);
+    // Without the generator (a build without the feature) there is no such operation.
+    if (generator === null) throw new FillError("not_available");
+    if (source === null || typeof source.frames !== "function") return { ok: false, reason: "not_offered" };
+    // A value that expired, or that a lock took, is gone: nothing is asked of the page for it.
+    if (generator.get(generationId) === null) return { ok: false, reason: "not_offered" };
+    if (filling) return { ok: false, reason: "busy" };
+    if (host?.state() !== "unlocked") return { ok: false, reason: "vault_locked" };
+
+    filling = true;
+    /** @type {Pending[]} */
+    let requests = [];
+    try {
+      const found = await source.frames(tabId, frameId !== undefined ? { frameId } : {});
+      if (host?.state() !== "unlocked") return { ok: false, reason: "vault_locked" };
+      if (found.host === null || found.frames.length === 0) return { ok: false, reason: "no_fields" };
+      // Not on a plain `http` page: a password made here would be sent in the clear.
+      if (found.insecure) return { ok: false, reason: "insecure_page" };
+
+      requests = found.frames.slice(0, MAX_GENERATED_FRAMES).map((f) => ({
+        requestId: hex(random(new Uint8Array(16))),
+        tabId,
+        frameId: f.frameId,
+        ...(f.documentId !== undefined ? { documentId: f.documentId } : {}),
+        origin: f.origin,
+        ancestors: f.ancestors,
+        unchecked: f.unchecked === true,
+        mode: /** @type {const} */ ("generated"),
+        report: deferred(),
+        result: null,
+      }));
+      for (const request of requests) pending.set(request.requestId, request);
+      const reports = await Promise.allSettled(requests.map((request) => reportOf(request)));
+
+      // The first frame, the top first, that reports a new-password field and shows it on the page.
+      /** @param {number} i */
+      const hasNew = (i) => reports[i].status === "fulfilled" && /** @type {PromiseFulfilledResult<{ kinds: Set<string> }>} */ (reports[i]).value.kinds.has("new_password");
+      let chosen = -1;
+      /** @type {string | null} */
+      let passed = null;
+      for (const i of [...reports.keys()].filter(hasNew)) {
+        if (chosen >= 0) break;
+        const problem = requests[i].unchecked === true ? FRAME_UNCHECKED : await shownOnPage(requests[i], "new_password");
+        if (problem === null) chosen = i;
+        else if (passed === null || problem === "frame_hidden" || (problem === FRAME_UNCHECKED && passed !== "frame_hidden")) passed = problem;
+      }
+      if (chosen < 0) {
+        if (passed !== null) return { ok: false, reason: passed };
+        if (reports.some((r) => r.status === "fulfilled")) return { ok: false, reason: "no_fields" };
+        const code = /** @type {any} */ (/** @type {PromiseRejectedResult} */ (reports[0]).reason)?.code;
+        return { ok: false, reason: typeof code === "string" ? code : "not_filled" };
+      }
+      const request = requests[chosen];
+      for (const other of requests) if (other !== request) pending.delete(other.requestId);
+      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string, limits: Map<string, number> }>} */ (reports[chosen]).value;
+      const kinds = GENERATED_ORDER.filter((kind) => report.kinds.has(kind));
+
+      // The shortest `maxlength` of the fields decides the length; below the shortest password Ferret makes, nothing is filled.
+      const limits = kinds.map((kind) => report.limits.get(kind)).filter((n) => n !== undefined);
+      const limit = limits.length > 0 ? Math.min(.../** @type {number[]} */ (limits)) : null;
+      const before = generator.get(generationId);
+      if (before === null) return { ok: false, reason: "not_offered" };
+      if (limit !== null && before.value.length > limit) {
+        // `fit` refuses a limit below 8, and a passphrase, which is never cut.
+        if (!(await generator.fit(generationId, limit)).ok) return { ok: false, reason: "field_too_short" };
+      }
+      // Read after the fit, and after every await: a lock in between has taken it.
+      const generated = generator.get(generationId);
+      if (generated === null || host?.state() !== "unlocked") return { ok: false, reason: "not_offered" };
+      const value = generated.value;
+
+      for (const kind of kinds) {
+        if (pending.get(request.requestId) !== request) throw new FillError("vault_locked");
+        // Right before the value goes: the frame must still be shown in every document above it.
+        const hiddenNow = await shownOnPage(request, kind);
+        if (hiddenNow !== null) return { ok: false, reason: hiddenNow };
+        if (pending.get(request.requestId) !== request || generator.get(generationId) === null) throw new FillError("vault_locked");
+        const result = await push(request, kind, value, report.url);
+        if (!result.ok) return { ok: false, reason: typeof result.reason === "string" ? result.reason : "not_filled" };
+      }
+      let offer = false;
+      if (offers !== null) {
+        try {
+          await offers.onGenerated({
+            tabId,
+            frameId: request.frameId,
+            ...(request.documentId !== undefined ? { documentId: request.documentId } : {}),
+            url: report.url,
+            origin: request.origin,
+            generationId,
+            value,
+            expiresAt: generated.expiresAt,
+          });
+          offer = true;
+        } catch {
+          // The value is in the page; the offer to save it is what failed.
+        }
+      }
+      return { ok: true, length: value.length, offer };
+    } catch (error) {
+      const code = /** @type {any} */ (error)?.code;
+      return { ok: false, reason: typeof code === "string" ? code : "not_filled" };
+    } finally {
+      for (const request of requests) pending.delete(request.requestId);
+      filling = false;
+    }
+  }
+
+  /**
    * A report of a content script (`frame_report` or `fill_result`). It counts only for the pending request it
    * names, from that request's frame and document; anything else does nothing.
    * @param {{ kind: string, body: any, sender: { tabId: number, frameId: number, documentId?: string, url: string } }} args
@@ -698,9 +847,16 @@ export function createFillHost({
       request.report.reject(new FillError("origin_changed"));
       return undefined;
     }
+    // A generated fill takes the new and the confirm field only, a sign-in fill never those.
+    const wanted = request.mode === "generated" ? GENERATED_ORDER : FILL_ORDER;
+    /** @type {any[]} */
+    const fields = (Array.isArray(body.fields) ? body.fields : []).filter((/** @type {any} */ f) => wanted.includes(f?.kind));
     /** @type {Set<string>} */
-    const kinds = new Set((Array.isArray(body.fields) ? body.fields : []).map((/** @type {any} */ f) => f?.kind));
-    request.report.resolve({ kinds, url: sender.url });
+    const kinds = new Set(fields.map((f) => f.kind));
+    /** @type {Map<string, number>} */
+    const limits = new Map();
+    for (const f of fields) if (Number.isSafeInteger(f.max) && f.max >= 0) limits.set(f.kind, f.max);
+    request.report.resolve({ kinds, url: sender.url, limits });
     return undefined;
   }
 
@@ -713,6 +869,7 @@ export function createFillHost({
   const ops = Object.freeze({
     fill_offer: op(offer),
     fill: op(fill),
+    fill_generated: op(fillGenerated),
     fill_report: op(onReport),
     search: op(search),
     item: op(item),

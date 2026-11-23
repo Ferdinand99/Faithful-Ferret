@@ -1,0 +1,160 @@
+/* The tabs of the open popup (the vault and the generator) and the generator's
+   part (the approved layout, 380 wide). Sizes and colours are the Hedgerow
+   tokens of session.css. The tab bar sits at the foot of the panel, above the
+   account line, as in the approved layout. */
+
+.ff-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ff-tabpanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.ff-tabpanel[hidden] {
+  display: none;
+}
+
+.ff-tabbar {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.ff-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ff-tab[aria-selected="true"] {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.ff-tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.ff-ico-generator {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M4%2012a8%208%200%200114-5M20%2012a8%208%200%2001-14%205%27/%3E%3Cpath%20d=%27M18%203v4h-4M6%2021v-4h4%27/%3E%3C/svg%3E);
+}
+
+.ff-gen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 14px var(--sp-4);
+}
+
+.ff-gen-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.ff-gen-value {
+  display: block;
+  box-sizing: border-box;
+  min-height: 3.2em;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.ff-gen-strength {
+  min-height: 1.2em;
+}
+
+.ff-gen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ff-gen-status {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--info-fill);
+  color: var(--info-text);
+  font-size: 0.8125rem;
+}
+
+.ff-gen-status[data-tone="bad"] {
+  background: var(--bad-fill);
+  color: var(--bad-text);
+}
+
+.ff-gen-status[hidden] {
+  display: none;
+}
+
+.ff-gen-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-gen-kinds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-full);
+  background: var(--hover);
+}
+
+.ff-gen-kind {
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.ff-gen-kind[aria-pressed="true"] {
+  background: var(--card-raised);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-card);
+}
+
+.ff-gen-kind:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.ff-gen-check {
+  font-size: 0.875rem;
+}

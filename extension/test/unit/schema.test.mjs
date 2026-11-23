@@ -114,7 +114,8 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     for (const key of keysOf(schema)) {
       const where = `${channel}/${type} ${direction}: ${key}`;
       if (allowed.has(key)) {
-        assert.equal(channel, "push", `${where}: only the push type carries a value`);
+        // Only what goes into a page (the push type) and the generator's reply (a value the core has just made).
+        assert.equal(channel === "push" || (channel === "ui" && type === "generate" && direction === "reply"), true, `${where}: only the push type and the generator's reply carry a value`);
         continue;
       }
       assert.ok(!FORBIDDEN_KEYS.includes(key), `${where}: forbidden key`);
@@ -252,6 +253,12 @@ test("every UI request and reply round-trips with a sample body", () => {
     ],
     item_resolve: [{ ref: "h2", choice: "mine" }, { ok: false, reason: "conflict_changed" }],
     item_discard: [{ ref: "h1" }, { ok: true }],
+    generate: [
+      { kind: "password", length: 20, lower: true, upper: true, digits: true, symbols: true, min_each: 1, avoid_ambiguous: false },
+      { ok: true, generation_id: "g1", value: "Zq9!sample", kind: "password", bits: 100, expires_at: 1_700_000_900_000 },
+    ],
+    generate_copy: [{ generation_id: "g1" }, { ok: true }],
+    fill_generated: [{ generation_id: "g1", tab_id: 7, frame_id: 0 }, { ok: true, length: 20, offer: true }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {

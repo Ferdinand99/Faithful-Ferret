@@ -30,10 +30,12 @@ const isIndex = (n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 
  *   frameId: number,
  *   documentId?: string,
  *   requestId: string,
- * }} request `documentId`, when the browser gives one, pins both calls to that exact document
+ *   mode?: "generated",
+ * }} request `documentId`, when the browser gives one, pins both calls to that exact document; `mode: "generated"`
+ *   asks the engine for the new and the confirm field of a sign-up, change or reset form instead of a sign-in
  * @returns {Promise<void>} resolves when the engine has begun the request
  */
-export async function injectFill({ scripting, tabId, frameId, documentId, requestId }) {
+export async function injectFill({ scripting, tabId, frameId, documentId, requestId, mode }) {
   if (!isIndex(tabId) || !isIndex(frameId)) throw new TypeError("inject: bad target");
   if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) throw new TypeError("inject: bad request id");
   const target = typeof documentId === "string" && documentId !== ""
@@ -42,13 +44,14 @@ export async function injectFill({ scripting, tabId, frameId, documentId, reques
   const loaded = await scripting.executeScript({ target, files: [ENTRY] });
   // A script that failed to load or threw is reported in the result, not as a rejection.
   if (!Array.isArray(loaded) || loaded.length !== 1 || loaded[0]?.error !== undefined) throw new Error("inject: the script did not load");
+  if (mode !== undefined && mode !== "generated") throw new TypeError("inject: bad mode");
   const results = await scripting.executeScript({
     target,
-    func: (/** @type {string} */ id) => {
+    func: (/** @type {string} */ id, /** @type {string | undefined} */ asked) => {
       const api = /** @type {any} */ (globalThis).__ferretFill;
-      return api !== undefined && api.begin(id) === true;
+      return api !== undefined && api.begin(id, asked) === true;
     },
-    args: [requestId],
+    args: mode === undefined ? [requestId] : [requestId, mode],
   });
   if (!Array.isArray(results) || results.length !== 1 || results[0]?.result !== true) {
     throw new Error("inject: the engine did not begin");

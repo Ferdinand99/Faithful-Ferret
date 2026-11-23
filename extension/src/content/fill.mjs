@@ -59,6 +59,14 @@
 // no address of its own, which gives the frame the parent's address) is not a
 // page the user opened: it reports no field.
 //
+// A generated password (`begin(requestId, "generated")`): the request is for the
+// new and the confirm field of the first sign-up, change or reset group of the
+// page, and for nothing else. A sign-in group and the password in use of a
+// change group are not reported, and an aim is not used. The report also names
+// each field's `maxlength`, so the extension can make the value fit. At the
+// fill the field must still be the new (or confirm) field of such a group, shown
+// and inside its `maxlength`.
+//
 // The context menu (`aim`): a click on Ferret's menu item names one field
 // (`menus.getTargetElement`). The extension aims the engine at it before the
 // request begins, and that request fills the group of the clicked field
@@ -101,6 +109,8 @@ export const FILL_GLOBAL = "__ferretFill";
 export const AIM_MS = 3_000;
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** The groups whose new and confirm fields take a generated password. */
+const NEW_PASSWORD_GROUPS = Object.freeze(["signup", "change", "reset"]);
 /** The elements that can hold a frame. */
 const FRAME_HOLDERS = new Set(["iframe", "frame", "object", "embed"]);
 /** The most points of a field that are checked in the documents above its frame. */
@@ -138,9 +148,9 @@ const OPTIONAL_DEFAULTS = Object.freeze([
 ]);
 
 /**
- * @typedef {"username" | "password" | "totp"} Kind
+ * @typedef {"username" | "password" | "totp" | "new_password" | "confirm_password"} Kind
  * @typedef {{ kind: Kind, id: string, element: any, form: any }} Field `element`: the input, or the boxes of a split code
- * @typedef {"origin_changed" | "hidden" | "covered" | "gone" | "wrong_kind"} Reason
+ * @typedef {"origin_changed" | "hidden" | "covered" | "gone" | "wrong_kind" | "value_too_long"} Reason
  */
 
 /**
@@ -495,10 +505,14 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    * Nothing outside the group is reported, so no kind can land in another form
    * than the one that gets the password.
    *
+   * With `generated`: only the new and the confirm field of the first sign-up, change or reset group whose new field
+   * the user can see (a sign-in group and a password in use give nothing).
+   *
    * @param {any} [target]
+   * @param {boolean} [generated]
    * @returns {Field[]}
    */
-  function scan(target) {
+  function scan(target, generated = false) {
     if (writtenByParent()) return [];
     /** @type {Map<any, boolean>} */
     const seen = new Map();
@@ -529,6 +543,15 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
         take("totp", group.otp);
       }
     };
+
+    if (generated) {
+      const group = groups.find((g) => NEW_PASSWORD_GROUPS.includes(g.kind) && g.new);
+      if (group) {
+        take("new_password", group.new);
+        take("confirm_password", group.confirm);
+      }
+      return fieldsOf(chosen, order);
+    }
 
     if (target !== undefined) {
       if (!usable(target)) return [];
@@ -610,22 +633,40 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
+   * The `maxlength` of a new or confirm field, or undefined when it has none.
+   * @param {Field} field
+   * @returns {number | undefined}
+   */
+  function limitOf({ kind, element }) {
+    if (kind !== "new_password" && kind !== "confirm_password") return undefined;
+    // The attribute, as the detection reads it: a value that is not a whole number is no limit (the browser ignores it too).
+    const raw = String(element.getAttribute("maxlength") ?? "").trim();
+    return /^\d{1,6}$/.test(raw) ? Number(raw) : undefined;
+  }
+
+  /**
    * Starts a pending request: finds the fields and reports them.
    * @param {string} requestId
+   * @param {string} [mode] "generated": the new and the confirm field of a sign-up, change or reset group
    * @returns {boolean} whether a report was sent
    */
-  function begin(requestId) {
+  function begin(requestId, mode) {
     pending = null;
     // An aim counts for this request only, whatever becomes of it.
     const target = aimed !== null && clock() <= aimed.until ? aimed.element : undefined;
     aimed = null;
     if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) return false;
-    const fields = scan(target);
+    if (mode !== undefined && mode !== "generated") return false;
+    const generated = mode === "generated";
+    const fields = scan(generated ? undefined : target, generated);
     pending = { requestId, fields };
     const raw = encode("frame_report", {
       request_id: requestId,
       self_origin: selfOrigin(),
-      fields: fields.map(({ kind, id }) => ({ kind, id })),
+      fields: fields.map((field) => {
+        const max = limitOf(field);
+        return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}) };
+      }),
     });
     Promise.resolve(send(raw)).catch(() => {});
     return true;
@@ -663,6 +704,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     }
     const target = pending?.fields.find((f) => f.kind === kind);
     if (!target) return { ok: false, reason: "wrong_kind" };
+    if (kind === "new_password" || kind === "confirm_password") return fillNew(target, value);
     if (Array.isArray(target.element)) return fillBoxes(target, value);
     const { element } = target;
     // The kind is checked again on the live element: a password goes only into
@@ -683,6 +725,37 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     }
     const problem = inspect(element);
     if (problem !== null) return { ok: false, reason: problem };
+    if (!nativeSetter) return { ok: false, reason: "gone" };
+    put(element, value);
+    return { ok: true };
+  }
+
+  /**
+   * A generated password into the new or the confirm field of a sign-up, change or reset group. The field must still
+   * be a masked input of the form it had at the report and still be that group's new (or confirm) field, so a page
+   * that turned it into a sign-in or a code field gets nothing; it must pass every check of `inspect`, and take the
+   * value inside its `maxlength`.
+   * @param {Field} target
+   * @param {string} value
+   * @returns {{ ok: true } | { ok: false, reason: Reason }}
+   */
+  function fillNew(target, value) {
+    const { element } = target;
+    if (!isElement(element) || Array.isArray(element) || element.isConnected !== true) return { ok: false, reason: "gone" };
+    if (String(element.type ?? "").toLowerCase() !== "password" || (element.form ?? null) !== target.form) return { ok: false, reason: "wrong_kind" };
+    const problem = inspect(element);
+    if (problem !== null) return { ok: false, reason: problem };
+    /** @type {Map<any, boolean>} */
+    const seen = new Map();
+    const usable = (/** @type {any} */ el) => {
+      if (!seen.has(el)) seen.set(el, inspect(el) === null);
+      return seen.get(el) === true;
+    };
+    const now = findGroups(document, { maxNodes: MAX_NODES, shown: usable });
+    const role = target.kind === "new_password" ? "new" : "confirm";
+    if (!now.some((g) => NEW_PASSWORD_GROUPS.includes(g.kind) && g[role] === element)) return { ok: false, reason: "wrong_kind" };
+    const max = limitOf(target);
+    if (max !== undefined && value.length > max) return { ok: false, reason: "value_too_long" };
     if (!nativeSetter) return { ok: false, reason: "gone" };
     put(element, value);
     return { ok: true };
@@ -766,7 +839,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
  *
  * @param {any} [api] the `browser` object
  * @param {any} [scope] the global object of the script (the page window)
- * @returns {{ begin: (requestId: string) => boolean, aim: (targetElementId: number) => boolean, where: (requestId: string, kind: string) => object, frameShown: (frameId: number, points: unknown) => object }}
+ * @returns {{ begin: (requestId: string, mode?: string) => boolean, aim: (targetElementId: number) => boolean, where: (requestId: string, kind: string) => object, frameShown: (frameId: number, points: unknown) => object }}
  */
 export function start(api = /** @type {any} */ (globalThis).browser, scope = globalThis) {
   const existing = Object.getOwnPropertyDescriptor(scope, FILL_GLOBAL);

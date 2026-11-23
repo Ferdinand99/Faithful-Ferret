@@ -23,7 +23,7 @@ const SAVE_PATHS = Object.freeze({
   types: Object.freeze([
     "form_capture", "form_gone", "page_ready",
     "offer_list", "offer_save", "offer_update", "offer_dismiss", "offer_never",
-    "generate", "fill_generated",
+    "generate", "generate_copy", "fill_generated",
     "sync_items", "item_conflict", "item_resolve", "item_discard",
   ]),
   /** Core operations of the feature (the sync's offer ops): with the feature off each one only refuses. */

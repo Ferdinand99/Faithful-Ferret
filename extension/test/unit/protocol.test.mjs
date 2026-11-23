@@ -169,7 +169,8 @@ test("fill_field_is_the_only_type_with_a_value_and_it_holds_one_value", () => {
       }
     }
   }
-  assert.deepEqual(holders, ["fill_field"]);
+  // The generator's reply carries the value the core has just made, for the popup to show; nothing else does.
+  assert.deepEqual(holders.sort(), ["fill_field", "generate"]);
 
   // The body holds one value: one string, no array, nothing nested but `expect`.
   const def = /** @type {any} */ (PUSH_TYPES.fill_field.request);
@@ -203,6 +204,7 @@ test("a content script cannot send a message type that carries a value", () => {
     "fields",
     "id",
     "kind",
+    "max",
     "request_id",
     "self_origin",
   ]);
