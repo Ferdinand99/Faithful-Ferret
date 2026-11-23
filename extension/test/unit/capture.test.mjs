@@ -607,6 +607,17 @@ test("page_ready_is_sent_only_with_a_visible_password_field", () => {
   late.clock.advance(6000);
   assert.equal(late.of("page_ready").length, 1);
 
+  // A form drawn after the 1.5 second look (an error form that a failed sign-in draws late): the look at 3 seconds finds it.
+  const slow = createWorld();
+  slow.start();
+  slow.clock.advance(2000);
+  assert.deepEqual(slow.sent, []);
+  loginForm(slow);
+  slow.clock.advance(1100);
+  assert.deepEqual(slow.sent, [{ type: "page_ready", body: {} }]);
+  slow.clock.advance(6000);
+  assert.equal(slow.of("page_ready").length, 1);
+
   // A page that is still loading: the look at the load event.
   const loading = createWorld();
   /** @type {any} */ (loading.document).readyState = "loading";

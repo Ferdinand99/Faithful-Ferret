@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { join as joinPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "../../scripts/build.mjs";
-import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
+import { LOCK_CHOICES, captureErrorKey, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
 import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
@@ -122,6 +122,81 @@ test("the_settings_request_has_the_bounds_of_the_choices", () => {
   assert.throws(() => encode("settings", { lock_minutes: 15 }), "the old key is not known any more");
 });
 
+test("turning_on_offer_to_save_asks_for_https_access_in_the_settings_tab_and_explains_why", async () => {
+  /** @type {string[]} */
+  const order = [];
+  /** @type {Array<{ origins: string[] }>} */
+  const asked = [];
+  const answer = (/** @type {any} */ body) => {
+    order.push(`request ${JSON.stringify(body)}`);
+    return { ok: true, on: body.enable === true, permission: true, never: [] };
+  };
+  const make = (/** @type {boolean} */ grant) =>
+    createSettingsFlow(
+      async (type, body) => {
+        encode(type, body);
+        return answer(body);
+      },
+      {
+        requestPermission: async (wanted) => {
+          order.push("permission");
+          asked.push(wanted);
+          return grant;
+        },
+      },
+    );
+
+  // Off until the user turns it on: reading the setting asks the browser for nothing.
+  const flow = make(true);
+  assert.deepEqual(await flow.capture.load(), { ok: true, on: false, permission: true, never: [] });
+  assert.deepEqual(asked, []);
+  // Turning it on asks for https pages, first and in the click, and only then tells the background.
+  assert.deepEqual(await flow.capture.turnOn(), { ok: true, on: true, permission: true, never: [] });
+  assert.deepEqual(asked, [{ origins: ["https://*/*"] }]);
+  assert.deepEqual(order.slice(-2), ["permission", 'request {"enable":true}']);
+  // The user says no: the background is only asked what is true (nothing is switched on) and the reason is shown.
+  order.length = 0;
+  const refused = await make(false).capture.turnOn();
+  assert.equal(refused.ok, false);
+  assert.equal(/** @type {any} */ (refused).reason, "permission_refused");
+  assert.equal(order.some((line) => line.includes('"enable":true')), false);
+  // No way to ask (the page was given no request function): the same, nothing is switched on.
+  const none = await createSettingsFlow(async () => ({ ok: true, on: false, permission: false, never: [] })).capture.turnOn();
+  assert.equal(/** @type {any} */ (none).reason, "permission_refused");
+  // A permission request that fails is a refusal too.
+  const failing = createSettingsFlow(async () => ({ ok: true, on: false, permission: false, never: [] }), { requestPermission: async () => Promise.reject(new Error("x")) });
+  assert.equal(/** @type {any} */ (await failing.capture.turnOn()).reason, "permission_refused");
+  // A background that answers with something odd is not believed; a refusal shows its reason.
+  const odd = createSettingsFlow(async () => ({ on: "yes" }), {});
+  assert.deepEqual(await odd.capture.load(), { ok: false, reason: "unknown" });
+  const gone = createSettingsFlow(async () => Promise.reject(new UiError("not_available")), {});
+  assert.deepEqual(await gone.capture.load(), { ok: false, reason: "not_available" });
+  assert.equal(captureErrorKey("not_available"), "capture.error.not_available");
+  assert.equal(captureErrorKey("<b>"), "capture.error.unknown");
+
+  // The texts explain why in both languages: what is asked for, what is read, how long it is kept, that nothing is saved
+  // without a click, and that open tabs need a reload.
+  const read = (/** @type {string} */ lang) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "capture.json"), "utf8"));
+  const [en, nb] = [read("en"), read("nb")];
+  assert.deepEqual(Object.keys(en).sort(), Object.keys(nb).sort());
+  for (const [lang, texts] of [["en", en], ["nb", nb]]) {
+    for (const key of Object.keys(texts)) assert.ok(typeof texts[key] === "string" && texts[key].length > 0, `${lang}: ${key}`);
+    for (const key of ["capture.title", "capture.switch", "capture.why", "capture.reload", "capture.on", "capture.off", "capture.never.title", "capture.never.empty", "capture.never.hint", "capture.never.remove", "capture.never.remove.label", "capture.never.clear"]) {
+      assert.ok(texts[key], `${lang}: ${key}`);
+    }
+    for (const reason of ["disconnected", "not_available", "permission_missing", "permission_refused", "register_failed", "unknown"]) {
+      assert.ok(texts[captureErrorKey(reason)], `${lang}: ${reason}`);
+    }
+  }
+  assert.match(en["capture.why"], /https/);
+  assert.match(en["capture.why"], /five minutes/);
+  assert.match(en["capture.why"], /without your click/);
+  assert.match(en["capture.reload"], /reload/);
+  assert.match(nb["capture.why"], /https/);
+  assert.match(nb["capture.why"], /fem minutter/);
+  assert.match(nb["capture.reload"], /laster dem på nytt/);
+});
+
 test("a_release_build_with_save_off_shows_the_eff_word_list_credit_on_the_settings_page", async () => {
   // The list is in the WASM file of every package, so the credit is in every build: no flag, a page the settings tab shows.
   const env = makeRoot();
@@ -150,4 +225,42 @@ test("a_release_build_with_save_off_shows_the_eff_word_list_credit_on_the_settin
   } finally {
     env.cleanup();
   }
+});
+
+test("turning_offer_to_save_off_takes_the_access_to_https_pages_back", async () => {
+  /** @type {string[]} */
+  const order = [];
+  const make = (/** @type {{ refuse?: boolean, removeFails?: boolean, withRemove?: boolean }} */ { refuse = false, removeFails = false, withRemove = true } = {}) =>
+    createSettingsFlow(
+      async (type, body) => {
+        encode(type, body);
+        order.push(`request ${JSON.stringify(body)}`);
+        return refuse && body.enable === false ? { ok: false, reason: "unknown", on: true, permission: true, never: [] } : { ok: true, on: body.enable !== false, permission: body.enable !== false, never: [] };
+      },
+      withRemove
+        ? {
+            removePermission: async (gone) => {
+              order.push(`remove ${JSON.stringify(gone)}`);
+              if (removeFails) throw new Error("x");
+              return true;
+            },
+          }
+        : {},
+    );
+  // The background switches capture off first; then the access goes; the state is read again.
+  const off = await make().capture.turnOff();
+  assert.deepEqual(order, ['request {"enable":false}', 'remove {"origins":["https://*/*"]}', "request {}"]);
+  assert.equal(off.ok, true);
+  // A background that refuses leaves the access alone.
+  order.length = 0;
+  const refused = await make({ refuse: true }).capture.turnOff();
+  assert.deepEqual(order, ['request {"enable":false}']);
+  assert.equal(refused.ok, false);
+  // An access that cannot be removed is not an error of turning it off (the state read next says what is true).
+  order.length = 0;
+  assert.equal((await make({ removeFails: true }).capture.turnOff()).ok, true);
+  // A page with no way to remove it only switches capture off.
+  order.length = 0;
+  assert.equal((await make({ withRemove: false }).capture.turnOff()).ok, true);
+  assert.deepEqual(order, ['request {"enable":false}']);
 });

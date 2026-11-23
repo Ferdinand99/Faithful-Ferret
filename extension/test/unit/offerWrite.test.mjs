@@ -611,9 +611,10 @@ test("a_change_form_whose_current_password_matches_no_item_asks_which_one", asyn
  * The sync host of the built package with a fake engine over `items`, its offer ops on a core host, and the test's
  * own store of offers.
  * @param {ReturnType<typeof item>[]} items
- * @param {{ halted?: string | null }} [options]
+ * @param {{ halted?: string | null, offers?: { peek: Function, take: Function } }} [options] `offers`: the store the offers
+ *   are read from instead of the test's own
  */
-async function syncWorld(items, { halted = null } = {}) {
+async function syncWorld(items, { halted = null, offers = undefined } = {}) {
   const { load } = await pkg();
   const [{ createSyncHost }, { createCoreHost, CORE_OPS }] = await Promise.all([load("background/sync.mjs"), load("background/coreHost.mjs")]);
   const fake = fakeVault(items);
@@ -664,7 +665,7 @@ async function syncWorld(items, { halted = null } = {}) {
       return /** @type {any} */ (engine);
     },
     createChannel: () => ({ start() {}, stop() {}, state: () => "offline" }),
-    captures,
+    captures: offers ?? captures,
   });
   const client = { vault: fake.vault, job: {}, lock: async () => {} };
   const probes = {
@@ -762,6 +763,53 @@ test("a_pending_write_is_answered_as_pending_and_a_lock_ends_the_writer", async 
   const later = world.plant(capture());
   await assert.rejects(world.call("offer_save", { session: SESSION, offer_id: later, name: "A", username: null, folder: null }), { code: "vault_locked" });
   assert.equal(world.writes.length, 1);
+});
+
+test("a_lock_during_a_write_gives_vault_locked_writes_nothing_and_leaves_no_offer", async () => {
+  // The real store of offers, cleared by the lock, is what the write reads from.
+  const { load } = await pkg();
+  const { createOffers } = await load("background/offers.mjs");
+  let counter = 0;
+  const offers = createOffers({
+    now: () => 1_763_800_000_000,
+    random: (/** @type {Uint8Array} */ bytes) => {
+      counter += 1;
+      bytes.fill(counter);
+      return bytes;
+    },
+    frames: {
+      origin: async (/** @type {string} */ url) => new URL(url).origin,
+      sameSite: async () => true,
+      host: async (/** @type {string} */ url) => ({ a_label: new URL(url).hostname, unicode: new URL(url).hostname }),
+      frame: async () => null,
+      shown: async () => true,
+      incognito: async () => false,
+    },
+  });
+  const world = await syncWorld([], { offers });
+  world.coreHost.onLocked(() => offers.clear("lock"));
+  const offerId = await offers.onGenerated({ tabId: 3, frameId: 0, frameUrl: PAGE_URL, kind: "signup", password: NEW });
+  assert.ok(offerId);
+  offers.forTab(3, SESSION);
+
+  // The engine is busy with the write when the lock comes; it then stops, as the real one does.
+  /** @type {() => void} */
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  world.engine.create = async () => {
+    await gate;
+    throw Object.assign(new Error("stopped"), { code: "stopped" });
+  };
+  const pending = world.call("offer_save", { session: SESSION, offer_id: offerId, name: "A", username: null, folder: null });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await world.coreHost.lock("manual");
+  release();
+  await assert.rejects(pending, { code: "vault_locked" });
+  assert.deepEqual(world.writes, [], "nothing was queued");
+  assert.equal(offers.peek(offerId, SESSION), null, "the lock took the offer and its password");
+  assert.equal(offers.size(), 0);
 });
 
 // ---------------------------------------------------------------- the engine stays with the writer

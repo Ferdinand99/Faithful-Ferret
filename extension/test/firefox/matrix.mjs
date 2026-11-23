@@ -455,11 +455,11 @@ export async function runFillPhase(w, cases, log = () => {}) {
 /**
  * What the extension holds as offers for a tab, through the test bridge. Until the extension keeps offers,
  * the bridge answers `{ available: false }`.
- * @param {World} w @param {number} tabId
+ * @param {World} w @param {number} tabId @param {boolean} [clear] drop the tab's offers first
  * @returns {Promise<{ available: boolean, offers: Array<Record<string, any>> }>}
  */
-export async function offersPeek(w, tabId) {
-  const reply = await w.fromBridge(() => w.bridge.invoke("offers_peek", { tab_id: tabId }));
+export async function offersPeek(w, tabId, clear = false) {
+  const reply = await w.fromBridge(() => w.bridge.invoke("offers_peek", { tab_id: tabId, ...(clear ? { clear: true } : {}) }));
   if (!reply || typeof reply !== "object" || reply.available !== true) return { available: false, offers: [] };
   return { available: true, offers: Array.isArray(reply.offers) ? reply.offers : [] };
 }
@@ -475,7 +475,8 @@ export async function captureCase(w, c) {
   const count = { n: 0 };
   try {
     const tabId = await openCase(w, c, count);
-    const first = await offersPeek(w, tabId);
+    // The tab may hold the offers of the case before it: a case starts with none.
+    const first = await offersPeek(w, tabId, true);
     if (!first.available) {
       result.error = NO_OFFERS;
       return result;

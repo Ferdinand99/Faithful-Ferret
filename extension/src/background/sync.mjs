@@ -1019,6 +1019,21 @@ export function createSyncHost({
     },
 
     /**
+     * What a captured form means for the vault, for the store of offers: the write path's classification, read only
+     * (nothing is written and nothing is shown), or null when no engine runs or saving is off. The store drops an offer
+     * for a login the vault holds already.
+     * @param {Capture} capture
+     * @returns {Promise<{ action: string } | null>}
+     */
+    async classifyCapture(capture) {
+      if (FEATURES.save !== true) return null;
+      const run = running;
+      if (run === null || run.ended) return null;
+      const outcome = await run.writer.classify(capture);
+      return { action: outcome.action };
+    },
+
+    /**
      * The page whose port this was has gone: its references to items end with it.
      * @param {string} session
      */

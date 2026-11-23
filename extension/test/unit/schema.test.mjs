@@ -256,6 +256,7 @@ test("every UI request and reply round-trips with a sample body", () => {
     ],
     item_resolve: [{ ref: "h2", choice: "mine" }, { ok: false, reason: "conflict_changed" }],
     item_discard: [{ ref: "h1" }, { ok: true }],
+    capture_settings: [{ enable: true, never_remove: "shop.example.net" }, { ok: true, on: true, permission: true, never: ["shop.example.net"] }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {

@@ -19,8 +19,10 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { CONTENT_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
+import { readGraph } from "./importGraph.mjs";
 import {
-  build, DEFAULT_FEATURES, FEATURES, FEATURES_FILE, featuresModule, parseFeatures, RELEASE_FEATURES, SAVE_FILES,
+  build, DEFAULT_FEATURES, FEATURES, FEATURES_FILE, featuresModule, parseFeatures, RELEASE_FEATURES, SAVE_FILES, WASM_FILES,
 } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 
@@ -30,13 +32,17 @@ const SAVE_PATHS = Object.freeze({
   files: Object.freeze(["content/capture.inject.js", "content/capture.mjs", "content/capture.entry.mjs"]),
   /** Message types of the feature, from a content script and from Ferret's pages. */
   types: Object.freeze([
-    "form_capture", "form_gone", "page_ready",
+    "form_capture", "form_gone", "page_ready", "capture_settings",
     "offer_list", "offer_save", "offer_update", "offer_dismiss", "offer_never",
     "generate", "fill_generated",
     "sync_items", "item_conflict", "item_resolve", "item_discard",
   ]),
   /** Core operations of the feature (the sync's offer ops): with the feature off each one only refuses. */
   coreOps: Object.freeze(["offer_classify", "offer_save", "offer_update", "folder_names"]),
+  /** Core operations of the capture host: the same. */
+  captureOps: Object.freeze(["capture_event", "capture_settings"]),
+  /** Modules that register the capture script: only code that the feature's own modules import may hold them. */
+  registers: /registerContentScripts|capture\.inject\.js/,
   /** The attribute every control of the feature carries, so a page module that builds one is found. */
   control: 'data-feature="save"',
   controlInCode: /["']data-feature["']\s*:\s*["']save["']|data-feature=\\?["']save/,
@@ -84,6 +90,39 @@ async function coreOpsIn(dir) {
 }
 
 /**
+ * What the capture host's core operations answer in a package, by name (as `coreOpsIn`).
+ * @param {string} dir
+ * @returns {Promise<Record<string, string>>}
+ */
+async function captureOpsIn(dir) {
+  const { createCaptureHost } = await import(pathToFileURL(join(dir, "background", "captureHost.mjs")).href);
+  const none = { addListener() {} };
+  const host = createCaptureHost({
+    now: () => 1_000_000,
+    random: (/** @type {Uint8Array} */ bytes) => bytes,
+    webNavigation: { onCommitted: none, onCompleted: none, onHistoryStateUpdated: none, getAllFrames: async () => [] },
+    tabs: { onRemoved: none, get: async () => ({}) },
+    scripting: { registerContentScripts: async () => {}, unregisterContentScripts: async () => {}, getRegisteredContentScripts: async () => [] },
+    permissions: { contains: async () => false, onRemoved: none },
+    storageLocal: { get: async () => ({}), set: async () => {} },
+  });
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const name of SAVE_PATHS.captureOps) {
+    const op = host.ops[name];
+    if (!op) {
+      out[name] = "absent";
+      continue;
+    }
+    out[name] = await op.run({}, { type: "form_gone", sender: { tabId: 1, frameId: 0, url: "https://a.example/" }, body: { capture_id: "c" } }, {}).then(
+      () => "served",
+      (/** @type {any} */ error) => (error?.code === "not_available" ? "refused" : String(error?.code)),
+    );
+  }
+  return out;
+}
+
+/**
  * Every path of the `save` feature that a package still has: a file of the feature, a handler of the register that
  * serves one of its message types and does not refuse it, a core operation of the feature that does not refuse, a page
  * with one of its controls, and a page module that builds such a control without asking FEATURES first.
@@ -105,6 +144,20 @@ async function savePathsIn(dir, files) {
   }
   for (const [name, answer] of Object.entries(await coreOpsIn(dir))) {
     if (answer !== "refused" && answer !== "absent") found.push(`core op ${name} answers ${answer}`);
+  }
+  for (const [name, answer] of Object.entries(await captureOpsIn(dir))) {
+    if (answer !== "refused" && answer !== "absent") found.push(`core op ${name} answers ${answer}`);
+  }
+  // The registration of the capture script is code of the feature: a module that holds it must ask FEATURES itself or
+  // be imported only by modules that do (the capture host), and one nothing imports is a way in of its own.
+  const graph = readGraph(files, { skip: (path) => WASM_FILES.includes(path) });
+  /** @param {string} path */
+  const asksFeatures = (/** @type {string} */ path) => /shared\/features\.mjs["']/.test(files.get(path)?.toString("utf8") ?? "");
+  for (const [path, bytes] of files) {
+    if (!path.endsWith(".mjs") || path === "shared/captureConfig.mjs" || path === FEATURES_FILE) continue;
+    if (!SAVE_PATHS.registers.test(bytes.toString("utf8"))) continue;
+    const importers = [...graph.edges].filter(([, edges]) => edges.some((e) => e.target === path)).map(([importer]) => importer);
+    if (!asksFeatures(path) && (importers.length === 0 || !importers.every(asksFeatures))) found.push(`registration in ${path} without a gated importer`);
   }
   for (const [path, bytes] of files) {
     const text = bytes.toString("utf8");
@@ -201,6 +254,7 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
       "};",
       "",
     ].join("\n"),
+    "src/background/probeRegister.mjs": "export const register = (scripting) => scripting.registerContentScripts([]);\n",
     "src/background/handlers/mixedProbe.handler.mjs": [
       'import { FEATURES } from "../../shared/features.mjs";',
       "export default {",
@@ -227,6 +281,7 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
       "file content/capture.inject.js",
       "handler background/handlers/mixedProbe.handler.mjs serves offer_update, offer_dismiss",
       "handler background/handlers/offerProbe.handler.mjs serves offer_save",
+      "registration in background/probeRegister.mjs without a gated importer",
     ]);
     // With the feature on, the gated handler serves its type: it refuses only because the feature is off.
     const on = await build({ ...options, out: join(probe.out, "t"), variant: "test" });
@@ -236,7 +291,27 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
     // flag's doing.
     assert.deepEqual(await coreOpsIn(on.dir), Object.fromEntries(SAVE_PATHS.coreOps.map((name) => [name, "sync_not_running"])));
     assert.deepEqual(await coreOpsIn(release.dir), Object.fromEntries(SAVE_PATHS.coreOps.map((name) => [name, "refused"])));
+    // The capture host's operations, the same: served in the test build, refused in the release.
+    assert.deepEqual(await captureOpsIn(on.dir), Object.fromEntries(SAVE_PATHS.captureOps.map((name) => [name, "served"])));
+    assert.deepEqual(await captureOpsIn(release.dir), Object.fromEntries(SAVE_PATHS.captureOps.map((name) => [name, "refused"])));
   } finally {
     probe.cleanup();
+  }
+});
+
+test("every_message_type_is_a_u1_type_or_listed_as_a_type_of_the_save_feature", () => {
+  // Fail closed: a message type that someone adds must either be listed under the feature (and so be checked to refuse
+  // with the feature off) or be added here on purpose as a type of the first release.
+  const FIRST_RELEASE_TYPES = Object.freeze([
+    "candidates", "copy", "fill", "forget_preview", "forget_server", "frame_report", "fill_result", "grant_check", "item", "lock",
+    "open_site", "search", "server_check", "settings", "sign_in", "state", "sync_accept_older", "sync_older_preview", "sync_retry",
+    "sync_state", "unlock",
+  ]);
+  const all = [...Object.keys(UI_TYPES), ...Object.keys(CONTENT_TYPES)];
+  const unaccounted = all.filter((type) => !FIRST_RELEASE_TYPES.includes(type) && !SAVE_PATHS.types.includes(type));
+  assert.deepEqual(unaccounted, [], "a type that is in neither list");
+  // And everything listed as the feature's that exists is a type of a table (a stale name is found).
+  for (const type of ["form_capture", "form_gone", "page_ready", "capture_settings", "sync_items", "item_conflict", "item_resolve", "item_discard"]) {
+    assert.ok(all.includes(type), type);
   }
 });

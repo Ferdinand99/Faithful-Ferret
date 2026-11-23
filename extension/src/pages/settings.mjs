@@ -1,9 +1,11 @@
 // The settings page (design document, section 7.2): opened in a tab by the
-// browser's "Preferences" button of the add-on. One setting for now, "Lock
-// after", a select with the fixed choices. It talks to the background over the
-// UI port like the other pages; it never sees a key.
+// browser's "Preferences" button of the add-on. "Lock after", a select with the
+// fixed choices, and, in a build with saving passwords on, "Offer to save
+// passwords" with its never list (section 10.9). It talks to the background over
+// the UI port like the other pages; it never sees a key or a captured value.
 
 import { el, mount } from "../shared/dom.mjs";
+import { createCaptureSection } from "./captureSettings.mjs";
 import { createCredits } from "./credits.mjs";
 import { errorBox, loadTexts, showError, translateStatic } from "./page.mjs";
 import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "./settingsFlow.mjs";
@@ -15,7 +17,10 @@ async function main() {
   const texts = await loadTexts();
   translateStatic(document, texts);
   const ui = connectUi(browser.runtime);
-  const flow = createSettingsFlow(ui.request);
+  const flow = createSettingsFlow(ui.request, {
+    requestPermission: (wanted) => browser.permissions.request(wanted),
+    removePermission: (gone) => browser.permissions.remove(gone),
+  });
 
   const select = el(
     "select",
@@ -52,6 +57,9 @@ async function main() {
     }
   });
 
+  // Only a build with saving passwords on has the section (the module asks the build flag).
+  const capture = createCaptureSection(flow, texts);
+
   mount(
     root,
     el("h1", { "data-role": "settings-title" }, texts.t("settings.title")),
@@ -68,8 +76,10 @@ async function main() {
       status,
       error,
     ),
+    ...(capture === null ? [] : [capture.node]),
     createCredits(texts),
   );
+  if (capture !== null) await capture.refresh();
   document.body.dataset.ready = "1";
 }
 

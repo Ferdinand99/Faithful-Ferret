@@ -386,6 +386,19 @@ export const UI_TYPES = defineTypes({
     ),
     reply: object({ lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) }),
   },
+  // "Offer to save passwords" and the never list, from the settings page. `enable` follows the page's own request for
+  // the permission for https pages (the background checks it again); `never_remove` takes one host off the list and
+  // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
+  capture_settings: {
+    request: object(
+      { enable: boolean(), never_remove: host, never_clear: boolean() },
+      { optional: ["enable", "never_remove", "never_clear"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, on: boolean(), permission: boolean(), never: array(host, { max: 500 }) },
+      { optional: ["reason"] },
+    ),
+  },
 });
 
 /** Content script to background. A content script only reports; it never asks. */

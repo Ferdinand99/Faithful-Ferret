@@ -281,7 +281,13 @@ export function unsafeOffersOf(r) {
     const miss = (/** @type {string} */ reason) => out.push({ id: c.id, category: c.category, kind: "offer", reason, ...(o.password_field ? { field: o.password_field } : {}) });
     if (o.origin !== origin) miss("wrong_origin");
     if (o.password_field !== null && o.password_field !== undefined && SECRET_KINDS.has(c.fields?.[o.password_field])) miss("value_from_cvc_pin_or_code_field");
-    if (o.password_field !== null && o.password_field !== undefined && c.must_stay_empty.includes(o.password_field)) miss("value_from_a_field_that_must_stay_empty");
+    // A current password is never the new one: in a sign-up, a change or a reset form it is not a value to offer.
+    if (o.password_field !== null && o.password_field !== undefined && c.fields?.[o.password_field] === "current_password" && ["signup", "change", "reset"].includes(c.category)) miss("current_password_offered_as_a_new_one");
+    // A field the fill must leave empty is also one a value must not be taken from, unless it is the field the case expects
+    // the offer to come from (the new password the person typed there): only a value from another such field is unsafe,
+    // and in a negative case every one is.
+    const expectedFrom = c.class !== "negative" ? (c.expect.capture?.password_from ?? null) : null;
+    if (o.password_field !== null && o.password_field !== undefined && c.must_stay_empty.includes(o.password_field) && o.password_field !== expectedFrom) miss("value_from_a_field_that_must_stay_empty");
     if (o.type === "update") {
       let host = "";
       try {

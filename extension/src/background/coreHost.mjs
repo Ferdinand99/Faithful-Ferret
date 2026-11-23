@@ -34,11 +34,12 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
  * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe`, `item_rename_probe`,
- * `match_bench`, `offer_plant` and `offer_bench` are only available in the test
+ * `match_bench`, `offer_plant`, `offer_bench` and `offers_peek` are only available in the test
  * build, which passes their implementations in (`ops`); in a release they are
  * refused like any other name. The offer ops (`offer_classify`, `offer_save`,
  * `offer_update`, `folder_names`) refuse with `not_available` in a build without
- * the `save` feature.
+ * the `save` feature. The capture ops (`capture_event`, `capture_settings`) are the capture
+ * host's (captureHost.mjs); a build without the feature does not have them.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -80,6 +81,9 @@ export const CORE_OPS = Object.freeze([
   "folder_names",
   "offer_plant",
   "offer_bench",
+  "offers_peek",
+  "capture_event",
+  "capture_settings",
 ]);
 
 /**
