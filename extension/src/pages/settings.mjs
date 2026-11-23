@@ -4,6 +4,7 @@
 // UI port like the other pages; it never sees a key.
 
 import { el, mount } from "../shared/dom.mjs";
+import { createCredits } from "./credits.mjs";
 import { errorBox, loadTexts, showError, translateStatic } from "./page.mjs";
 import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "./settingsFlow.mjs";
 import { connectUi } from "./ui.mjs";
@@ -67,6 +68,7 @@ async function main() {
       status,
       error,
     ),
+    createCredits(texts),
   );
   document.body.dataset.ready = "1";
 }

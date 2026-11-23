@@ -5,12 +5,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { join as joinPath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { build } from "../../scripts/build.mjs";
 import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
 import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
 import { importsOf } from "./importGraph.mjs";
+import { byRole, one, textsOf, useDocument } from "./pageDom.mjs";
 
 /** A `request` that records what the page asks and answers from `answer`. */
 function recorder(/** @type {(body: any) => any} */ answer = (body) => ({ lock_seconds: body.lock_seconds ?? 900 })) {
@@ -117,4 +120,34 @@ test("the_settings_request_has_the_bounds_of_the_choices", () => {
   assert.ok(UI_TYPES.settings);
   for (const seconds of LOCK_CHOICES) assert.doesNotThrow(() => encode("settings", { lock_seconds: seconds }), String(seconds));
   assert.throws(() => encode("settings", { lock_minutes: 15 }), "the old key is not known any more");
+});
+
+test("a_release_build_with_save_off_shows_the_eff_word_list_credit_on_the_settings_page", async () => {
+  // The list is in the WASM file of every package, so the credit is in every build: no flag, a page the settings tab shows.
+  const env = makeRoot();
+  try {
+    for (const variant of /** @type {const} */ (["release", "test"])) {
+      const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, variant), manifest: "mv2", variant, features: [] });
+      assert.deepEqual(result.features, [], "saving is off");
+      const settings = result.files.get("pages/settings.mjs")?.toString("utf8") ?? "";
+      assert.ok(settings.includes("createCredits(texts)"), "the page shows the credits");
+      assert.equal(settings.includes("features.mjs"), false, "the settings page asks no flag");
+      assert.equal((result.files.get("pages/credits.mjs")?.toString("utf8") ?? "").includes("features.mjs"), false, "nor does the credits module");
+      useDocument();
+      const mod = await import(pathToFileURL(joinPath(result.dir, "pages", "credits.mjs")).href);
+      for (const lang of ["en", "nb"]) {
+        const catalog = JSON.parse(result.files.get(`locales.${lang}.json`)?.toString("utf8") ?? "{}");
+        const section = mod.createCredits(textsOf(catalog, lang));
+        const text = one(section, "credits-eff")?.textContent ?? "";
+        assert.match(text, /EFF/, lang);
+        assert.match(text, /Electronic Frontier Foundation/, lang);
+        assert.match(text, /CC BY 3[.]0 US/, lang);
+        assert.ok(text.includes("https://creativecommons.org/licenses/by/3.0/us/"), `${lang}: the licence address is text`);
+        assert.ok(text.includes("https://www.eff.org/dice"), `${lang}: the source address is text`);
+        assert.equal(byRole(section, "credits").length, 1);
+      }
+    }
+  } finally {
+    env.cleanup();
+  }
 });

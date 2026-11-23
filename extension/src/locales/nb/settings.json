@@ -1,4 +1,6 @@
 {
+  "settings.credits.eff": "Passordfrase-generatoren henter ordene fra EFFs store ordliste fra Electronic Frontier Foundation (kilde: {source_url}), brukt under lisensen Creative Commons Attribution 3.0 United States (CC BY 3.0 US, {license_url}). Terningtallene er fjernet fra listen; ordene er uendret.",
+  "settings.credits.title": "Takk til",
   "settings.error.disconnected": "Bakgrunnen til Ferret stoppet mens den jobbet. Åpne denne siden på nytt.",
   "settings.error.internal_error": "Innstillingen kunne ikke lagres. Ingenting ble endret.",
   "settings.error.invalid_input": "Det er ikke et av valgene. Ingenting ble endret.",
