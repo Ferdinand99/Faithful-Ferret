@@ -258,6 +258,58 @@ test.describe("one item on a desktop", () => {
     expect(await page.evaluate(() => document.querySelector('[data-role="name"]').value)).toBe("");
     expect(JSON.stringify(draft)).not.toContain(PASSWORD);
   });
+
+  test("the_password_on_the_edit_form_can_be_shown_and_hidden_from_the_keyboard", async ({ page }) => {
+    await ready(page);
+    await scene(page, "edit");
+    const input = page.getByLabel("Password", { exact: true });
+    const toggle = page.getByRole("button", { name: "Show password" });
+    await expect(input).toHaveAttribute("type", "password");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await input.fill("typed-by-the-user-1");
+    // The button takes the focus (it is a real button in the tab order) and is pressed with the keyboard.
+    await expect(toggle).toHaveAttribute("type", "button");
+    await toggle.focus();
+    await expect(toggle).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(input).toHaveAttribute("type", "text");
+    await expect(input).toHaveValue("typed-by-the-user-1");
+    const hide = page.getByRole("button", { name: "Hide password" });
+    await expect(hide).toHaveAttribute("aria-pressed", "true");
+    // The focus ring is drawn on the button (an outline, not nothing).
+    await expect(hide).toBeFocused();
+    expect(await hide.evaluate((node) => getComputedStyle(node).outlineStyle)).not.toBe("none");
+    await page.keyboard.press("Space");
+    await expect(input).toHaveAttribute("type", "password");
+    await expect(page.getByRole("button", { name: "Show password" })).toHaveAttribute("aria-pressed", "false");
+    // Showing it does not change the address and does not submit the form.
+    expect(await page.evaluate(() => location.href)).not.toContain("typed-by-the-user");
+    expect(await page.evaluate(() => window.__calls.updates.length)).toBe(0);
+    // Shown again, then saved: the draft carries the typed password and the field is hidden and empty afterwards.
+    await toggle.click();
+    await expect(input).toHaveAttribute("type", "text");
+    await page.locator('[data-role="save"]').click();
+    await expect.poll(() => page.evaluate(() => window.__calls.updates.length)).toBe(1);
+    const draft = await page.evaluate(() => window.__calls.updates[0][1]);
+    expect(draft.fields.find((f) => f.id === "password").value).toBe("typed-by-the-user-1");
+    await expect(input).toHaveAttribute("type", "password");
+    await expect(input).toHaveValue("");
+  });
+
+  test("the_password_on_the_new_form_starts_hidden_and_the_button_fits_in_the_field", async ({ page }) => {
+    await ready(page);
+    await scene(page, "new");
+    const input = page.getByLabel("Password", { exact: true });
+    await expect(input).toHaveAttribute("type", "password");
+    const button = page.getByRole("button", { name: "Show password" });
+    await button.click();
+    await expect(input).toHaveAttribute("type", "text");
+    const [field, control] = await Promise.all([input.boundingBox(), page.getByRole("button", { name: "Hide password" }).boundingBox()]);
+    expect(control.x).toBeGreaterThanOrEqual(field.x);
+    expect(control.x + control.width).toBeLessThanOrEqual(field.x + field.width + 0.5);
+    expect(control.y).toBeGreaterThanOrEqual(field.y - 0.5);
+    expect(control.y + control.height).toBeLessThanOrEqual(field.y + field.height + 0.5);
+  });
 });
 
 for (const width of [320, 375]) {
