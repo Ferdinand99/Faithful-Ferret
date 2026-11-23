@@ -20,8 +20,10 @@
 //            holds this user name and password), `update` (one item, by its user
 //            name, by the current password of a change form, or because Ferret
 //            filled that item's password into this document), `choose` (a list
-//            the user picks from: never an automatic target) or `save`. Only an
-//            item that matches by host or by its exact address can be a target:
+//            the user picks from: never an automatic target) or `save`. A
+//            change form whose current password matches no item gives a list,
+//            never an automatic target. Only a login item that matches by host
+//            or by its exact address can be a target:
 //            an item that matches by its registrable domain alone is listed
 //            apart (`domainOnly`, with its host) and is updated only when the
 //            user picks it from that list. Items that are read only, damaged, in
@@ -127,7 +129,7 @@ export class OfferWriteError extends Error {
  *   usernameFrom: Capture["usernameFrom"],
  * }} Classification
  * @typedef {{
- *   id: string, rev: number, name: string, username: string, urls: string[], folders?: string[],
+ *   id: string, rev: number, name: string, username: string, urls: string[], folders?: string[], type?: string,
  *   readOnly?: boolean, damaged?: boolean, quarantined?: boolean, blocked?: boolean, conflict?: boolean,
  *   missingOnServer?: boolean, pending?: boolean,
  * }} Summary the part of the sync engine's item summary this module reads
@@ -197,6 +199,13 @@ export function checkCapture(capture) {
  */
 export const writable = (s) =>
   s.readOnly !== true && s.damaged !== true && s.quarantined !== true && s.blocked !== true && s.conflict !== true && s.missingOnServer !== true;
+
+/**
+ * Whether an item is a login: only a login takes a password from a form (a note, card or identity with the page's
+ * address is never updated with one).
+ * @param {Summary} s
+ */
+export const isLogin = (s) => (s.type ?? "login") === "login";
 
 /**
  * The folders of the vault for the save card to offer: each name once (two names that differ only in case are one
@@ -356,11 +365,11 @@ export function createOfferWriter({ engine, liveClient, fillContext = null, now 
     const captured = c.username === null ? null : fold(c.username);
     /** @param {Hit} h */
     const sameName = (h) => captured !== null && h.name !== "" && fold(h.name) === captured;
-    const strong = hits.filter((h) => h.how !== "domain" && writable(h.summary));
+    const strong = hits.filter((h) => h.how !== "domain" && writable(h.summary) && isLogin(h.summary));
 
     /** @type {Classification["domainOnly"]} */
     const domainOnly = [];
-    for (const h of hits.filter((x) => x.how === "domain" && writable(x.summary)).slice(0, MAX_LISTED)) {
+    for (const h of hits.filter((x) => x.how === "domain" && writable(x.summary) && isLogin(x.summary)).slice(0, MAX_LISTED)) {
       domainOnly.push({ id: h.summary.id, rev: h.summary.rev, name: clip(String(h.summary.name ?? ""), MAX_TEXT), host: await itemHost(h.summary) });
     }
     /** @type {Classification["reused"]} */
@@ -395,6 +404,13 @@ export function createOfferWriter({ engine, liveClient, fillContext = null, now 
       }
     }
 
+    // A change form whose current password matches no item is no evidence for any of them: the user picks, or saves.
+    if (c.currentPassword !== null) {
+      const named = sure ? strong.filter(sameName) : [];
+      const listed = named.length > 0 ? named : strong;
+      return listed.length > 0 ? outcome("choose", listed.map((h) => targetOf(h, h.via ?? "list"))) : outcome("save");
+    }
+
     // A user name the page put there, or none at all, never picks one of several items.
     if (!sure && strong.length > 1) return outcome("choose", strong.map((h) => targetOf(h, h.via ?? "list")));
     if (captured === null) return strong.length === 1 ? outcome("update", [targetOf(strong[0], "only")]) : outcome("save");
@@ -405,7 +421,8 @@ export function createOfferWriter({ engine, liveClient, fillContext = null, now 
   }
 
   /**
-   * Whether the write has not reached the server yet (it waits in the outbox).
+   * Whether the write has not reached the server yet (it waits in the outbox). An item the list does not show (yet)
+   * counts as pending too.
    * @param {string} id
    */
   const pendingOf = (id) => engine.list().find((s) => s.id === id)?.pending !== false;
@@ -458,7 +475,7 @@ export function createOfferWriter({ engine, liveClient, fillContext = null, now 
     await originOf(c);
     const summary = engine.list().find((s) => s.id === t.id);
     if (summary === undefined) throw new OfferWriteError("not_found");
-    if (!writable(summary)) throw new OfferWriteError("not_a_target");
+    if (!writable(summary) || !isLogin(summary)) throw new OfferWriteError("not_a_target");
     // Made from the revision the classification saw, or not at all.
     if (summary.rev !== t.rev) throw new OfferWriteError("item_changed");
     const opened = await engine.open(t.id);
@@ -468,6 +485,7 @@ export function createOfferWriter({ engine, liveClient, fillContext = null, now 
       const answer = await vault.match_page(c.frameUrl, [opened.handle]);
       const how = Array.isArray(answer) ? /** @type {any} */ (answer.find((h) => /** @type {any} */ (h)?.handle === opened.handle))?.how : undefined;
       if (how !== "exact" && how !== "host" && !(how === "domain" && t.picked === true)) throw new OfferWriteError("not_a_target");
+      if (opened.view?.item_type !== "login") throw new OfferWriteError("not_a_target");
       /** @type {any[]} */
       const existing = Array.isArray(opened.view?.fields) ? opened.view.fields : [];
       const ids = existing.map((f) => f?.id);

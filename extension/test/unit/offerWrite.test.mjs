@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { createOfferWriter, FIELD_LABELS, folderNames, labelLanguage, MAX_REUSED, PASSWORD_FIELD } from "../../src/background/offerWrite.mjs";
 import { createFillContext } from "../../src/background/fillContext.mjs";
-import { build, isTestOnlyPath, WASM_FILES } from "../../scripts/build.mjs";
+import { build, isTestOnlyPath, TEST_ONLY_FILES, WASM_FILES } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 import { pkg } from "./sessionHelpers.mjs";
 
@@ -567,6 +567,44 @@ test("a_password_used_for_another_host_is_reported_as_reused_with_at_most_three_
   assert.equal(c.reused.some((r) => r.name === "Item 1"), false);
 });
 
+test("only_a_login_item_can_be_an_update_target", async () => {
+  // A note, a card and an identity with the page's address, and the same user name: never a target, never listed.
+  for (const type of ["note", "card", "identity"]) {
+    const w = writerOver([item(1, { username: "ola", body: { item_type: type } })]);
+    const c = await w.writer.classify(capture());
+    assert.equal(c.action, "save", type);
+    assert.deepEqual(c.targets, [], type);
+    const none = await w.writer.classify(capture({ username: null, usernameFrom: null }));
+    assert.equal(none.action, "save", `${type}: not even the only candidate`);
+    await assert.rejects(w.writer.update(capture(), { id: idOf(1), rev: 1 }), { code: "not_a_target" }, type);
+    assert.deepEqual(w.writes, [], type);
+    // Nor by domain.
+    const domain = writerOver([item(2, { username: "ola", urls: [["https://example.net/", "domain"]], body: { item_type: type } })]);
+    assert.deepEqual((await domain.writer.classify(capture())).domainOnly, [], type);
+    await assert.rejects(domain.writer.update(capture(), { id: idOf(2), rev: 1, picked: true }), { code: "not_a_target" }, type);
+  }
+  // A login beside them is the target.
+  const mixed = writerOver([item(1, { username: "ola", body: { item_type: "note" } }), item(2, { username: "ola" })]);
+  assert.deepEqual((await mixed.writer.classify(capture())).targets.map((t) => t.id), [idOf(2)]);
+});
+
+test("a_change_form_whose_current_password_matches_no_item_asks_which_one", async () => {
+  // One item, no user name, and a current password that is not the item's: no automatic update.
+  const one = writerOver([item(1, { username: "ola", password: OLD })]);
+  const c = await one.writer.classify(capture({ kind: "change", username: null, usernameFrom: null, currentPassword: "Current-PASSWORD-x" }));
+  assert.equal(c.action, "choose");
+  assert.deepEqual(c.targets.map((t) => t.id), [idOf(1)]);
+  // Even with the item's user name typed: the current password speaks against it.
+  const named = await one.writer.classify(capture({ kind: "change", currentPassword: "Current-PASSWORD-x" }));
+  assert.equal(named.action, "choose");
+  // No item for the page: a new one.
+  const empty = writerOver([]);
+  assert.equal((await empty.writer.classify(capture({ kind: "change", currentPassword: "Current-PASSWORD-x" }))).action, "save");
+  // The matching current password still decides at once.
+  assert.equal((await one.writer.classify(capture({ kind: "change", username: null, usernameFrom: null, currentPassword: OLD }))).action, "update");
+  assert.deepEqual(one.writes, []);
+});
+
 // ---------------------------------------------------------------- the sync's ops
 
 /**
@@ -729,14 +767,16 @@ test("a_pending_write_is_answered_as_pending_and_a_lock_ends_the_writer", async 
 // ---------------------------------------------------------------- the engine stays with the writer
 
 /** Code without its comments, for a structural check. @param {string} text */
-const withoutComments = (text) =>
-  text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:"'\\])\/\/[^\n]*/g, "$1")
-    // The import lines name module paths ("sync/engine.mjs"), not the engine.
-    .replace(/^\s*import\s[^;]*;/gm, "");
+const codeOf = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/[^\n]*/g, "$1");
 
-/** The methods of the engine that the sync itself may call: none of them writes an item. */
+/** Code without its comments and its import lines (they name module paths such as "sync/engine.mjs", not the engine). @param {string} text */
+const withoutComments = (text) => codeOf(text).replace(/^\s*import\s[^;]*;/gm, "");
+
+/**
+ * The methods of the engine that the sync itself may call. None of them makes or changes an item from a form: they
+ * are the sync's own work and the writes the sync may make itself (the choice in a conflict, dropping a refused write,
+ * accepting an older state); never `create`, `update` or `remove`.
+ */
 const SYNC_ENGINE_METHODS = Object.freeze([
   "start", "stop", "health", "status", "syncNow", "discard", "resumeAfterHalt", "on", "list", "open",
   "restorePreview", "acceptOlderState", "conflict", "resolve", "keepMine",
@@ -800,46 +840,95 @@ test("sync_passes_the_engine_only_to_the_offer_writer", async () => {
   assert.equal(world.madeWith.length, 1);
 });
 
+/**
+ * Every place in a file's code that reaches a `create` or `update`: a member access in any form (a call, `?.(`,
+ * `.call`, `.apply`, `.bind`, or the method read into a variable), named by the path in front of it (`)` or `]` when
+ * that is an expression), a bracket access, and a destructuring that takes one of the two.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function writesIn(text) {
+  const code = withoutComments(text);
+  /** @type {string[]} */
+  const out = [];
+  for (const m of code.matchAll(/((?:[\w$]+\s*\??\.\s*)*[\w$]+|[)\]])?\s*\??\.\s*(create|update)\b/g)) {
+    out.push(`${(m[1] ?? "").replace(/\s+/g, "").replace(/\?/g, "")}.${m[2]}`);
+  }
+  for (const m of code.matchAll(/\[\s*["'`](create|update)["'`]\s*\]/g)) out.push(`[${m[1]}]`);
+  for (const m of code.matchAll(/\{[^{}]*\b(create|update)\b[^{}]*\}\s*=(?!=)/g)) out.push(`{${m[1]}} =`);
+  return out.sort();
+}
+
+/**
+ * The only `create` and `update` the extension's own code may reach, per file of the package: the browser's
+ * (alarms, menus, tabs, windows), the offer writer's own `update`, and the engine's two in the offer writer.
+ * @type {Readonly<Record<string, string[]>>}
+ */
+const ALLOWED_WRITES = Object.freeze({
+  "background/clipboard.mjs": ["alarms.create"],
+  "background/lock.mjs": ["alarms.create"],
+  "background/menus.mjs": ["menus.create"],
+  "background/fillFlow.mjs": ["tabs.create"],
+  "pages/popup.mjs": ["browser.tabs.create", "browser.tabs.create", "browser.windows.create"],
+  "background/sync.mjs": ["run.writer.update"],
+  "background/offerWrite.mjs": ["engine.create", "engine.update"],
+});
+
 test("only_offer_write_calls_engine_create_or_update", async () => {
   const shared = new Set(/** @type {string[]} */ (JSON.parse(readFileSync(join(extensionDir, "shared.json"), "utf8"))).map((p) => `shared/${p}`));
-  /** The receivers whose `create` and `update` are not the engine's: the browser's, and the offer writer's own `update`. */
-  const BROWSER = new Set(["alarms", "tabs", "menus", "contextMenus", "windows", "writer"]);
-  /** @param {string} text @returns {string[]} */
-  const writesIn = (text) => {
-    const code = withoutComments(text);
-    /** @type {string[]} */
-    const out = [];
-    for (const m of code.matchAll(/([\w$\])]*)\s*\.\s*(create|update)\s*\(/g)) {
-      if (!BROWSER.has(m[1])) out.push(`${m[1]}.${m[2]}(`);
-    }
-    for (const m of code.matchAll(/\[\s*["'`](create|update)["'`]\s*\]/g)) out.push(m[0]);
-    return out;
-  };
-  // Positive controls: the ways the engine could be asked to write elsewhere are found.
-  for (const text of ["await engine.create(draft);", "await engine().update(id, d, 1);", "await run.engine.update(id, d, 1);", "e[\"create\"](d);", "await s.items()[0].create(d)"]) {
-    assert.notDeepEqual(writesIn(text), [], text);
+  // The matcher finds every form of reaching the two methods.
+  for (const [text, found] of /** @type {Array<[string, string[]]>} */ ([
+    ["await engine.create(draft);", ["engine.create"]],
+    ["await engine().update(id, d, 1);", [").update"]],
+    ["await run.engine\n  .update(id, d, 1);", ["run.engine.update"]],
+    ["await engine.create?.(d);", ["engine.create"]],
+    ["await engine?.update(id, d, 1);", ["engine.update"]],
+    ["engine.update.call(engine, id, d, 1);", ["engine.update"]],
+    ["Reflect.apply(engine.create, engine, [d]);", ["engine.create"]],
+    ["const f = e.update.bind(e);", ["e.update"]],
+    ["e[\"create\"](d);", ["[create]"]],
+    ["const { create, list } = engine;", ["{create} ="]],
+    ["await s.items()[0].create(d)", ["].create"]],
+    ["const writer = engine; await writer.create(d);", ["writer.create"]],
+  ])) {
+    assert.deepEqual(writesIn(text), found, text);
   }
-  assert.deepEqual(writesIn("await browser.tabs.create({ url }); alarms.create(n, {}); menus.create({}); browser.windows.create({});"), []);
+  assert.deepEqual(writesIn("const created = a.createdAt; x.updateFound(); if (a == { create }) {} // engine.create(x)"), []);
 
   for (const variant of ["release", "test"]) {
     for (const manifest of ["mv3", "mv2"]) {
       const env = makeRoot();
       try {
         const { files } = await build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest, variant });
-        let writer = "";
+        /** @type {string[]} */
+        const scanned = [];
+        /** @type {string[]} */
+        const makers = [];
+        /** @type {string[]} */
+        const factories = [];
         for (const [path, bytes] of files) {
           if (!/\.(?:mjs|js)$/.test(path) || shared.has(path) || WASM_FILES.includes(path)) continue;
-          // The test build's own test code (absent from a release) makes test items with the engine.
-          if (isTestOnlyPath(path) || path.startsWith("test/")) continue;
           const text = bytes.toString("utf8");
-          if (path === "background/offerWrite.mjs") {
-            writer = text;
+          const code = codeOf(text);
+          // Who may make an engine: the sync alone (and the test build's hooks, through the sync's factory).
+          if (/\bcreateSyncEngine\b/.test(code) || /["']\.\.?\/(?:[\w.]+\/)*sync\/engine\.mjs["']/.test(code)) makers.push(path);
+          if (/\bdefaultCreateEngine\b/.test(code)) factories.push(path);
+          // The test build's own test code, by the build's own lists (a release refuses any such path).
+          if (variant === "test" && (isTestOnlyPath(path) || TEST_ONLY_FILES.includes(path))) {
+            if (path === "background/test-only/matchProbe.mjs") {
+              // Positive control in a real package: the probe that makes test items with the engine is found.
+              assert.ok(writesIn(text).includes("running.create"), `${manifest}: the check finds the probe's write`);
+            }
             continue;
           }
-          assert.deepEqual(writesIn(text), [], `${variant} ${manifest}: ${path} asks something other than the browser to create or update`);
+          scanned.push(path);
+          assert.deepEqual(writesIn(text), [...(ALLOWED_WRITES[path] ?? [])].sort(), `${variant} ${manifest}: ${path}`);
         }
-        // The writer is in the package and is the place that writes.
-        assert.deepEqual(writesIn(writer).sort(), ["engine.create(", "engine.update("], `${variant} ${manifest}`);
+        for (const path of Object.keys(ALLOWED_WRITES)) assert.ok(scanned.includes(path), `${variant} ${manifest}: ${path} is in the package`);
+        assert.deepEqual(makers, ["background/sync.mjs"], `${variant} ${manifest}: only the sync makes an engine`);
+        // The test build's hooks get the sync's engine only as the second argument of their factory.
+        assert.deepEqual(factories, ["background/sync.mjs"], `${variant} ${manifest}: the engine's factory is named in the sync only`);
+        if (variant === "test") assert.ok(files.has("background/test-only/matchProbe.mjs"), `${manifest}: the control file is there`);
       } finally {
         env.cleanup();
       }

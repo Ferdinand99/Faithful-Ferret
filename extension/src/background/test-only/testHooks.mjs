@@ -28,6 +28,19 @@ import { createScenarios } from "./measureScenario.mjs";
 // The offers of the test build, for the sync (main.mjs passes them as its `captures`).
 export { captures };
 
+/** The engine the sync made last (the test build's probes make test items with it). @type {any} */
+let made = null;
+
+/**
+ * The sync's engine factory in the test build: the sync's own engine (`make`), kept here as well, so the probes can
+ * make test items with it. main.mjs gives it to the sync only when the hooks exist (never in a release).
+ * @param {Record<string, any>} options @param {(options: Record<string, any>) => any} make
+ */
+export const createEngine = (options, make) => (made = make(options));
+
+/** The engine the sync made last, or null (main.mjs asks only while the sync runs). */
+export const engine = () => made;
+
 export const TEST_CORE_PORT = "ferret-test-core";
 export const TEST_MEASURE_PORT = "ferret-test-measure";
 export const TEST_WHOAMI_PORT = "ferret-test-whoami";

@@ -118,11 +118,11 @@ const HEX16 = /^[0-9a-f]{32}$/;
 const VAULT_GONE = Object.freeze(["vault_locked", "worker_failed", "internal", "kdf_out_of_memory", "locked", "stopped"]);
 
 /**
- * The shared engine, as `createSyncHost` makes it when it is given no other factory. The test build's hooks pass it
- * on through a factory of their own (they make test items with the engine); a release has no hooks.
+ * The shared engine, made here and nowhere else. A factory given to `createSyncHost` gets this one as its second
+ * argument (the test build's hooks make test items with the engine they get through it; a release has no hooks).
  * @param {Record<string, any>} options
  */
-export const defaultCreateEngine = (options) => createSyncEngine(/** @type {any} */ (options));
+const defaultCreateEngine = (options) => /** @type {Engine} */ (/** @type {unknown} */ (createSyncEngine(/** @type {any} */ (options))));
 
 /** The states of the live channel (`sync/events.mjs`). */
 const LIVE_STATES = Object.freeze(["connecting", "live", "fallback", "offline", "unauthorized"]);
@@ -186,7 +186,7 @@ export class SyncHostError extends Error {
  *   permissions?: { remove?(p: { origins: string[] }): Promise<boolean> },
  *   locks?: any,
  *   win?: any,
- *   createEngine?: (options: Record<string, any>) => Engine,
+ *   createEngine?: (options: Record<string, any>, make: (options: Record<string, any>) => Engine) => Engine,
  *   createChannel?: (options: Record<string, any>) => Channel,
  *   captures?: CaptureSource | null,
  *   fillContext?: import("./offerWrite.mjs").FillContextReader | null,
@@ -201,7 +201,7 @@ export function createSyncHost({
   permissions = {},
   locks = /** @type {any} */ (globalThis).navigator?.locks,
   win = globalThis,
-  createEngine = (options) => /** @type {Engine} */ (/** @type {unknown} */ (createSyncEngine(/** @type {any} */ (options)))),
+  createEngine = (options, make) => make(options),
   createChannel = (options) => /** @type {Channel} */ (createLiveChannel(/** @type {any} */ (options))),
   captures = null,
   fillContext = null,
@@ -346,7 +346,7 @@ export function createSyncHost({
       deviceName: () => sessionHost.deviceName(),
       pollMs: FALLBACK_POLL_MS,
       win,
-    });
+    }, defaultCreateEngine);
     // The one module the engine is handed to: the writer of offers, with the same client of this unlock.
     const writer = createOfferWriter({ engine, liveClient: client, fillContext, now: Date.now, language });
     /** @type {Running} */
