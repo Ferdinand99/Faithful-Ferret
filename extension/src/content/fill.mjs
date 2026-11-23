@@ -38,14 +38,17 @@
 // or a `border-image-outset` that another element draws over the field.
 //
 // A second, bounded pass (COVERAGE_PASS) looks for those covers: an element that is no ancestor of the field and
-// that, in its computed styles, paints over it opaquely (an opaque
-// `box-shadow`, `outline` or `drop-shadow`, or a background when the element
-// lets clicks through with `pointer-events: none`) and whose painted area holds
-// the centre of the field or a quarter of its area. A floating label, which
-// covers a small part of the field or has no background, passes. It looks at
-// most MAX_PAINT_NODES elements and cannot see a cover that `border-image`, a
-// pseudo-element or a canvas draws, nor tell by z-order whether a painted area is
-// above or below the field (it refuses either way).
+// that, in its computed styles, paints over it opaquely (an opaque `box-shadow`, `outline` or `drop-shadow` outside
+// its own box, or the box of an element with `pointer-events: none` that has a background or is an image, a video or the
+// like), and whose painted area holds the centre of the field or a quarter of its area. The opacity of the elements above
+// an element counts (a faded wrapper fades what is in it). The field's own labels count like its ancestors for the
+// click-through case: a label at rest sits over its empty field. An element that paints below the field in the stack is
+// no cover (a heuristic: `z-index`, positioning, tree order and the contexts that opacity, transforms and filters make;
+// an outline always counts). A floating label, which has no background or covers a small part of the field, passes. The
+// pass looks at most MAX_PAINT_NODES elements, the last of the document first, and keeps MAX_PAINTS areas that meet the
+// viewport; past those a page can hide a cover from it. It cannot see a cover that `border-image`, a pseudo-element or a
+// canvas that is not click-through draws, and it does not clip a painted area by an `overflow` of an element above it
+// (a refusal that the user would not see the reason for).
 //
 // Which field: one request fills one group, found by the detection module
 // (forms.mjs): the first sign-in or change group of the page whose password the
@@ -102,7 +105,7 @@
 // extension's own calls, never as messages a page or a frame could send.
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
-import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, shadowOf } from "./forms.mjs";
+import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, isInside, shadowOf } from "./forms.mjs";
 
 /** The smallest width and height, in CSS pixels, of a field the engine fills. */
 export const MIN_SIDE = 8;
@@ -127,6 +130,8 @@ const OPAQUE = 0.9;
 /** The least alpha of a background that counts as a cover when the element lets clicks through. */
 const BACKGROUND_COVER = 0.5;
 /** Elements that paint nothing the page shows. */
+/** Elements whose content is no background but is drawn all the same. */
+const REPLACED = new Set(["img", "video", "canvas", "svg", "iframe", "embed", "object"]);
 const NOT_PAINTED = new Set(["head", "script", "style", "meta", "link", "title", "noscript", "template", "base"]);
 /** The name under which the injected script offers `begin` and `aim` to the extension (not reachable by the page). */
 export const FILL_GLOBAL = "__ferretFill";
@@ -209,7 +214,7 @@ function styleProblem(style) {
 
 /**
  * @typedef {{ left: number, top: number, right: number, bottom: number }} Box
- * @typedef {{ element: any, box: Box, hole: Box | null }} Paint the area `box` that `element` paints over (what lies below it), but not the `hole` inside it
+ * @typedef {{ element: any, kind: "through" | "shadow" | "outline", box: Box, hole: Box | null }} Paint the area `box` that `element` paints over (what lies below it), but not the `hole` inside it; `through`: the element's own box, which clicks go through; `shadow`: a shadow outside its box; `outline`: a ring around it
  */
 
 const LENGTH = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:px)?$/;
@@ -362,26 +367,179 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   let foundGroup = null;
   /** The field of a context menu click, for the next request only. @type {{ element: any, until: number } | null} */
   let aimed = null;
-  /** What the extra pass found in the document, for the call being served only (see `fresh`). @type {Paint[] | null} */
+  /** What the extra pass found in the document, and what it worked out about elements, for the call being served only (see `fresh`). @type {Paint[] | null} */
   let paintsMemo = null;
+  /** The opacity of an element times that of everything above it. @type {Map<any, number>} */
+  let opacityMemo = new Map();
+  /** What decides where an element paints in the stack (see `stackNode`). @type {Map<any, { z: number | null, context: boolean, positioned: boolean }>} */
+  let stackMemo = new Map();
+
+  /**
+   * The opacity an element is drawn with: its own times that of every element above it (opacity is not inherited,
+   * but a faded parent fades what is in it). A node that no slot takes is not drawn at all.
+   * @param {any} node
+   * @returns {number}
+   */
+  function effectiveOpacity(node) {
+    /** @type {any[]} */
+    const chain = [];
+    let product = 1;
+    /** @type {any} */
+    let up = node;
+    for (let depth = 0; up !== null; depth += 1) {
+      if (up === UNRENDERED) {
+        product = 0;
+        break;
+      }
+      const known = opacityMemo.get(up);
+      if (known !== undefined) {
+        product = known;
+        break;
+      }
+      // Deeper than any walk goes: count what is left as opaque (the side that detects more).
+      if (depth > MAX_DEPTH) break;
+      chain.push(up);
+      up = flatParent(up);
+    }
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      const style = window.getComputedStyle(chain[i]);
+      const own = style ? Number.parseFloat(read(style, "opacity")) : 1;
+      product *= Number.isFinite(own) ? Math.min(1, Math.max(0, own)) : 1;
+      opacityMemo.set(chain[i], product);
+    }
+    return product;
+  }
+
+  /**
+   * What one element contributes to where it paints: an explicit `z-index` (on a positioned element or a flex or grid
+   * item), whether it makes a stacking context of its own at level 0 (opacity, transform, filter, isolation, blend
+   * mode, clip or mask), and whether it is positioned.
+   * @param {any} node
+   * @returns {{ z: number | null, context: boolean, positioned: boolean }}
+   */
+  function stackNode(node) {
+    const known = stackMemo.get(node);
+    if (known) return known;
+    const style = window.getComputedStyle(node);
+    const position = style ? read(style, "position") : "";
+    const positioned = position !== "" && position !== "static";
+    const opacity = style ? Number.parseFloat(read(style, "opacity")) : 1;
+    const plain = (/** @type {string} */ name, /** @type {string} */ normal) => {
+      const value = style ? read(style, name) : "";
+      return value === "" || value === normal;
+    };
+    const context =
+      (Number.isFinite(opacity) && opacity < 1) ||
+      !plain("transform", "none") || !plain("filter", "none") || !plain("perspective", "none") ||
+      !plain("translate", "none") || !plain("rotate", "none") || !plain("scale", "none") ||
+      !plain("clip-path", "none") || !plain("mask-image", "none") || !plain("mix-blend-mode", "normal") ||
+      (style ? read(style, "isolation") === "isolate" : false);
+    /** @type {number | null} */
+    let z = null;
+    const raw = style ? read(style, "z-index") : "";
+    if (/^[+-]?\d+$/.test(raw)) {
+      let counts = positioned;
+      if (!counts) {
+        // A flex or grid item takes part in the stack with its z-index, positioned or not.
+        const parent = node.parentElement;
+        const display = parent ? read(window.getComputedStyle(parent), "display") : "";
+        counts = display.includes("flex") || display.includes("grid");
+      }
+      if (counts) z = Number.parseInt(raw, 10);
+    }
+    const info = { z, context, positioned };
+    stackMemo.set(node, info);
+    return info;
+  }
+
+  /**
+   * Where a chain of elements (innermost first, below a common ancestor) paints in that ancestor's stack: the
+   * explicit `z-index` of its outermost element that has one, 0 for a chain that makes a context or is positioned
+   * without one, and a half step below 0 for a chain that is not positioned at all (its backgrounds come before
+   * positioned content and above negative layers). A heuristic: the page may stack in ways this does not model.
+   * @param {any[]} chain
+   * @returns {number}
+   */
+  function levelOf(chain) {
+    let positioned = false;
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      const info = stackNode(chain[i]);
+      if (info.z !== null) return info.z;
+      if (info.context) return 0;
+      if (info.positioned) positioned = true;
+    }
+    return positioned ? 0 : -0.5;
+  }
+
+  /**
+   * The elements from `node` up to the root of the flat tree, innermost first.
+   * @param {any} node
+   * @returns {any[]}
+   */
+  function flatChain(node) {
+    /** @type {any[]} */
+    const out = [];
+    /** @type {any} */
+    let up = node;
+    for (let depth = 0; up !== null && up !== UNRENDERED && depth <= MAX_DEPTH; depth += 1) {
+      out.push(up);
+      up = flatParent(up);
+    }
+    return out;
+  }
+
+  /**
+   * Whether `painter` paints below `field` in the stack: it can then not cover the field, whatever its box is. A
+   * heuristic (see `levelOf`); "no" whenever it cannot tell.
+   * @param {any} painter @param {any} field
+   * @returns {boolean}
+   */
+  function paintsBelow(painter, field) {
+    const above = flatChain(painter);
+    const here = flatChain(field);
+    const inside = new Set(here);
+    const meeting = above.findIndex((node) => inside.has(node));
+    if (meeting <= 0) return false;
+    const fieldIndex = here.indexOf(above[meeting]);
+    if (fieldIndex <= 0) return false;
+    const painterChain = above.slice(0, meeting);
+    const fieldChain = here.slice(0, fieldIndex);
+    const painterLevel = levelOf(painterChain);
+    const fieldLevel = levelOf(fieldChain);
+    if (painterLevel !== fieldLevel) return painterLevel < fieldLevel;
+    // Neither is positioned: the painter's background comes before the field's content.
+    if (painterLevel === -0.5) return true;
+    const first = painterChain[painterChain.length - 1];
+    const second = fieldChain[fieldChain.length - 1];
+    if (typeof first.compareDocumentPosition !== "function") return false;
+    const relation = first.compareDocumentPosition(second);
+    // The field's branch comes later in the tree (and the two are in one tree): it paints over the painter.
+    return (relation & 4) !== 0 && (relation & 1) === 0;
+  }
 
   /**
    * The areas that elements of the document paint over what lies below, for the extra pass: an opaque `box-shadow`,
    * `outline` or `drop-shadow` outside the element's own box, and the box of an element that lets clicks through
-   * (`pointer-events: none`) and has a background. At most MAX_PAINT_NODES elements are looked at and MAX_PAINTS areas
-   * kept; what lies beyond is not seen.
+   * (`pointer-events: none`) and has a background or is an image, a video, an SVG or the like. Only areas that meet
+   * the viewport are kept. At most MAX_PAINT_NODES elements are looked at, the last of the document first (overlays
+   * and portals are usually added there), and MAX_PAINTS areas kept; what lies beyond is not seen.
    * @returns {Paint[]}
    */
   function collectPaints() {
     /** @type {Paint[]} */
     const out = [];
     let seen = 0;
+    const { width, height } = viewport();
+    /** @type {Box} */
+    const screen = { left: 0, top: 0, right: width, bottom: height };
     /** @param {any} root */
     const visit = (root) => {
-      for (const node of root.querySelectorAll("*")) {
+      const all = root.querySelectorAll("*");
+      for (let i = all.length - 1; i >= 0; i -= 1) {
+        const node = all[i];
         seen += 1;
         if (seen > MAX_PAINT_NODES || out.length >= MAX_PAINTS) return;
-        if (!NOT_PAINTED.has(node.localName)) paintsOf(node, out);
+        if (!NOT_PAINTED.has(node.localName)) paintsOf(node, out, screen);
         const inner = shadowOf(node);
         if (inner) visit(inner);
       }
@@ -392,13 +550,25 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
   /**
    * Adds the areas one element paints to `out`.
-   * @param {any} node @param {Paint[]} out
+   * @param {any} node @param {Paint[]} out @param {Box} screen
    */
-  function paintsOf(node, out) {
+  function paintsOf(node, out, screen) {
     const style = window.getComputedStyle(node);
     if (!style || read(style, "display") === "none" || read(style, "visibility") !== "visible") return;
-    const opacity = Number.parseFloat(read(style, "opacity"));
-    const shown = Number.isFinite(opacity) ? opacity : 1;
+    // Most elements paint nothing the pass looks for: leave them before the more costly questions.
+    const clickThrough = read(style, "pointer-events") === "none";
+    const background = read(style, "background-color");
+    const image = read(style, "background-image");
+    const throughPaints = clickThrough && (REPLACED.has(node.localName) || (background !== "" && alphaOf(background) > 0) || (image !== "" && image !== "none"));
+    const shadows = read(style, "box-shadow");
+    const lineStyle = read(style, "outline-style");
+    const filter = read(style, "filter");
+    const shadowed = shadows !== "" && shadows !== "none";
+    const outlined = lineStyle !== "" && lineStyle !== "none" && lineStyle !== "hidden";
+    const dropped = filter.includes("drop-shadow(");
+    if (!throughPaints && !shadowed && !outlined && !dropped) return;
+    // The opacity it is drawn with, that of the elements above it included.
+    const shown = effectiveOpacity(node);
     if (shown < BACKGROUND_COVER) return;
     // An element without a box paints nothing (`display: contents`, or below a `display: none`).
     if (typeof node.getClientRects === "function" && node.getClientRects().length === 0) return;
@@ -411,58 +581,48 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       }
       return border;
     };
-    const add = (/** @type {Box} */ box, /** @type {Box | null} */ hole) => {
-      if (out.length < MAX_PAINTS && areaOf(box) > 0) out.push({ element: node, box, hole });
+    const add = (/** @type {Paint["kind"]} */ kind, /** @type {Box} */ box, /** @type {Box | null} */ hole) => {
+      if (out.length < MAX_PAINTS && areaOf(meet(box, screen)) > 0) out.push({ element: node, kind, box, hole });
     };
 
-    // A cover that clicks go through: only when it has a background of its own (a label with none shows only its text).
-    if (read(style, "pointer-events") === "none") {
-      const color = read(style, "background-color");
-      const image = read(style, "background-image");
-      if ((color !== "" && alphaOf(color) * shown >= BACKGROUND_COVER) || (image !== "" && image !== "none")) add(own(), null);
-    }
+    // A cover that clicks go through: only when it has a background of its own (a label with none shows only its text),
+    // or is an image or the like.
+    if (throughPaints && (REPLACED.has(node.localName) || (background !== "" && alphaOf(background) * shown >= BACKGROUND_COVER) || (image !== "" && image !== "none"))) add("through", own(), null);
     // An opaque shadow of the element, outside its own box (which the hit test sees).
-    for (const layer of parseShadows(read(style, "box-shadow"))) {
+    for (const layer of parseShadows(shadows)) {
       if (layer.inset || layer.alpha * shown < OPAQUE) continue;
-      add(grown(shifted(own(), layer.ox, layer.oy), layer.spread - layer.blur / 2), own());
+      add("shadow", grown(shifted(own(), layer.ox, layer.oy), layer.spread - layer.blur / 2), own());
     }
     // An outline is a ring around the box, grown by its offset.
-    const lineStyle = read(style, "outline-style");
-    if (lineStyle !== "" && lineStyle !== "none" && lineStyle !== "hidden") {
+    if (outlined) {
       const width = Number.parseFloat(read(style, "outline-width"));
       const offset = Number.parseFloat(read(style, "outline-offset"));
       if (width > 0 && alphaOf(read(style, "outline-color")) * shown >= OPAQUE) {
         const gap = Number.isFinite(offset) ? offset : 0;
-        add(grown(own(), gap + width), grown(own(), gap));
+        add("outline", grown(own(), gap + width), grown(own(), gap));
       }
     }
-    // A drop shadow is a copy of the element, moved by its offset and blurred.
-    const filter = read(style, "filter");
-    if (filter.includes("drop-shadow(")) {
+    // A drop shadow is a copy of the element, moved by its offset; its blur only softens the edge.
+    if (dropped) {
       for (const token of splitTop(filter, " ")) {
         if (!token.startsWith("drop-shadow(") || !token.endsWith(")")) continue;
         const [layer] = parseShadows(token.slice("drop-shadow(".length, -1));
-        if (layer && layer.alpha * shown >= OPAQUE) add(grown(shifted(own(), layer.ox, layer.oy), layer.blur / 2), own());
+        if (layer && layer.alpha * shown >= OPAQUE) add("shadow", grown(shifted(own(), layer.ox, layer.oy), -layer.blur / 2), own());
       }
     }
   }
 
   /**
-   * The elements from `element` up to the root, through shadow roots and slots: what paints below the element
-   * and so never covers it.
-   * @param {any} element
-   * @returns {Set<any>}
+   * Whether `paint` counts against the element `target`: its element is not the target or above it (which paint below
+   * it), it is not the label of the target when it only lets clicks through (a label at rest sits over its field), and
+   * it does not paint below the target in the stack (an outline always paints on top).
+   * @param {Paint} paint @param {any} target @param {Set<any>} mine @param {any[]} labels
    */
-  function ancestorsOf(element) {
-    /** @type {Set<any>} */
-    const out = new Set();
-    /** @type {any} */
-    let node = element;
-    for (let depth = 0; node !== null && node !== UNRENDERED && depth <= MAX_DEPTH; depth += 1) {
-      out.add(node);
-      node = flatParent(node);
-    }
-    return out;
+  function counts(paint, target, mine, labels) {
+    if (mine.has(paint.element)) return false;
+    if (paint.kind === "through" && labels.some((label) => isInside(label, paint.element))) return false;
+    if (paint.kind !== "outline" && paintsBelow(paint.element, target)) return false;
+    return true;
   }
 
   /**
@@ -474,14 +634,23 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (!coveragePass) return null;
     paintsMemo ??= collectPaints();
     if (paintsMemo.length === 0) return null;
-    const mine = ancestorsOf(element);
     const field = boxOf(rect);
-    return paintsMemo.some((paint) => !mine.has(paint.element) && coversField(paint, field)) ? "covered" : null;
+    const near = paintsMemo.filter((paint) => coversField(paint, field));
+    if (near.length === 0) return null;
+    const mine = new Set(flatChain(element));
+    /** @type {any[]} */
+    let labels = [];
+    try {
+      labels = element.labels ? Array.from(element.labels) : [];
+    } catch {
+      labels = [];
+    }
+    return near.some((paint) => counts(paint, element, mine, labels)) ? "covered" : null;
   }
 
   /**
-   * The extra pass for the element that holds a frame: whether something that is no ancestor of it paints over one
-   * of the field's points, moved into this document.
+   * The extra pass for the element that holds a frame: whether something that is no ancestor of it paints over the
+   * centre of the field, moved into this document, or over two of its points.
    * @param {any} holder @param {Array<[number, number]>} points
    * @returns {"covered" | null}
    */
@@ -489,8 +658,12 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (!coveragePass) return null;
     paintsMemo ??= collectPaints();
     if (paintsMemo.length === 0) return null;
-    const mine = ancestorsOf(holder);
-    return paintsMemo.some((paint) => !mine.has(paint.element) && points.some(([x, y]) => paintsAt(paint, x, y))) ? "covered" : null;
+    const mine = new Set(flatChain(holder));
+    const near = paintsMemo.filter((paint) => points.some(([x, y]) => paintsAt(paint, x, y)));
+    if (near.length === 0) return null;
+    const counting = near.filter((paint) => counts(paint, holder, mine, []));
+    const painted = points.filter(([x, y]) => counting.some((paint) => paintsAt(paint, x, y)));
+    return painted.length >= 2 || (painted.length === 1 && painted[0] === points[0]) ? "covered" : null;
   }
 
   /**
@@ -501,13 +674,18 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    * @returns {F}
    */
   function fresh(fn) {
+    const forget = () => {
+      paintsMemo = null;
+      opacityMemo = new Map();
+      stackMemo = new Map();
+    };
     return /** @type {F} */ (
       (/** @type {any[]} */ ...args) => {
-        paintsMemo = null;
+        forget();
         try {
           return fn(...args);
         } finally {
-          paintsMemo = null;
+          forget();
         }
       }
     );

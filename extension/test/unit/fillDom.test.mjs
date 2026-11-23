@@ -854,12 +854,11 @@ test("a_cover_that_hit_testing_cannot_see_is_detected_by_the_coverage_pass", () 
     t.document.body.append(cover);
     cover.rect = { left: 90, top: 150, width: 260, height: 52 };
     cover.z = 10;
-    cover.style["pointer-events"] = "none";
-    cover.style["background-color"] = "rgb(255, 255, 255)";
+    Object.assign(cover.style, { position: "absolute", "pointer-events": "none", "background-color": "rgb(255, 255, 255)" });
     const painter = t.document.createElement("div");
     t.document.body.append(painter);
     painter.rect = { left: 10, top: 400, width: 20, height: 20 };
-    painter.style["box-shadow"] = "rgb(255, 255, 255) 0px 0px 0px 9999px";
+    Object.assign(painter.style, { position: "absolute", "box-shadow": "rgb(255, 255, 255) 0px 0px 0px 9999px" });
     return t;
   };
   const on = build({});
@@ -873,13 +872,14 @@ test("a_cover_that_hit_testing_cannot_see_is_detected_by_the_coverage_pass", () 
 const COVERAGE_ON = Object.freeze({ coveragePass: true });
 
 /**
- * Adds a div to `parent` with a rectangle (or none) and styles.
- * @param {any} document @param {{ left: number, top: number, width: number, height: number } | null} rect @param {Record<string, string>} style @param {any} [parent]
+ * Adds an element to `parent` with a rectangle (or none) and styles. Positioned unless the styles say otherwise: a box that
+ * is not positioned paints its background below the content of the field, so it cannot cover it.
+ * @param {any} document @param {{ left: number, top: number, width: number, height: number } | null} rect @param {Record<string, string>} style @param {any} [parent] @param {string} [tag]
  */
-function painter(document, rect, style, parent = document.body) {
-  const element = parent.append(document.createElement("div"));
+function painter(document, rect, style, parent = document.body, tag = "div") {
+  const element = parent.append(document.createElement(tag));
   if (rect !== null) element.rect = rect;
-  Object.assign(element.style, style);
+  Object.assign(element.style, { position: "absolute", ...style });
   return element;
 }
 
@@ -915,7 +915,7 @@ test("the_coverage_pass_refuses_a_pointer_events_none_cover", () => {
     const later = setup({}, addLoginForm, COVERAGE_ON);
     painter(later.document, OVER_FIELD, { "pointer-events": "none", ...style });
     assert.ok(!kinds(later.begin()).includes("password"), name);
-    // With the pass off the limit stands (a test pins it).
+    // With the pass off the limit stands.
     assert.deepEqual(fillWith(OVER_FIELD, { "pointer-events": "none", ...style }, { coveragePass: false }).answer, FILLED, `${name}, pass off`);
   }
 
@@ -957,12 +957,92 @@ test("the_coverage_pass_refuses_a_pointer_events_none_cover", () => {
   assert.deepEqual(kinds(moving.begin()), ["username", "password"]);
   assert.deepEqual(moving.fill(), FILLED);
 
+  // An image or the like that clicks go through is a cover too, with no background at all.
+  for (const tag of ["img", "video", "canvas", "svg", "iframe"]) {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    painter(t.document, OVER_FIELD, { "pointer-events": "none" }, t.document.body, tag);
+    assert.deepEqual(t.fill(), COVERED, tag);
+  }
+
   // The same for the element that holds a frame: a cover over the framed field in the parent page.
   const cover = { left: 400, top: 100, width: 400, height: 300 };
   assert.equal(framePage(() => {}, COVERAGE_ON).shown(), "shown");
   assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none", "background-color": WHITE }); }, COVERAGE_ON).shown(), "covered");
   assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none" }); }, COVERAGE_ON).shown(), "shown", "no background");
   assert.equal(framePage((p) => { painter(p.document, cover, { "pointer-events": "none", "background-color": WHITE }); }, { coveragePass: false }).shown(), "shown", "pass off");
+  // A badge over one of the field's other points is not a cover; over its centre, or over two points, it is.
+  const badge = (/** @type {number} */ x, /** @type {number} */ y, size = 6) => ({ left: x - size / 2, top: y - size / 2, width: size, height: size });
+  const covered = (/** @type {Array<[number, number]>} */ at) => framePage((p) => {
+    for (const [x, y] of at) painter(p.document, badge(x, y), { "pointer-events": "none", "background-color": WHITE });
+  }, COVERAGE_ON).shown();
+  assert.equal(covered([[560, 276]]), "shown", "one point beside the centre");
+  assert.equal(covered([[620, 276]]), "covered", "the centre");
+  assert.equal(covered([[560, 276], [680, 276]]), "covered", "two points");
+});
+
+test("an_overlay_that_is_hidden_by_an_ancestors_opacity_is_not_a_cover", () => {
+  // `opacity` is not inherited but a faded parent fades everything in it; `pointer-events` is inherited, so the child of a hidden,
+  // click-through wrapper is click-through too (set here, the fake page has no inheritance).
+  const OVER_FIELD = { left: 90, top: 150, width: 260, height: 52 };
+  /** @param {string} opacity @param {Record<string, string>} [childStyle] */
+  const under = (opacity, childStyle = {}) => {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    const wrapper = painter(t.document, { left: 0, top: 0, width: 1280, height: 800 }, { opacity, "pointer-events": "none" });
+    painter(t.document, OVER_FIELD, { "pointer-events": "none", "background-color": WHITE, ...childStyle }, wrapper);
+    return t.fill();
+  };
+  assert.deepEqual(under("0"), FILLED, "a hidden wrapper");
+  assert.deepEqual(under("0.3"), FILLED, "a faded wrapper");
+  assert.deepEqual(under("1"), COVERED, "the same wrapper with full opacity");
+  assert.deepEqual(under("0.6", { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, "background-color": "transparent" }), FILLED, "a shadow of a faded child");
+  // Three levels: the product counts.
+  const t = setup({}, addLoginForm, COVERAGE_ON);
+  t.begin();
+  const a = painter(t.document, null, { opacity: "0.8" });
+  const b = painter(t.document, null, { opacity: "0.6" }, a);
+  painter(t.document, OVER_FIELD, { "pointer-events": "none", "background-color": WHITE }, b);
+  assert.deepEqual(t.fill(), FILLED, "0.8 times 0.6 is below half");
+});
+
+test("a_layer_that_paints_below_the_field_is_not_a_cover", () => {
+  const PAGE = { left: 0, top: 0, width: 1280, height: 800 };
+  const SHADE = { "pointer-events": "none", "background-color": "rgba(0, 0, 0, 0.5)" };
+  /** A card (positioned, with `z`) around the sign-in form, and a layer (full-page unless it has a box of its own) before or after it. @param {Record<string, string>} card @param {Record<string, string>} layer @param {boolean} before @param {typeof PAGE} [box] */
+  const page = (card, layer, before, box = PAGE) => {
+    const t = setup({}, (/** @type {any} */ document) => {
+      if (before) painter(document, box, layer);
+      const wrap = painter(document, { left: 80, top: 80, width: 300, height: 200 }, card);
+      const form = addLoginForm(document, wrap);
+      if (!before) painter(document, box, layer);
+      return form;
+    }, COVERAGE_ON);
+    t.begin();
+    // A cover that was there at the report leaves the field out of it, so the answer is no fill (any reason).
+    const answer = t.fill();
+    return answer.ok ? answer : COVERED;
+  };
+  // A darkening layer or a glow behind a card that is stacked above it.
+  assert.deepEqual(page({ "z-index": "1" }, SHADE, true), FILLED, "a layer before a card with a z-index");
+  assert.deepEqual(page({}, SHADE, true), FILLED, "a layer before a positioned card (tree order)");
+  assert.deepEqual(page({ "z-index": "1" }, { ...SHADE, "z-index": "-1" }, false), FILLED, "a layer with a negative z-index, after the card");
+  assert.deepEqual(page({ "z-index": "3" }, { ...SHADE, "z-index": "2" }, false), FILLED, "a lower z-index, after the card");
+  assert.deepEqual(page({ position: "static" }, { ...SHADE, "z-index": "-1" }, true), FILLED, "a negative layer behind plain content");
+  // The same layers where they do paint over the card.
+  assert.deepEqual(page({}, SHADE, false), COVERED, "a layer after a positioned card");
+  assert.deepEqual(page({ "z-index": "1" }, { ...SHADE, "z-index": "2" }, true), COVERED, "a layer with a higher z-index, before the card");
+  assert.deepEqual(page({ "z-index": "1" }, { ...SHADE, "z-index": "2" }, false), COVERED, "a layer with a higher z-index, after the card");
+  assert.deepEqual(page({ position: "static" }, SHADE, false), COVERED, "a positioned layer over plain content");
+  // A layer that makes a stacking context of its own (a transform, a filter) paints with the positioned content.
+  assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static", transform: "translateZ(0)" }, false), COVERED, "a transformed layer that is not positioned");
+  // Not positioned, like the content: its background is below the field's content, whatever the order.
+  assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static" }, false), FILLED, "plain boxes");
+  // A shadow of a layer below the card is no cover either, an outline always is.
+  const shadow = { "box-shadow": `${WHITE} 0px 0px 0px 9999px` };
+  assert.deepEqual(page({ "z-index": "1" }, shadow, true, { left: 10, top: 400, width: 20, height: 20 }), FILLED, "a shadow of a layer below the card");
+  assert.deepEqual(page({ "z-index": "1" }, { "z-index": "2", ...shadow }, true, { left: 10, top: 400, width: 20, height: 20 }), COVERED, "a shadow of a layer above the card");
+  assert.deepEqual(page({ "z-index": "1" }, { "outline-style": "solid", "outline-width": "9999px", "outline-color": WHITE }, true, { left: 10, top: 400, width: 20, height: 20 }), COVERED, "an outline paints on top, whatever its level");
 });
 
 test("the_coverage_pass_refuses_a_box_shadow_cover", () => {
@@ -977,7 +1057,6 @@ test("the_coverage_pass_refuses_a_box_shadow_cover", () => {
     ["an outline", AWAY, { "outline-style": "solid", "outline-width": "9999px", "outline-offset": "0px", "outline-color": WHITE }],
     ["an outline with an offset", AWAY, { "outline-style": "solid", "outline-width": "300px", "outline-offset": "100px", "outline-color": "rgb(0, 0, 0)" }],
     ["a drop shadow moved onto the field", { left: -300, top: 150, width: 260, height: 52 }, { filter: `drop-shadow(${WHITE} 400px 0px 0px)` }],
-    ["a drop shadow with a wide blur", AWAY, { filter: `drop-shadow(${WHITE} 0px 0px 9999px)` }],
   ])) {
     const { t, answer } = fillWith(rect, style);
     assert.deepEqual(answer, COVERED, name);
@@ -996,6 +1075,7 @@ test("the_coverage_pass_refuses_a_box_shadow_cover", () => {
     ["no outline style", AWAY, { "outline-style": "none", "outline-width": "9999px", "outline-color": WHITE }],
     ["a faint outline", AWAY, { "outline-style": "solid", "outline-width": "9999px", "outline-offset": "0px", "outline-color": "rgba(0, 0, 0, 0.3)" }],
     ["a faint drop shadow", AWAY, { filter: "drop-shadow(rgba(0, 0, 0, 0.3) 0px 0px 9999px)" }],
+    ["a drop shadow whose blur only softens its edge", AWAY, { filter: `drop-shadow(${WHITE} 0px 0px 9999px)` }],
     ["a large spread of a hidden element", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, visibility: "hidden" }],
     ["a large spread of an element that is not drawn", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, display: "none" }],
     ["a large spread of a faded element", AWAY, { "box-shadow": `${WHITE} 0px 0px 0px 9999px`, opacity: "0.5" }],
@@ -1028,10 +1108,64 @@ test("a_floating_label_is_not_a_cover", () => {
   assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE }).answer, FILLED, "a notch with a background");
   assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE, filter: `drop-shadow(${WHITE} 0px 0px 2px)` }).answer, FILLED, "a notch with a glow");
   assert.deepEqual(fillWith(notch, { "pointer-events": "none", "background-color": WHITE, "box-shadow": `${WHITE} 0px 0px 0px 2px` }).answer, FILLED, "a notch with a rim");
-  // The threshold: a label that holds a quarter of the field's area or its centre is a cover.
+  // The threshold: an element that holds a quarter of the field's area or its centre is a cover.
   assert.deepEqual(fillWith({ left: 100, top: 160, width: 50, height: 32 }, { "pointer-events": "none", "background-color": WHITE }).answer, FILLED, "under a quarter");
   assert.deepEqual(fillWith({ left: 100, top: 160, width: 70, height: 32 }, { "pointer-events": "none", "background-color": WHITE }).answer, COVERED, "over a quarter");
   assert.deepEqual(fillWith({ left: 200, top: 170, width: 40, height: 10 }, { "pointer-events": "none", "background-color": WHITE }).answer, COVERED, "over the centre");
+
+  // The label of the field itself, at rest over an empty field with a background of its own that crosses the centre: not a cover.
+  // The same box as any other element is one.
+  const long = { left: 104, top: 166, width: 220, height: 20 };
+  const labelled = (/** @type {string} */ tag, /** @type {Record<string, string>} */ attributes) => {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    const label = t.document.body.append(t.document.createElement(tag, attributes));
+    label.rect = long;
+    Object.assign(label.style, { position: "absolute", "pointer-events": "none", "background-color": WHITE });
+    return { t, label };
+  };
+  const forPass = labelled("label", { for: "pass" });
+  assert.deepEqual(forPass.t.fill(), FILLED, "a label for the field");
+  assert.deepEqual(labelled("label", { for: "user" }).t.fill(), COVERED, "the label of another field");
+  assert.deepEqual(labelled("div", { for: "pass" }).t.fill(), COVERED, "a div is no label");
+  // What is inside the label is the label's.
+  const nested = setup({}, addLoginForm, COVERAGE_ON);
+  nested.begin();
+  const outer = nested.document.body.append(nested.document.createElement("label", { for: "pass" }));
+  Object.assign(outer.style, { position: "absolute", "pointer-events": "none" });
+  painter(nested.document, long, { "pointer-events": "none", "background-color": WHITE }, outer);
+  assert.deepEqual(nested.fill(), FILLED, "a span in the label");
+  // A label does not excuse a shadow, an outline or a drop shadow over the field.
+  const rim = labelled("label", { for: "pass" });
+  rim.label.rect = { left: 10, top: 400, width: 20, height: 20 };
+  Object.assign(rim.label.style, { "background-color": "transparent", "box-shadow": `${WHITE} 0px 0px 0px 9999px` });
+  assert.deepEqual(rim.t.fill(), COVERED, "a label with a large shadow");
+});
+
+test("the_coverage_pass_sees_a_late_cover_on_a_large_page", () => {
+  const OVER_FIELD = { left: 90, top: 150, width: 260, height: 52 };
+  // 5 200 harmless elements, then the cover: the walk starts from the end of the document.
+  const crowded = setup({}, (/** @type {any} */ document) => {
+    const forms = addLoginForm(document);
+    for (let i = 0; i < 5_200; i += 1) {
+      const filler = document.body.append(document.createElement("div"));
+      filler.rect = { left: 500, top: 500, width: 5, height: 5 };
+    }
+    return forms;
+  }, COVERAGE_ON);
+  crowded.begin();
+  painter(crowded.document, OVER_FIELD, { "pointer-events": "none", "background-color": WHITE });
+  assert.deepEqual(crowded.fill(), COVERED, "a cover after 5 200 elements");
+  // 300 tiny outlines far off the screen cannot fill the list before a cover that comes earlier in the document.
+  const noisy = setup({}, (/** @type {any} */ document) => {
+    const forms = addLoginForm(document);
+    painter(document, OVER_FIELD, { "pointer-events": "none", "background-color": WHITE });
+    for (let i = 0; i < 300; i += 1) {
+      painter(document, { left: 5_000 + i, top: 5_000, width: 1, height: 1 }, { "outline-style": "solid", "outline-width": "1px", "outline-color": WHITE });
+    }
+    return forms;
+  }, COVERAGE_ON);
+  assert.ok(!kinds(noisy.begin()).includes("password"), "a cover before 300 outlines off the screen");
 });
 
 test("a_report_has_at_most_three_fields_and_nothing_is_sent_before_begin", () => {

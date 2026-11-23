@@ -6,6 +6,7 @@
 //   /static/login.html    one sign-in form (user name and password)
 //   /static/signup.html   one sign-up form (e-mail, a new password with a maxlength of 24, and its confirmation)
 //   /static/blank.html    an empty page
+//   /static/cover/<id>.html  a sign-in page of coverPages.mjs (layouts the extra pass for covers must keep filling, and covers it must refuse)
 //   /static/frames.html   one page with an iframe of each kind that has an opaque or special origin
 //                         (srcdoc, sandboxed without allow-same-origin, about:blank) and one ordinary one
 //   /healthz              "ok"
@@ -27,6 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findSite, siteById } from "../fixtures/sites/index.mjs";
+import { coverPage } from "./coverPages.mjs";
 import { IP_HOSTS, originText } from "../fixtures/sites/origins.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -93,6 +95,10 @@ export function readHosts() {
   }
   return { fixture: data.fixture ?? [], e2e };
 }
+
+const COVER_PATH_PREFIX = "/static/cover/";
+const COVER_PATH_SUFFIX = ".html";
+const COVER_PATH = new RegExp("^/static/cover/[a-z0-9-]+\\.html$");
 
 const LOGIN_HTML = `<!doctype html>
 <html lang="en">
@@ -248,6 +254,9 @@ export async function startFixtures({ hosts = readHosts().fixture, port = 0, alt
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(LOGIN_HTML);
     } else if (path === "/static/signup.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(SIGNUP_HTML);
+    } else if (COVER_PATH.test(path) && coverPage(path.slice(COVER_PATH_PREFIX.length, -COVER_PATH_SUFFIX.length))) {
+      const cover = /** @type {NonNullable<ReturnType<typeof coverPage>>} */ (coverPage(path.slice(COVER_PATH_PREFIX.length, -COVER_PATH_SUFFIX.length)));
+      res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(req.method === "HEAD" ? undefined : cover.html);
     } else if (path === "/static/frames.html") {
       res.writeHead(200, { ...common, "content-type": "text/html; charset=utf-8" }).end(FRAMES_HTML);
     } else if (path === "/static/blank.html" || path === "/static/login-done.html") {
