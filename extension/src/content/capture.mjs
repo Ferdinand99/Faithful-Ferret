@@ -31,9 +31,14 @@
 //   takes no role); the detection module gives roles to the fields passed by `shown` only.
 // - A submission is a trusted `submit` event, a trusted click on a submit control or on an element with the submit words
 //   of patterns.mjs, or a trusted Enter in a field. A control that shows or hides the password, or that sits in the
-//   password field's wrapper, never counts. The form is read one task later, after the page's handlers, and the
-//   triggers of one burst are one submission. At most one capture per frame in two seconds (the newer one is dropped, so
-//   a mis-detected early trigger can cost the real submission that follows within two seconds).
+//   password field's wrapper, never counts. The page is looked at in the trigger itself (this script's listener is on the
+//   window, in the capture phase, and runs before the page's own handlers): which groups and fields the person could see
+//   is decided there, so a form that the page hides, replaces or covers in its own submit or click handler is still the
+//   form the person submitted. The values are read one task later, after the page's handlers, and must be what the person
+//   typed; the triggers of one burst are one submission. At most one capture per frame in two seconds, and a step that asks for the user name only has
+//   a gap of its own (the newer one is dropped, so a mis-detected early trigger can cost the real submission that follows
+//   within two seconds, but the password step that follows an identifier step on the same page is not lost). The groups a
+//   trigger belongs to are found in the trigger too, for a page that removes the fields from their wrapper in its handler.
 // - A value over the size limits drops the capture (a password over 1 024 characters), or the user name (over 512).
 //
 // Limits that are accepted and stated: a page's own listener on the window in the capture phase runs before this one (it is
@@ -51,7 +56,7 @@
 const RECHECK = [700, 1500, 3000, 4900];
 const MAX_USER = 512;
 const MAX_PASSWORD = 1024;
-/** One capture per frame in this many milliseconds. */
+/** One capture per frame, and one identifier step per frame, in this many milliseconds. */
 const MIN_GAP = 2000;
 /** The smallest side of a field that counts as shown (as in the fill engine). */
 const MIN_SIDE = 8;
@@ -77,9 +82,12 @@ export function createCapture({ window, document, send, clock, forms }) {
   const undo = [];
   /** @type {any[]} */
   let triggers = [];
+  /** The groups the person could see when the first trigger of the current burst came, or null. @type {any[] | null} */
+  let snapshot = null;
   /** The timer that runs the submission of the current burst of triggers. @type {any} */
   let waiting = null;
   let lastCapture = -Infinity;
+  let lastIdentifier = -Infinity;
   let readySent = false;
   let stopped = false;
   /** Whether an input was recorded in this document (a trusted one, or any in a password field). */
@@ -270,18 +278,22 @@ export function createCapture({ window, document, send, clock, forms }) {
   const submitted = () => {
     waiting = null;
     const burst = triggers;
+    const groups = snapshot;
     triggers = [];
+    snapshot = null;
     const now = clock.now();
-    // Nothing was typed in this document yet: there is nothing to read, so the page is not walked.
-    if (!typedAny || now - lastCapture < MIN_GAP) return;
-    const groups = findGroups(document, { shown });
+    // Nothing was typed in this document yet (no snapshot was taken).
+    if (groups === null) return;
     const seen = new Set(groups.flatMap(rolesOf));
     for (const trigger of burst) {
-      for (const group of groups) {
-        if (!belongs(trigger, group)) continue;
+      for (const group of trigger.groups) {
         const message = messageFor(group);
         if (message === null) continue;
-        lastCapture = now;
+        // The step that asks for the user name only has a gap of its own, so that the password step that follows it on
+        // the same page within two seconds is not lost.
+        if (now - (message.kind === "identifier" ? lastIdentifier : lastCapture) < MIN_GAP) continue;
+        if (message.kind === "identifier") lastIdentifier = now;
+        else lastCapture = now;
         send("form_capture", message);
         if (message.kind !== "identifier") {
           watch(rolesOf(group), message.capture_id, seen);
@@ -293,8 +305,29 @@ export function createCapture({ window, document, send, clock, forms }) {
 
   /** @param {string} how @param {any} node */
   const trigger = (how, node) => {
-    triggers.push({ how, node });
-    if (waiting === null) waiting = later(submitted, 0);
+    // Before the page's own handlers run: the groups and the fields the person could see, and which of them the trigger
+    // belongs to (nothing is read from the fields but their roles; the values are read in `submitted`). Only when
+    // something was typed here and a capture is not ruled out by the gap.
+    if (waiting === null) {
+      snapshot = null;
+      const now = clock.now();
+      if (typedAny && (now - lastCapture >= MIN_GAP || now - lastIdentifier >= MIN_GAP)) {
+        try {
+          snapshot = findGroups(document, { shown });
+        } catch {
+          // A page that breaks the walk gives no capture.
+        }
+      }
+      waiting = later(submitted, 0);
+    }
+    /** @type {any[]} */
+    let groups = [];
+    try {
+      groups = snapshot === null ? [] : snapshot.filter((group) => belongs({ how, node }, group));
+    } catch {
+      // A page that breaks the walk gives no capture.
+    }
+    triggers.push({ how, node, groups });
   };
 
   /**

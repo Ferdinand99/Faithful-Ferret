@@ -409,6 +409,290 @@ test("a_value_the_page_changed_after_the_last_trusted_input_is_not_captured", ()
   assert.equal(captures(again)[0].password, PASSWORD);
 });
 
+test("a_form_the_page_hides_in_its_own_submit_handler_is_captured", () => {
+  /** @type {Array<[string, (world: ReturnType<typeof createWorld>, f: ReturnType<typeof loginForm>) => void]>} */
+  const hides = [
+    ["display none on the form", (_w, f) => { f.form.style.display = "none"; }],
+    ["the form removed", (w, f) => { w.document.body.remove(f.form); }],
+    ["a cover over the form", (w) => {
+      const cover = addText(w.document, w.document.body, "div", "Signing in", { id: "cover" });
+      cover.rect = { left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 };
+    }],
+    ["aria-hidden on the form", (_w, f) => { f.form.setAttribute("aria-hidden", "true"); }],
+  ];
+  for (const [label, hide] of hides) {
+    const world = createWorld();
+    const f = loginForm(world);
+    f.form.addEventListener("submit", () => hide(world, f));
+    world.start();
+    world.type(f.user, "anna");
+    world.type(f.pass, PASSWORD);
+    world.submit(f.form);
+    world.settle();
+    assert.deepEqual(captures(world).map((c) => [c.kind, c.username, c.username_from, c.password]), [["login", "anna", "typed", PASSWORD]], label);
+  }
+
+  // A page that reveals a decoy password field with a value of its own in its submit handler, and hides the real one: the
+  // roles were given at the trigger, so the typed password is the one sent (a login), and a sign-up is not a join request.
+  const decoyLogin = createWorld();
+  const dl = loginForm(decoyLogin);
+  const trap = addInput(decoyLogin.document, dl.form, { type: "password", name: "password", id: "trap" }, { top: 220 });
+  trap.style.display = "none";
+  trap.value = "decoy-from-the-page";
+  dl.form.addEventListener("submit", () => { trap.style.display = "block"; dl.pass.style.display = "none"; });
+  decoyLogin.start();
+  decoyLogin.type(dl.user, "anna");
+  decoyLogin.type(dl.pass, PASSWORD);
+  decoyLogin.submit(dl.form);
+  decoyLogin.settle();
+  assert.deepEqual(captures(decoyLogin).map((m) => [m.kind, m.password]), [["login", PASSWORD]], "a decoy revealed in a login");
+  const decoySignup = createWorld();
+  const ds = signupForm(decoySignup);
+  const spare = addInput(decoySignup.document, ds.form, { type: "password", name: "extra", id: "spare", autocomplete: "new-password" }, { top: 280 });
+  spare.style.display = "none";
+  spare.value = "decoy-from-the-page";
+  ds.form.addEventListener("submit", () => { spare.style.display = "block"; ds.fresh.style.display = "none"; ds.again.style.display = "none"; });
+  decoySignup.start();
+  decoySignup.type(ds.user, "anna");
+  decoySignup.type(ds.fresh, PASSWORD);
+  decoySignup.type(ds.again, PASSWORD);
+  decoySignup.submit(ds.form);
+  decoySignup.settle();
+  assert.deepEqual(captures(decoySignup).map((m) => [m.kind, m.password]), [["signup", PASSWORD]], "a decoy revealed in a sign-up");
+
+  // The click on the button hides the form (a page that handles the click itself), and so does a key handler.
+  const clicked = createWorld();
+  const c = loginForm(clicked);
+  c.go.addEventListener("click", () => { c.form.style.display = "none"; });
+  clicked.start();
+  clicked.type(c.user, "anna");
+  clicked.type(c.pass, PASSWORD);
+  clicked.click(c.go);
+  clicked.settle();
+  assert.deepEqual(captures(clicked).map((m) => m.password), [PASSWORD], "hidden in the click");
+  const pressed = createWorld();
+  const e = loginForm(pressed);
+  e.pass.addEventListener("keydown", () => { e.form.style.display = "none"; });
+  pressed.start();
+  pressed.type(e.pass, PASSWORD);
+  pressed.enter(e.pass);
+  pressed.settle();
+  assert.deepEqual(captures(pressed).map((m) => m.password), [PASSWORD], "hidden in the key handler");
+
+  // The form was already hidden when the person submitted: it is not what the person saw, nothing is sent.
+  const before = createWorld();
+  const b = loginForm(before);
+  before.start();
+  before.type(b.user, "anna");
+  before.type(b.pass, PASSWORD);
+  b.form.style.display = "none";
+  before.submit(b.form);
+  before.settle();
+  assert.deepEqual(before.of("form_capture"), []);
+
+  // After the capture the hidden form is gone for the extension: two checks in a row, then form_gone, once.
+  const gone = createWorld();
+  const g = loginForm(gone);
+  g.form.addEventListener("submit", () => { g.form.style.display = "none"; });
+  gone.start();
+  gone.type(g.pass, PASSWORD);
+  gone.submit(g.form);
+  gone.settle();
+  const [capture] = captures(gone);
+  gone.clock.advance(6000);
+  assert.deepEqual(gone.of("form_gone"), [{ type: "form_gone", body: { capture_id: capture.capture_id } }]);
+});
+
+test("a_form_replaced_by_a_route_change_in_the_click_is_captured", () => {
+  const world = createWorld();
+  const f = loginForm(world);
+  f.go.addEventListener("click", () => {
+    // The page's router swaps the sign-in view for the signed-in one in the same turn.
+    world.document.body.remove(f.form);
+    addText(world.document, world.document.body, "h1", "Welcome back", { id: "home" });
+  });
+  world.start();
+  world.type(f.user, "anna");
+  world.type(f.pass, PASSWORD);
+  world.click(f.go);
+  world.settle();
+  assert.deepEqual(captures(world).map((m) => [m.kind, m.username, m.password]), [["login", "anna", PASSWORD]]);
+  world.clock.advance(6000);
+  assert.equal(world.of("form_gone").length, 1, "the replaced view is gone");
+  assert.equal(world.of("page_ready").length, 1, "no password form came back: only the start");
+
+  // A route that swaps in another sign-in form (a failed attempt drawn again) is not "gone": the form is back.
+  const again = createWorld();
+  const a = loginForm(again);
+  a.go.addEventListener("click", () => {
+    again.document.body.remove(a.form);
+    loginForm(again);
+  });
+  again.start();
+  again.type(a.pass, PASSWORD);
+  again.click(a.go);
+  again.settle();
+  assert.equal(captures(again).length, 1);
+  again.clock.advance(6000);
+  assert.deepEqual(again.of("form_gone"), []);
+  assert.equal(again.of("page_ready").length, 2);
+
+  // A route that empties the view the way `innerHTML = ""` does: each field and the button become a root of their own.
+  const bare = createWorld();
+  const view = bare.document.body.append(bare.document.createElement("div", { id: "view" }));
+  const bu = addInput(bare.document, view, { type: "text", name: "username", id: "u" }, { top: 100 });
+  const bp = addInput(bare.document, view, { type: "password", name: "password", id: "p" }, { top: 160 });
+  const bgo = addText(bare.document, view, "button", "Sign in", { type: "button" });
+  bgo.addEventListener("click", () => { for (const child of [...view.childNodes]) view.remove(child); });
+  bare.start();
+  bare.type(bu, "anna");
+  bare.type(bp, PASSWORD);
+  bare.click(bgo);
+  bare.settle();
+  assert.deepEqual(captures(bare).map((m) => [m.kind, m.username, m.password]), [["login", "anna", PASSWORD]]);
+
+  // A hash route: the page hides the sign-in view in a click, with no form around the fields.
+  const hash = createWorld();
+  const box = hash.document.body.append(hash.document.createElement("div", { id: "view" }));
+  const u = addInput(hash.document, box, { type: "text", name: "username", id: "u" }, { top: 100 });
+  const p = addInput(hash.document, box, { type: "password", name: "password", id: "p" }, { top: 160 });
+  const go = addText(hash.document, box, "button", "Sign in", { type: "button" });
+  go.addEventListener("click", () => { box.style.display = "none"; });
+  hash.start();
+  hash.type(u, "anna");
+  hash.type(p, PASSWORD);
+  hash.click(go);
+  hash.settle();
+  assert.deepEqual(captures(hash).map((m) => [m.kind, m.username, m.password]), [["login", "anna", PASSWORD]]);
+  hash.clock.advance(6000);
+  assert.equal(hash.of("form_gone").length, 1);
+});
+
+test("an_identifier_step_hidden_by_its_own_next_click_is_captured", () => {
+  const same = createWorld();
+  const form = same.document.body.append(same.document.createElement("form", { id: "login" }));
+  const step1 = form.append(same.document.createElement("div", { id: "step1" }));
+  const step2 = form.append(same.document.createElement("div", { id: "step2" }));
+  const who = addInput(same.document, step1, { type: "text", name: "identifier", autocomplete: "username" }, { top: 100 });
+  const next = addText(same.document, step1, "button", "Next", { type: "button" });
+  const pass = addInput(same.document, step2, { type: "password", name: "password", autocomplete: "current-password" }, { top: 160 });
+  const go = addText(same.document, step2, "button", "Sign in", { type: "submit" });
+  for (const el of [who, pass, next, go]) el.form = form;
+  step2.style.display = "none";
+  next.addEventListener("click", () => {
+    step1.style.display = "none";
+    step2.style.display = "block";
+  });
+  same.start();
+  same.type(who, "anna@example.net");
+  same.click(next);
+  same.settle();
+  assert.deepEqual(captures(same).map((c) => [c.kind, c.username, c.username_from, c.password, c.current_password]), [["identifier", "anna@example.net", "typed", null, null]]);
+  // The password step that follows on the same page, a moment later, is not lost to the gap after the name step.
+  same.clock.advance(300);
+  same.type(pass, PASSWORD);
+  same.click(go);
+  same.settle();
+  assert.deepEqual(captures(same).map((c) => [c.kind, c.password]), [["identifier", null], ["login", PASSWORD]]);
+
+  // The gap is per kind: a second step that asks for the name within two seconds gives nothing, a second form capture
+  // within two seconds gives nothing, and each is free again after two seconds.
+  const twice = createWorld();
+  const t = loginForm(twice);
+  const idForm = twice.document.body.append(twice.document.createElement("form", { id: "identify" }));
+  addText(twice.document, idForm, "h1", "Sign in");
+  const who2 = addInput(twice.document, idForm, { type: "text", name: "identifier", autocomplete: "username" }, { top: 400 });
+  who2.form = idForm;
+  const next2 = addText(twice.document, idForm, "button", "Next", { type: "submit" });
+  next2.form = idForm;
+  twice.start();
+  twice.type(who2, "anna@example.net");
+  twice.submit(idForm);
+  twice.settle();
+  twice.clock.advance(300);
+  twice.submit(idForm);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier"], "two identifier steps within two seconds");
+  twice.type(t.user, "anna");
+  twice.type(t.pass, PASSWORD);
+  twice.submit(t.form);
+  twice.settle();
+  twice.clock.advance(300);
+  twice.submit(t.form);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier", "login"], "a login right after an identifier step, and not twice");
+  twice.clock.advance(2001);
+  twice.submit(idForm);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier", "login", "identifier"], "an identifier step is free after two seconds");
+
+  // A name the page put there is still no step, even when the page hides the step in its own handler.
+  const quiet = createWorld();
+  const qform = quiet.document.body.append(quiet.document.createElement("form", { id: "identify" }));
+  addText(quiet.document, qform, "h1", "Sign in");
+  const q = addInput(quiet.document, qform, { type: "text", name: "identifier", autocomplete: "username" }, { top: 100 });
+  q.form = qform;
+  q.value = "anna@example.net";
+  const qnext = addText(quiet.document, qform, "button", "Next", { type: "submit" });
+  qnext.form = qform;
+  qform.addEventListener("submit", () => { qform.style.display = "none"; });
+  quiet.start();
+  quiet.submit(qform);
+  quiet.settle();
+  assert.deepEqual(quiet.sent, []);
+});
+
+test("a_value_the_page_changed_in_its_own_submit_handler_is_still_not_captured", () => {
+  // The page hides the form and also rewrites or empties the password in its own handler: the snapshot only decides what
+  // the person could see, the value must still be what the person typed.
+  /** @type {Array<[string, (f: ReturnType<typeof loginForm>, w: ReturnType<typeof createWorld>) => void]>} */
+  const changes = [
+    ["a value written by the page", (f) => { f.pass.value = "swapped-by-the-page"; }],
+    ["a value emptied", (f) => { f.pass.value = ""; }],
+    ["a value written again by a script", (f, w) => { f.pass.value = PASSWORD; w.fire(f.pass, "input", { trusted: false }); }],
+  ];
+  for (const [label, change] of changes) {
+    const world = createWorld();
+    const f = loginForm(world);
+    f.form.addEventListener("submit", () => {
+      f.form.style.display = "none";
+      change(f, world);
+    });
+    world.start();
+    world.type(f.user, "anna");
+    world.type(f.pass, PASSWORD);
+    world.submit(f.form);
+    world.settle();
+    world.clock.advance(6000);
+    assert.deepEqual(world.of("form_capture"), [], label);
+    assert.deepEqual(world.of("form_gone"), [], label);
+  }
+
+  // The same through a click handler, with the form replaced.
+  const clicked = createWorld();
+  const c = loginForm(clicked);
+  c.go.addEventListener("click", () => {
+    c.pass.value = "swapped-by-the-page";
+    clicked.document.body.remove(c.form);
+  });
+  clicked.start();
+  clicked.type(c.user, "anna");
+  clicked.type(c.pass, PASSWORD);
+  clicked.click(c.go);
+  clicked.settle();
+  assert.deepEqual(clicked.of("form_capture"), []);
+
+  // A page that fills a form the person never typed a password into cannot make it count.
+  const planted = createWorld();
+  const p = loginForm(planted);
+  p.form.addEventListener("submit", () => { p.form.style.display = "none"; p.pass.value = "planted"; });
+  planted.start();
+  planted.type(p.user, "anna");
+  planted.submit(p.form);
+  planted.settle();
+  assert.deepEqual(planted.of("form_capture"), []);
+});
+
 test("a_value_set_by_the_page_in_a_keydown_handler_is_not_captured", () => {
   // The page cancels each key and writes the character itself (so no input event comes), then the person submits.
   const world = createWorld();
