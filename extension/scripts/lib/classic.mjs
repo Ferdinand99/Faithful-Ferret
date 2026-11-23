@@ -32,6 +32,13 @@
 // Not allowed: `import()`, `import.meta`, default or namespace imports,
 // re-exports, `export default`. The output is compiled (not run) once, so a
 // bundle that does not parse fails the build and not the injection.
+//
+// `slim` (the capture script, which runs in every https page and has a size
+// budget): the modules are joined without the lines that only explain them.
+// Comments that stand on lines of their own, the indentation of every line
+// and blank lines are left out. Code is never touched. A line that ends in a
+// backslash (a string continued on the next line, where indentation counts) is
+// refused, and so is a literal that runs over several lines (a template literal).
 import { posix } from "node:path";
 import vm from "node:vm";
 import { importsOf } from "./imports.mjs";
@@ -39,6 +46,10 @@ import { importsOf } from "./imports.mjs";
 /** The module the content script starts from, and the file that is written. */
 export const CONTENT_ENTRY = "content/entry.mjs";
 export const CONTENT_BUNDLE = "content/fill.inject.js";
+/** The capture script: the same joiner, another entry, and the size budget of a script that runs in every page. */
+export const CAPTURE_ENTRY = "content/capture.entry.mjs";
+export const CAPTURE_BUNDLE = "content/capture.inject.js";
+export const CAPTURE_MAX_BYTES = 40 * 1024;
 
 /**
  * The files a content script may be built from: its own folder and the message
@@ -77,6 +88,65 @@ function checkKeywordLines(path, source) {
   }
 }
 
+/**
+ * The source without the lines that only explain it (see `slim` in the head of the file).
+ * @param {string} path @param {string} source
+ */
+export function slimSource(path, source) {
+  const lines = source.split("\n");
+  /** @type {number[]} */
+  const starts = [];
+  for (let at = 0, i = 0; i < lines.length; at += lines[i].length + 1, i += 1) starts.push(at);
+  const lineAt = (/** @type {number} */ offset) => {
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if (starts[mid] <= offset) low = mid;
+      else high = mid - 1;
+    }
+    return low;
+  };
+  /** Lines that are only a comment. @type {Set<number>} */
+  const dropped = new Set();
+  /** Lines of a multi-line comment that shares a line with code: kept exactly as they are. @type {Set<number>} */
+  const verbatim = new Set();
+  for (const match of source.matchAll(TOKEN)) {
+    const text = match[0];
+    if (match[1]) continue;
+    const start = /** @type {number} */ (match.index);
+    const end = start + text.length;
+    const first = lineAt(start);
+    const last = lineAt(Math.max(start, end - 1));
+    if (!text.startsWith("//") && !text.startsWith("/*")) {
+      // A literal that runs over lines (a template literal, or a regular expression that made the lexer open one) is
+      // not slimmed: its inner lines and its trailing spaces are program text, and this lexer is not exact enough to
+      // be trusted inside one. No module of the capture script has one; a module that gains one fails the build.
+      if (first !== last) throw new Error(`content script: ${path}: line ${first + 1} has a literal that runs over several lines, which the slim join does not handle`);
+      continue;
+    }
+    const alone = source.slice(starts[first], start).trim() === "" && source.slice(end, starts[last] + lines[last].length).trim() === "";
+    for (let i = first; i <= last; i += 1) {
+      if (alone) dropped.add(i);
+      else if (i > first) verbatim.add(i);
+    }
+  }
+  /** @type {string[]} */
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (dropped.has(i)) continue;
+    if (verbatim.has(i)) {
+      out.push(lines[i]);
+      continue;
+    }
+    if (/\\\s*$/.test(lines[i])) throw new Error(`content script: ${path}: line ${i + 1} ends in a backslash`);
+    // Only the indentation goes: spaces at the end of a line can belong to a literal.
+    const line = lines[i].trimStart();
+    if (line.trim() !== "") out.push(line);
+  }
+  return out.join("\n");
+}
+
 /** @param {string} list the inside of `{ ... }` @param {string} where @returns {string[]} */
 function names(list, where) {
   const out = list.split(",").map((n) => n.trim()).filter((n) => n !== "");
@@ -90,9 +160,10 @@ function names(list, where) {
  * @param {string} entry the entry module's path in the package
  * @param {Map<string, Buffer>} files path -> bytes
  * @param {(path: string) => boolean} [allowed]
+ * @param {{ slim?: boolean, name?: string }} [options] `slim`: see the head of the file; `name`: the file the script is compiled as
  * @returns {string} the classic script
  */
-export function classicScript(entry, files, allowed = contentMayInclude) {
+export function classicScript(entry, files, allowed = contentMayInclude, options = {}) {
   /** @type {Array<{ path: string, variable: string, code: string, exports: string[] }>} */
   const order = [];
   /** @type {Map<string, { variable: string, exports: string[] }>} */
@@ -118,7 +189,7 @@ export function classicScript(entry, files, allowed = contentMayInclude) {
     const specifiers = [];
     /** @type {Array<{ target: string, wanted: string[] }>} */
     const wanted = [];
-    let code = source.replace(IMPORT, (_, list, __, specifier) => {
+    let code = (options.slim ? slimSource(path, source) : source).replace(IMPORT, (_, list, __, specifier) => {
       if (!/^\.\.?\//.test(specifier)) throw new Error(`content script: ${path} imports ${specifier} (only relative imports)`);
       specifiers.push(specifier);
       wanted.push({
@@ -186,7 +257,7 @@ export function classicScript(entry, files, allowed = contentMayInclude) {
     "",
   ].join("\n");
   try {
-    new vm.Script(text, { filename: CONTENT_BUNDLE });
+    new vm.Script(text, { filename: options.name ?? CONTENT_BUNDLE });
   } catch (error) {
     throw new Error(`content script: the joined script does not parse: ${/** @type {Error} */ (error).message}`);
   }

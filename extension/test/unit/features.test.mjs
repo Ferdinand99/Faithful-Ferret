@@ -4,6 +4,15 @@
 // serves none of the feature's messages (a handler for one only refuses), and
 // shows none of its controls.
 //
+// The rule for the code of the feature, which this test holds it to:
+//
+// - a handler of the feature checks `FEATURES.save` before anything else and, when the feature is off, throws an error
+//   whose `code` is `not_available`, for every message type it serves (not only the first), as a handler that is not
+//   there would answer;
+// - every control of the feature, in a page or built by a page module, carries `data-feature="save"`, and a page
+//   module that builds one imports `shared/features.mjs`;
+// - every file, message type and core operation of the feature is added to SAVE_PATHS below, in the change that adds it.
+//
 // The lists in SAVE_PATHS name what belongs to the feature. Each change that adds
 // a file, a message type or a control of the feature adds it there.
 import assert from "node:assert/strict";
@@ -18,7 +27,7 @@ import { makeRoot } from "./buildHelpers.mjs";
 /** What belongs to the `save` feature. */
 const SAVE_PATHS = Object.freeze({
   /** Package files of the feature. */
-  files: Object.freeze(["content/capture.inject.js"]),
+  files: Object.freeze(["content/capture.inject.js", "content/capture.mjs", "content/capture.entry.mjs"]),
   /** Message types of the feature, from a content script and from Ferret's pages. */
   types: Object.freeze([
     "form_capture", "form_gone", "page_ready",
@@ -33,14 +42,17 @@ const SAVE_PATHS = Object.freeze({
   controlInCode: /["']data-feature["']\s*:\s*["']save["']|data-feature=\\?["']save/,
 });
 
-/** The refusal of a handler whose feature is off (the router's own `not_available`). */
-const refuses = async (/** @type {any} */ handler) => {
-  try {
-    await handler.handle({}, { channel: handler.channel, type: handler.types[0], state: () => "unlocked" });
-  } catch (error) {
-    return /** @type {any} */ (error)?.code === "not_available";
+/** The refusal of a handler whose feature is off (the router's own `not_available`): for each of the types it serves. */
+const refuses = async (/** @type {any} */ handler, /** @type {string[]} */ types = handler.types) => {
+  for (const type of types) {
+    try {
+      await handler.handle({}, { channel: handler.channel, type, state: () => "unlocked" });
+      return false;
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== "not_available") return false;
+    }
   }
-  return false;
+  return types.length > 0;
 };
 
 /**
@@ -89,7 +101,7 @@ async function savePathsIn(dir, files) {
   for (const path of handlers) {
     const handler = (await import(pathToFileURL(join(dir, ...path.split("/"))).href)).default;
     const served = (handler?.types ?? []).filter((/** @type {string} */ type) => SAVE_PATHS.types.includes(type));
-    if (served.length > 0 && !(await refuses(handler))) found.push(`handler ${path} serves ${served.join(", ")}`);
+    if (served.length > 0 && !(await refuses(handler, served))) found.push(`handler ${path} serves ${served.join(", ")}`);
   }
   for (const [name, answer] of Object.entries(await coreOpsIn(dir))) {
     if (answer !== "refused" && answer !== "absent") found.push(`core op ${name} answers ${answer}`);
@@ -189,6 +201,18 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
       "};",
       "",
     ].join("\n"),
+    "src/background/handlers/mixedProbe.handler.mjs": [
+      'import { FEATURES } from "../../shared/features.mjs";',
+      "export default {",
+      '  types: ["offer_update", "offer_dismiss"],',
+      '  channel: "ui",',
+      "  handle: async (_body, ctx) => {",
+      '    if (!FEATURES.save && ctx.type === "offer_update") throw Object.assign(new Error("not_available"), { code: "not_available" });',
+      "    return { ok: true };",
+      "  },",
+      "};",
+      "",
+    ].join("\n"),
     "src/pages/probe.html": '<!doctype html><button data-feature="save" data-role="probe">x</button>\n',
     "src/pages/probeView.mjs": 'export const control = { "data-feature": "save" };\n',
     "src/pages/probeGated.mjs": 'import { FEATURES } from "../shared/features.mjs";\nexport const control = FEATURES.save ? { "data-feature": "save" } : null;\n',
@@ -201,6 +225,7 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
       "control in pages/probe.html",
       "control in pages/probeView.mjs without FEATURES",
       "file content/capture.inject.js",
+      "handler background/handlers/mixedProbe.handler.mjs serves offer_update, offer_dismiss",
       "handler background/handlers/offerProbe.handler.mjs serves offer_save",
     ]);
     // With the feature on, the gated handler serves its type: it refuses only because the feature is off.

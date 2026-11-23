@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 440px; }
+label { display: block; margin: 8px 0 2px; }
+input, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+button { width: auto; }
+section { margin: 0; }
+.hot { color: #a00; }
+</style>
+</head>
+<body>
+<!-- Not a case of the corpus: the page of the capture script's cost test on a page that changes all the time. A
+     sign-in form and about two thousand elements, of which every tenth of a second some change their text or class
+     and a few sections are removed and added, as a busy single-page app does. -->
+<h1>Sign in</h1>
+<form id="login" method="post" action="/static/login-done.html" onsubmit="event.preventDefault()">
+<label for="u">User name</label>
+<input id="u" name="username" type="text" autocomplete="username">
+<label for="p">Password</label>
+<input id="p" name="password" type="password" autocomplete="current-password">
+<button id="go" type="submit">Sign in</button>
+</form>
+<main id="app"></main>
+<script>
+var app = document.getElementById("app");
+function makeSection(i) {
+  var section = document.createElement("section");
+  section.className = "s";
+  for (var j = 0; j < 4; j += 1) {
+    var p = document.createElement("p");
+    var a = document.createElement("a");
+    a.href = "#" + i + "-" + j;
+    a.textContent = "item " + i + "." + j;
+    p.appendChild(a);
+    section.appendChild(p);
+  }
+  return section;
+}
+for (var i = 0; i < 225; i += 1) app.appendChild(makeSection(i));
+var tick = 0;
+setInterval(function () {
+  tick += 1;
+  var links = app.getElementsByTagName("a");
+  for (var k = 0; k < 40; k += 1) {
+    var link = links[(tick * 7 + k * 13) % links.length];
+    link.textContent = "item " + tick + "." + k;
+    link.className = tick % 2 === 0 ? "hot" : "";
+  }
+  if (tick % 5 === 0) {
+    app.removeChild(app.firstChild);
+    app.appendChild(makeSection(1000 + tick));
+  }
+}, 100);
+</script>
+</body>
+</html>

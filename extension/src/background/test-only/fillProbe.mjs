@@ -36,6 +36,9 @@ export function listen({ runtime }) {
   });
 }
 
+/** The files a test may inject by name: the capture script and the two files that time it. */
+const INJECTABLE = new Set(["content/capture.inject.js", "test/capture-meter-start.js", "test/capture-meter-end.js"]);
+
 /** @param {unknown} n */
 const index = (n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
@@ -71,6 +74,23 @@ export function onConnect(port, { runtime }) {
         // Nobody listens in a page that has no engine yet: the browser says so.
         const delivered = await browser.tabs.sendMessage(a.tabId, raw, { frameId: a.frameId }).then(() => true, () => false);
         port.postMessage({ id, ok: true, value: { delivered } });
+      } else if (message?.op === "inject_files") {
+        // Files of the test build into one frame, in one call (the capture script, between the two files that time it).
+        if (!index(a.tabId) || !index(a.frameId)) throw new Error("bad_target");
+        if (!Array.isArray(a.files) || a.files.length === 0 || !a.files.every((/** @type {unknown} */ f) => typeof f === "string" && INJECTABLE.has(f))) throw new Error("bad_files");
+        const results = await browser.scripting.executeScript({ target: { tabId: a.tabId, frameIds: [a.frameId] }, files: a.files.map((/** @type {string} */ f) => `/${f}`) });
+        port.postMessage({ id, ok: true, value: { loaded: Array.isArray(results) && results.length === 1 && results[0]?.error === undefined } });
+      } else if (message?.op === "meter") {
+        // What capture-meter-start.js collected, read with a function (the meter lives in the content script's world).
+        if (!index(a.tabId) || !index(a.frameId)) throw new Error("bad_target");
+        const results = await browser.scripting.executeScript({
+          target: { tabId: a.tabId, frameIds: [a.frameId] },
+          func: () => {
+            const m = /** @type {any} */ (globalThis).__ferretMeter;
+            return m === undefined ? null : { ms: m.ms, calls: m.calls, listeners: m.listeners, timers: m.timers, startMs: m.startMs, now: performance.now() - m.startedAt };
+          },
+        });
+        port.postMessage({ id, ok: true, value: results?.[0]?.result ?? null });
       } else if (message?.op === "reports") {
         port.postMessage({ id, ok: true, value: reports });
       } else if (message?.op === "clear") {
