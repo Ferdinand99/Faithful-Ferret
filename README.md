@@ -21,9 +21,10 @@
 > session has ended (see [What works today](#what-works-today)). v0.8.0 added a password generator, a comparison of a
 > stored field with a given value, and password history to the core. v0.9.0 shows the previous passwords of an item in
 > the web vault, makes the side menu's "Import and export" reach both pages, and teaches the Firefox extension to
-> work out what a form is for before it fills. No screen uses the generator or the field comparison yet. The extension
-> fills logins from its popup but cannot save new passwords yet (that is coming), and it is not on the Firefox add-ons
-> store. Saving passwords and the password generator in the extension are in progress, then a health check. Ferret is a
+> work out what a form is for before it fills. <!-- TODO(release): name the gate release and its extension version here, and keep v0.9.0 above only as the last release before it. -->
+> The Firefox extension now also offers to save a new password or update a changed one, and has a password generator
+> in its popup; the web vault has no generator screen yet. The extension is not on the Firefox add-ons store. A health
+> check is next. Ferret is a
 > single-author project and is **not for real passwords yet**. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
@@ -91,8 +92,9 @@ These are in v0.9.0 and are tested on a test instance. All of it is pre-1.0, and
 - **Firefox extension.** See [below](#firefox-extension).
 - **Generator, field comparison and password history, in the core.** v0.8.0 added these to the shared Rust core and
   its WebAssembly package. They are tested with unit tests and the shared test vectors. The web vault shows the
-  password history (see above) since v0.9.0, but **no screen of the web vault or the extension uses the generator or
-  the field comparison yet**, so you cannot generate a password there.
+  password history (see above) since v0.9.0. The Firefox extension uses all three (see [below](#firefox-extension)):
+  its generator tab makes passwords with the generator, and its offers to save or update a password use the field
+  comparison and the history. **The web vault has no generator screen yet**, so you cannot generate a password there.
   - *Generator.* A password of 4 to 128 characters from the lower-case letters, upper-case letters, digits and the
     symbols `!#$%&*+-.:=?@^_~` that you choose, with 0 to 8 characters required from each chosen class and an option
     to leave out the look-alike characters `Il1|O0o`. Or a passphrase of 3 to 20 words from the
@@ -113,9 +115,10 @@ These are in v0.9.0 and are tested on a test instance. All of it is pre-1.0, and
 
 ### Firefox extension
 
-The first version of the Firefox extension came in v0.7.0. It needs Firefox 153 or newer and is early: it fills logins
-from its popup, but it cannot save new passwords, make passwords or handle passkeys yet. It is **not on the Firefox
-add-ons store**. A build that Mozilla has signed as an unlisted add-on is made by a manually started workflow, and the
+The first version of the Firefox extension came in v0.7.0. It needs Firefox 153 or newer and is early: it fills
+logins from its popup, offers to save and update passwords, and makes passwords, but it cannot handle passkeys yet.
+<!-- TODO(release): say from which extension version the saving and the generator are in. -->
+It is **not on the Firefox add-ons store**. A build that Mozilla has signed as an unlisted add-on is made by a manually started workflow, and the
 release downloads of v0.9.0 do not include it; the signed builds are on their own releases, named `extension-v` and the
 version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how that build is made, and
 [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the checks.
@@ -147,6 +150,48 @@ version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how 
   asks only for a one-time code gets the code. A sign-up or password reset form, a card form and a PIN field get
   nothing: a stored password never goes into a field that sets a new password, a card's security code, a PIN or a
   one-time code, even when the page makes that field a password field.
+<!-- TODO(matrix): add the measured fill and capture rates of the final test matrix here, once it has run (corpus, hold-out set, both Firefox channels). Do not state a rate that the report does not show. -->
+- **Offers to save and update passwords.** This is off until you turn on "Offer to save and update passwords" on the
+  extension's settings page. Turning it on asks Firefox for access to `https` pages, because a small script has to run
+  in them to notice a form that is submitted; turning it off gives that access back. Pages that were already open
+  notice passwords only after a reload. The script changes nothing in the page and sends nothing until a form with a
+  password field is submitted. It reads only what you typed or pasted yourself (or what Firefox filled in on your
+  behalf), only in fields you can see, and never on `http` pages or in frames that do not belong to the same site as
+  the page. A sign-in is offered only after it seems to have worked: the page moved on and shows no sign-in form again.
+  A sign-up, change or reset form is offered a few seconds after you stop typing.
+  - *Where it is shown.* Only in Ferret's popup and as a number on its toolbar button, never in the web page. By
+    default the popup opens by itself on the page you are looking at when there is an offer, if Firefox lets an
+    extension do that; a setting turns this off, and the number on the button stays. A click on the card is ignored for
+    a moment after it appears, so a click meant for the page cannot answer it.
+  - *Save or update.* Ferret's core decides, by comparing the typed password with your saved logins without
+    revealing them. A new login is saved with the site's address (the host, no path), and you can change its name, user
+    name and folder on the card. A changed password is offered as an update only for a saved login that matches the
+    host or the exact address; the update changes the password, keeps everything else and keeps the old password under
+    "Previous passwords" (up to five). A login that matches only by the site's main domain is listed apart and updated
+    only if you pick it. If more than one login could be the one, you pick from a list. The card also names up
+    to three other logins that use the same password. The password is hidden on the card until you press "Show
+    password".
+  - *Nothing without your click.* A save or an update happens only when you press the button on the card, and each
+    offer can be used once. "Not now" drops the offer, and "Never for this site" adds the site to a list on the
+    settings page that you can edit (from a private window the choice lasts only until the browser closes). Private
+    windows work like other windows, if you have allowed the extension in them.
+  - *What is kept.* What you typed is kept only in the memory of the extension's background page, for at most five
+    minutes, and is dropped when the tab closes and whenever the vault locks (a lock by hand, by the timer, when the
+    system is idle or on a restart). It is never written to the browser's storage or a log. Copies that Firefox's
+    JavaScript engine makes cannot be wiped; the copy in the core is.
+  - *A change in two places.* If a login was changed on this device and somewhere else, the popup tells you what
+    differs (passwords are not shown) and you keep one of the two versions; nothing is merged.
+- **Password generator.** The popup has a "Generator" part, next to "Vault" and "Settings" in the bar at the bottom of
+  the popup (a "Health" item is there too, marked "Coming soon"). It makes a password (4 to 128 characters from the
+  classes you choose, 20 with all four by default, with an option to leave out look-alike characters) or a passphrase
+  from the [EFF large word list](https://www.eff.org/dice) (3 to 20 words, 5 by default, with a separator, capital
+  first letters and an optional number). The strength is shown as an estimate in bits. "Copy" puts the value on the
+  clipboard, which Ferret clears after 30 seconds. "Fill in the page" puts it into the new-password fields of a sign-up,
+  change or reset form on the page you are on, and into nothing else: never into a field for a password you already
+  have and never into a sign-in form. It fills only when the password has at least 8 characters and fits the field. When
+  it has filled a form, the card to save the new login appears at once. A value you made but did not save stays only in
+  the memory of the background page until the vault locks or 15 minutes pass. The options you choose are remembered;
+  the value never is. The credit for the word list is on the settings page.
 - **Automatic updates.** A signed release build from version 0.7.1 on carries the address of an update list, and
   Firefox installs a newer signed version that the list names, without the add-ons store. Builds before 0.7.1 never
   update themselves; version 0.7.1 is installed by hand once.
@@ -218,8 +263,10 @@ Security is the top priority of the project, and this is how the design handles 
 - **A compromised device is out of reach.** Malware on a device that has the vault unlocked can read what you can
   read.
 - **Zero-knowledge has a price.** If every unlock and recovery method is lost, the data cannot be recovered.
-- **The extension is early.** It is a first version for Firefox only, outside the add-ons store, and it cannot save new
-  passwords yet. It has had no external review either.
+- **The extension is early.** It is a first version for Firefox only, outside the add-ons store. Its detection of new
+  and changed passwords is a set of rules that was tested against a collection of test forms, not against every site:
+  some forms are not noticed, and you can always save a login in the web vault. It has had no external review either.
+  <!-- TODO(matrix): refer to the measured numbers once the final matrix report is in. -->
 - **Recovery has limits in this version.** A new browser needs both pages of the sheet, and the secret key cannot be
   changed. After a new recovery key, the old one works again only if the server is restored from a backup made before
   the renewal. An export or backup made before a master password change still opens with the old password. The
@@ -267,8 +314,8 @@ The steps are the order of work, not cuts in scope, and there are no dates:
    use the generator or the field comparison yet.
 5. The browser extension and the iOS and Android apps. The first Firefox extension is done (v0.7.0): sign-in, sync,
    suggestions and fill from the popup, copy, and auto-lock; since v0.9.0 it also checks what a form is for before it
-   fills. Saving new and changed passwords and the password generator in the extension are in progress, then a health
-   check and the rest of the 1.0 list. The apps are later.
+   fills. <!-- TODO(release): version --> It now also offers to save new and changed passwords and has a password
+   generator in its popup. A health check and the rest of the 1.0 list are next. The apps are later.
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).

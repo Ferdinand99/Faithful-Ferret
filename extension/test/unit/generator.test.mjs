@@ -239,7 +239,7 @@ test("copy_of_a_generated_value_uses_the_30_second_clear", async () => {
 test("a_build_without_the_feature_refuses_every_generator_type_and_has_no_generator_operation", async () => {
   const env = makeRoot();
   try {
-    const release = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: env.out, manifest: "mv2", variant: "release" });
+    const release = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: env.out, manifest: "mv2", variant: "test", features: [] });
     const { pathToFileURL } = await import("node:url");
     const load = (/** @type {string} */ path) => import(pathToFileURL(join(release.dir, ...path.split("/"))).href);
     const handler = (await load("background/handlers/generator.handler.mjs")).default;

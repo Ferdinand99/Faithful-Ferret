@@ -197,13 +197,13 @@ test("turning_on_offer_to_save_asks_for_https_access_in_the_settings_tab_and_exp
   assert.match(nb["capture.reload"], /laster dem på nytt/);
 });
 
-test("a_release_build_with_save_off_shows_the_eff_word_list_credit_on_the_settings_page", async () => {
-  // The list is in the WASM file of every package, so the credit is in every build: no flag, a page the settings tab shows.
+test("the_eff_word_list_credit_is_on_the_settings_page_with_saving_on_and_off", async () => {
+  // The list is in the WASM file of every package, so the credit is in every build, with the feature on or off: no flag,
+  // a page the settings tab shows.
   const env = makeRoot();
   try {
-    for (const variant of /** @type {const} */ (["release", "test"])) {
-      const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, variant), manifest: "mv2", variant, features: [] });
-      assert.deepEqual(result.features, [], "saving is off");
+    for (const [name, variant, features] of /** @type {[string, "release" | "test", string[] | undefined][]} */ ([["release", "release", undefined], ["test", "test", undefined], ["off", "test", []]])) {
+      const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, name), manifest: "mv2", variant, ...(features ? { features } : {}) });
       const settings = result.files.get("pages/settings.mjs")?.toString("utf8") ?? "";
       assert.ok(settings.includes("createCredits(texts)"), "the page shows the credits");
       assert.equal(settings.includes("features.mjs"), false, "the settings page asks no flag");
