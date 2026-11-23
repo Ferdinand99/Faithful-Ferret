@@ -380,7 +380,7 @@ async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) 
       }
     }
   };
-  let tabId = await pressed(() => w.visit(caseUrl(c, w.server)));
+  let tabId = await pressed(() => w.visit(caseUrl(c, w.server), { retry: false }));
   // A frame may load after the page does.
   if (c.frame) await sleep(1200);
   await beforePrepare(tabId);

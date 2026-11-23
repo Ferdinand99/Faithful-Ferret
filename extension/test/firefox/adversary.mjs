@@ -276,14 +276,24 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   };
 
   /**
-   * Loads a page in the page tab and presses the real shortcut there (activeTab). Returns the tab's id.
-   * @param {string} url
+   * Loads a page in the page tab and presses the real shortcut there (activeTab). Returns the tab's id. The real shortcut
+   * goes to the tab the window shows, and now and then that is still the bridge tab: it is pressed again (three times at
+   * most) unless `retry` is false (the matrix counts those retries itself). Any other failure fails at once.
+   * @param {string} url @param {{ retry?: boolean }} [options]
    */
-  const visit = async (url) => {
+  const visit = async (url, { retry = true } = {}) => {
     await session.switchTo(pageTab);
     await session.navigate(url);
     await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
-    return pressShortcutOn(url);
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await pressShortcutOn(url);
+      } catch (error) {
+        const toBridge = /gave no activeTab/.test(String(error)) && /"tabUrl":"moz-extension:/.test(String(error));
+        if (!retry || attempt >= 3 || !toBridge) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
   };
 
   // The entries, with the sync engine of the extension (the release writes no items).
