@@ -153,6 +153,36 @@ test("fill_on_the_fixture_login_page_puts_both_values_in_and_the_page_sees_them"
       const hidden = await session.waitFor(async () => (await probe("reports")).find((r) => r.type === "fill_result"), 10_000, "the hidden refusal");
       assert.deepEqual(hidden.body, { request_id: "req-fill-4", ok: false, reason: "hidden" });
       assert.equal(await value("password"), "");
+
+      // Covers that a click passes through or that paint outside their box, which hit testing does not see.
+      const answerTo = async (/** @type {string} */ requestId) => {
+        await probe("clear");
+        await probe("fill", { tabId, frameId: 0, requestId, field: "password", value: PASSWORD, origin, frameUrl: url });
+        const found = await session.waitFor(async () => (await probe("reports")).find((r) => r.type === "fill_result"), 10_000, "the answer");
+        return found.body;
+      };
+      /** Starts a request with one extra element on the page and answers the fill of the password. */
+      const withExtra = async (/** @type {string} */ requestId, /** @type {string} */ css) => {
+        await session.content(() => {
+          document.getElementById("password").value = "";
+          document.getElementById("password").style.opacity = "1";
+          document.getElementById("extra")?.remove();
+        });
+        await probe("inject", { tabId, frameId: 0, requestId });
+        await session.content((/** @type {string} */ style) => {
+          const field = document.getElementById("password").getBoundingClientRect();
+          const extra = document.createElement("div");
+          extra.id = "extra";
+          extra.style.cssText = style.replace("FIELD", `left:${field.left}px;top:${field.top}px;width:${field.width}px;height:${field.height}px`);
+          document.body.append(extra);
+        }, css);
+        return answerTo(requestId);
+      };
+      assert.deepEqual(await withExtra("req-fill-5", "position:absolute;FIELD;pointer-events:none;background:#fff"), { request_id: "req-fill-5", ok: false, reason: "covered" }, `${channel}: a cover that clicks pass through`);
+      assert.deepEqual(await withExtra("req-fill-6", "position:absolute;left:0;top:0;width:0;height:0;box-shadow:0 0 0 9999px #fff"), { request_id: "req-fill-6", ok: false, reason: "covered" }, `${channel}: a large box-shadow`);
+      assert.deepEqual(await withExtra("req-fill-7", "position:absolute;left:0;top:0;width:1px;height:1px;outline:9999px solid #fff"), { request_id: "req-fill-7", ok: false, reason: "covered" }, `${channel}: a large outline`);
+      assert.deepEqual(await withExtra("req-fill-8", "position:absolute;FIELD;pointer-events:none;color:#888"), { request_id: "req-fill-8", ok: true }, `${channel}: a floating label has no background`);
+      assert.equal(await value("password"), PASSWORD);
     } finally {
       await session.quit();
     }

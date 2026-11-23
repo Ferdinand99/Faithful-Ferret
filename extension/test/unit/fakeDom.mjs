@@ -59,6 +59,30 @@ export class FakeNode {
     this.seq = sequence++;
   }
 
+  /**
+   * The position of `other` relative to this node, as the browser's bit set: 1 not in the same tree, 2 it comes
+   * before, 4 it comes after, 8 it contains this node, 16 it is inside this node.
+   * @param {any} other
+   */
+  compareDocumentPosition(other) {
+    if (other === this) return 0;
+    const chain = (/** @type {any} */ node) => {
+      /** @type {any[]} */
+      const out = [];
+      for (let n = node; n; n = n.parentNode ?? n.host ?? null) out.unshift(n);
+      return out;
+    };
+    const mine = chain(this);
+    const theirs = chain(other);
+    if (mine[0] !== theirs[0]) return 1;
+    let i = 0;
+    while (i < mine.length && i < theirs.length && mine[i] === theirs[i]) i += 1;
+    if (i === mine.length) return 4 | 16;
+    if (i === theirs.length) return 2 | 8;
+    const order = mine[i - 1].childNodes ?? [];
+    return order.indexOf(theirs[i]) > order.indexOf(mine[i]) ? 4 : 2;
+  }
+
   get children() {
     return this.childNodes;
   }
