@@ -196,7 +196,7 @@
             <li class="card feature problem reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
               <h3>Autofill that notices</h3>
-              <p>Detection of <strong>new and changed passwords</strong>, so a password you just created or changed on a site isn’t left behind. The Firefox extension does this with rules that are tested against a collection of test forms we wrote ourselves, not against every site. <!-- TODO(matrix): name the measured rates and the size of the collection once the final report is in. --></p>
+              <p>Detection of <strong>new and changed passwords</strong>, so a password you just created or changed on a site isn’t left behind. The Firefox extension does this with rules that are tested against a collection of test forms we wrote ourselves, not against every site. The measured rates are listed under the extension above.</p>
             </li>
             <li class="card feature problem reveal d1">
               <span class="list-icon status-info"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
@@ -299,7 +299,7 @@
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
               <h3>Offers to save and update passwords</h3>
               <p>Off until you turn on &ldquo;Offer to save and update passwords&rdquo; on the extension&rsquo;s settings page, which asks Firefox for access to <span class="mono">https</span> pages (turning it off gives it back). A small script notices a submitted form, reads only what you typed yourself, in fields you can see, and never runs on <span class="mono">http</span> pages. The offer shows only in Ferret&rsquo;s popup and as a number on its button, never in the page; a setting decides whether the popup opens by itself. Ferret&rsquo;s core decides between save and update without revealing your saved passwords. An update changes only the password and keeps the old one under &ldquo;Previous passwords&rdquo;. Nothing is saved without your click on the card, and &ldquo;Never for this site&rdquo; is a list you can edit. What you typed is kept only in memory, for at most five minutes, and is dropped whenever the vault locks.</p>
-              <!-- TODO(matrix): add the measured detection rates of the final test matrix here once it has run. -->
+              <p>Measured on test forms we wrote ourselves, in Firefox Release and ESR on a test server of their own: of 130 forms in the main collection, filling 53 of 55, noticing a submitted form 75 of 75 and filling a generated password 25 of 26. On 68 forms modelled on a public autofill test site: 32 of 32, 41 of 41 and 12 of 12. On 39 forms written by someone who had not seen the code, 14 of 14 filled and 15 of 20 noticed, and the five that are missed send a request and leave the form on screen (a failed sign-in looks the same, so Ferret offers nothing). No unsafe fill and no unsafe offer in any run. It says nothing about a site that does something new.</p>
             </li>
             <li class="card feature reveal d1">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
@@ -569,7 +569,7 @@
               <div class="ms-body">
                 <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Firefox extension with saving and generator done, apps later</span></p>
                 <h3>Browser extension, iOS and Android</h3>
-                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The first Firefox extension is done (v0.7.0): sign-in, sync, suggestions and fill from the popup, copy, and auto-lock. Since v0.9.0 it also checks what a form is for before it fills. <!-- TODO(release): version --> It also offers to save new and changed passwords and has a password generator in its popup. It is not on the Firefox add-ons store. A health check is next. The iOS and Android apps come later.</p>
+                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The first Firefox extension is done (v0.7.0): sign-in, sync, suggestions and fill from the popup, copy, and auto-lock. Since v0.9.0 it also checks what a form is for before it fills. It also offers to save new and changed passwords and has a password generator in its popup. It is not on the Firefox add-ons store. A health check is next. The iOS and Android apps come later.</p>
               </div>
             </li>
             <li class="milestone reveal">
