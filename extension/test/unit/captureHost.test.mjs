@@ -124,7 +124,7 @@ async function world({ granted = false, stored = {} } = {}) {
   /** A capture message from the page's content script. @param {Record<string, unknown>} [body] @param {Record<string, unknown>} [senderOver] */
   const capture = async (body = {}, senderOver = {}) => {
     const sender = contentScriptSender(fake, PAGE, { tab: { id: TAB }, frameId: 0, documentId: `doc-${TAB}-0`, ...senderOver });
-    // A key set to undefined is a key that is not sent.
+    // The script sends every key, `null` for what the form does not have: a key set to undefined is null here.
     const message = Object.fromEntries(
       Object.entries({
         capture_id: "cap1",
@@ -133,8 +133,9 @@ async function world({ granted = false, stored = {} } = {}) {
         username: SENTINEL_USER,
         username_from: "typed",
         password: SENTINEL_PASSWORD,
+        current_password: null,
         ...body,
-      }).filter(([, value]) => value !== undefined),
+      }).map(([key, value]) => [key, value === undefined ? null : value]),
     );
     return router.onMessage(encode("form_capture", message), sender);
   };
@@ -167,7 +168,7 @@ test("capture_messages_work_while_locked_and_do_not_move_lock_at", async () => {
   // A report is not an answer: a message of an extension page with the same type is refused at the door.
   const popup = createPort(UI_PORT, extensionPageSender(w.fake));
   w.router.onConnect(popup);
-  await popup.send(encode("form_capture", { capture_id: "x", self_origin: ORIGIN, kind: "login", password: "p" }));
+  await popup.send(encode("form_capture", { capture_id: "x", self_origin: ORIGIN, kind: "login", username: null, username_from: null, password: "p", current_password: null }));
   assert.equal(popup.disconnected, true, "a page cannot send what only a content script sends");
   // And a content script cannot send the settings page's type.
   const before2 = w.offers.size();
