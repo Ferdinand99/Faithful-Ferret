@@ -360,7 +360,7 @@ export const shortcutWentToAnExtensionPage = (error) => /gave no activeTab/.test
 
 /**
  * Opens a case's page and does its `prepare` steps. Returns the tab's id. `count.n` counts the times the real shortcut
- * went to the bridge tab and the page was opened again (twice at most). `beforePrepare` runs with the tab's id after the
+ * went to the bridge tab and the page was opened again (four times at most). `beforePrepare` runs with the tab's id after the
  * page is open and before the `prepare` steps (the capture phase clears the tab's offers and kept user names there, so that
  * what the steps leave, such as the user name of a first step, still counts for the case).
  * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count] @param {(tabId: number) => Promise<void>} [beforePrepare]
@@ -374,7 +374,7 @@ async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) 
       try {
         return await press();
       } catch (error) {
-        if (attempt >= 3 || !shortcutWentToAnExtensionPage(error)) throw error;
+        if (attempt >= 5 || !shortcutWentToAnExtensionPage(error)) throw error;
         count.n += 1;
         await sleep(1000);
       }
