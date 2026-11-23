@@ -348,21 +348,28 @@ export function createOffers({
     entry.state = "ready";
     entry.readyAt = entry.readyAt ?? now();
     entry.login = null;
-    dirty.add(entry.tabId);
-    // The write path can say that the vault holds this login already: then there is nothing to offer.
+    // The write path can say that the vault holds this login already: then there is nothing to offer, and the badge (and a
+    // popup that opens by itself) must not show it for a moment first. The tab's count is told only once that is answered;
+    // when it cannot be (the vault is locked, the write path is gone) the offer shows all the same.
     const capture = entry.capture;
     if (writer !== null && capture !== null && !entry.generated) {
       Promise.resolve()
         .then(() => writer.classify({ ...capture }))
         .then(
           (outcome) => {
-            if (outcome?.action === "none" && !entry.removed) {
-              drop(entry);
-              refreshBadges();
-            }
+            if (entry.removed) return;
+            if (outcome?.action === "none") drop(entry);
+            else dirty.add(entry.tabId);
+            refreshBadges();
           },
-          () => {},
+          () => {
+            if (entry.removed) return;
+            dirty.add(entry.tabId);
+            refreshBadges();
+          },
         );
+    } else {
+      dirty.add(entry.tabId);
     }
   }
 
