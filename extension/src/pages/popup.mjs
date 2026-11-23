@@ -363,10 +363,12 @@ async function main() {
       offerFlow === null
         ? null
         : createOfferSection({ texts, flow: offerFlow, tabId, onChange: () => void vault.reload({ automatic: true }).catch(() => {}) });
-    // In a build with saving on, the vault and the generator are two tabs; otherwise the vault is all there is.
+    // The bottom bar: the vault, in a build with saving on the generator, and the settings.
     const tabs = createPopupTabs({
       texts,
       vault: vault.root,
+      // "Settings" opens the settings page (in every build) and the popup closes.
+      onSettings: () => void openSettings({ runtime: browser.runtime, close: () => window.close() }),
       makeGenerator: () =>
         generatorFlow === null || generatorStore === null
           ? null
@@ -447,10 +449,6 @@ async function main() {
     } catch {
       show(await flow.load().catch(() => ({ view: /** @type {const} */ ("signed_out"), host: "", account: "", server: "", sync: null })));
     }
-  });
-
-  byId("settings").addEventListener("click", () => {
-    void openSettings({ runtime: browser.runtime, close: () => window.close() });
   });
 
   popOut.addEventListener("click", async () => {

@@ -20,15 +20,13 @@ test("the_popup_settings_button_opens_the_options_page_and_closes_the_popup", as
   assert.deepEqual(log, []);
 });
 
-test("the_popup_header_has_a_settings_button_with_a_name_in_both_languages_and_not_behind_save", () => {
+test("the_popup_settings_item_has_a_name_in_both_languages_and_opens_the_page_through_the_bar", () => {
   const html = readFileSync(join(src, "pages", "popup.html"), "utf8");
-  const button = /<button[^>]*id="settings"[^>]*>/.exec(html)?.[0] ?? "";
-  assert.match(button, /data-i18n-label="session\.settings"/, "an accessible name");
-  assert.equal(button.includes("data-feature"), false, "in every build");
+  assert.equal(html.includes('id="settings"'), false, "the entry is in the bottom bar, not in the header");
   for (const lang of ["en", "nb"]) {
     const catalog = JSON.parse(readFileSync(join(src, "locales", lang, "session.json"), "utf8"));
     assert.equal(typeof catalog["session.settings"], "string", lang);
   }
   const popup = readFileSync(join(src, "pages", "popup.mjs"), "utf8");
-  assert.match(popup, /openSettings\(\{ runtime: browser\.runtime/);
+  assert.match(popup, /onSettings: \(\) => void openSettings\(\{ runtime: browser\.runtime/);
 });
