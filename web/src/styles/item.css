@@ -293,3 +293,60 @@
     border: 1px solid CanvasText;
   }
 }
+
+/* The show/hide button of a password input: inside the frame of the input, at its end. The icon follows the text colour, so
+   both themes work; the focus ring is the one of the page, drawn in the brand colour. */
+:root {
+  --i-eye: url(data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M2.75%2012S6%205.75%2012%205.75%2021.25%2012%2021.25%2012%2018%2018.25%2012%2018.25%202.75%2012%202.75%2012z%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.75%27%2F%3E%3C%2Fsvg%3E);
+  --i-eye-off: url(data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M2.75%2012S6%205.75%2012%205.75%2021.25%2012%2021.25%2012%2018%2018.25%2012%2018.25%202.75%2012%202.75%2012z%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.75%27%2F%3E%3Cpath%20d%3D%27M4.5%204.5l15%2015%27%2F%3E%3C%2Fsvg%3E);
+}
+
+.icon[data-icon="eye"] { --icon: var(--i-eye); }
+.icon[data-icon="eye-off"] { --icon: var(--i-eye-off); }
+
+.vault-ui .secret-input {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.vault-ui .secret-input > input {
+  padding-inline-end: 48px;
+}
+
+.vault-ui .reveal-toggle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.vault-ui .reveal-toggle[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.vault-ui .reveal-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-ui .reveal-toggle:hover:not(:disabled) {
+    color: var(--text);
+  }
+}
+
+@media (forced-colors: active) {
+  .vault-ui .reveal-toggle {
+    color: ButtonText;
+  }
+}

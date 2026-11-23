@@ -10,6 +10,10 @@
 // A draft is the core's `DraftDto`: only what the user changed, in the core's
 // own key names (`item_type`, `matching`).
 //
+// The password input can be shown, with an eye button beside it, so the user can check what they typed. It is hidden again
+// when the form is saved, cancelled, frozen, wiped by a lock or put back in a screen, and a form that is built anew starts
+// hidden. Whether it is shown is held in the `type` of the input and nowhere else: never in a URL, a store or a message.
+//
 // Changes that are not saved live in the form and nowhere else: never in a store, a URL or a message. When
 // the vault moves to another tab (`tracker`), the form is kept on screen read-only (`freeze`) and goes on
 // when the vault comes back (`thaw`); a lock wipes it as it wipes every screen. The form tells whether it
@@ -113,23 +117,30 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   const kind = id === null ? "login" : String(view.item_type);
 
   /**
-   * @param {{ id: string, label: string, type?: string, autocomplete?: string, role: string, help?: string, rows?: number }} spec
+   * @param {{ id: string, label: string, type?: string, autocomplete?: string, role: string, help?: string, rows?: number, toggle?: HTMLElement }} spec
+   *   `toggle` is a button that goes inside the frame of the input (the show/hide button of the password)
    */
-  function field({ id: fieldId, label, type = "text", autocomplete = "off", role, help, rows }) {
+  function field({ id: fieldId, label, type = "text", autocomplete = "off", role, help, rows, toggle }) {
     const input = /** @type {HTMLInputElement} */ (rows
       ? el("textarea", { id: fieldId, name: fieldId, rows, "data-role": role })
       : el("input", { id: fieldId, name: fieldId, type, autocomplete, "data-role": role }));
     input.spellcheck = false; // what is typed here is not sent to a spelling service
     const row = el("div", { class: "field", "data-field": role },
-      el("label", { for: fieldId }, label), input, help ? el("small", { class: "help" }, help) : null);
+      el("label", { for: fieldId }, label),
+      toggle ? el("div", { class: "secret-input", "data-role": `${role}-box` }, input, toggle) : input,
+      help ? el("small", { class: "help" }, help) : null);
     return { row, input };
   }
 
   const name = field({ id: "edit-name", label: t("vault.edit.name"), role: "name" });
   name.input.required = true;
   const username = field({ id: "edit-username", label: t("vault.edit.username"), role: "username", autocomplete: "off" });
+  const reveal = /** @type {HTMLButtonElement} */ (el("button", {
+    type: "button", class: "reveal-toggle", "aria-pressed": "false", "aria-label": t("vault.edit.password_show"), "data-role": "password-toggle",
+  }, el("span", { class: "icon", "data-icon": "eye", "aria-hidden": "true" })));
+  const revealIcon = /** @type {HTMLElement} */ (reveal.firstChild);
   const password = field({
-    id: "edit-password", label: t("vault.edit.password"), type: "password", autocomplete: "new-password", role: "password",
+    id: "edit-password", label: t("vault.edit.password"), type: "password", autocomplete: "new-password", role: "password", toggle: reveal,
     help: oldPassword ? `${t("vault.edit.password_keep")} ${t("vault.edit.password_history")}` : undefined,
   });
   const url = field({ id: "edit-url", label: t("vault.edit.url"), role: "url" });
@@ -206,6 +217,21 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   typeSelect.addEventListener("change", syncRows);
   syncRows();
 
+  /** Whether the password is on the screen as text. */
+  let shown = false;
+  /** @param {boolean} on The password input shows its text (`true`) or dots (`false`); the button says which, and what it would do. */
+  function showPassword(on) {
+    shown = on;
+    password.input.setAttribute("type", on ? "text" : "password");
+    reveal.setAttribute("aria-pressed", on ? "true" : "false");
+    reveal.setAttribute("aria-label", t(on ? "vault.edit.password_hide" : "vault.edit.password_show"));
+    revealIcon.setAttribute("data-icon", on ? "eye-off" : "eye");
+  }
+  reveal.addEventListener("click", () => {
+    if (frozen || !touch()) return;
+    showPassword(!shown);
+  });
+
   /** The form was saved or wiped: it holds nothing to lose any more. */
   let settled = false;
   /** The form is read-only: the vault is in another tab. */
@@ -217,6 +243,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   function wipeForm() {
     for (const input of [name.input, username.input, password.input, url.input, notes.input]) input.value = "";
     favorite.checked = false;
+    showPassword(false);
     picker.wipe();
     notesLoaded = false;
     settled = true;
@@ -241,7 +268,8 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       if (on) input.setAttribute("readonly", "");
       else input.removeAttribute?.("readonly");
     }
-    for (const control of [favorite, typeSelect, save, loadNotes]) {
+    if (on) showPassword(false);
+    for (const control of [favorite, typeSelect, save, loadNotes, reveal]) {
       /** @type {any} */ (control).disabled = on;
     }
     picker.setReadOnly(on);
@@ -294,6 +322,8 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   const save = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", class: "btn btn-primary", "data-role": "save" }, t("vault.edit.save")));
   const cancel = el("a", { class: "btn btn-secondary", href: id === null ? "#/items" : `#/items/${id}`, "data-role": "cancel" }, t("vault.edit.cancel"));
 
+  cancel.addEventListener("click", () => showPassword(false));
+
   const form = el("form", {
     class: "stack",
     "data-role": "edit-form",
@@ -323,6 +353,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
         }
       }
       save.disabled = true;
+      showPassword(false);
       mount(status, document.createTextNode(t("vault.edit.saving")));
       const draft = buildDraft();
       try {

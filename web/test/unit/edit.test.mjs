@@ -33,11 +33,11 @@ const ENTRY = Object.freeze({
 
 const FORM_ROLES = ["name", "username", "password", "url", "notes"];
 
-async function edit({ id = ID, view = {}, entry = {}, touch, scope } = {}) {
+async function edit({ id = ID, view = {}, entry = {}, touch, scope, tracker } = {}) {
   const engine = fakeEngine({ items: [{ ...ENTRY, ...entry }], views: { [ID]: { ...VIEW, ...view } }, secrets: { [ID]: ["ada", PASSWORD, "4242"] } });
   const client = fakeClient(engine, { notes: { [ID]: NOTES } });
   const moves = [];
-  const root = await editView({ engine, client, id, t, go: (path) => moves.push(path), touch, scope });
+  const root = await editView({ engine, client, id, t, go: (path) => moves.push(path), touch, scope, tracker });
   return { engine, client, root, moves };
 }
 
@@ -525,6 +525,156 @@ test("editing_the_password_in_the_web_vault_keeps_the_old_one", async () => {
   // The form says what happens to the old password.
   await withDom(async () => {
     const { root } = await edit();
-    assert.ok(textOf(find(root, "password").parentNode ?? root).includes("vault.edit.password_history"));
+    assert.ok(textOf(find(root, "password-box").parentNode ?? root).includes("vault.edit.password_history"));
   });
+});
+
+// The show/hide button of the password input.
+const toggleOf = (root) => find(root, "password-toggle");
+const typeOf = (root) => find(root, "password").getAttribute("type");
+
+test("the_password_is_hidden_when_the_form_is_built_and_the_button_has_a_name_and_a_state", async () => {
+  for (const id of [null, ID]) {
+    await withDom(async () => {
+      const { root } = await edit({ id });
+      assert.equal(typeOf(root), "password");
+      const button = toggleOf(root);
+      assert.equal(button.tagName, "button");
+      assert.equal(button.getAttribute("type"), "button", "it never submits the form");
+      assert.equal(button.getAttribute("aria-pressed"), "false");
+      assert.equal(button.getAttribute("aria-label"), "vault.edit.password_show");
+      assert.ok(find(root, "password-box").childNodes.includes(button), "the button is inside the frame of the input");
+    });
+  }
+});
+
+test("the_button_shows_and_hides_the_typed_password_and_says_what_it_would_do", async () => {
+  await withDom(async () => {
+    const { root } = await edit({ id: null });
+    type(root, "password", PASSWORD);
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "text");
+    assert.equal(toggleOf(root).getAttribute("aria-pressed"), "true");
+    assert.equal(toggleOf(root).getAttribute("aria-label"), "vault.edit.password_hide");
+    assert.equal(find(root, "password").value, PASSWORD, "the typed text stays");
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "password");
+    assert.equal(toggleOf(root).getAttribute("aria-pressed"), "false");
+    assert.equal(toggleOf(root).getAttribute("aria-label"), "vault.edit.password_show");
+    assert.equal(find(root, "password").value, PASSWORD);
+  });
+});
+
+test("showing_the_password_reveals_nothing_of_the_stored_one_and_asks_the_worker_for_nothing", async () => {
+  await withDom(async () => {
+    const { root, client } = await edit();
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "text");
+    assert.equal(find(root, "password").value, "", "an edit starts with an empty password input, shown or not");
+    assert.deepEqual(client.calls, []);
+    assert.ok(!textOf(root).includes(PASSWORD));
+  });
+});
+
+test("the_password_is_hidden_again_on_save", async () => {
+  await withDom(async () => {
+    const { root, moves } = await edit({ id: null });
+    type(root, "name", "Bank");
+    type(root, "password", PASSWORD);
+    await click(toggleOf(root));
+    await submit(find(root, "edit-form"));
+    assert.equal(typeOf(root), "password");
+    assert.equal(toggleOf(root).getAttribute("aria-pressed"), "false");
+    assert.equal(find(root, "password").value, "");
+    assert.equal(moves.length, 1);
+  });
+});
+
+test("the_password_is_hidden_again_when_a_save_is_refused", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit({ id: null });
+    type(root, "name", "Bank");
+    type(root, "password", PASSWORD);
+    engine.create = async () => {
+      throw coded("offline");
+    };
+    await click(toggleOf(root));
+    await submit(find(root, "edit-form"));
+    assert.equal(typeOf(root), "password");
+    assert.equal(find(root, "password").value, PASSWORD, "what was typed is kept for another try");
+  });
+});
+
+test("the_password_is_hidden_again_on_cancel", async () => {
+  await withDom(async () => {
+    const { root } = await edit({ id: null });
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "text");
+    await click(find(root, "cancel"));
+    assert.equal(typeOf(root), "password");
+    assert.equal(toggleOf(root).getAttribute("aria-pressed"), "false");
+  });
+});
+
+test("the_lock_hides_the_password_and_empties_it", async () => {
+  await withDom(async () => {
+    const scope = createWipeScope();
+    const { root } = await edit({ id: null, scope });
+    type(root, "password", PASSWORD);
+    const input = find(root, "password");
+    await click(toggleOf(root));
+    scope.run();
+    assert.equal(input.getAttribute("type"), "password");
+    assert.equal(input.value, "");
+    assert.equal(toggleOf(root), null, "the screen is gone");
+  });
+});
+
+test("a_frozen_form_hides_the_password_and_the_button_is_off_until_the_form_thaws", async () => {
+  await withDom(async () => {
+    const forms = [];
+    const { root, engine } = await edit({ tracker: { trackUnsaved: (form) => (forms.push(form), () => {}) } });
+    await click(toggleOf(root));
+    forms[0].freeze();
+    assert.equal(typeOf(root), "password");
+    assert.equal(toggleOf(root).disabled, true);
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "password", "a press on a frozen form does nothing");
+    forms[0].thaw({ engine });
+    assert.equal(toggleOf(root).disabled, false);
+    assert.equal(typeOf(root), "password", "it comes back hidden");
+  });
+});
+
+test("a_form_that_is_built_anew_starts_hidden_and_the_button_does_not_count_as_an_edit", async () => {
+  await withDom(async () => {
+    const first = await edit({ id: null });
+    await click(toggleOf(first.root));
+    const second = await edit({ id: null });
+    assert.equal(typeOf(second.root), "password");
+    assert.equal(toggleOf(second.root).getAttribute("aria-pressed"), "false");
+  });
+  // Showing the password is a view, not a change: the form still has no unsaved edits.
+  await withDom(async () => {
+    const forms = [];
+    const { root } = await edit({ tracker: { trackUnsaved: (form) => (forms.push(form), () => {}) } });
+    await click(toggleOf(root));
+    assert.equal(forms[0].dirty(), false);
+  });
+});
+
+test("a_press_after_the_lock_time_does_not_show_the_password", async () => {
+  await withDom(async () => {
+    const { root } = await edit({ id: null, touch: () => false });
+    await click(toggleOf(root));
+    assert.equal(typeOf(root), "password");
+  });
+});
+
+test("the_toggle_texts_exist_in_english_and_norwegian", async () => {
+  const [en, nb] = await Promise.all(["en", "nb"].map(async (lang) => JSON.parse(await (await import("node:fs/promises")).readFile(new URL(`../../src/locales/${lang}/vault.json`, import.meta.url), "utf8"))));
+  assert.equal(en["vault.edit.password_show"], "Show password");
+  assert.equal(en["vault.edit.password_hide"], "Hide password");
+  assert.equal(nb["vault.edit.password_show"], "Vis passord");
+  assert.equal(nb["vault.edit.password_hide"], "Skjul passord");
 });
