@@ -7,8 +7,9 @@
 // page with "Fill", the favourites and all items, search, a filter by type,
 // copying and one item's view. In a build with saving from the extension on,
 // the sync's part also shows the changes that wait and the items that need the
-// user, with their conflict cards (conflictCard.mjs). The views are in
-// popupFlow.mjs; this file builds them with `el()`.
+// user, with their conflict cards (conflictCard.mjs), and the open popup has two
+// tabs, the vault and the generator (popupTabs.mjs, generatorView.mjs). The views
+// are in popupFlow.mjs; this file builds them with `el()`.
 //
 // The page the popup is about is the active tab of the window it was opened
 // from. A popup that was popped out into a window of its own keeps that tab
@@ -21,12 +22,14 @@
 import { FEATURES } from "../shared/features.mjs";
 import { el, mount } from "../shared/dom.mjs";
 import { createSyncAttention, createSyncItems } from "./conflictCard.mjs";
+import { createGeneratorFlow, createGeneratorView, createOptionsStore } from "./generatorView.mjs";
 import { createOlderPanel } from "./olderState.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
 import {
   createListFlow, createOlderFlow, createPopupFlow, createSyncItemsFlow, followStep, forgetBodyKey, statusKey, stopKey, warningKey,
 } from "./popupFlow.mjs";
 import { createVaultList } from "./popupList.mjs";
+import { createPopupTabs } from "./popupTabs.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
 /** @typedef {import("./page.mjs").Texts} Texts */
@@ -82,6 +85,8 @@ async function main() {
   const listFlow = createListFlow(ui.request);
   const olderFlow = createOlderFlow(ui.request);
   const itemsFlow = FEATURES.save ? createSyncItemsFlow(ui.request) : null;
+  const generatorFlow = FEATURES.save ? createGeneratorFlow(ui.request) : null;
+  const generatorStore = FEATURES.save ? createOptionsStore(browser.storage.local) : null;
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
   // The panel is as tall as Firefox lets a popup be; a tab or a window gives the popup its own height (popup.css).
@@ -348,13 +353,20 @@ async function main() {
         });
       },
     });
+    // In a build with saving on, the vault and the generator are two tabs; otherwise the vault is all there is.
+    const tabs = createPopupTabs({
+      texts,
+      vault: vault.root,
+      makeGenerator: () =>
+        generatorFlow === null || generatorStore === null ? null : (createGeneratorView({ texts, flow: generatorFlow, store: generatorStore, tabId })?.root ?? null),
+    });
     mount(
       root,
       el(
         "section",
         { class: "ff-panel ff-unlocked", "data-role": "unlocked-view" },
         syncSlot,
-        vault.root,
+        tabs.root,
         el("footer", { class: "ff-foot" }, where(view)),
       ),
     );

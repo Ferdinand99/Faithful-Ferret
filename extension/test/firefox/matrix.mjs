@@ -48,7 +48,7 @@ export const ENTRIES = Object.freeze({
 export const RULES = Object.freeze(Object.fromEntries(Object.entries(ENTRIES).map(([key, e]) => [key, { url: e.url, matching: e.matching, ...(e.domain ? { domain: e.domain } : {}) }])));
 
 const NO_OFFERS = "the extension keeps no offers to read yet";
-const NO_GENERATOR = "the extension has no generator yet";
+const NO_GENERATOR = "the extension did not answer the generator";
 
 /** @param {string} text */
 export const sha256 = (text) => createHash("sha256").update(text, "utf8").digest("hex");
@@ -512,6 +512,7 @@ export async function captureCase(w, c) {
         origin: String(o.origin),
         username: typeof o.username === "string" ? o.username : null,
         password_field: Object.entries(typed).find(([, hash]) => hash === o.password_sha256)?.[0] ?? null,
+        ...(o.generated === true ? { generated: true } : {}),
         ...(o.reuse === true ? { reuse: true } : {}),
         ...(typeof o.info === "string" ? { info: o.info } : {}),
         ...(typeof o.target_name === "string" ? { target_entry: w.keyOf(o.target_name) } : {}),
@@ -552,6 +553,9 @@ export async function runCapturePhase(w, cases, log = () => {}) {
 
 // ----------------------------------------------------------------------- the generator pass
 
+/** The body of `generate` the popup sends by default: a password of 20 characters from the four classes. */
+const GENERATE_BODY = Object.freeze({ kind: "password", length: 20, lower: true, upper: true, digits: true, symbols: true, min_each: 1, avoid_ambiguous: false });
+
 /**
  * Asks the extension to generate a password into the new-password fields of the page in a tab, the way the popup does
  * (the message names are the generator's: `generate`, then `fill_generated` with the generation's id). An extension
@@ -559,8 +563,8 @@ export async function runCapturePhase(w, cases, log = () => {}) {
  * @param {World} w @param {number} tabId
  */
 export async function generateFillVia(w, tabId) {
-  // A message the extension does not know may get no answer at all (the port waits two minutes for one): an
-  // extension with a generator answers at once, so a few seconds of silence mean there is none.
+  // The extension has a generator, so it answers at once: a few seconds of silence are a failure of the case, never
+  // "no generator" (the port would wait two minutes).
   /** @param {string} type @param {Record<string, unknown>} body */
   const ask = (type, body) => /** @type {Promise<{ type: string, body: any }>} */ (Promise.race([
     w.ui.ask(type, body),
@@ -568,7 +572,7 @@ export async function generateFillVia(w, tabId) {
   ]));
   await w.ui.open();
   try {
-    const made = await ask("generate", { tab_id: tabId });
+    const made = await ask("generate", GENERATE_BODY);
     if (made.type !== "generate" || typeof made.body?.generation_id !== "string") throw new Error(NO_GENERATOR);
     const filled = await ask("fill_generated", { generation_id: made.body.generation_id, tab_id: tabId });
     if (filled.type !== "fill_generated" || filled.body?.ok !== true) throw new Error(`the generated password was not filled (${String(filled.body?.reason ?? filled.type)})`);
@@ -601,7 +605,9 @@ export async function generatorCase(w, c) {
     const filled = [];
     if (first !== "" && !own.has(first)) filled.push(want.new);
     if (want.confirm && first !== "" && valueOf(want.confirm) === first) filled.push(want.confirm);
-    result.observed = { ...result.observed, generated: { filled } };
+    // Every other field of the page that holds the generated value is a stray fill.
+    const stray = first === "" ? [] : rows.filter((r) => `#${r.id}` !== want.new && `#${r.id}` !== want.confirm && r.value === first).map((r) => `#${r.id}`);
+    result.observed = { ...result.observed, generated: { filled, stray } };
     result.ran.generated = true;
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);
@@ -617,15 +623,8 @@ export async function generatorCase(w, c) {
 export async function runGeneratorPhase(w, cases, log = () => {}) {
   /** @type {import("./matrixReport.mjs").Result[]} */
   const results = [];
-  let unavailable = false;
   for (const c of cases.filter((x) => x.class !== "negative" && x.expect.generated)) {
-    if (unavailable) {
-      results.push({ case: c, ran: { fill: false, capture: false, generated: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null }, error: NO_GENERATOR });
-      continue;
-    }
     const r = await generatorCase(w, c);
-    // Without a generator the first case says so, and no more pages are opened for the others.
-    if (r.error === NO_GENERATOR) unavailable = true;
     log(`generator ${c.id}: ${r.ran.generated ? `${r.observed?.generated?.filled.length ?? 0} fields` : `not run (${r.error})`}`);
     results.push(r);
   }

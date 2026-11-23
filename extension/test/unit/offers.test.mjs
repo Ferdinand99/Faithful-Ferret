@@ -887,3 +887,21 @@ test("a_lock_or_a_closed_tab_while_a_generated_offer_is_judged_leaves_no_generat
   other.clear("tab_closed", { tabId: 99 });
   assert.match(String(await id), /^[0-9a-f]{32}$/);
 });
+
+test("a_generated_offer_never_outlives_the_value_it_was_made_for", async () => {
+  const w = world();
+  // The generator held the value 14 minutes already: the offer has the one minute that is left, not a new 15 minutes.
+  const meta = { tabId: TAB, frameId: 0, documentId: `doc-${TAB}-0`, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" };
+  const id = await w.offers.onGenerated({ ...meta, expiresAt: w.clock.now() + 60_000 });
+  assert.match(String(id), /^[0-9a-f]{32}$/);
+  w.clock.advance(59_000);
+  assert.equal(w.offers.forTab(TAB, "e".repeat(32)).length, 1);
+  w.clock.advance(2_000);
+  assert.equal(w.offers.forTab(TAB, "e".repeat(32)).length, 0, "gone with the value");
+  // A value that has ended makes no offer, and one with a longer end than the offers' own is capped at 15 minutes.
+  assert.equal(await w.offers.onGenerated({ ...meta, expiresAt: w.clock.now() }), null);
+  assert.equal(w.offers.size(), 0);
+  await w.offers.onGenerated({ ...meta, expiresAt: w.clock.now() + 99 * 60_000 });
+  w.clock.advance(15 * 60_000 + 1000);
+  assert.equal(w.offers.forTab(TAB, "e".repeat(32)).length, 0);
+});

@@ -707,13 +707,12 @@ export function createOffers({
 
   /**
    * A password Ferret generated and filled into a form: an offer to save it, ready at once, kept for fifteen minutes (or
-   * until a lock). It names the frame the fill went to; the origin is the core's, and a host on the "never" list gets
-   * none.
+   * until a lock). It names the frame the fill went to; the origin is the core's. The "never" list does not stop it.
    *
    * @param {{
    *   tabId: number, frameId: number, documentId?: string, frameUrl: string,
-   *   kind: "signup" | "change" | "reset", password: string, username?: string | null,
-   * }} meta
+   *   kind: "signup" | "change" | "reset", password: string, username?: string | null, expiresAt?: number,
+   * }} meta `expiresAt`: when the generator stops holding the value; the offer never outlives it
    * @returns {Promise<string | null>} the offer's id, or null when no offer was made
    */
   async function onGenerated(meta) {
@@ -733,6 +732,9 @@ export function createOffers({
       const incognito = await frames.incognito(meta.tabId);
       if (stale()) return null;
       const at = now();
+      // The offer ends when the generator stops holding the value, never later: a fill at minute 14 does not make 29.
+      const until = typeof meta.expiresAt === "number" && Number.isFinite(meta.expiresAt) ? Math.min(at + GENERATED_TTL_MS, meta.expiresAt) : at + GENERATED_TTL_MS;
+      if (until <= at) return null;
       // The newest generated password of a tab and origin is the one that is offered.
       for (const old of [...entries.values()]) if (old.generated && old.tabId === meta.tabId && old.capture?.origin === origin) drop(old);
       const username = typeof meta.username === "string" && meta.username !== "" && meta.username.length <= MAX_USERNAME ? meta.username : null;
@@ -761,7 +763,7 @@ export function createOffers({
         incognito,
         createdAt: at,
         receivedAt: at,
-        expiresAt: at + GENERATED_TTL_MS,
+        expiresAt: until,
         readyAt: at,
         generated: true,
         sessions: new Set(),

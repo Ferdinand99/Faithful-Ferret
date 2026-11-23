@@ -394,7 +394,8 @@ test("no_ui_reply_or_push_type_carries_a_captured_value", () => {
   // Only the capture's own request carries what the user typed, and only upwards: no reply and no push type has a
   // password-like key (a push carries the one value of one fill).
   for (const [type, def] of Object.entries(UI_TYPES)) {
-    for (const key of keysOf(def.reply)) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui reply ${type}: ${key}`);
+    // The one reply with a value is the generator's: the password or passphrase the core has just made, never a capture.
+    for (const key of keysOf(def.reply)) if (!(type === "generate" && key === "value")) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui reply ${type}: ${key}`);
     for (const key of keysOf(def.request)) {
       if (!["sign_in", "unlock"].includes(type)) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui request ${type}: ${key}`);
     }

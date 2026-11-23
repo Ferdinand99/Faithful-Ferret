@@ -123,10 +123,12 @@ function viewOf(item) {
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
  *   fillContext?: any,
+ *   generated?: boolean,
  * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`);
- *   `fillContext` is given to the fill flow
+ *   `fillContext` is given to the fill flow; `generated` adds the generator (its handler, its operations, a core that
+ *   makes passwords of the length it is asked for) and a store of offers that records what it is told
  */
-export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null } = {}) {
+export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null, generated = false } = {}) {
   const { load } = await pkg();
   const [
     { createCoreHost, CORE_OPS },
@@ -150,7 +152,9 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     load("background/handlers/search.handler.mjs"),
     load("background/handlers/fillReport.handler.mjs"),
     load("background/handlers/candidates.handler.mjs"),
+    ...(generated ? [load("background/handlers/generator.handler.mjs")] : []),
   ]);
+  const generatorModule = generated ? await load("background/generator.mjs") : null;
   const fake = createFakeBrowser();
   const clock = createClock(1_763_800_000_000);
 
@@ -158,8 +162,33 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   /** The open handles: handle -> item. @type {Map<number, typeof ITEMS[number]>} */
   const handles = new Map();
   let nextHandle = 100;
+  /** What the fake core made for the generator: the kind, the options it was asked with and the value it answered. @type {Array<{ kind: string, options: any, value: string }>} */
+  const made = [];
+  /** `refuses`: the code the fake core fails a password with (a test plays options out of range). @type {{ refuses: string | null }} */
+  const generatorCore = { refuses: null };
+  let madeCount = 0;
+  /** The fake core's password: as long as asked, a counter in front so two are never equal. @param {any} options */
+  const fakePassword = (options) => {
+    madeCount += 1;
+    const alphabet = "aB3!xY7?kM9#";
+    let value = `${madeCount}.`;
+    while (value.length < options.length) value += alphabet[value.length % alphabet.length];
+    return value.slice(0, Math.max(options.length, 1));
+  };
   const client = createFakeClient({
     vault: {
+      generate_password: (/** @type {any} */ options) => {
+        if (generatorCore.refuses !== null) throw Object.assign(new Error(generatorCore.refuses), { code: generatorCore.refuses });
+        const value = fakePassword(options);
+        made.push({ kind: "password", options, value });
+        return { value, bits: options.length * 5 };
+      },
+      generate_passphrase: (/** @type {any} */ options) => {
+        madeCount += 1;
+        const value = Array.from({ length: options.words }, (_, i) => `word${madeCount}x${i}`).join(options.separator);
+        made.push({ kind: "passphrase", options, value });
+        return { value, bits: options.words * 12.9 };
+      },
       ferret_aaguid: () => new Uint8Array(16),
       reveal_item_field: (/** @type {number} */ handle, /** @type {number} */ index) => {
         const item = handles.get(handle);
@@ -218,6 +247,11 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     /** The frame's own facts, as the browser gives them for its messages. */
     sender,
     fields,
+    /** What the frame reports to a generated fill (the new and the confirm field), and each field's `maxlength`. */
+    generatedFields: /** @type {string[]} */ (["new_password", "confirm_password"]),
+    limits: /** @type {Record<string, number>} */ ({}),
+    /** The kind of form a generated fill reports (null: the report names none). @type {string | null} */
+    group: "signup",
     /** What was filled, by kind. @type {Record<string, string>} */
     filled: /** @type {Record<string, string>} */ ({}),
     /** Whether the frame reports at all. */
@@ -281,13 +315,18 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
         return [{ frameId: sim.sender.frameId, result: verdict === "shown" ? { verdict, points } : { verdict } }];
       }
       if (frameShown.hangBegin) return new Promise(() => {});
-      const [requestId] = injection.args;
+      const [requestId, mode] = injection.args;
       if (sim.reports) {
         setTimeout(() => {
           void fromPage("frame_report", {
             request_id: requestId,
             self_origin: sim.sender.selfOrigin,
-            fields: sim.fields.map((kind, i) => ({ kind, id: `f${i}` })),
+            fields: (mode === "generated" ? sim.generatedFields : sim.fields).map((kind, i) => ({
+              kind,
+              id: `f${i}`,
+              ...(mode === "generated" && sim.limits[kind] !== undefined ? { max: sim.limits[kind] } : {}),
+            })),
+            ...(mode === "generated" && sim.group !== null ? { group: sim.group } : {}),
           }, sim);
         }, 0);
       }
@@ -323,6 +362,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   /** `fails`: the clipboard refuses the write; `timerFails`: the fallback timer cannot be made; `timers`: those that were. */
   const clipboardState = { fails: false, timerFails: false, timers: /** @type {Array<{ fn: () => unknown, ms: number }>} */ ([]) };
   const sessionStorage = createSessionStorage();
+  /** The browser's `storage.local`, as far as the background modules here write it (for the tests that search it). */
+  const storageLocal = createSessionStorage();
   const events = createAlarmsAndIdle();
   const clipboard = createClipboard({
     writeText: async (/** @type {string} */ text) => {
@@ -352,6 +393,28 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     /** Whether the sync engine runs (an open vault whose sync did not start has none). */
     syncRunning: true,
   };
+  /** What the store of offers was told after a generated fill (`failing`: it throws instead). */
+  const offered = { calls: /** @type {any[]} */ ([]), failing: false, refusing: false };
+  const offers = {
+    onGenerated(/** @type {any} */ meta) {
+      if (offered.failing) throw new Error("no room");
+      // The store answers null when it makes no offer (a lock, a closed tab, a page it does not take).
+      if (offered.refusing) return null;
+      offered.calls.push(meta);
+      return `offer-${offered.calls.length}`;
+    },
+  };
+  let generationCount = 0;
+  const generatorHost = generatorModule
+    ? generatorModule.createGeneratorHost({
+        now: clock.now,
+        newId: () => {
+          generationCount += 1;
+          return generationCount.toString(16).padStart(32, "0");
+        },
+        clipboard,
+      })
+    : null;
   /** @type {any} */
   let coreHost = null;
   const fillHost = createFillHost({
@@ -394,12 +457,35 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
               grant: structuredClone(matching.grant),
             };
           },
+          // The frames a generated password may go into (frames.mjs `generatorFrames`): every frame of the tab, no item.
+          frames: async (/** @type {number} */ tabId, /** @type {{ frameId?: number }} */ { frameId } = {}) => {
+            matching.asked.push(tabId);
+            matching.askedFrames.push(frameId);
+            await matching.before(matching.asked.length);
+            if (tabId !== TAB) return { host: null, insecure: false, frames: [] };
+            return {
+              host: { unicode: "login.example.net", a_label: "login.example.net" },
+              insecure: matching.frames.some((f) => f.insecure === true),
+              frames: matching.frames
+                .filter((f) => frameId === undefined || f.frameId === frameId)
+                .map((f) => ({
+                  frameId: f.frameId,
+                  ...(f.documentId ? { documentId: f.documentId } : {}),
+                  url: f.url,
+                  origin: f.origin,
+                  ancestors: f.ancestors ?? (f.frameId === 0 ? [] : [{ frameId: 0, documentId: "doc-1" }]),
+                  ...(f.unchecked === true ? { unchecked: true } : {}),
+                })),
+            };
+          },
         }
       : null,
     now: clock.now,
     reportTimeoutMs,
     resultTimeoutMs,
     fillContext,
+    generator: generatorHost,
+    offers: generated ? offers : null,
   });
   const probes = {
     unlock_probe: {
@@ -411,9 +497,10 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       },
     },
   };
-  coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...fillHost.ops, ...probes }, names: [...CORE_OPS, "unlock_probe"] });
+  coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...fillHost.ops, ...(generatorHost?.ops ?? {}), ...probes }, names: [...CORE_OPS, "unlock_probe"] });
   fillHost.attach(coreHost);
-  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, now: clock.now, coreHost });
+  generatorHost?.attach(coreHost);
+  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal, now: clock.now, coreHost });
   const router = createRouter({
     runtime: fake.runtime,
     lock,
@@ -472,10 +559,15 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     written,
     clipboardState,
     sessionStorage,
+    storageLocal,
     events,
     clipboard,
     matching,
     fillHost,
+    generatorHost,
+    generatorCore,
+    made,
+    offered,
     coreHost,
     lock,
     router,

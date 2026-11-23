@@ -116,8 +116,10 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     for (const key of keysOf(schema)) {
       const where = `${channel}/${type} ${direction}: ${key}`;
       if (allowed.has(key)) {
-        // The fill value goes down to a page (push); what the person typed into a form goes up (content). Nothing else.
-        assert.equal(channel, type === "form_capture" ? "content" : "push", `${where}: only the push type carries a value, and the capture a typed password`);
+        // The fill value goes down to a page (push); what the person typed into a form goes up (content); the generator's
+        // reply carries the value the core has just made. Nothing else.
+        const generatorReply = channel === "ui" && type === "generate" && direction === "reply";
+        assert.equal(generatorReply || channel === (type === "form_capture" ? "content" : "push"), true, `${where}: only the push type, the generator's reply and the capture's typed password carry a value`);
         if (type === "form_capture") assert.equal(direction, "request", `${where}: never in a reply`);
         continue;
       }
@@ -256,6 +258,12 @@ test("every UI request and reply round-trips with a sample body", () => {
     ],
     item_resolve: [{ ref: "h2", choice: "mine" }, { ok: false, reason: "conflict_changed" }],
     item_discard: [{ ref: "h1" }, { ok: true }],
+    generate: [
+      { kind: "password", length: 20, lower: true, upper: true, digits: true, symbols: true, min_each: 1, avoid_ambiguous: false },
+      { ok: true, generation_id: "g1", value: "Zq9!sample", kind: "password", bits: 100, expires_at: 1_700_000_900_000 },
+    ],
+    generate_copy: [{ generation_id: "g1" }, { ok: true }],
+    fill_generated: [{ generation_id: "g1", tab_id: 7, frame_id: 0 }, { ok: true, length: 20, offer: true }],
     capture_settings: [{ enable: true, never_remove: "shop.example.net" }, { ok: true, on: true, permission: true, never: ["shop.example.net"] }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
@@ -270,7 +278,7 @@ test("every UI request and reply round-trips with a sample body", () => {
 test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   // Both keys are forbidden names, and the one place that may carry them is the capture of a submitted form.
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
-  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], form_capture: ["password", "current_password"] });
+  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"] });
   /** @type {string[]} */
   const holders = [];
   for (const { type, channel, direction, schema } of allSchemas()) {
@@ -282,6 +290,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "content/form_capture/request/current_password",
     "content/form_capture/request/password",
     "push/fill_field/request/value",
+    "ui/generate/reply/value",
   ]);
   // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) => JSON.stringify({ v: 1, id: "a", type, body });
