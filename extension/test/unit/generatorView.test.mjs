@@ -341,3 +341,26 @@ test("every_reason_the_generator_can_give_has_a_text_in_both_languages", async (
     assert.ok(mod.ERROR_REASONS.includes(reason), reason);
   }
 });
+
+test("a_partial_fill_that_still_holds_an_offer_tells_the_popup_so_the_card_shows", async () => {
+  useDocument();
+  const pack = packageOf((await pkg()).dir);
+  const mod = await pack.load("pages/generatorView.mjs");
+  /** @type {string[]} */
+  const told = [];
+  // One field took the value and the next was covered: the fill refuses, and the background still holds the offer.
+  const partial = fakeBackground({ answer: (type) => (type === "fill_generated" ? { ok: false, reason: "covered", offer: true } : undefined) });
+  const view = mod.createGeneratorView({ texts: pack.texts("en"), flow: mod.createGeneratorFlow(partial.request), store: mod.createOptionsStore(fakeArea()), tabId: 7, onOffer: () => told.push("offer") });
+  await view.ready;
+  await settle();
+  await click(one(view.root, "fill"));
+  assert.deepEqual(told, ["offer"], "the popup is told of the offer");
+  assert.equal(one(view.root, "generator-status")?.getAttribute("data-tone"), "bad", "the refusal is still shown");
+  // A refusal with no offer does not announce one.
+  const plain = fakeBackground({ answer: (type) => (type === "fill_generated" ? { ok: false, reason: "covered" } : undefined) });
+  const other = mod.createGeneratorView({ texts: pack.texts("en"), flow: mod.createGeneratorFlow(plain.request), store: mod.createOptionsStore(fakeArea()), tabId: 7, onOffer: () => told.push("offer") });
+  await other.ready;
+  await settle();
+  await click(one(other.root, "fill"));
+  assert.deepEqual(told, ["offer"]);
+});

@@ -111,6 +111,7 @@ test("the_conflict_card_shows_no_password", async () => {
     ok: true,
     mine: { deleted: false, name: "Mail (this device)", username: "anna@example.net", modified: MODIFIED_MINE, device: "Ferret for Firefox (Windows)" },
     theirs: { deleted: false, name: "Mail (web vault)", username: "anna@example.net", modified: MODIFIED_THEIRS, device: "Web vault (Linux)" },
+    differs: [{ what: "name" }],
   });
   for (const secret of [PASSWORD, OLD_PASSWORD]) assert.equal(JSON.stringify(answer).includes(secret), false);
   assert.equal(engine.closed, 1, "the handles of the two versions are closed before the answer goes");
@@ -142,6 +143,49 @@ test("the_conflict_card_shows_no_password", async () => {
   await again.loaded;
   assert.equal(one(again.root, "conflict-deleted")?.textContent, texts.t("sync.conflict.deleted_theirs"));
   assert.equal(byRole(again.root, "conflict-username").length, 1);
+});
+
+test("the_conflict_card_names_what_differs_and_never_a_value_or_a_password", async () => {
+  const { engine, cards, request, flow, texts, clock } = await itemsWorld();
+  const listed = await request("sync_items", {});
+  const ref = listed.items[0].ref;
+  // The two versions differ in the user name, an own field, the addresses, the favourite mark and (by the number of earlier
+  // passwords) the password; the notes and the one-time code are the same.
+  const conflicts = engine.conflicts.get(CONFLICTED);
+  const mine = viewOf("Mail", PASSWORD, MODIFIED_MINE, "Ferret for Firefox (Windows)");
+  const theirs = viewOf("Mail", OLD_PASSWORD, MODIFIED_THEIRS, "Web vault (Linux)");
+  mine.fields[0].value = "anna@example.net";
+  theirs.fields[0].value = "anna.new@example.net";
+  mine.fields.push({ id: "recovery", label: "Recovery e-mail", kind: "email", value: "one@example.net" });
+  theirs.fields.push({ id: "recovery", label: "Recovery e-mail", kind: "email", value: "two@example.net" });
+  mine.fields.push({ id: "pin", label: "PIN", kind: "hidden", value: "1234-secret-pin" });
+  theirs.fields.push({ id: "pin", label: "PIN", kind: "hidden", value: "9999-secret-pin" });
+  theirs.urls = [{ url: "https://login.example.org", matching: "host" }];
+  theirs.favorite = true;
+  /** @type {any} */ (mine).password_history = [{ until: 1 }];
+  /** @type {any} */ (theirs).password_history = [];
+  conflicts.local.view = mine;
+  conflicts.server.view = theirs;
+  const answer = await request("item_conflict", { ref });
+  assert.deepEqual(answer.differs, [{ what: "username" }, { what: "field", label: "Recovery e-mail" }, { what: "urls" }, { what: "favorite" }, { what: "hidden" }]);
+  // Names only: no value of a field, no password, not even the hidden ones the test planted.
+  for (const secret of [PASSWORD, OLD_PASSWORD, "1234-secret-pin", "9999-secret-pin", "one@example.net", "two@example.net"]) {
+    assert.equal(JSON.stringify(answer.differs).includes(secret), false, secret);
+  }
+  useDocument();
+  const card = cards.createConflictCard({ texts, flow, ref, onDone: () => {}, onBack: () => {}, now: () => clock.now });
+  await card.loaded;
+  assert.deepEqual(
+    byRole(card.root, "conflict-differs-item").map((n) => n.getAttribute("data-what")),
+    ["username", "field", "urls", "favorite", "hidden"],
+  );
+  const text = one(card.root, "conflict-differs")?.textContent ?? "";
+  assert.ok(text.includes("Recovery e-mail") && text.includes("hidden field"));
+  for (const secret of [PASSWORD, OLD_PASSWORD, "1234-secret-pin", "one@example.net"]) assert.equal(text.includes(secret), false, secret);
+  assert.equal(one(card.root, "conflict-differs")?.getAttribute("data-feature"), "save");
+  // Identical versions name nothing.
+  conflicts.server.view = structuredClone(mine);
+  assert.deepEqual((await request("item_conflict", { ref })).differs, []);
 });
 
 test("keep_theirs_needs_a_second_click_and_keep_mine_writes_on_top", async () => {
