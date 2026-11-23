@@ -250,6 +250,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     /** What the frame reports to a generated fill (the new and the confirm field), and each field's `maxlength`. */
     generatedFields: /** @type {string[]} */ (["new_password", "confirm_password"]),
     limits: /** @type {Record<string, number>} */ ({}),
+    /** The kind of form a generated fill reports (null: the report names none). @type {string | null} */
+    group: "signup",
     /** What was filled, by kind. @type {Record<string, string>} */
     filled: /** @type {Record<string, string>} */ ({}),
     /** Whether the frame reports at all. */
@@ -324,6 +326,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
               id: `f${i}`,
               ...(mode === "generated" && sim.limits[kind] !== undefined ? { max: sim.limits[kind] } : {}),
             })),
+            ...(mode === "generated" && sim.group !== null ? { group: sim.group } : {}),
           }, sim);
         }, 0);
       }
@@ -391,11 +394,14 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     syncRunning: true,
   };
   /** What the store of offers was told after a generated fill (`failing`: it throws instead). */
-  const offered = { calls: /** @type {any[]} */ ([]), failing: false };
+  const offered = { calls: /** @type {any[]} */ ([]), failing: false, refusing: false };
   const offers = {
     onGenerated(/** @type {any} */ meta) {
       if (offered.failing) throw new Error("no room");
+      // The store answers null when it makes no offer (a lock, a closed tab, a page it does not take).
+      if (offered.refusing) return null;
       offered.calls.push(meta);
+      return `offer-${offered.calls.length}`;
     },
   };
   let generationCount = 0;

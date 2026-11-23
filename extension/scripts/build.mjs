@@ -37,7 +37,8 @@
 //    Writes background/handlers.gen.mjs (the register of background/handlers/*.handler.mjs),
 //    background/variant.gen.mjs (what differs between release and test) and
 //    shared/features.mjs (which features are on). The content
-//    script and the modules it imports are joined into content/fill.inject.js (scripts/lib/classic.mjs). Anything
+//    script and the modules it imports are joined into content/fill.inject.js, and, with `save` on, the capture script into
+//    content/capture.inject.js (scripts/lib/classic.mjs). Anything
 //    below a folder named test-only is left out of a release.
 // 5. Refuses a relative import or page script whose file is not in the package, inline
 //    script and style in HTML, source maps, files over 4 MiB that
@@ -50,7 +51,7 @@ import {
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
-import { CONTENT_BUNDLE, CONTENT_ENTRY, classicScript } from "./lib/classic.mjs";
+import { CAPTURE_BUNDLE, CAPTURE_ENTRY, CAPTURE_MAX_BYTES, CONTENT_BUNDLE, CONTENT_ENTRY, classicScript, contentMayInclude } from "./lib/classic.mjs";
 import { danglingImports, importsOf } from "./lib/imports.mjs";
 import { FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "./lib/testIds.mjs";
 import { RELEASE_ID, UPDATE_URL } from "./lib/updates.mjs";
@@ -90,10 +91,10 @@ export const RELEASE_FEATURES = Object.freeze(/** @type {string[]} */ ([]));
 /** The generated module that tells the code of a package which features are on. */
 export const FEATURES_FILE = "shared/features.mjs";
 /**
- * The package files of the `save` feature. A package with `save` off never holds
- * one (the build leaves them out), and a release never does (the release check).
+ * The package files of the `save` feature (the capture script, joined, and the sources it is joined from). A package
+ * with `save` off never holds one (the build leaves them out), and a release never does (the release check).
  */
-export const SAVE_FILES = Object.freeze(["content/capture.inject.js"]);
+export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", CAPTURE_ENTRY]);
 
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -125,7 +126,7 @@ export const TEST_ONLY_DIR = "test-only";
 /** @param {string} path a package path (posix) */
 export const isTestOnlyPath = (path) => path.split("/").includes(TEST_ONLY_DIR);
 /** Files below test/ that the test variant ships, to dist/test/. */
-export const TEST_ONLY_FILES = ["test/bridge.html", "test/bridge.mjs"];
+export const TEST_ONLY_FILES = ["test/bridge.html", "test/bridge.mjs", "test/capture-meter-start.js", "test/capture-meter-end.js"];
 /** The host names of the fixture server and of the end-to-end stack: internal, never in a release. */
 export const HOSTS_FILE = "test/fixtures/hosts.json";
 
@@ -955,8 +956,12 @@ export async function build({
   dist.set(FEATURES_FILE, Buffer.from(featuresModule(on, dist)));
   // The content script, joined into one classic script (an injected file cannot be a module).
   if (dist.has(CONTENT_ENTRY)) dist.set(CONTENT_BUNDLE, Buffer.from(classicScript(CONTENT_ENTRY, dist)));
-  // A package with `save` off holds no file of that feature.
-  if (!on.includes("save")) for (const path of SAVE_FILES) dist.delete(path);
+  // The capture script of the `save` feature: its own classic script, joined slim (it runs in every https page).
+  if (on.includes("save") && dist.has(CAPTURE_ENTRY)) {
+    const script = classicScript(CAPTURE_ENTRY, dist, contentMayInclude, { slim: true, name: CAPTURE_BUNDLE });
+    if (Buffer.byteLength(script) > CAPTURE_MAX_BYTES) throw new Error(`${CAPTURE_BUNDLE}: ${Buffer.byteLength(script)} bytes, over the ${CAPTURE_MAX_BYTES} of its size budget`);
+    dist.set(CAPTURE_BUNDLE, Buffer.from(script));
+  }
   for (const [lang, text] of generateLocales(root)) dist.set(`locales.${lang}.json`, Buffer.from(text));
   const css = generateCss(root);
   if (css !== "") dist.set("assets/app.css", Buffer.from(css));
@@ -981,6 +986,9 @@ export async function build({
     if (WASM_FILES.includes(path)) dist.set(path, bytes);
   }
   dist.set("manifest.json", Buffer.from(`${JSON.stringify(manifestJson, null, 2)}\n`));
+
+  // A package with `save` off holds no file of that feature (this runs after every step that adds files).
+  if (!on.includes("save")) for (const path of SAVE_FILES) dist.delete(path);
 
   // 5. Checks.
   for (const [path, bytes] of dist) checkFile(path, bytes);

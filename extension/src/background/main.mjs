@@ -8,12 +8,15 @@
 // through the core host's fill operations.
 // The sync engine stays inside the sync (sync.mjs): the matching and the item
 // operations get its items to read, never the engine.
+// The forms the user submitted are held by the capture host (captureHost.mjs): the store of offers, the registration
+// of the capture script and the setting; only in a build with saving passwords on, and only in memory.
 // Every listener is registered while the module loads, so the event that woke
 // the page reaches it.
 //
 // The background page starts locked. If it dies, the next start is locked too:
 // the keys lived in the page and went with it.
 
+import { createCaptureHost } from "./captureHost.mjs";
 import { createClipboard } from "./clipboard.mjs";
 import { createQuickFill, listenForCommands } from "./commands.mjs";
 import { action } from "./compat.mjs";
@@ -53,12 +56,21 @@ const sessionHost = createSessionHost({
 // saving passwords, which is off in a release until it is finished.
 const fillContext = FEATURES.save ? createFillContext({ now }) : null;
 
+// The capture host (the store of offers, the registration of the capture script, the setting); only with saving passwords.
+// The sync and the capture host need each other (the sync reads the offers it writes, the store asks the sync whether a
+// login is saved already), so each reaches the other through a function.
+/** @type {ReturnType<typeof createCaptureHost> | null} */
+let captureHost = null;
+
 // The sync engine starts when the session opens the vault and stops at every lock. The offers to save a password come
-// from the background's store of offers (none yet in this build but the test build's own).
+// from the capture host's store of offers (and, in the test build, from what its hooks planted).
 const syncHost = createSyncHost({
   sessionHost,
   permissions: { remove: (gone) => browser.permissions.remove(gone) },
-  captures: hooks?.captures ?? null,
+  captures: {
+    peek: (offerId, session) => captureHost?.offers.peek(offerId, session) ?? hooks?.captures?.peek(offerId, session) ?? null,
+    take: (offerId, session) => captureHost?.offers.take(offerId, session) ?? hooks?.captures?.take(offerId, session) ?? null,
+  },
   fillContext,
   // The web vault's languages: Norwegian for a Norwegian browser, English otherwise.
   language: labelLanguage(navigator.languages ?? [navigator.language]),
@@ -66,6 +78,19 @@ const syncHost = createSyncHost({
   // and there the engine is made and kept by the sync alone.
   ...(hooks?.createEngine ? { createEngine: hooks.createEngine } : {}),
 });
+
+captureHost = FEATURES.save
+  ? createCaptureHost({
+      now,
+      random: (bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
+      webNavigation: browser.webNavigation,
+      tabs: browser.tabs,
+      scripting: browser.scripting,
+      permissions: browser.permissions,
+      storageLocal: browser.storage.local,
+      writer: { classify: (capture) => syncHost.classifyCapture(capture) },
+    })
+  : null;
 
 // Ferret's copies: the background writes the clipboard itself, and clears it 30 seconds later (its alarm listener is
 // registered now, so the alarm that wakes an unloaded page reaches it).
@@ -99,6 +124,8 @@ const fillHost = createFillHost({
   syncHost: { engine: () => /** @type {any} */ (syncHost.items()) },
   fillContext,
   generator: generatorHost,
+  // A generated password that went into a page is offered for saving by the capture host's store of offers.
+  offers: captureHost !== null ? { onGenerated: (meta) => /** @type {NonNullable<typeof captureHost>} */ (captureHost).offers.onGenerated(meta) } : null,
   clipboard,
   scripting: browser.scripting,
   tabs: browser.tabs,
@@ -117,13 +144,14 @@ const coreHost = createCoreHost({
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (id) => clearTimeout(/** @type {any} */ (id)),
   },
-  ops: { ...sessionHost.ops, ...syncHost.ops, ...matchHost.ops, ...fillHost.ops, ...(generatorHost?.ops ?? {}) },
+  ops: { ...sessionHost.ops, ...syncHost.ops, ...matchHost.ops, ...fillHost.ops, ...(captureHost?.ops ?? {}), ...(generatorHost?.ops ?? {}) },
 });
 coreHostRef = coreHost;
 sessionHost.attach(coreHost);
 syncHost.attach(coreHost);
 matchHost.attach(coreHost);
 fillHost.attach(coreHost);
+captureHost?.attach(coreHost);
 generatorHost?.attach(coreHost);
 
 const lock = createLock({
@@ -147,6 +175,7 @@ const router = createRouter({
   onSessionEnd: (session) => {
     fillHost.endSession(session);
     syncHost.endSession(session);
+    captureHost?.endSession(session);
   },
 });
 
@@ -178,7 +207,9 @@ listenForMenus({
 // Only the test build has hooks, and they are set up here, in the first turn of the
 // page, so a port or an alarm that woke the page reaches them. `variantHooks` is null
 // in a release, so a release has no test code to run.
-if (hooks) hooks.install({ browser, runtime, coreHost, now, engine: () => (syncHost.items() !== null ? hooks.engine() : null) });
+if (hooks) {
+  hooks.install({ browser, runtime, coreHost, now, offers: captureHost?.offers ?? null, engine: () => (syncHost.items() !== null ? hooks.engine() : null) });
+}
 
 // A new page has no vault, whatever an earlier page left in `storage.session`.
 coreHost.lock("restart").catch(() => {});

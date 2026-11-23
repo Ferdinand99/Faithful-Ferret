@@ -39,9 +39,10 @@ test("the_capture_and_write_rules_are_in_the_spec", () => {
   // Where capture runs, and what it never does to the page.
   for (const rule of [
     '**Detection of new and changed passwords.** When the user turns on "Offer to save passwords" and grants access to `https` pages (asked in an extension tab), a small capture script runs in every `https` page and frame.',
-    "It changes nothing in the page, leaves no marker and sends nothing until the page has a password field.",
+    "It changes nothing in the page, leaves no marker and sends nothing until the page has a password field, except the user name a person typed into a step that asks for the user name only, which it reports when that step is submitted and which never leads to an offer by itself.",
     // Trusted input only, shown fields only.
     "it reads the form group's password fields only when their last change came from the user's own input (a trusted `input` event) and the page has not changed them since, and only fields that are shown; a user name may also come from the page and is then shown as editable.",
+    "When a sign-up, change or reset form is submitted and the new password is in its field but did not come from the user's own input (Ferret filled it), the script reports the form without any password, so that the extension can join it to the password Ferret generated for that form; no value the page could have set is ever sent.",
     // Origin and frames.
     "It never runs on `http://` pages; a capture from a frame whose ancestors are not all same-site with the top, secure and not opaque, or whose frame the page hides, is dropped; the origin is taken from the browser, never from the page.",
     // Where the captured value is held, and for how long.

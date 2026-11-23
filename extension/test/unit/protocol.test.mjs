@@ -202,6 +202,7 @@ test("a content script cannot send a message type that carries a value", () => {
   // The two content types carry ids, a flag and one origin, nothing else.
   assert.deepEqual(keysOf(CONTENT_TYPES.frame_report.request).sort(), [
     "fields",
+    "group",
     "id",
     "kind",
     "max",

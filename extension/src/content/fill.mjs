@@ -220,6 +220,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
   /** @type {{ requestId: string, fields: Field[] } | null} */
   let pending = null;
+  /** The kind of the group the last generated scan found (signup, change or reset), or null. @type {string | null} */
+  let foundGroup = null;
   /** The field of a context menu click, for the next request only. @type {{ element: any, until: number } | null} */
   let aimed = null;
 
@@ -549,6 +551,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       if (group) {
         take("new_password", group.new);
         take("confirm_password", group.confirm);
+        foundGroup = group.kind;
       }
       return fieldsOf(chosen, order);
     }
@@ -658,6 +661,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) return false;
     if (mode !== undefined && mode !== "generated") return false;
     const generated = mode === "generated";
+    foundGroup = null;
     const fields = scan(generated ? undefined : target, generated);
     pending = { requestId, fields };
     const raw = encode("frame_report", {
@@ -667,6 +671,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
         const max = limitOf(field);
         return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}) };
       }),
+      ...(generated && foundGroup !== null && fields.length > 0 ? { group: foundGroup } : {}),
     });
     Promise.resolve(send(raw)).catch(() => {});
     return true;

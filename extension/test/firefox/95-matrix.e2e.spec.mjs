@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { world } from "./adversary.mjs";
-import { channels, defaultManifest, fixtures, launch, stopFixtures } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, defaultManifest, fixtures, launch, stopFixtures } from "./harness.mjs";
 import { ENTRIES, caseUrl, casesOf, grantUrls, leave, locate, mergePhases, runCapturePhase, runFillPhase, runGeneratorPhase } from "./matrix.mjs";
 import { computeMatrix, writeReport } from "./matrixReport.mjs";
 
@@ -114,6 +114,25 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
         } finally {
           await w.ui.close();
         }
+      }
+      // Every lock clears the offers the extension holds, and a run of the whole corpus lasts longer than the default
+      // "Lock after": the vault stays open for the day.
+      await w.ui.open();
+      try {
+        await w.ui.body("settings", { lock_seconds: 86_400 });
+      } finally {
+        await w.ui.close();
+      }
+      // The capture phase needs "Offer to save passwords" on: the person turns it on in the settings tab with a real
+      // click, which asks for access to https pages (the test profile accepts the request) and registers the script.
+      if (PART !== "fill") {
+        await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
+        await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+        const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
+        assert.ok(toggle, `${channel}: the settings page has the switch`);
+        await w.session.click(toggle);
+        await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "true"), 15_000, "capture on");
+        await w.session.switchTo(w.pageTab);
       }
       // The vault check of the capture phase needs the item list of the sync engine: it has the matrix's entries.
       const vault = await w.vaultState();

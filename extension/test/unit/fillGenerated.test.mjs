@@ -246,7 +246,7 @@ test("fill_generated_respects_maxlength_and_refuses_below_8", async () => {
   assert.equal(shown.value.length, 12);
   assert.notEqual(shown.value, made.value);
   assert.deepEqual(world.pushed.map((p) => p.message.body.value), [shown.value, shown.value]);
-  assert.deepEqual(world.offered.calls.map((c) => c.value), [shown.value], "the offer holds what went into the page");
+  assert.deepEqual(world.offered.calls.map((c) => c.password), [shown.value], "the offer holds what went into the page");
 
   // The same options as the first value (the generator keeps them), with the length of the limit only.
   assert.deepEqual({ ...world.made[1].options, length: 20 }, world.made[0].options);
@@ -296,7 +296,7 @@ test("fill_generated_creates_an_offer_marked_generated_and_shows_the_save_card_a
   assert.equal(reply.offer, true);
   // The store of offers was told what went into the page, where, and for how long the value is held.
   assert.deepEqual(world.offered.calls, [
-    { tabId: TAB, frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, generationId: made.generation_id, value: made.value, expiresAt: made.expires_at },
+    { tabId: TAB, frameId: 0, documentId: "doc-1", frameUrl: LOGIN_URL, kind: "signup", password: made.value, expiresAt: made.expires_at },
   ]);
   // It is told once per fill, and not for a fill that put nothing in.
   await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB });
@@ -377,7 +377,7 @@ test("a_value_that_landed_in_one_field_and_was_refused_by_the_next_still_gets_it
   world.page.answer = (/** @type {string} */ kind) => (kind === "confirm_password" ? { ok: false, reason: "hidden" } : { ok: true });
   assert.deepEqual(await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB }), { ok: false, reason: "covered", offer: true });
   assert.deepEqual(world.page.filled, { new_password: made.value });
-  assert.deepEqual(world.offered.calls.map((c) => c.value), [made.value], "the page holds the value, so the offer does too");
+  assert.deepEqual(world.offered.calls.map((c) => c.password), [made.value], "the page holds the value, so the offer does too");
 
   // Nothing landed: no offer. And an offer that cannot be made says so.
   const none = await signUpWorld();
@@ -388,4 +388,29 @@ test("a_value_that_landed_in_one_field_and_was_refused_by_the_next_still_gets_it
   full.world.offered.failing = true;
   full.world.page.answer = (/** @type {string} */ kind) => (kind === "confirm_password" ? { ok: false, reason: "hidden" } : { ok: true });
   assert.deepEqual(await full.popup.request("fill_generated", { generation_id: full.made.generation_id, tab_id: TAB }), { ok: false, reason: "covered" });
+});
+
+test("the_store_of_offers_is_told_the_kind_of_form_and_a_refusal_means_no_offer", async () => {
+  // The kind of the form comes from the fill script's report: a change form and a reset form say so.
+  for (const group of ["change", "reset"]) {
+    const { world, popup, made } = await signUpWorld();
+    world.page.group = group;
+    assert.equal((await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB })).offer, true);
+    assert.deepEqual(world.offered.calls.map((c) => c.kind), [group]);
+  }
+  // A report that names no kind gives no offer (the value is in the page, the store is not asked).
+  const unnamed = await signUpWorld();
+  unnamed.world.page.group = null;
+  assert.deepEqual(await unnamed.popup.request("fill_generated", { generation_id: unnamed.made.generation_id, tab_id: TAB }), { ok: true, length: 20, offer: false });
+  assert.deepEqual(unnamed.world.offered.calls, []);
+  // The store answers null: no offer, and the reply says so.
+  const refused = await signUpWorld();
+  refused.world.offered.refusing = true;
+  assert.deepEqual(await refused.popup.request("fill_generated", { generation_id: refused.made.generation_id, tab_id: TAB }), { ok: true, length: 20, offer: false });
+  // The offer ends with the value: a fill at minute 14 passes the generator's own end, not a new 15 minutes.
+  const late = await signUpWorld();
+  late.world.clock.advance(14 * 60_000);
+  await late.popup.request("fill_generated", { generation_id: late.made.generation_id, tab_id: TAB });
+  assert.equal(late.world.offered.calls[0].expiresAt, late.made.expires_at);
+  assert.ok(late.world.offered.calls[0].expiresAt - late.world.clock.now() <= 60_000);
 });

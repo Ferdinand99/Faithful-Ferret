@@ -92,8 +92,9 @@ runs `95-matrix.e2e.spec.mjs` on the end-to-end stack: the extension signed in t
 entries, and every case of the corpus in `test/fixtures/forms/` (see its README). The fill phase opens each
 page with the real shortcut, asks the extension for the page's entries, fills them and reads every input of
 every document; the capture phase types what a person types and reads the extension's offers through the test
-bridge's `offers_peek`. Until the extension keeps offers, `offers_peek` says it has none to show and the capture
-phase counts every case as not run. The first test of the spec proves that WebDriver's key events are trusted
+bridge's `offers_peek` (the offers' kind, origin, user name, what the write path makes of them and the SHA-256 of
+each password, never a password). A build without the `save` feature has no offers, `offers_peek` says so and the
+capture phase counts every case as not run. The first test of the spec proves that WebDriver's key events are trusted
 (`isTrusted`) in both channels; the extension counts only trusted input, so the matrix means nothing without it.
 
 `matrixReport.mjs` turns the results into the numbers: the fill and capture rates over the positive cases,

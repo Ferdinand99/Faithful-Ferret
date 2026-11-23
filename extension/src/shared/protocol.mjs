@@ -6,7 +6,9 @@
 // - UI_TYPES: an extension page to the background, over the port named
 //   UI_PORT. The background answers on the same port with the same id.
 // - CONTENT_TYPES: a content script to the background, over
-//   runtime.sendMessage. A content script can never ask for a value.
+//   runtime.sendMessage. A content script can never ask for a value. One type
+//   carries a secret up: `form_capture`, what a person typed into a form they
+//   submitted (SECRET_KEY_EXCEPTIONS).
 // - PUSH_TYPES: the background to one content script, over tabs.sendMessage,
 //   as the answer to a pending action in the extension's own UI. Only here does
 //   a secret travel to a page, and it is one value for one field of one frame.
@@ -27,6 +29,7 @@ import {
   array,
   boolean,
   integer,
+  nullable,
   object,
   string,
   validate,
@@ -36,6 +39,10 @@ export { ProtocolError };
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 65_536;
+/** A message of these types is smaller still: a capture is a user name and a password or two, never a page. */
+export const MAX_BYTES_BY_TYPE = Object.freeze({ form_capture: 4096 });
+/** @param {string} type */
+const limitOf = (type) => /** @type {Record<string, number>} */ (MAX_BYTES_BY_TYPE)[type] ?? MAX_MESSAGE_BYTES;
 export const UI_PORT = "ferret-ui";
 
 /**
@@ -50,6 +57,7 @@ export const DEFAULT_LOCK_SECONDS = 900;
 /** Keys that no schema may carry, except where `SECRET_KEY_EXCEPTIONS` says so. */
 export const FORBIDDEN_KEYS = Object.freeze([
   "password",
+  "current_password",
   "value",
   "secret",
   "totp_secret",
@@ -58,12 +66,14 @@ export const FORBIDDEN_KEYS = Object.freeze([
 
 /**
  * The only places a forbidden key name is allowed: `fill_field` carries the one
- * value that is filled into a page, and the reply of `generate` carries the
- * password or passphrase the core has just made, for the popup to show.
+ * value that is filled into a page; the reply of `generate` carries the password or passphrase the core has just made,
+ * for the popup to show; and `form_capture` (content script to background) carries what the person typed into the
+ * form they submitted, the password and, in a change form, the one in use. Nothing is sent back.
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
   generate: Object.freeze(["value"]),
+  form_capture: Object.freeze(["password", "current_password"]),
 });
 
 /**
@@ -433,6 +443,19 @@ export const UI_TYPES = defineTypes({
     ),
     reply: object({ lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) }),
   },
+  // "Offer to save passwords" and the never list, from the settings page. `enable` follows the page's own request for
+  // the permission for https pages (the background checks it again); `never_remove` takes one host off the list and
+  // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
+  capture_settings: {
+    request: object(
+      { enable: boolean(), never_remove: host, never_clear: boolean() },
+      { optional: ["enable", "never_remove", "never_clear"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, on: boolean(), permission: boolean(), never: array(host, { max: 500 }) },
+      { optional: ["reason"] },
+    ),
+  },
 });
 
 /** Content script to background. A content script only reports; it never asks. */
@@ -456,7 +479,9 @@ export const CONTENT_TYPES = defineTypes({
         ),
         { max: 64 },
       ),
-    }),
+      // The kind of the form a generated fill found (the fields are its new and confirm field); only in that mode.
+      group: string({ max: 16, oneOf: ["signup", "change", "reset"] }),
+    }, { optional: ["group"] }),
   },
   fill_result: {
     request: object(
@@ -464,6 +489,26 @@ export const CONTENT_TYPES = defineTypes({
       { optional: ["reason"] },
     ),
   },
+  // The capture script (the `save` feature). A form was submitted: its kind, the user name (with where it came from:
+  // typed by the person, or already in the field), and the password the person typed (the new one in a sign-up, change
+  // or reset form; the one in use in a sign-in) and, in a change form, the one in use. A key is `null` when the form
+  // has no such value or it did not come from the person's own typing. `identifier` is a step that asks for the user
+  // name only: no password. `self_origin` only narrows, as in `frame_report`.
+  form_capture: {
+    request: object({
+      capture_id: requestId,
+      self_origin: origin,
+      kind: string({ max: 16, oneOf: ["login", "signup", "change", "reset", "identifier"] }),
+      username: nullable(string({ min: 1, max: 512 })),
+      username_from: nullable(string({ max: 8, oneOf: ["typed", "page"] })),
+      password: nullable(string({ min: 1, max: 1024 })),
+      current_password: nullable(string({ min: 1, max: 1024 })),
+    }),
+  },
+  // The password field of a capture went away (or was hidden) and no new one showed up within five seconds.
+  form_gone: { request: object({ capture_id: requestId }) },
+  // A password field the person can see is on the page: sent only when there is one.
+  page_ready: { request: empty },
 });
 
 /** Background to one content script. */
@@ -518,7 +563,7 @@ export function encode(type, body, opts = {}) {
   if (!ID.test(id)) throw new ProtocolError("bad_shape", "id");
   const clean = validate(schema, body);
   const raw = JSON.stringify({ v: PROTOCOL_VERSION, id, type, body: clean });
-  if (encoder.encode(raw).length > MAX_MESSAGE_BYTES) {
+  if (encoder.encode(raw).length > limitOf(type)) {
     throw new ProtocolError("too_large");
   }
   return raw;
@@ -601,6 +646,7 @@ export function decode(raw, allowed, opts = {}) {
     return { id, type, body: validate(refusal, body) };
   }
   if (!Object.hasOwn(allowed, type)) throw new ProtocolError("unknown_type");
+  if (limitOf(type) < MAX_MESSAGE_BYTES && encoder.encode(raw).length > limitOf(type)) throw new ProtocolError("too_large");
   const def = allowed[type];
   const schema = opts.reply ? def.reply : def.request;
   if (!schema) throw new ProtocolError("unknown_type");

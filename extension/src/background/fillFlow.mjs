@@ -256,7 +256,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   report: Deferred,
  *   result: Deferred | null,
  * }} Pending one frame of a fill
- *   `report` settles with `{ kinds: Set<string>, url: string, limits: Map<string, number> }` (`limits`: the `maxlength` of
+ *   `report` settles with `{ kinds: Set<string>, url: string, limits: Map<string, number>, group: string | null }` (`limits`: the `maxlength` of
  *   the fields of a generated fill that have one), `result` with `{ ok: boolean, reason?: string }`
  */
 
@@ -271,7 +271,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   source?: CandidateSource | null,
  *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void } | null,
  *   generator?: { get(id: unknown): { value: string, kind: string, expiresAt: number } | null, fit(id: string, limit: number): Promise<{ ok: boolean }> } | null,
- *   offers?: { onGenerated(meta: GeneratedMeta): unknown } | null,
+ *   offers?: { onGenerated(meta: GeneratedMeta): Promise<string | null> | string | null } | null,
  *   now?: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   timers?: { setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: unknown) => void },
@@ -281,9 +281,10 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   notes what was filled where (null: nothing is noted); `generator` holds the generated values (null: no generated
  *   fill); `offers` is given what was filled so it can hold an offer to save it (null: no offer is made)
  * @typedef {{
- *   tabId: number, frameId: number, documentId?: string, url: string, origin: string, generationId: string,
- *   value: string, expiresAt: number,
- * }} GeneratedMeta what the store of offers is told after a generated fill: the frame and the value, in memory only
+ *   tabId: number, frameId: number, documentId?: string, frameUrl: string, kind: "signup" | "change" | "reset", password: string, expiresAt: number,
+ * }} GeneratedMeta what the store of offers is told after a generated fill: the frame and the document that were
+ *   filled, the kind of the form, the value (in memory only) and when the generator stops holding it; the store answers
+ *   the offer's id, or null when it makes none
  */
 export function createFillHost({
   syncHost,
@@ -773,7 +774,7 @@ export function createFillHost({
       }
       const request = requests[chosen];
       for (const other of requests) if (other !== request) pending.delete(other.requestId);
-      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string, limits: Map<string, number> }>} */ (reports[chosen]).value;
+      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string, limits: Map<string, number>, group: string | null }>} */ (reports[chosen]).value;
       const kinds = GENERATED_ORDER.filter((kind) => report.kinds.has(kind));
 
       // The shortest `maxlength` of the fields decides the length; below the shortest password Ferret makes, nothing is filled.
@@ -792,21 +793,24 @@ export function createFillHost({
       // Ferret fills no generated password shorter than 8 characters, whatever the field says (the popup can make one of 4).
       if (value.length < MIN_GENERATED_FILL) return { ok: false, reason: "field_too_short" };
 
-      /** Tells the store of offers what went into the page. True when an offer is held for it. */
+      /**
+       * Tells the store of offers what went into the page: the frame and the document that were filled, the kind of
+       * the form and the value, and when the value stops being held (the offer ends then too). True when an offer is
+       * held for it; the store answers null when it makes none (a lock, a closed tab, a page it does not take).
+       */
       const announce = async () => {
-        if (offers === null) return false;
+        if (offers === null || report.group === null) return false;
         try {
-          await offers.onGenerated({
+          const id = await offers.onGenerated({
             tabId,
             frameId: request.frameId,
             ...(request.documentId !== undefined ? { documentId: request.documentId } : {}),
-            url: report.url,
-            origin: request.origin,
-            generationId,
-            value,
+            frameUrl: report.url,
+            kind: /** @type {"signup" | "change" | "reset"} */ (report.group),
+            password: value,
             expiresAt: generated.expiresAt,
           });
-          return true;
+          return typeof id === "string" && id !== "";
         } catch {
           // The value is in the page; the offer to save it is what failed.
           return false;
@@ -868,7 +872,8 @@ export function createFillHost({
     /** @type {Map<string, number>} */
     const limits = new Map();
     for (const f of fields) if (Number.isSafeInteger(f.max) && f.max >= 0) limits.set(f.kind, f.max);
-    request.report.resolve({ kinds, url: sender.url, limits });
+    const group = request.mode === "generated" && ["signup", "change", "reset"].includes(body.group) ? body.group : null;
+    request.report.resolve({ kinds, url: sender.url, limits, group });
     return undefined;
   }
 

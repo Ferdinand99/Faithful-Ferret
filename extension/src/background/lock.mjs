@@ -39,8 +39,25 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * `forget_preview` is the question before it, on the same devices: it reads two
  * counts of the local records (unsent changes, and whether another address
  * keeps the account), needs no key and changes nothing.
+ * `form_capture`, `form_gone` and `page_ready` are the capture script's reports: they are taken while the vault is locked,
+ * never touch a key and never move the deadline (a page's activity is not the user's); `capture_settings` is the settings
+ * page's "Offer to save passwords", which must work on a locked device like the other settings.
  */
-export const LOCK_EXEMPT = Object.freeze(["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_preview", "forget_server"]);
+export const LOCK_EXEMPT = Object.freeze([
+  "sign_in",
+  "unlock",
+  "state",
+  "settings",
+  "lock",
+  "server_check",
+  "sync_state",
+  "forget_preview",
+  "forget_server",
+  "form_capture",
+  "form_gone",
+  "page_ready",
+  "capture_settings",
+]);
 
 export const LOCK_AT_KEY = "lock_at";
 export const ALARM_NAME = "ferret-lock";

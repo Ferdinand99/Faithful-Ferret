@@ -31,7 +31,7 @@ async function built({ manifest = "mv3", variant = "release", extra = {} } = {})
 }
 
 /** The handler files of a release, in the order of the register. */
-const RELEASE_HANDLERS = Object.freeze(["candidates.handler.mjs", "copy.handler.mjs", "fill.handler.mjs", "fillReport.handler.mjs", "generator.handler.mjs", "grant.handler.mjs", "lock.handler.mjs", "search.handler.mjs", "session.handler.mjs", "settings.handler.mjs", "sync.handler.mjs", "syncWrite.handler.mjs"]);
+const RELEASE_HANDLERS = Object.freeze(["candidates.handler.mjs", "capture.handler.mjs", "captureSettings.handler.mjs", "copy.handler.mjs", "fill.handler.mjs", "fillReport.handler.mjs", "generator.handler.mjs", "grant.handler.mjs", "lock.handler.mjs", "search.handler.mjs", "session.handler.mjs", "settings.handler.mjs", "sync.handler.mjs", "syncWrite.handler.mjs"]);
 
 /** Only the exact files of the WASM package: a look-alike path (our own file under js/) is not part of it. @param {string} path */
 const insideWasmPackage = (path) => WASM_FILES.includes(path);
@@ -261,7 +261,7 @@ test("the_handler_register_lists_every_handler_file_in_order_and_refuses_strays"
   try {
     const text = /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
     assert.deepEqual(importsOf(text).specifiers, ["alpha.handler.mjs", ...RELEASE_HANDLERS, "zeta.handler.mjs"].map((name) => `./handlers/${name}`));
-    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6, handler7, handler8, handler9, handler10, handler11, handler12, handler13]\);/);
+    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6, handler7, handler8, handler9, handler10, handler11, handler12, handler13, handler14, handler15]\);/);
   } finally {
     env.cleanup();
   }
@@ -301,8 +301,16 @@ async function boot(dir) {
       remove: async () => {},
       onClicked: { addListener: () => { counts.menuClick += 1; } },
     },
-    scripting: { executeScript: async () => [] },
-    webNavigation: { getFrame: async () => null, getAllFrames: async () => [] },
+    scripting: { executeScript: async () => [], getRegisteredContentScripts: async () => [], registerContentScripts: async () => {}, unregisterContentScripts: async () => {} },
+    webNavigation: {
+      getFrame: async () => null,
+      getAllFrames: async () => [],
+      onCommitted: { addListener() {} },
+      onCompleted: { addListener() {} },
+      onHistoryStateUpdated: { addListener() {} },
+    },
+    tabs: { get: async () => ({ incognito: false }), onRemoved: { addListener() {} } },
+    permissions: { contains: async () => false, onRemoved: { addListener() {} } },
     runtime: {
       ...fake.runtime,
       getManifest: () => ({ manifest_version: 3, browser_specific_settings: { gecko: { id: fake.runtime.id } } }),

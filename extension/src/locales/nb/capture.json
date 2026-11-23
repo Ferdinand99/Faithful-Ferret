@@ -1,0 +1,20 @@
+{
+  "capture.error.disconnected": "Bakgrunnen til Ferret stoppet mens den jobbet. Åpne denne siden på nytt.",
+  "capture.error.not_available": "Lagring av passord er ikke med i denne versjonen av Ferret.",
+  "capture.error.permission_missing": "Nettleseren ga ikke Ferret tilgang til https-sider, så ingenting ble slått på.",
+  "capture.error.permission_refused": "Du tillot ikke tilgang til https-sider, så ingenting ble slått på.",
+  "capture.error.register_failed": "Nettleseren ville ikke starte skriptet. Ingenting ble slått på.",
+  "capture.error.unknown": "Det gikk ikke. Ingenting ble endret.",
+  "capture.never.clear": "Fjern alle",
+  "capture.never.empty": "Ingen nettsteder ennå. «Aldri for dette nettstedet» på et tilbud legger til ett her.",
+  "capture.never.hint": "Ferret tilbyr ingenting for disse nettstedene. Et nettsted du valgte i et privat vindu, står her bare til nettleseren lukkes.",
+  "capture.never.remove": "Fjern",
+  "capture.never.remove.label": "Fjern {host} fra listen",
+  "capture.never.title": "Nettsteder du aldri vil bli spurt om",
+  "capture.off": "Av. Ferret ser ikke på skjemaene du sender inn.",
+  "capture.on": "På. Ferret tilbyr å lagre et nytt passord eller oppdatere et endret etter at du har sendt inn et skjema.",
+  "capture.reload": "Faner som allerede er åpne, begynner å legge merke til passord når du laster dem på nytt.",
+  "capture.switch": "Tilby å lagre og oppdatere passord",
+  "capture.title": "Tilby å lagre passord",
+  "capture.why": "For å legge merke til et nytt eller endret passord må Ferret kjøre et lite skript på alle https-sider, og derfor ber den nettleseren om tilgang til https-sider. Skriptet endrer ingenting på en side og sender ingenting før du sender inn et skjema med et passord i. Det du skrev, holdes bare i minnet til bakgrunnssiden i Ferret, i høyst fem minutter, og slettes når hvelvet låses. Ingenting lagres uten at du klikker på tilbudet. Ferret ber aldri om hovedpassordet ditt inne i en nettside."
+}
