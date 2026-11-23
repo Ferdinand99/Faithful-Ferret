@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { packZip, readZip } from "../../scripts/lib/archive.mjs";
 import {
-  channels, EXTENSION_ORIGIN, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_SHORTCUT, xpiPath,
+  channels, commandOnPage, EXTENSION_ORIGIN, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_SHORTCUT, xpiPath,
 } from "./harness.mjs";
 import { MEASURE_URL, portCommand } from "./measure.mjs";
 
@@ -357,8 +357,11 @@ async function probeAll(channel, manifest) {
     // A real shortcut: the command runs with activeTab on this tab.
     let command;
     await row(rows, ctx, "chrome_context.shortcut", async () => {
-      await session.pressShortcut(TEST_SHORTCUT);
-      command = await session.waitFor(async () => (await fromBridge(framesTab, () => bridge.events())).find((e) => e.kind === "command"), 15_000, "the command event");
+      command = await commandOnPage({
+        clear: () => fromBridge(framesTab, () => bridge.clearEvents()),
+        press: () => session.pressShortcut(TEST_SHORTCUT),
+        events: () => fromBridge(framesTab, () => bridge.events()),
+      });
       return { status: command.tabUrl === server.url(server.hosts[0], "/static/frames.html") ? "works" : "fails", detail: { tabId: command.tabId, sawTheTabAddress: command.tabUrl !== null } };
     });
     const tabId = /** @type {number} */ (command?.tabId);
