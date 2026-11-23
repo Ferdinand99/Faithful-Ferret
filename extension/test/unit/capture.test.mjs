@@ -801,7 +801,8 @@ test("sign_up_change_and_reset_forms_send_the_new_password_and_the_one_in_use", 
   filledCurrent.submit(d.form);
   filledCurrent.settle();
   assert.deepEqual(captures(filledCurrent).map((x) => [x.kind, x.password, x.current_password]), [["change", PASSWORD, null]]);
-  // A new password the person did not type: nothing, whatever the current one is.
+  // A new password the person did not type (the page wrote it, or the extension filled it): the form is reported with no
+  // password at all, whatever the current one is, as a request to join it to a generated password. The value never goes up.
   const planted = createWorld();
   const p = changeForm(planted);
   planted.start();
@@ -810,7 +811,42 @@ test("sign_up_change_and_reset_forms_send_the_new_password_and_the_one_in_use", 
   p.again.value = "planted";
   planted.submit(p.form);
   planted.settle();
-  assert.deepEqual(planted.sent.filter((m) => m.type === "form_capture"), []);
+  assert.deepEqual(captures(planted).map((x) => [x.kind, x.username, x.password, x.current_password]), [["change", null, null, null]]);
+  assert.equal(JSON.stringify(planted.sent).includes("planted"), false);
+  assert.equal(JSON.stringify(planted.sent).includes("old-password-1"), false);
+
+  // A sign-up form that the extension filled (new and confirm, with events a script made), with a user name the person typed:
+  // reported with the user name and no password. The same form with the new field empty, or a sign-in form with a value
+  // the page wrote, is not reported.
+  const generated = createWorld();
+  const g = signupForm(generated);
+  generated.start();
+  generated.type(g.user, "anna");
+  for (const field of [g.fresh, g.again]) {
+    field.value = "Gen-erated-1!";
+    generated.fire(field, "input", { trusted: false });
+    generated.fire(field, "change", { trusted: false });
+  }
+  generated.submit(g.form);
+  generated.settle();
+  assert.deepEqual(captures(generated).map((x) => [x.kind, x.username, x.username_from, x.password, x.current_password]), [["signup", "anna", "typed", null, null]]);
+  assert.equal(JSON.stringify(generated.sent).includes("Gen-erated-1!"), false);
+  const emptyNew = createWorld();
+  const e = signupForm(emptyNew);
+  emptyNew.start();
+  emptyNew.type(e.user, "anna");
+  emptyNew.submit(e.form);
+  emptyNew.settle();
+  assert.deepEqual(emptyNew.of("form_capture"), []);
+  const plantedLogin = createWorld();
+  const pl = loginForm(plantedLogin);
+  plantedLogin.start();
+  plantedLogin.type(pl.user, "anna");
+  pl.pass.value = "written-by-the-page";
+  plantedLogin.fire(pl.pass, "input", { trusted: false });
+  plantedLogin.submit(pl.form);
+  plantedLogin.settle();
+  assert.deepEqual(plantedLogin.of("form_capture"), [], "a sign-in form is never reported without its password");
 
   // Over the limits: a password over 1 024 characters is dropped, and so is a current password over it (the new one stays).
   const huge = createWorld();
@@ -828,6 +864,135 @@ test("sign_up_change_and_reset_forms_send_the_new_password_and_the_one_in_use", 
   limit.submit(l.form);
   limit.settle();
   assert.equal(captures(limit)[0].password.length, 1024);
+});
+
+test("a_covered_or_modal_hidden_form_is_not_reported_gone_and_a_form_that_comes_back_sends_page_ready", () => {
+  /** A signed-in-looking attempt: typed and submitted, with the start's page_ready already sent. */
+  const attempt = () => {
+    const world = createWorld();
+    const f = loginForm(world);
+    world.start();
+    world.type(f.user, "anna");
+    world.type(f.pass, PASSWORD);
+    world.submit(f.form);
+    world.settle();
+    assert.equal(captures(world).length, 1);
+    return { world, f };
+  };
+  // The form stays in the page but is covered, or the page behind an error modal is aria-hidden or inert: not gone, and
+  // nothing else is sent either (the form did not come back, it never left).
+  /** @type {Array<[string, (w: ReturnType<typeof createWorld>, f: ReturnType<typeof loginForm>) => void]>} */
+  const stays = [
+    ["a Signing in overlay", (w, f) => {
+      const cover = addText(w.document, w.document.body, "div", "Signing in...");
+      cover.rect = { ...f.pass.rect };
+      cover.z = 10;
+    }],
+    ["aria-hidden on the app root (an error modal library)", (w) => { w.document.body.setAttribute("aria-hidden", "true"); }],
+    ["an inert page behind a dialog", (_w, f) => { f.form.inert = true; }],
+    ["a dialog backdrop over the whole page", (w) => {
+      const backdrop = addText(w.document, w.document.body, "div", "");
+      backdrop.rect = { left: 0, top: 0, width: 1280, height: 800 };
+      backdrop.z = 10;
+    }],
+  ];
+  for (const [label, cover] of stays) {
+    const { world, f } = attempt();
+    world.clock.advance(300);
+    cover(world, f);
+    world.clock.advance(6000);
+    assert.deepEqual(world.of("form_gone"), [], label);
+    assert.equal(world.of("page_ready").length, 1, `${label}: only the start's page_ready`);
+  }
+
+  // Gone for real (removed) at two checks in a row: form_gone, once. Hidden or too small count as gone as well.
+  /** @type {Array<[string, (w: ReturnType<typeof createWorld>, f: ReturnType<typeof loginForm>) => void]>} */
+  const leaves = [
+    ["removed", (w, f) => { w.document.body.remove(f.form); }],
+    ["not displayed", (_w, f) => { f.form.style.display = "none"; }],
+    ["visibility hidden", (_w, f) => { f.form.style.visibility = "hidden"; }],
+  ];
+  for (const [label, leave] of leaves) {
+    const { world, f } = attempt();
+    world.clock.advance(300);
+    leave(world, f);
+    world.clock.advance(1000);
+    assert.deepEqual(world.of("form_gone"), [], `${label}: one check is not enough`);
+    world.clock.advance(6000);
+    assert.equal(world.of("form_gone").length, 1, label);
+  }
+
+  // Gone at one check only (an overlay-less flicker: removed and back within the first check): never form_gone.
+  const flicker = attempt();
+  flicker.world.clock.advance(100);
+  flicker.world.document.body.remove(flicker.f.form);
+  flicker.world.clock.advance(100);
+  flicker.f.form.style.display = "block";
+  flicker.world.document.body.append(flicker.f.form);
+  flicker.world.clock.advance(6000);
+  assert.deepEqual(flicker.world.of("form_gone"), []);
+
+  // A form that is replaced by a new one before the first check (a failed attempt): page_ready, no form_gone.
+  const failed = attempt();
+  failed.world.clock.advance(300);
+  failed.world.document.body.remove(failed.f.form);
+  loginForm(failed.world);
+  failed.world.clock.advance(6000);
+  assert.deepEqual(failed.world.of("form_gone"), []);
+  assert.equal(failed.world.of("page_ready").length, 2);
+
+  // form_gone first, then the form comes back (a slow failed attempt): page_ready after it, once.
+  const slow = attempt();
+  slow.world.clock.advance(300);
+  slow.world.document.body.remove(slow.f.form);
+  slow.world.clock.advance(2900);
+  assert.equal(slow.world.of("form_gone").length, 1);
+  loginForm(slow.world);
+  slow.world.clock.advance(6000);
+  assert.equal(slow.world.of("page_ready").length, 2);
+  assert.equal(slow.world.of("form_gone").length, 1);
+
+  // The form that comes back is in a shadow root: found there too.
+  const shadow = attempt();
+  shadow.world.clock.advance(300);
+  shadow.world.document.body.remove(shadow.f.form);
+  const host = shadow.world.document.body.append(shadow.world.document.createElement("login-box"));
+  loginForm(shadow.world, { parent: host.attachShadow({ mode: "open" }) });
+  shadow.world.clock.advance(6000);
+  assert.deepEqual(shadow.world.of("form_gone"), []);
+  assert.equal(shadow.world.of("page_ready").length, 2);
+});
+
+test("a_control_deeper_in_the_password_fields_wrapper_is_a_toggle_and_an_offscreen_field_is_not_shown", () => {
+  // An icon button with no words, one level deeper than the wrapper's child: not a submission, however the page types it.
+  for (const attributes of [{}, { type: "button" }]) {
+    const world = createWorld();
+    const form = world.document.body.append(world.document.createElement("form", { id: "login" }));
+    const user = addInput(world.document, form, { type: "text", name: "username" }, { top: 100 });
+    const wrapper = form.append(world.document.createElement("div", { class: "pw" }));
+    const pass = addInput(world.document, wrapper, { type: "password", name: "password" }, { top: 160 });
+    const inner = wrapper.append(world.document.createElement("span"));
+    const eye = addText(world.document, inner, "button", "", attributes);
+    for (const el of [user, pass, eye]) el.form = form;
+    world.start();
+    world.type(user, "anna");
+    world.type(pass, PASSWORD);
+    world.click(eye);
+    world.settle();
+    world.clock.advance(6000);
+    assert.deepEqual(world.of("form_capture"), [], JSON.stringify(attributes));
+  }
+  // A user name field that lies wholly to the right of the page is not shown: its value is not sent as the user name.
+  const world = createWorld();
+  const f = loginForm(world);
+  f.user.value = "honeypot-name";
+  f.user.rect = { left: 5000, top: 100, width: 240, height: 32 };
+  world.start();
+  world.type(f.pass, PASSWORD);
+  world.submit(f.form);
+  world.settle();
+  assert.equal(JSON.stringify(world.sent).includes("honeypot-name"), false);
+  assert.equal(captures(world).length, 1);
 });
 
 test("the_capture_script_stops_and_reads_nothing_after_it", () => {
@@ -915,9 +1080,7 @@ test("slimming_a_module_drops_comment_lines_and_indentation_and_nothing_else", (
     "const a = 1; // a trailing comment stays",
     "  /** @type {number} */ const b = 2;",
     "function f() {",
-    "    return `x",
-    "  // inside a template",
-    "    y`;",
+    "    return `x`;   ",
     "}",
     "",
     "  /**",
@@ -926,21 +1089,24 @@ test("slimming_a_module_drops_comment_lines_and_indentation_and_nothing_else", (
     "const re = /\\/\\//;",
     "",
   ].join("\n");
+  // Only indentation goes: spaces at the end of a line stay.
   assert.equal(slimSource("x.mjs", source), [
     "const a = 1; // a trailing comment stays",
     "/** @type {number} */ const b = 2;",
     "function f() {",
-    "return `x",
-    "  // inside a template",
-    "    y`;",
+    "return `x`;   ",
     "}",
     "const re = /\\/\\//;",
   ].join("\n"));
   assert.throws(() => slimSource("x.mjs", 'const s = "a\\\nb";\n'), /ends in a backslash/);
+  // A literal over several lines is refused, whether it is real or a regular expression that made the lexer open one.
+  for (const text of ["const t = `a   \nb`;\n", "const t = `x\n  // inside\n  y`;\n", "const r = /`/;\nconst t = `\n    inner\n`;\n"]) {
+    assert.throws(() => slimSource("x.mjs", text), /runs over several lines/, text);
+  }
   // On the real detection module and the word lists it removes only what is not code (the same lines, found another way).
   for (const name of ["forms", "patterns", "capture", "capture.entry"]) {
     const text = readFileSync(join(SRC, "content", `${name}.mjs`), "utf8");
-    const expected = text.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !/^(?:\/\/|\/\*|\*)/.test(l)).join("\n");
+    const expected = text.split("\n").map((l) => l.trimStart()).filter((l) => l.trim() !== "" && !/^(?:\/\/|\/\*|\*)/.test(l)).join("\n");
     assert.equal(slimSource(name, text), expected, name);
   }
 });

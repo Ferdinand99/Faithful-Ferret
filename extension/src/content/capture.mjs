@@ -11,7 +11,8 @@
 //                 successful one.
 //   form_capture  a form was submitted: its kind, the user name, and the password (or, in a change form, the new one and
 //                 the one in use) that the person typed.
-//   form_gone     after a capture the password field went away and no new one showed up within five seconds.
+//   form_gone     after a capture the password field was removed or hidden (not merely covered) at two checks in a row, and no
+//                 password field the person can see has come back; if one does come back, page_ready is sent instead.
 //
 // Rules for what counts as typed (the page is not trusted):
 //
@@ -21,14 +22,25 @@
 //   changed after the last typing is dropped, and so is a field whose last input event came from a script. A key press
 //   never counts: a page can cancel the key and write the value itself.
 // - A user name may come from the page (a field that was filled in already; `username_from: "page"`). A step that asks
-//   for the user name only (`identifier`) is sent when the person typed the name.
+//   for the user name only (`identifier`) is sent when the person typed the name, with both passwords null: it is the one
+//   message on a page with no password field, and it never leads to an offer by itself.
+// - A sign-up, change or reset form whose new password is in its field but did not come from the person's typing (the
+//   extension filled it) is sent with `password: null` and `current_password: null`, a request to join the form to the
+//   password the extension generated for it; no value the page could have set goes up. A sign-in form is never sent so.
 // - Only fields the person could see count (a hidden, honeypot, zero-size, off-screen, covered or `aria-hidden` field
 //   takes no role); the detection module gives roles to the fields passed by `shown` only.
 // - A submission is a trusted `submit` event, a trusted click on a submit control or on an element with the submit words
 //   of patterns.mjs, or a trusted Enter in a field. A control that shows or hides the password, or that sits in the
 //   password field's wrapper, never counts. The form is read one task later, after the page's handlers, and the
-//   triggers of one burst are one submission. At most one capture per frame in two seconds.
+//   triggers of one burst are one submission. At most one capture per frame in two seconds (the newer one is dropped, so
+//   a mis-detected early trigger can cost the real submission that follows within two seconds).
 // - A value over the size limits drops the capture (a password over 1 024 characters), or the user name (over 512).
+//
+// Limits that are accepted and stated: a page's own listener on the window in the capture phase runs before this one (it is
+// registered earlier) and can rewrite a value inside the trusted event before it is read, or stop the event; the page
+// can then only choose what is offered for its own origin, which the browser names. An input inside a closed shadow root
+// is retargeted to its host and is not seen, so a form there gives no capture. At rest, only password fields in the
+// page's own tree are looked for (a form in a shadow root is found at a submission and in the checks after one).
 //
 // What it costs: while idle it holds five listeners and one look at the page's inputs when it starts (and again once
 // at load and once after 1.5 seconds, for a form drawn late). It has no MutationObserver: after a capture it looks at
@@ -70,6 +82,8 @@ export function createCapture({ window, document, send, clock, forms }) {
   let lastCapture = -Infinity;
   let readySent = false;
   let stopped = false;
+  /** Whether an input was recorded in this document (a trusted one, or any in a password field). */
+  let typedAny = false;
 
   /** Runs `fn` after `ms`, unless the script was stopped. @param {() => void} fn @param {number} ms */
   const later = (fn, ms) => {
@@ -105,13 +119,17 @@ export function createCapture({ window, document, send, clock, forms }) {
   const shown = (el) => {
     try {
       const box = el.getBoundingClientRect();
-      if (box.width < MIN_SIDE || box.height < MIN_SIDE || box.right <= 0 || box.bottom <= 0) return false;
+      if (box.width < MIN_SIDE || box.height < MIN_SIDE || box.right <= 0 || box.bottom <= 0 || box.left >= window.innerWidth) return false;
       if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
       for (let node = el, depth = 0; node && depth < 20; node = node.getRootNode().host, depth += 1) {
         if (node.closest('[aria-hidden="true"], [inert]')) return false;
+        const around = node.getBoundingClientRect();
+        // A host with no box of its own (`display: contents`) cannot be hit.
+        if (around.width === 0 || around.height === 0) continue;
+        const top = node.getRootNode().elementsFromPoint?.(around.left + around.width / 2, around.top + around.height / 2)?.[0];
+        if (top !== undefined && top !== node) return false;
       }
-      const top = el.getRootNode().elementsFromPoint?.(box.left + box.width / 2, box.top + box.height / 2)?.[0];
-      return top === undefined || top === el;
+      return true;
     } catch {
       return false;
     }
@@ -149,9 +167,14 @@ export function createCapture({ window, document, send, clock, forms }) {
     } else {
       const field = kind === "login" ? group.password : group.new;
       password = typedValue(field);
-      if (password === null || password.length > MAX_PASSWORD) return null;
-      if (group.confirm && group.confirm.value !== password) return null;
-      if (kind === "change") {
+      if (password === null) {
+        // A sign-up, change or reset form whose new password is in the field but did not come from the person's own
+        // typing (the extension filled it): reported with no password at all, so that the extension can join it to the
+        // password it generated for the form. Nothing a page could have set goes up.
+        if (kind === "login" || !field || field.value === "") return null;
+      } else if (password.length > MAX_PASSWORD || (group.confirm && group.confirm.value !== password)) {
+        return null;
+      } else if (kind === "change") {
         current = typedValue(group.current);
         if (current !== null && current.length > MAX_PASSWORD) current = null;
       }
@@ -177,27 +200,60 @@ export function createCapture({ window, document, send, clock, forms }) {
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   };
 
-  /** After a capture: is the form's password field still there? @param {any[]} fields @param {string} id */
-  const watch = (fields, id) => {
-    const before = new Set(passwords());
-    let gone = false;
+  /** The password fields a group gives a role to (so only fields that are shown, in the page and in shadow roots). @param {any} group */
+  const rolesOf = (group) => [group.password, group.new, group.current, group.confirm].filter(Boolean);
+
+  /**
+   * After a capture: is the form's password field still there? The form is "gone" only when the browser says it is: removed,
+   * not displayed, not visible, or too small. A cover ("Signing in..."), an error modal that sets `aria-hidden` on the
+   * rest of the page, or a dialog's backdrop does not make it gone, and the form must be seen gone at two checks in a row
+   * (the first check only looks) before form_gone is sent. If a password field the person can see comes back (the original
+   * or a new one, also inside a shadow root) before or after that, page_ready is sent, once, so that a failed attempt is
+   * never taken for a successful one.
+   * @param {any[]} fields @param {string} id @param {Set<any>} seen the password fields shown when the capture was made
+   */
+  const watch = (fields, id, seen) => {
+    let goneChecks = 0;
+    let sentGone = false;
     let back = false;
-    for (const ms of RECHECK) {
-      later(() => {
-        if (gone || fields.some((/** @type {any} */ el) => el.isConnected && shown(el))) return;
-        if (passwords().some((el) => !before.has(el))) {
-          if (!back) {
-            back = true;
-            readySent = false;
-            ready();
-          }
-          return;
-        }
-        gone = true;
+    const goneNow = (/** @type {any} */ el) => !el.isConnected || !el.checkVisibility({ checkVisibilityCSS: true }) || el.getBoundingClientRect().width < MIN_SIDE;
+    RECHECK.forEach((ms, index) => later(() => {
+      if (back) return;
+      /** @type {any[]} */
+      const found = findGroups(document, { shown }).flatMap(rolesOf);
+      if (found.some((el) => !seen.has(el)) || (sentGone && fields.some((el) => found.includes(el)))) {
+        back = true;
+        readySent = true;
+        send("page_ready", {});
+        return;
+      }
+      if (fields.some((el) => !goneNow(el))) {
+        goneChecks = 0;
+        return;
+      }
+      goneChecks += 1;
+      if (index >= 1 && goneChecks >= 2 && !sentGone) {
+        sentGone = true;
         readySent = false;
         send("form_gone", { capture_id: id });
-      }, ms);
+      }
+    }, ms));
+  };
+
+  /**
+   * A control deeper than one level inside a password field's wrapper (an icon button in a span in the wrapper) is a toggle
+   * too: the nearest ancestor within three levels that holds a field of the group holds exactly one, a password field, and
+   * is not the form; and the control has no submit words.
+   * @param {any} control @param {any[]} fields
+   */
+  const nestedToggle = (control, fields) => {
+    if (SUBMIT.test(controlText(control))) return false;
+    for (let node = control.parentElement, depth = 0; node && depth < 3; node = node.parentElement, depth += 1) {
+      if (node.localName === "form" || node.localName === "body") return false;
+      const inside = fields.filter((f) => isInside(node, f.element));
+      if (inside.length > 0) return inside.length === 1 && inside[0].password;
     }
+    return false;
   };
 
   /** Whether a trigger belongs to a group. @param {any} trigger @param {any} group */
@@ -205,7 +261,7 @@ export function createCapture({ window, document, send, clock, forms }) {
     const { how, node } = trigger;
     if (how === "submit") return group.form === node;
     if (how === "enter") return group.fields.some((/** @type {any} */ f) => f.element === node);
-    if (isToggle(node, group.fields)) return false;
+    if (isToggle(node, group.fields) || nestedToggle(node, group.fields)) return false;
     if (group.form) return isInside(group.form, node);
     return isInside(group.container, node) || near(group.fields[0].element, node);
   };
@@ -216,8 +272,10 @@ export function createCapture({ window, document, send, clock, forms }) {
     const burst = triggers;
     triggers = [];
     const now = clock.now();
-    if (now - lastCapture < MIN_GAP) return;
+    // Nothing was typed in this document yet: there is nothing to read, so the page is not walked.
+    if (!typedAny || now - lastCapture < MIN_GAP) return;
     const groups = findGroups(document, { shown });
+    const seen = new Set(groups.flatMap(rolesOf));
     for (const trigger of burst) {
       for (const group of groups) {
         if (!belongs(trigger, group)) continue;
@@ -226,7 +284,7 @@ export function createCapture({ window, document, send, clock, forms }) {
         lastCapture = now;
         send("form_capture", message);
         if (message.kind !== "identifier") {
-          watch([group.password, group.new, group.current].filter(Boolean), message.capture_id);
+          watch(rolesOf(group), message.capture_id, seen);
         }
         return;
       }
@@ -251,7 +309,7 @@ export function createCapture({ window, document, send, clock, forms }) {
       const tag = node.localName;
       const role = node.getAttribute("role");
       if (tag === "button" || tag === "a" || role === "button" || (tag === "input" && ["submit", "image", "button"].includes(node.type))) return node;
-      if (words === null && depth < 4 && SUBMIT.test(controlText(node)) && (node.textContent ?? "").length <= 40) words = node;
+      if (words === null && depth < 4 && (node.textContent ?? "").length <= 40 && SUBMIT.test(controlText(node))) words = node;
     }
     return words;
   };
@@ -261,9 +319,14 @@ export function createCapture({ window, document, send, clock, forms }) {
     if (!el || el.localName !== "input") return;
     if (!event.isTrusted) {
       typed.delete(el);
+      // A script that fills a password field (the extension's own fill, too) leaves a form that may be reported.
+      if (el.type === "password") typedAny = true;
       return;
     }
-    if (el.type === "password" || TEXT_TYPES.has(el.type)) typed.set(el, el.value);
+    if (el.type === "password" || TEXT_TYPES.has(el.type)) {
+      typed.set(el, el.value);
+      typedAny = true;
+    }
   });
   on("submit", (event) => {
     const form = targetOf(event);

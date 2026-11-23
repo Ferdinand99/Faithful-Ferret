@@ -36,9 +36,9 @@
 // `slim` (the capture script, which runs in every https page and has a size
 // budget): the modules are joined without the lines that only explain them.
 // Comments that stand on lines of their own, the indentation of every line
-// outside a multi-line string or template literal, and blank lines are left
-// out. Code is never touched, and a line that ends in a backslash (a string
-// continued on the next line, where indentation counts) is refused.
+// and blank lines are left out. Code is never touched. A line that ends in a
+// backslash (a string continued on the next line, where indentation counts) is
+// refused, and so is a literal that runs over several lines (a template literal).
 import { posix } from "node:path";
 import vm from "node:vm";
 import { importsOf } from "./imports.mjs";
@@ -109,7 +109,7 @@ export function slimSource(path, source) {
   };
   /** Lines that are only a comment. @type {Set<number>} */
   const dropped = new Set();
-  /** Lines that start inside a multi-line literal or share a line with code: kept exactly as they are. @type {Set<number>} */
+  /** Lines of a multi-line comment that shares a line with code: kept exactly as they are. @type {Set<number>} */
   const verbatim = new Set();
   for (const match of source.matchAll(TOKEN)) {
     const text = match[0];
@@ -119,7 +119,10 @@ export function slimSource(path, source) {
     const first = lineAt(start);
     const last = lineAt(Math.max(start, end - 1));
     if (!text.startsWith("//") && !text.startsWith("/*")) {
-      for (let i = first + 1; i <= last; i += 1) verbatim.add(i);
+      // A literal that runs over lines (a template literal, or a regular expression that made the lexer open one) is
+      // not slimmed: its inner lines and its trailing spaces are program text, and this lexer is not exact enough to
+      // be trusted inside one. No module of the capture script has one; a module that gains one fails the build.
+      if (first !== last) throw new Error(`content script: ${path}: line ${first + 1} has a literal that runs over several lines, which the slim join does not handle`);
       continue;
     }
     const alone = source.slice(starts[first], start).trim() === "" && source.slice(end, starts[last] + lines[last].length).trim() === "";
@@ -137,8 +140,9 @@ export function slimSource(path, source) {
       continue;
     }
     if (/\\\s*$/.test(lines[i])) throw new Error(`content script: ${path}: line ${i + 1} ends in a backslash`);
-    const line = lines[i].trim();
-    if (line !== "") out.push(line);
+    // Only the indentation goes: spaces at the end of a line can belong to a literal.
+    const line = lines[i].trimStart();
+    if (line.trim() !== "") out.push(line);
   }
   return out.join("\n");
 }

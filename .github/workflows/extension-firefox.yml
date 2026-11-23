@@ -54,6 +54,7 @@ jobs:
             -e FERRET_MANIFEST=mv3 \
             -e FERRET_GREP= \
             -e FERRET_HEADLESS=1 \
+            -e FERRET_TIMING_SLACK=2 \
             -e FERRET_E2E_CA_PEM= \
             --tmpfs /work:exec,size=2g \
             --tmpfs /tmp:exec,size=2g \
