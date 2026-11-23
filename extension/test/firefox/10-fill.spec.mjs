@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import {
-  channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_COMMAND, TEST_SHORTCUT,
+  channels, commandOnPage, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_COMMAND, TEST_SHORTCUT,
 } from "./harness.mjs";
 
 process.env.FERRET_SSE_INTERVAL_MS ??= "300";
@@ -60,9 +60,11 @@ test("fill_on_the_fixture_login_page_puts_both_values_in_and_the_page_sees_them"
       const value = (/** @type {string} */ id) => session.content((/** @type {string} */ field) => document.getElementById(field).value, id);
 
       // A real shortcut on the page tab: Firefox grants activeTab for it.
-      await session.pressShortcut(TEST_SHORTCUT);
-      const command = await session.waitFor(
-        async () => (await fromBridge(() => bridge.events())).find((e) => e.kind === "command"), 10_000, "the command event");
+      const command = await commandOnPage({
+        clear: () => fromBridge(() => bridge.clearEvents()),
+        press: () => session.pressShortcut(TEST_SHORTCUT),
+        events: () => fromBridge(() => bridge.events()),
+      });
       assert.equal(command.name, TEST_COMMAND);
       assert.equal(command.tabUrl, url, `${channel}: activeTab was granted`);
       const tabId = command.tabId;

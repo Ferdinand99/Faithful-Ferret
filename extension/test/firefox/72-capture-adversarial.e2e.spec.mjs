@@ -20,7 +20,7 @@ import { after, test } from "node:test";
 import { channels, fixtures, stopFixtures } from "./harness.mjs";
 import { captureCase, captureCasesOf, caseUrl, casesOf, offersPeek } from "./matrix.mjs";
 import { allText, newestTab, popupWithCard, readyWorld, sleep, uniqueSignup, vaultItemHref } from "./offerWorld.mjs";
-import { SLOW } from "./e2e.mjs";
+import { SLOW, pace } from "./e2e.mjs";
 
 /** The channel's world, made once. @type {Map<string, Awaited<ReturnType<typeof readyWorld>>>} */
 const worlds = new Map();
@@ -240,7 +240,8 @@ test("a_lock_between_submit_and_click_leaves_no_offer", async () => {
     await w.session.switchTo(w.pageTab);
     await w.ui.open();
     try {
-      const unlocked = await w.ui.ask("unlock", { mp: w.account.password, ...(w.account.secretKey ? { sk: w.account.secretKey } : {}) });
+      await pace();
+      const unlocked = await w.ui.ask("unlock", { mp: w.account.password });
       assert.equal(unlocked.type, "unlock", `${channel}: ${JSON.stringify(unlocked.body)}`);
       assert.equal(unlocked.body?.ok, true, `${channel}: unlocked again`);
     } finally {

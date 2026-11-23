@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
-import { SLOW } from "./e2e.mjs";
+import { SLOW, pace } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, channels, fixtures, stopFixtures } from "./harness.mjs";
 import { caseUrl, casesOf, captureCase, leave, locate, offersPeek, readValue } from "./matrix.mjs";
 import { allText, newestTab, popupWithCard, readyWorld, sleep, uniqueSignup, vaultItemHref } from "./offerWorld.mjs";
@@ -288,7 +288,8 @@ test("full_u2_flow_end_to_end", async () => {
       try {
         assert.equal((await w.ui.ask("lock", {})).type, "lock", `${channel}: lock`);
         await evil("seq_lie", { latest_seq: 1 });
-        const unlocked = await w.ui.ask("unlock", { mp: w.account.password, ...(w.account.secretKey ? { sk: w.account.secretKey } : {}) });
+        await pace();
+      const unlocked = await w.ui.ask("unlock", { mp: w.account.password });
         assert.equal(unlocked.body?.ok, true, `${channel}: ${JSON.stringify(unlocked.body)}`);
       } finally {
         await w.ui.close();
@@ -329,7 +330,8 @@ test("full_u2_flow_end_to_end", async () => {
       }
       await w.ui.open();
       try {
-        const unlocked = await w.ui.ask("unlock", { mp: w.account.password, ...(w.account.secretKey ? { sk: w.account.secretKey } : {}) });
+        await pace();
+      const unlocked = await w.ui.ask("unlock", { mp: w.account.password });
         assert.equal(unlocked.body?.ok, true, `${channel}: ${JSON.stringify(unlocked.body)}`);
       } finally {
         await w.ui.close();
