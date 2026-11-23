@@ -14,9 +14,12 @@ function setup(options, build) {
   const page = createPage(options);
   const parts = build(page.document);
   const sent = /** @type {string[]} */ ([]);
-  const engine = createFillEngine({ window: page.window, document: page.document, send: (raw) => { sent.push(raw); }, runtimeId: RUNTIME_ID, extensionBase: EXTENSION_BASE });
+  /** The elements a context-menu click can name, by id. @type {Map<number, any>} */
+  const aimTargets = new Map();
+  const engine = createFillEngine({ window: page.window, document: page.document, send: (raw) => { sent.push(raw); }, runtimeId: RUNTIME_ID, extensionBase: EXTENSION_BASE, targetOf: (id) => aimTargets.get(id) ?? null });
   return {
     ...page,
+    aimTargets,
     ...parts,
     sent,
     engine,
@@ -173,9 +176,21 @@ test("a_generated_fill_refuses_a_value_over_the_maxlength_a_hidden_field_and_a_p
 });
 
 test("a_generated_request_ignores_an_aim_and_a_sign_in_request_never_reports_a_new_field", () => {
+  // A click on the password in use of a change form aims the next request at it. A generated request does not use the
+  // aim: it still reports the new and the confirm field only, and the aim is spent.
+  const aimed = setup({ url: "https://example.com/account/password" }, (document) => formWith(document, [
+    { type: "text", name: "username", autocomplete: "username" },
+    { type: "password", name: "old", autocomplete: "current-password" },
+    { type: "password", name: "new", autocomplete: "new-password" },
+    { type: "password", name: "new2", autocomplete: "new-password" },
+  ], "Change password"));
+  aimed.aimTargets.set(1, aimed.inputs[1]);
+  assert.equal(aimed.engine.aim(1), true, "the aim was taken (positive control)");
+  assert.deepEqual(aimed.begin("generated").map((f) => f.kind), ["new_password", "confirm_password"]);
+  // The aim does not wait for the next sign-in request either: that one reports the group, not the clicked field.
+  assert.deepEqual(aimed.begin(undefined).map((f) => f.kind), ["username", "password"]);
+  // And without an aim the generated request is the same.
   const t = setup({ url: "https://example.com/signup" }, (document) => formWith(document, SIGN_UP));
-  // An aim at the e-mail field is for the next request only, whatever mode it is; a generated request does not use it.
-  assert.equal(t.engine.aim === undefined, false);
   assert.deepEqual(t.begin("generated").map((f) => f.kind), ["new_password", "confirm_password"]);
   // A sign-in request on a change form reports the user name and the password in use, never the new fields.
   const change = setup({ url: "https://example.com/account/password" }, (document) => formWith(document, [

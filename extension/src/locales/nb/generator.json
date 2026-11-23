@@ -21,8 +21,8 @@
   "generator.strength.very_strong": "Svært sterkt",
   "generator.options.length": "Lengde",
   "generator.options.words": "Antall ord",
-  "generator.options.upper": "Store bokstaver (A til Å)",
-  "generator.options.lower": "Små bokstaver (a til å)",
+  "generator.options.upper": "Store bokstaver (A til Z)",
+  "generator.options.lower": "Små bokstaver (a til z)",
   "generator.options.digits": "Sifre (0 til 9)",
   "generator.options.symbols": "Tegn (! @ # og flere)",
   "generator.options.avoid_ambiguous": "La være å bruke tegn som ligner hverandre (som O og 0)",
@@ -47,11 +47,10 @@
   "generator.error.covered": "Noe dekker passordfeltet, så Ferret fylte det ikke inn.",
   "generator.error.frame_hidden": "Skjemaet er skjult eller dekket på siden, så Ferret fylte det ikke inn.",
   "generator.error.frame_unchecked": "Skjemaet ligger i en ramme inni en annen ramme som Ferret ikke har tilgang til, så Ferret kunne ikke sjekke at skjemaet vises og fylte det ikke inn.",
-  "generator.error.field_too_short": "Passordfeltet tar færre tegn enn Ferret lager et passord eller en passordfrase av, så Ferret fylte det ikke inn. Kopier verdien og fyll den inn selv, eller lag et kortere passord.",
+  "generator.error.field_too_short": "Ferret fyller inn et generert passord bare når det har minst 8 tegn og passer i feltet, og en passordfrase bare når den passer hel. Dette gjør det ikke, så ingenting ble fylt inn. Lag et nytt, eller kopier dette og fyll det inn selv.",
   "generator.error.insecure_page": "Siden er ikke kryptert, så Ferret fyller ikke inn et nytt passord der.",
   "generator.error.clipboard": "Ferret kunne ikke skrive til utklippstavlen.",
   "generator.error.not_cleared": "Kopiert, men Ferret kunne ikke stille inn tidtakeren som tømmer utklippstavlen. Tøm den selv når du har limt inn.",
   "generator.error.vault_locked": "Hvelvet er låst.",
-  "generator.error.unknown": "Noe gikk galt.",
-  "generator.credits_eff": "Passordfrase-generatoren henter ordene fra EFFs store ordliste fra Electronic Frontier Foundation, brukt under lisensen CC BY 3.0 US. Terningtallene er fjernet fra listen; ordene er uendret."
+  "generator.error.unknown": "Noe gikk galt."
 }

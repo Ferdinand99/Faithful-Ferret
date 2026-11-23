@@ -47,11 +47,10 @@
   "generator.error.covered": "Something covers the password field, so Ferret did not fill it.",
   "generator.error.frame_hidden": "The form is hidden or covered on the page, so Ferret did not fill it.",
   "generator.error.frame_unchecked": "The form is in a frame inside another frame that Ferret has no access to, so Ferret could not check that the form is shown and did not fill it.",
-  "generator.error.field_too_short": "The password field takes fewer characters than Ferret makes a password or passphrase of, so Ferret did not fill it. Copy the value and fill it in yourself, or make a shorter password.",
+  "generator.error.field_too_short": "Ferret fills in a generated password only when it has at least 8 characters and fits the field, and a passphrase only when it fits whole. This one does not, so nothing was filled. Make another one, or copy this one and fill it in yourself.",
   "generator.error.insecure_page": "This page is not encrypted, so Ferret does not fill a new password into it.",
   "generator.error.clipboard": "Ferret could not write to the clipboard.",
   "generator.error.not_cleared": "Copied, but Ferret could not set the timer that clears the clipboard. Clear it yourself when you have pasted.",
   "generator.error.vault_locked": "The vault is locked.",
-  "generator.error.unknown": "Something went wrong.",
-  "generator.credits_eff": "The passphrase generator draws its words from the EFF large word list by the Electronic Frontier Foundation, used under the CC BY 3.0 US licence. The dice numbers were removed from the list; the words are unchanged."
+  "generator.error.unknown": "Something went wrong."
 }

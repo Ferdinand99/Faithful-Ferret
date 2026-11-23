@@ -102,6 +102,9 @@ const FILL_ORDER = Object.freeze(["username", "password", "totp"]);
 /** The kinds of value a generated fill puts in, in this order: the new password, then its confirmation. */
 const GENERATED_ORDER = Object.freeze(["new_password", "confirm_password"]);
 
+/** The shortest generated password Ferret fills into a page (the same floor as the one a field's `maxlength` meets). */
+export const MIN_GENERATED_FILL = 8;
+
 /** The most frames one generated fill asks. */
 const MAX_GENERATED_FRAMES = 8;
 
@@ -786,18 +789,12 @@ export function createFillHost({
       const generated = generator.get(generationId);
       if (generated === null || host?.state() !== "unlocked") return { ok: false, reason: "not_offered" };
       const value = generated.value;
+      // Ferret fills no generated password shorter than 8 characters, whatever the field says (the popup can make one of 4).
+      if (value.length < MIN_GENERATED_FILL) return { ok: false, reason: "field_too_short" };
 
-      for (const kind of kinds) {
-        if (pending.get(request.requestId) !== request) throw new FillError("vault_locked");
-        // Right before the value goes: the frame must still be shown in every document above it.
-        const hiddenNow = await shownOnPage(request, kind);
-        if (hiddenNow !== null) return { ok: false, reason: hiddenNow };
-        if (pending.get(request.requestId) !== request || generator.get(generationId) === null) throw new FillError("vault_locked");
-        const result = await push(request, kind, value, report.url);
-        if (!result.ok) return { ok: false, reason: typeof result.reason === "string" ? result.reason : "not_filled" };
-      }
-      let offer = false;
-      if (offers !== null) {
+      /** Tells the store of offers what went into the page. True when an offer is held for it. */
+      const announce = async () => {
+        if (offers === null) return false;
         try {
           await offers.onGenerated({
             tabId,
@@ -809,12 +806,27 @@ export function createFillHost({
             value,
             expiresAt: generated.expiresAt,
           });
-          offer = true;
+          return true;
         } catch {
           // The value is in the page; the offer to save it is what failed.
+          return false;
         }
+      };
+      // A value that landed in one field and was refused by the next is in the page all the same: the offer is made then too.
+      let landed = false;
+      /** @param {string} reason */
+      const stopped = async (reason) => (landed ? { ok: false, reason, offer: await announce() } : { ok: false, reason });
+      for (const kind of kinds) {
+        if (pending.get(request.requestId) !== request) throw new FillError("vault_locked");
+        // Right before the value goes: the frame must still be shown in every document above it.
+        const hiddenNow = await shownOnPage(request, kind);
+        if (hiddenNow !== null) return await stopped(hiddenNow);
+        if (pending.get(request.requestId) !== request || generator.get(generationId) === null) throw new FillError("vault_locked");
+        const result = await push(request, kind, value, report.url);
+        if (!result.ok) return await stopped(typeof result.reason === "string" ? result.reason : "not_filled");
+        landed = true;
       }
-      return { ok: true, length: value.length, offer };
+      return { ok: true, length: value.length, offer: await announce() };
     } catch (error) {
       const code = /** @type {any} */ (error)?.code;
       return { ok: false, reason: typeof code === "string" ? code : "not_filled" };

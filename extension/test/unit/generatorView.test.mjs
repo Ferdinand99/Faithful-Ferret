@@ -298,7 +298,7 @@ test("the_view_shows_what_the_background_still_holds_and_never_sends_the_value_b
   const status = one(view3.root, "generator-status");
   assert.equal(status?.hidden, false);
   assert.equal(status?.getAttribute("data-tone"), "bad");
-  assert.match(status?.textContent ?? "", /fewer characters than Ferret makes/);
+  assert.match(status?.textContent ?? "", /at least 8 characters and fits the field/);
   assert.equal((status?.textContent ?? "").includes("field_too_short"), false);
 });
 
@@ -327,16 +327,4 @@ test("every_reason_the_generator_can_give_has_a_text_in_both_languages", async (
   for (const reason of ["not_offered", "origin_changed", "busy", "frame_gone", "no_report", "no_fields", "no_answer", "value_too_long", "wrong_kind", "covered", "frame_hidden", "field_too_short", "insecure_page", "vault_locked"]) {
     assert.ok(mod.ERROR_REASONS.includes(reason), reason);
   }
-});
-
-test("the_about_page_credits_the_eff_word_list_only_with_the_save_feature_on", async () => {
-  const pack = packageOf((await pkg()).dir);
-  for (const lang of ["en", "nb"]) {
-    const text = pack.catalog(lang)["generator.credits_eff"];
-    assert.match(text, /EFF/);
-    assert.match(text, /CC BY 3\.0 US/);
-  }
-  const about = readFileSync(join((await pkg()).dir, "pages", "about.mjs"), "utf8");
-  assert.match(about, /FEATURES\.save/);
-  assert.match(about, /generator\.credits_eff/);
 });

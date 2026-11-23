@@ -346,3 +346,46 @@ async function texts() {
   const catalog = JSON.parse(readFileSync(join(dir, "locales.en.json"), "utf8"));
   return { Texts: textsOf(catalog, "en") };
 }
+
+test("a_generated_password_under_8_characters_is_never_filled_whatever_the_field_says", async () => {
+  // The popup can make a password of 4 characters; the core allows it, Ferret does not put it into a page.
+  for (const limits of /** @type {Array<Record<string, number>>} */ ([{}, { new_password: 6 }, { new_password: 64 }])) {
+    const world = await itemWorld({ generated: true });
+    await world.open();
+    const popup = world.popup();
+    const made = await popup.request("generate", { ...PASSWORD_OPTIONS, length: 6 });
+    assert.equal(made.value.length, 6);
+    world.page.limits = limits;
+    assert.deepEqual(await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB }), { ok: false, reason: "field_too_short" }, JSON.stringify(limits));
+    assert.deepEqual(world.pushed, []);
+    assert.deepEqual(world.offered.calls, []);
+    // It can still be shown and copied.
+    assert.equal((await popup.request("generate", { current: true })).value, made.value);
+    assert.deepEqual(await popup.request("generate_copy", { generation_id: made.generation_id }), { ok: true });
+  }
+  // 8 is the shortest that is filled; the floor is the one the generator makes a password fit a field with.
+  const eight = await itemWorld({ generated: true });
+  await eight.open();
+  const made = await eight.popup().request("generate", { ...PASSWORD_OPTIONS, length: 8 });
+  assert.deepEqual(await eight.popup().request("fill_generated", { generation_id: made.generation_id, tab_id: TAB }), { ok: true, length: 8, offer: true });
+  const pack = await pkg();
+  assert.equal((await pack.load("background/fillFlow.mjs")).MIN_GENERATED_FILL, (await pack.load("background/generator.mjs")).MIN_FIT);
+});
+
+test("a_value_that_landed_in_one_field_and_was_refused_by_the_next_still_gets_its_offer", async () => {
+  const { world, popup, made } = await signUpWorld();
+  world.page.answer = (/** @type {string} */ kind) => (kind === "confirm_password" ? { ok: false, reason: "hidden" } : { ok: true });
+  assert.deepEqual(await popup.request("fill_generated", { generation_id: made.generation_id, tab_id: TAB }), { ok: false, reason: "covered", offer: true });
+  assert.deepEqual(world.page.filled, { new_password: made.value });
+  assert.deepEqual(world.offered.calls.map((c) => c.value), [made.value], "the page holds the value, so the offer does too");
+
+  // Nothing landed: no offer. And an offer that cannot be made says so.
+  const none = await signUpWorld();
+  none.world.page.answer = () => ({ ok: false, reason: "hidden" });
+  assert.deepEqual(await none.popup.request("fill_generated", { generation_id: none.made.generation_id, tab_id: TAB }), { ok: false, reason: "covered" });
+  assert.deepEqual(none.world.offered.calls, []);
+  const full = await signUpWorld();
+  full.world.offered.failing = true;
+  full.world.page.answer = (/** @type {string} */ kind) => (kind === "confirm_password" ? { ok: false, reason: "hidden" } : { ok: true });
+  assert.deepEqual(await full.popup.request("fill_generated", { generation_id: full.made.generation_id, tab_id: TAB }), { ok: false, reason: "covered" });
+});

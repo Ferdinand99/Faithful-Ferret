@@ -359,6 +359,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   /** `fails`: the clipboard refuses the write; `timerFails`: the fallback timer cannot be made; `timers`: those that were. */
   const clipboardState = { fails: false, timerFails: false, timers: /** @type {Array<{ fn: () => unknown, ms: number }>} */ ([]) };
   const sessionStorage = createSessionStorage();
+  /** The browser's `storage.local`, as far as the background modules here write it (for the tests that search it). */
+  const storageLocal = createSessionStorage();
   const events = createAlarmsAndIdle();
   const clipboard = createClipboard({
     writeText: async (/** @type {string} */ text) => {
@@ -492,7 +494,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...fillHost.ops, ...(generatorHost?.ops ?? {}), ...probes }, names: [...CORE_OPS, "unlock_probe"] });
   fillHost.attach(coreHost);
   generatorHost?.attach(coreHost);
-  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, now: clock.now, coreHost });
+  const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal, now: clock.now, coreHost });
   const router = createRouter({
     runtime: fake.runtime,
     lock,
@@ -551,6 +553,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     written,
     clipboardState,
     sessionStorage,
+    storageLocal,
     events,
     clipboard,
     matching,

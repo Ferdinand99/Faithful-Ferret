@@ -188,14 +188,14 @@ test("the_capture_check_wants_one_offer_of_the_right_kind_from_the_right_field",
   }
 });
 
-test("the_generator_is_a_measure_of_its_own_and_not_part_of_the_capture_check", () => {
+test("the_generator_is_a_measure_of_its_own_and_part_of_the_gate_but_not_of_the_capture_check", () => {
   const gen = makeCase({ id: "signup-a", category: "signup", expect: { generated: { new: "#pw", confirm: "#pw2" }, capture: { offer: "save", username: "anna@example.net", password_from: "#pw", origin: ORIGIN } } });
   // A correct offer passes the capture check without any generator observation.
   const captured = computeMatrix([ran(gen, { offers: [offer({ password_field: "#pw" })] })], { part: "capture" });
   assert.equal(captured.capture.rate, 1, "capture does not ask for the generator");
   assert.equal(captured.generated.total, 1);
   assert.deepEqual(captured.generated.notRun, ["signup-a"], "the generator did not run: reported, in its own line");
-  assert.equal(captured.met, true, "and not part of the gate yet");
+  assert.equal(captured.met, false, "a generator pass that did not run counts as failed in the gate");
   // The generator pass has its own result.
   /** @param {string[]} filled */
   const withGenerator = (filled) => computeMatrix([{ ...ran(gen, { offers: [offer({ password_field: "#pw" })], generated: { filled } }), ran: { fill: true, capture: true, generated: true } }], { part: "capture" });
@@ -204,6 +204,12 @@ test("the_generator_is_a_measure_of_its_own_and_not_part_of_the_capture_check", 
   assert.equal(half.generated.passed, 0);
   assert.ok(half.misses.some((x) => x.part === "generated" && x.reason.includes("#pw2")), "the miss names the field");
   assert.equal(half.capture.rate, 1, "a failed generator does not fail the capture");
+  assert.equal(half.met, false, "but it fails the gate");
+  assert.equal(withGenerator(["#pw", "#pw2"]).met, true, "positive control");
+  // A field that is neither new nor confirm holding the value is a miss too.
+  const stray = computeMatrix([{ ...ran(gen, { offers: [offer({ password_field: "#pw" })], generated: { filled: ["#pw", "#pw2"], stray: ["#cur"] } }), ran: { fill: true, capture: true, generated: true } }], { part: "capture" });
+  assert.equal(stray.generated.passed, 0);
+  assert.ok(stray.misses.some((x) => x.part === "generated" && x.reason.includes("#cur")), "the miss names the field");
   // The fill part does not run the generator.
   assert.equal(computeMatrix([ran(gen)], { part: "fill" }).generated.selected, false);
 });

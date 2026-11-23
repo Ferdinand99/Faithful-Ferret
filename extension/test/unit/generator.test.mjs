@@ -162,11 +162,19 @@ test("the_generated_value_lives_in_the_background_until_lock_or_15_minutes", asy
     // Never written anywhere the background writes: not the session storage, not a log, and the replies of the other
     // types do not carry it (a positive control: the clipboard mark and the logs the spies would have seen exist).
     const everyValue = world.made.map((m) => m.value);
+    // Both areas, and the JSON-escaped form of each value too (a value with a quote or a backslash would be escaped).
+    const escaped = (/** @type {string} */ text) => JSON.stringify(text).slice(1, -1);
+    await world.lock.setSeconds(900);
     const stored = JSON.stringify([...world.sessionStorage.data]);
-    assert.ok(stored.includes("clipboard_mark"), "the spy on the storage saw the clipboard's mark");
+    const storedLocal = JSON.stringify([...world.storageLocal.data]);
+    assert.ok(stored.includes("clipboard_mark"), "the spy on the session storage saw the clipboard's mark");
+    assert.ok(storedLocal.length > 2, "the spy on the local storage saw the lock setting (positive control)");
     for (const secret of everyValue) {
-      assert.equal(stored.includes(secret), false, "no value in the storage");
-      assert.equal(logged.join("\n").includes(secret), false, "no value in the log");
+      for (const form of [secret, escaped(secret)]) {
+        assert.equal(stored.includes(form), false, "no value in the session storage");
+        assert.equal(storedLocal.includes(form), false, "no value in the local storage");
+        assert.equal(logged.join("\n").includes(form), false, "no value in the log");
+      }
     }
     console.log("positive control");
     assert.ok(logged.some((line) => line.includes("positive control")), "the log spy sees a log");

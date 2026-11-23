@@ -74,7 +74,8 @@ async function handle(body, ctx) {
             ...(body.frame_id !== undefined ? { frame_id: body.frame_id } : {}),
           })
         );
-        if (reply?.ok !== true) return { ok: false, reason: reasonOf(reply?.reason) };
+        // A refusal after one field took the value still says whether an offer is held for it.
+        if (reply?.ok !== true) return { ok: false, reason: reasonOf(reply?.reason), ...(reply?.offer === true ? { offer: true } : {}) };
         return { ok: true, ...(Number.isSafeInteger(reply.length) ? { length: reply.length } : {}), offer: reply.offer === true };
       }
       default:

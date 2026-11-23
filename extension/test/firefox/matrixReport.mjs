@@ -221,7 +221,7 @@ export function ruleMatches(rule, docUrl) {
  *   retries?: number,
  *   offers: Array<{ type: string, origin: string, username: string | null, password_field: string | null, reuse?: boolean, info?: string,
  *                   target_entry?: string, target_host?: string, target_match?: string, picked?: boolean, written_without_click?: boolean }>,
- *   generated: { filled: string[] } | null,
+ *   generated: { filled: string[], stray?: string[] } | null,
  * }} Observed
  * @typedef {{ case: Record<string, any>, ran: { fill: boolean, capture: boolean, generated?: boolean }, observed?: Partial<Observed>, error?: string }} Result
  * @typedef {{ id: string, category: string, kind: "fill" | "offer", reason: string, field?: string }} Miss
@@ -309,6 +309,9 @@ function generatedCheck(r) {
   const want = r.case.expect.generated;
   const filled = r.observed?.generated?.filled ?? [];
   for (const id of [want.new, want.confirm].filter(Boolean)) if (!filled.includes(id)) return { status: "fail", reason: `the generated password did not go into ${id}` };
+  // No other field may hold it: not the password in use of a change form, not the e-mail box.
+  const stray = r.observed?.generated?.stray ?? [];
+  if (stray.length > 0) return { status: "fail", reason: `the generated password also went into ${stray.join(", ")}` };
   return { status: "pass" };
 }
 
@@ -375,10 +378,11 @@ const rateOf = (passed, total) => (total === 0 ? null : passed / total);
  * - `unsafeFills` and `unsafeOffers`: every one found in any case of any class.
  * - `falseOffers`: offers in harmless negative cases (the ones with no `never` mark) that expect none.
  * - `generated`: the generator's own measure, over the cases with `expect.generated` (a generator pass in the capture
- *   phase). It is reported and not part of the gate yet: the gate takes it in when the extension has a generator.
+ *   phase). It is part of the gate at the set's overall level when the capture part is selected; a case whose
+ *   generator pass did not run, or got no answer, is a miss.
  * - `notRun`: the cases a selected part did not run for.
- * - `met`: both rates at the set's level, no positive or special category under the floor, nothing unsafe, nothing
- *   unrun. A part that was not selected does not count. The hold-out set has no category floor.
+ * - `met`: both rates and the generator's at the set's level, no positive or special category under the floor,
+ *   nothing unsafe, nothing unrun. A part that was not selected does not count. The hold-out set has no category floor.
  * - `gate`: `met` for a complete run (every part, no case filter); a partial run has no gate.
  * @param {Result[]} results
  * @param {{ set?: "corpus" | "holdout", part?: "fill" | "capture" | "all", manifest?: string, grep?: string }} [options]
@@ -490,7 +494,8 @@ export function computeMatrix(results, { set = "corpus", part = "all", manifest 
 
   const partOk = (/** @type {{ selected: boolean, rate: number | null }} */ p) => !p.selected || (p.rate !== null && p.rate >= level.overall);
   const floorsOk = Object.values(perCategory).every((v) => v.rate !== null && v.rate >= level.floor);
-  const met = partOk(fill) && partOk(capture) && floorsOk && unsafeFills.length === 0 && unsafeOffers.length === 0 && notRun.length === 0;
+  const generatedOk = !useCapture || generatedCount.total === 0 || generatedCount.passed / generatedCount.total >= level.overall;
+  const met = partOk(fill) && partOk(capture) && generatedOk && floorsOk && unsafeFills.length === 0 && unsafeOffers.length === 0 && notRun.length === 0;
   const complete = part === "all" && grep === "";
   const generated = { ...generatedCount, rate: rateOf(generatedCount.passed, generatedCount.total), selected: useCapture, notRun: generatedNotRun };
   const falseOffers = { rate: rateOf(falseCases.length, negativeRan), cases: falseCases };
@@ -535,7 +540,7 @@ function markdownOf(channel, m) {
     const p = m[which];
     lines.push(`| ${which} (positive cases) | ${p.passed} | ${p.total} | ${p.selected ? percent(p.rate) : "not selected"} |`);
   }
-  if (m.generated) lines.push(`| generator (not gated yet) | ${m.generated.passed} | ${m.generated.total} | ${m.generated.selected ? percent(m.generated.rate) : "not selected"} |`);
+  if (m.generated) lines.push(`| generator | ${m.generated.passed} | ${m.generated.total} | ${m.generated.selected ? percent(m.generated.rate) : "not selected"} |`);
   lines.push(`| unsafe fills | | ${m.unsafeFills.length} | |`, `| unsafe offers | | ${m.unsafeOffers.length} | |`);
   lines.push(`| false offers (harmless negatives) | | ${m.falseOffers.cases.length} | ${percent(m.falseOffers.rate)} |`);
   lines.push(`| cases that did not run | | ${m.notRun.length} | |`);
