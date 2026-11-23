@@ -18,7 +18,8 @@
  * @typedef {{ kind: "integer", min: number, max: number }} IntegerSchema
  * @typedef {{ kind: "array", item: Schema, min: number, max: number }} ArraySchema
  * @typedef {{ kind: "object", shape: Readonly<Record<string, Schema>>, optional: readonly string[] }} ObjectSchema
- * @typedef {StringSchema | BooleanSchema | IntegerSchema | ArraySchema | ObjectSchema} Schema
+ * @typedef {{ kind: "nullable", inner: Schema }} NullableSchema
+ * @typedef {StringSchema | BooleanSchema | IntegerSchema | ArraySchema | ObjectSchema | NullableSchema} Schema
  */
 
 /** The reasons a message is refused. */
@@ -96,6 +97,16 @@ export function integer(opts) {
 }
 
 /**
+ * A value that is `null` or what `inner` says (a key that is present with no value, as against an optional key
+ * that is left out).
+ * @param {Schema} inner
+ * @returns {NullableSchema}
+ */
+export function nullable(inner) {
+  return Object.freeze({ kind: "nullable", inner });
+}
+
+/**
  * @param {Schema} item
  * @param {{ max: number, min?: number }} opts
  * @returns {ArraySchema}
@@ -165,6 +176,8 @@ export function validate(schema, value, path = "body") {
       }
       return value;
     }
+    case "nullable":
+      return value === null ? null : validate(schema.inner, value, path);
     case "array": {
       if (!Array.isArray(value)) throw new ProtocolError("bad_shape", path);
       if (value.length < schema.min || value.length > schema.max) {
@@ -219,6 +232,8 @@ export function walk(schema, visit, path = "body") {
   visit(schema, path);
   if (schema.kind === "array") {
     walk(schema.item, visit, `${path}[]`);
+  } else if (schema.kind === "nullable") {
+    walk(schema.inner, visit, path);
   } else if (schema.kind === "object") {
     for (const key of Object.keys(schema.shape)) {
       walk(schema.shape[key], visit, `${path}.${key}`);

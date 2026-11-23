@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   CONTENT_TYPES,
   FORBIDDEN_KEYS,
+  MAX_BYTES_BY_TYPE,
   MAX_MESSAGE_BYTES,
   PUSH_TYPES,
   SECRET_KEY_EXCEPTIONS,
@@ -18,6 +19,7 @@ import {
   boolean,
   integer,
   keysOf,
+  nullable,
   object,
   string,
   validate,
@@ -114,9 +116,9 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     for (const key of keysOf(schema)) {
       const where = `${channel}/${type} ${direction}: ${key}`;
       if (allowed.has(key)) {
-        // The push type carries the one value of a fill; the capture of a submitted form carries what was typed, up.
-        const ok = (channel === "push" && type === "fill_field") || (channel === "content" && type === "form_capture" && direction === "request");
-        assert.ok(ok, `${where}: only the push type and the capture carry a value`);
+        // The fill value goes down to a page (push); what the person typed into a form goes up (content). Nothing else.
+        assert.equal(channel, type === "form_capture" ? "content" : "push", `${where}: only the push type carries a value, and the capture a typed password`);
+        if (type === "form_capture") assert.equal(direction, "request", `${where}: never in a reply`);
         continue;
       }
       assert.ok(!FORBIDDEN_KEYS.includes(key), `${where}: forbidden key`);
@@ -135,7 +137,7 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     [...seenTyped].sort(),
     ["sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
-  assert.deepEqual(FORBIDDEN_KEYS, ["password", "value", "secret", "totp_secret", "vk", "current_password"]);
+  assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "vk"]);
 
   // And the decoder refuses them where they are not in the schema.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) =>
@@ -263,4 +265,77 @@ test("every UI request and reply round-trips with a sample body", () => {
     const rep = decode(encode(type, reply, { id: "i1", reply: true }), UI_TYPES, { reply: true });
     assert.deepEqual(rep, { id: "i1", type, body: reply });
   }
+});
+
+test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
+  // Both keys are forbidden names, and the one place that may carry them is the capture of a submitted form.
+  assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
+  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], form_capture: ["password", "current_password"] });
+  /** @type {string[]} */
+  const holders = [];
+  for (const { type, channel, direction, schema } of allSchemas()) {
+    for (const key of keysOf(schema)) {
+      if (FORBIDDEN_KEYS.includes(key)) holders.push(`${channel}/${type}/${direction}/${key}`);
+    }
+  }
+  assert.deepEqual(holders.sort(), [
+    "content/form_capture/request/current_password",
+    "content/form_capture/request/password",
+    "push/fill_field/request/value",
+  ]);
+  // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
+  const raw = (/** @type {string} */ type, /** @type {unknown} */ body) => JSON.stringify({ v: 1, id: "a", type, body });
+  const capture = {
+    capture_id: "c1", self_origin: "https://a.example", kind: "change", username: "anna", username_from: "typed",
+    password: "new-secret", current_password: "old-secret",
+  };
+  assert.deepEqual(decode(raw("form_capture", capture), CONTENT_TYPES).body, capture);
+  for (const table of [UI_TYPES, PUSH_TYPES]) {
+    assert.throws(() => decode(raw("form_capture", capture), table), (err) => err instanceof ProtocolError && err.code === "unknown_type");
+  }
+  assert.throws(() => decode(raw("form_capture", capture), CONTENT_TYPES, { reply: true }), (err) => err instanceof ProtocolError && err.code === "unknown_type");
+  assert.equal(CONTENT_TYPES.form_capture.reply, undefined);
+  // Every other content type refuses both keys, and so does the capture for any other name of a secret.
+  for (const type of ["frame_report", "fill_result", "form_gone", "page_ready"]) {
+    for (const key of ["password", "current_password"]) {
+      const body = { frame_report: { request_id: "r", self_origin: "https://a.example", fields: [] }, fill_result: { request_id: "r", ok: true }, form_gone: { capture_id: "c" }, page_ready: {} }[type];
+      refusesShape(() => decode(raw(type, { ...body, [key]: "x" }), CONTENT_TYPES));
+    }
+  }
+  for (const key of ["value", "secret", "totp_secret", "vk", "mp", "sk", "url", "origin"]) {
+    refusesShape(() => decode(raw("form_capture", { ...capture, [key]: "x" }), CONTENT_TYPES));
+  }
+  // The values are strings or null, never missing, never another type.
+  for (const key of ["username", "username_from", "password", "current_password"]) {
+    assert.equal(decode(raw("form_capture", { ...capture, [key]: null }), CONTENT_TYPES).body[key], null);
+    const missing = /** @type {any} */ ({ ...capture });
+    delete missing[key];
+    refusesShape(() => decode(raw("form_capture", missing), CONTENT_TYPES));
+    refusesShape(() => decode(raw("form_capture", { ...capture, [key]: 7 }), CONTENT_TYPES));
+    refusesShape(() => decode(raw("form_capture", { ...capture, [key]: ["x"] }), CONTENT_TYPES));
+  }
+  refusesShape(() => decode(raw("form_capture", { ...capture, kind: "otp" }), CONTENT_TYPES));
+  refusesShape(() => decode(raw("form_capture", { ...capture, username_from: "fill" }), CONTENT_TYPES));
+  // The limits: a user name up to 512, a password up to 1 024, a message up to 4 KiB.
+  assert.equal(decode(raw("form_capture", { ...capture, username: "u".repeat(512), password: "p".repeat(1024), current_password: "c".repeat(1024) }), CONTENT_TYPES).type, "form_capture");
+  refusesShape(() => decode(raw("form_capture", { ...capture, username: "u".repeat(513) }), CONTENT_TYPES));
+  refusesShape(() => decode(raw("form_capture", { ...capture, password: "p".repeat(1025) }), CONTENT_TYPES));
+  refusesShape(() => decode(raw("form_capture", { ...capture, current_password: "c".repeat(1025) }), CONTENT_TYPES));
+  refusesShape(() => decode(raw("form_capture", { ...capture, password: "" }), CONTENT_TYPES));
+  assert.equal(MAX_BYTES_BY_TYPE.form_capture, 4096);
+  const wide = { ...capture, username: "å".repeat(512), password: "å".repeat(1024), current_password: "å".repeat(1024) };
+  assert.throws(() => decode(raw("form_capture", wide), CONTENT_TYPES), (err) => err instanceof ProtocolError && err.code === "too_large");
+  assert.throws(() => encode("form_capture", wide), (err) => err instanceof ProtocolError && err.code === "too_large");
+  // An error names the path and never the value.
+  assert.throws(
+    () => decode(raw("form_capture", { ...capture, password: "x".repeat(1025) }), CONTENT_TYPES),
+    (err) => err instanceof ProtocolError && err.path === "body.password" && !err.message.includes("xxx"),
+  );
+  // The nullable schema itself.
+  const maybe = object({ a: nullable(string({ max: 3 })) });
+  assert.deepEqual(validate(maybe, { a: null }), { a: null });
+  assert.deepEqual(validate(maybe, { a: "ab" }), { a: "ab" });
+  refusesShape(() => validate(maybe, {}));
+  refusesShape(() => validate(maybe, { a: "abcd" }));
+  refusesShape(() => validate(maybe, { a: undefined }));
 });

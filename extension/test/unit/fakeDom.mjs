@@ -90,8 +90,13 @@ export class FakeNode {
     return out;
   }
 
-  /** @param {string} selector "*" or a tag name */
+  /** @param {string} selector "*", a tag name, or `tag[attribute="value"]` (the value compared without case) */
   querySelectorAll(selector) {
+    const attribute = /^([a-z0-9]+)\[([a-z-]+)="([^"]*)"\]$/.exec(selector);
+    if (attribute) {
+      const [, tag, name, value] = attribute;
+      return this.descendants().filter((e) => e.localName === tag && String(e.getAttribute(name) ?? "").toLowerCase() === value);
+    }
     return this.descendants().filter((e) => selector === "*" || e.localName === selector);
   }
 
@@ -193,6 +198,35 @@ export class FakeElement extends FakeNode {
 
   get parentElement() {
     return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null;
+  }
+
+  /**
+   * The browser's own visibility question, over the flat tree: false when the element or an ancestor is not displayed, has
+   * `visibility` other than visible, or (with `checkOpacity`) has `opacity: 0`.
+   * @param {{ checkOpacity?: boolean, checkVisibilityCSS?: boolean }} [options]
+   */
+  checkVisibility(options = {}) {
+    for (let node = /** @type {any} */ (this); node; node = node.parentNode && node.parentNode.host ? node.parentNode.host : node.parentNode) {
+      if (node.nodeType !== 1) continue;
+      if (node.style.display === "none") return false;
+      if (options.checkVisibilityCSS && node.style.visibility !== undefined && node.style.visibility !== "visible") return false;
+      if (options.checkOpacity && Number(node.style.opacity ?? 1) === 0) return false;
+    }
+    return true;
+  }
+
+  /** Only a list of `[name]` and `[name="value"]` selectors: the nearest ancestor-or-self that has one of them. @param {string} selector */
+  closest(selector) {
+    const wanted = selector.split(",").map((s) => /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(s.trim()));
+    for (let node = /** @type {any} */ (this); node && node.nodeType === 1; node = node.parentElement) {
+      for (const match of wanted) {
+        if (!match) throw new Error(`the fake page does not know ${selector}`);
+        const [, name, value] = match;
+        const has = name === "inert" && node.inert === true ? true : node.hasAttribute(name) && (value === undefined || node.getAttribute(name) === value);
+        if (has) return node;
+      }
+    }
+    return null;
   }
 
   // A real browser gives the slot; the engine must also manage without it.

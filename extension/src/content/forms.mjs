@@ -40,7 +40,7 @@ import {
   ONE_TIME_PASSWORD, PASSWORD, PHONE, PIN, RESET, SEARCH, SHOW, SIGNUP, SUBMIT, SUBMIT_WORDS, USERNAME, normalize,
 } from "./patterns.mjs";
 
-export { SUBMIT_WORDS };
+export { SUBMIT, SUBMIT_WORDS };
 
 export const FIELD_KINDS = Object.freeze([
   "username", "email", "current_password", "new_password", "confirm_password", "otp", "otp_digit", "search",
@@ -291,18 +291,20 @@ export function classifyField(element, ctx = {}) {
  *   form: any,
  *   username?: any, email?: any, current?: any, password?: any, new?: any, confirm?: any, otp?: any,
  *   submit?: any,
+ *   container?: any,
  *   fields: Field[],
- * }} Group `fields`: every classified field of the group, in document order
+ * }} Group `fields`: every classified field of the group, in document order; `container`: the form, else the nearest
+ *   ancestor that holds the group's fields (the field itself when it is alone)
  */
 
 /** The text of a submit control or a button. @param {any} element */
-function controlText(element) {
+export function controlText(element) {
   const value = element.localName === "input" ? attr(element, "value") : textOf(element);
   return normalize([value, attr(element, "aria-label"), attr(element, "title")].join(" "));
 }
 
 /** Whether a button or an input sends its form. @param {any} element */
-function isSubmitControl(element) {
+export function isSubmitControl(element) {
   const type = attr(element, "type").toLowerCase();
   if (element.localName === "button") return type === "" || type === "submit";
   return element.localName === "input" && (type === "submit" || type === "image");
@@ -314,7 +316,7 @@ function isSubmitControl(element) {
  * submit control.
  * @param {any} control @param {Field[]} members
  */
-function isToggle(control, members) {
+export function isToggle(control, members) {
   const text = controlText(control);
   if (SHOW.test(text)) return true;
   if (SUBMIT.test(text)) return false;
@@ -440,7 +442,7 @@ export function findGroups(root, { maxNodes = MAX_NODES, shown = () => true } = 
       page: pageText,
       areas: areas.some(inGroup),
     };
-    groups.push(decide(form, members, wholePage, context, submit));
+    groups.push({ ...decide(form, members, wholePage, context, submit), container: key });
   }
   groups.sort((a, b) => (a.fields[0]?.order ?? 0) - (b.fields[0]?.order ?? 0));
   return groups;
