@@ -201,7 +201,7 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
   w.clock.advance(1);
   const offers = w.offers.forTab(TAB);
   assert.equal(offers.length, 1);
-  assert.deepEqual(Object.keys(offers[0]).sort(), ["generated", "host", "kind", "offer_id", "username"]);
+  assert.deepEqual(Object.keys(offers[0]).sort(), ["generated", "host", "incognito", "kind", "offer_id", "username"]);
   assert.equal(offers[0].kind, "login");
 
   // The history changed (a single-page app): two seconds after it.

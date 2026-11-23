@@ -182,7 +182,10 @@ export function createGeneratorFlow(request) {
     async fill(generationId, tabId) {
       try {
         const reply = await request("fill_generated", { generation_id: generationId, tab_id: tabId });
-        return reply.ok === true ? { ok: true, ...(reply.length !== undefined ? { length: reply.length } : {}), offer: reply.offer === true } : { ok: false, reason: reply.reason };
+        // A refusal after one field took the value still says whether an offer is held for it.
+        return reply.ok === true
+          ? { ok: true, ...(reply.length !== undefined ? { length: reply.length } : {}), offer: reply.offer === true }
+          : { ok: false, reason: reply.reason, ...(reply.offer === true ? { offer: true } : {}) };
       } catch (failure) {
         return { ok: false, reason: reasonOf(failure) };
       }
@@ -373,6 +376,8 @@ export function createGeneratorView({ texts, flow, store, tabId, onOffer = () =>
       const done = await flow.fill(generated.generationId, tabId);
       if (!done.ok) {
         fail(done.reason);
+        // One field may have taken the value before the fill stopped: the offer to save it is held all the same.
+        if (done.offer === true) onOffer();
         return;
       }
       // A field that takes fewer characters than the value made a shorter one: show what is in the page now.

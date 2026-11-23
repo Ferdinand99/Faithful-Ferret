@@ -56,6 +56,7 @@ export const CAPTURE_OP = "capture_event";
  *   channel: Channel,
  *   type: string,
  *   sender: any,
+ *   runtime?: { id?: string, getURL: (path: string) => string },
  *   session?: string,
  *   lock?: (reason: import("./coreHost.mjs").LockReason) => Promise<void>,
  *   state: () => "locked" | "unlocked",
@@ -68,6 +69,8 @@ export const CAPTURE_OP = "capture_event";
  * }} HandlerContext
  *   `session` (UI only) names the page's port: it is new for every port, so a
  *   reference the background gave one page is worth nothing on another.
+ *   `runtime` (UI only) is the extension's id and address of its own pages, for a handler that checks the sender again
+ *   (`isTopLevelExtensionPage`).
  *   `report` (content only) hands a report to `REPORT_OP`. `capture` (content only) hands the body of a capture message to
  *   `CAPTURE_OP`, with the type and the sender the router has checked.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
@@ -208,6 +211,7 @@ export function createRouter({
       channel: "ui",
       type,
       sender: port.sender,
+      runtime: Object.freeze({ id: runtime.id, getURL: (/** @type {string} */ path) => runtime.getURL(path) }),
       session,
       call,
       lock: lockHost,

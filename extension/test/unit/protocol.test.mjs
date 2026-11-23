@@ -169,8 +169,9 @@ test("fill_field_is_the_only_type_with_a_value_and_it_holds_one_value", () => {
       }
     }
   }
-  // The generator's reply carries the value the core has just made, for the popup to show; nothing else does.
-  assert.deepEqual(holders.sort(), ["fill_field", "generate"]);
+  // The generator's reply carries the value the core has just made, for the popup to show, and the offer's "Show" the
+  // password of one offer, on a click; nothing else does.
+  assert.deepEqual(holders.sort(), ["fill_field", "generate", "offer_reveal"]);
 
   // The body holds one value: one string, no array, nothing nested but `expect`.
   const def = /** @type {any} */ (PUSH_TYPES.fill_field.request);

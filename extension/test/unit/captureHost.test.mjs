@@ -357,7 +357,7 @@ test("captured_values_are_never_written_to_any_storage_or_console", async () => 
     assert.ok(listed.length >= 2);
     // The offer's own answers are metadata only.
     for (const meta of listed) {
-      assert.deepEqual(Object.keys(meta).sort(), ["generated", "host", "kind", "offer_id", "username"]);
+      assert.deepEqual(Object.keys(meta).sort(), ["generated", "host", "incognito", "kind", "offer_id", "username"]);
       stringified.push(JSON.stringify(meta));
     }
     // The settings page's answer and every sync of a lock.
@@ -394,8 +394,9 @@ test("no_ui_reply_or_push_type_carries_a_captured_value", () => {
   // Only the capture's own request carries what the user typed, and only upwards: no reply and no push type has a
   // password-like key (a push carries the one value of one fill).
   for (const [type, def] of Object.entries(UI_TYPES)) {
-    // The one reply with a value is the generator's: the password or passphrase the core has just made, never a capture.
-    for (const key of keysOf(def.reply)) if (!(type === "generate" && key === "value")) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui reply ${type}: ${key}`);
+    // The replies with a value are the generator's (the password or passphrase the core has just made) and the offer's
+    // "Show" (the password of one offer, to the popup session that was told of it, on a click): never a list of offers.
+    for (const key of keysOf(def.reply)) if (!(["generate", "offer_reveal"].includes(type) && key === "value")) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui reply ${type}: ${key}`);
     for (const key of keysOf(def.request)) {
       if (!["sign_in", "unlock"].includes(type)) assert.doesNotMatch(key, /pass|secret|^value$/i, `ui request ${type}: ${key}`);
     }

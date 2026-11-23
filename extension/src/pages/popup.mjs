@@ -8,8 +8,9 @@
 // copying and one item's view. In a build with saving from the extension on,
 // the sync's part also shows the changes that wait and the items that need the
 // user, with their conflict cards (conflictCard.mjs), and the open popup has two
-// tabs, the vault and the generator (popupTabs.mjs, generatorView.mjs). The views
-// are in popupFlow.mjs; this file builds them with `el()`.
+// tabs, the vault and the generator (popupTabs.mjs, generatorView.mjs), and the offers
+// to save or update a password that wait for the page above them (offerCards.mjs). The
+// views are in popupFlow.mjs; this file builds them with `el()`.
 //
 // The page the popup is about is the active tab of the window it was opened
 // from. A popup that was popped out into a window of its own keeps that tab
@@ -23,6 +24,7 @@ import { FEATURES } from "../shared/features.mjs";
 import { el, mount } from "../shared/dom.mjs";
 import { createSyncAttention, createSyncItems } from "./conflictCard.mjs";
 import { createGeneratorFlow, createGeneratorView, createOptionsStore } from "./generatorView.mjs";
+import { createOfferFlow, createOfferSection } from "./offerCards.mjs";
 import { createOlderPanel } from "./olderState.mjs";
 import { errorBox, field, loadTexts, showError, translateStatic } from "./page.mjs";
 import {
@@ -87,6 +89,7 @@ async function main() {
   const itemsFlow = FEATURES.save ? createSyncItemsFlow(ui.request) : null;
   const generatorFlow = FEATURES.save ? createGeneratorFlow(ui.request) : null;
   const generatorStore = FEATURES.save ? createOptionsStore(browser.storage.local) : null;
+  const offerFlow = FEATURES.save ? createOfferFlow(ui.request) : null;
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
   // The panel is as tall as Firefox lets a popup be; a tab or a window gives the popup its own height (popup.css).
@@ -353,12 +356,27 @@ async function main() {
         });
       },
     });
+    // The offers to save or update a password that wait for this page, above the vault (a build with saving on). An
+    // answered offer may have made a new item: the list is read again.
+    const offers =
+      offerFlow === null
+        ? null
+        : createOfferSection({ texts, flow: offerFlow, tabId, onChange: () => void vault.reload({ automatic: true }).catch(() => {}) });
     // In a build with saving on, the vault and the generator are two tabs; otherwise the vault is all there is.
     const tabs = createPopupTabs({
       texts,
       vault: vault.root,
       makeGenerator: () =>
-        generatorFlow === null || generatorStore === null ? null : (createGeneratorView({ texts, flow: generatorFlow, store: generatorStore, tabId })?.root ?? null),
+        generatorFlow === null || generatorStore === null
+          ? null
+          : (createGeneratorView({
+              texts,
+              flow: generatorFlow,
+              store: generatorStore,
+              tabId,
+              // A generated password that went into the page is offered at once: the card shows now.
+              onOffer: () => void offers?.reload().catch(() => {}),
+            })?.root ?? null),
     });
     mount(
       root,
@@ -366,11 +384,16 @@ async function main() {
         "section",
         { class: "ff-panel ff-unlocked", "data-role": "unlocked-view" },
         syncSlot,
+        ...(offers === null ? [] : [offers.root]),
         tabs.root,
         el("footer", { class: "ff-foot" }, where(view)),
       ),
     );
-    void vault.reload().then(() => vault.focus(), () => {});
+    // The focus starts on the offer's heading when there is one (never on a button that writes), else on the search.
+    void Promise.all([vault.reload().catch(() => {}), offers === null ? Promise.resolve(0) : offers.loaded.catch(() => 0)]).then(([, count]) => {
+      if (count > 0) offers?.focus();
+      else vault.focus();
+    });
     follow(view, note, syncSlot, vault);
   }
 

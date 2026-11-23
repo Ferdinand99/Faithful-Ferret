@@ -107,8 +107,8 @@ const encoder = new TextEncoder();
  *   username: string | null, usernameFrom: "typed" | "page" | "identifier" | "fill" | null,
  *   password: string, currentPassword: string | null, generated: boolean,
  * }} Capture a submitted form, held in memory only (the shape the write path reads)
- * @typedef {{ offer_id: string, kind: string, host: Host, username: string | null, generated: boolean }} OfferMeta
- *   what an answer carries of an offer: never a password
+ * @typedef {{ offer_id: string, kind: string, host: Host, username: string | null, generated: boolean, incognito: boolean }} OfferMeta
+ *   what an answer carries of an offer: never a password (`incognito`: the offer came from a private window)
  * @typedef {{ tabId: number, frameId: number, documentId?: string, url: string }} Sender
  *   a content script's sender, as the router checked it
  * @typedef {{ frameId: number, documentId?: string }} FrameRef
@@ -806,6 +806,7 @@ export function createOffers({
       host: { a_label: /** @type {Host} */ (e.host).a_label, unicode: /** @type {Host} */ (e.host).unicode },
       username: /** @type {Capture} */ (e.capture).username,
       generated: e.generated,
+      incognito: e.incognito,
     }));
   }
 
@@ -856,12 +857,15 @@ export function createOffers({
     /**
      * "Not now" (the offer goes) or "Never for this site" (it goes, so does every offer of that host, and the host joins
      * the list; a private window's choice is kept in memory only). Takes only an offer's id, which no page knows.
-     * @param {string} offerId @param {{ never?: boolean }} [options]
+     * With `uiSession` the offer must be one that popup session was told of (what a click in the popup passes).
+     * @param {string} offerId @param {{ never?: boolean, uiSession?: string }} [options]
+     * @returns {boolean} whether an offer was dismissed
      */
-    dismiss(offerId, { never: forever = false } = {}) {
+    dismiss(offerId, { never: forever = false, uiSession } = {}) {
       sweep();
       const entry = typeof offerId === "string" ? entries.get(offerId) : undefined;
-      if (entry === undefined) return;
+      if (entry === undefined) return false;
+      if (uiSession !== undefined && (typeof uiSession !== "string" || uiSession === "" || !entry.sessions.has(uiSession))) return false;
       const host = entry.host;
       const incognito = entry.incognito;
       drop(entry);
@@ -871,6 +875,7 @@ export function createOffers({
       }
       refreshBadges();
       schedule();
+      return true;
     },
 
     /**
