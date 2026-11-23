@@ -117,13 +117,16 @@ function viewOf(item) {
  *   frames?: Array<{
  *     frameId: number, documentId?: string, url: string, origin: string, insecure?: boolean, itemIds: string[],
  *     ancestors?: Array<{ frameId: number, documentId?: string }>,
+ *     unchecked?: boolean,
  *   }>,
  *   source?: boolean,
  *   reportTimeoutMs?: number,
  *   resultTimeoutMs?: number,
- * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`)
+ *   fillContext?: any,
+ * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`);
+ *   `fillContext` is given to the fill flow
  */
-export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200 } = {}) {
+export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null } = {}) {
   const { load } = await pkg();
   const [
     { createCoreHost, CORE_OPS },
@@ -379,6 +382,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
                   origin: f.origin,
                   // The documents above the frame (a frame of the top by default).
                   ancestors: f.ancestors ?? (f.frameId === 0 ? [] : [{ frameId: 0, documentId: "doc-1" }]),
+                  // A frame below a middle frame whose document may not be asked (frames.mjs).
+                  ...(f.unchecked === true ? { unchecked: true } : {}),
                 })),
               }))
               .filter((i) => i.frames.length > 0);
@@ -394,6 +399,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     now: clock.now,
     reportTimeoutMs,
     resultTimeoutMs,
+    fillContext,
   });
   const probes = {
     unlock_probe: {

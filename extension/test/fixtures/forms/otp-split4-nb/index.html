@@ -17,6 +17,7 @@ fieldset { border: 1px solid #bbb; margin: 8px 0; }
 </style>
 </head>
 <body>
+<!-- Six boxes: a code from an authenticator app has six to eight digits (the case had four boxes until the corpus fix). -->
 <h1>Bekreftelseskode</h1>
 <form id="otp-form" method="post" action="/static/login-done.html">
 <div class="digits" role="group" aria-label="Bekreftelseskode">
@@ -24,6 +25,8 @@ fieldset { border: 1px solid #bbb; margin: 8px 0; }
 <input id="d2" name="d2" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="2">
 <input id="d3" name="d3" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="3">
 <input id="d4" name="d4" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="4">
+<input id="d5" name="d5" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="5">
+<input id="d6" name="d6" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="6">
 </div>
 <div class="row"><button id="go" type="submit">Bekreft</button></div>
 </form>

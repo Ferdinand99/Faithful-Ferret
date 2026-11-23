@@ -21,10 +21,10 @@
 # a single run; the table says how to remove them.
 #
 # Steps:
-#  1. For each browser: a fresh stack, the scenarios 01 to 09 (setup, sign-in,
+#  1. For each browser: a fresh stack, the main scenarios (setup, sign-in,
 #     items, folders, two browsers, lock, unlock after the session has ended,
 #     hand-over to the admin origin, transport, no
-#     plaintext in the traffic, no policy violation), then the search for the
+#     plaintext in the traffic, no policy violation, previous passwords), then the search for the
 #     secrets of the run in the data directory and the server log.
 #  2. On the first browser's stack: restart the container and sign in again; then
 #     remove opaque_setup and check that the server refuses to start.
@@ -66,7 +66,7 @@ m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 m3_specs=(18-sheet 19-new-device 20-password 21-recover 22-recovery-key 23-export-import 24-import-foreign 25-backup-restore 26-tabs)
 shots_dir=test-results/out/m2-shots
 m5a_specs=(01-setup 27-device)
-main_specs=(01-setup 02-signin 03-vault 03-folders 04-sync 05-lock 05-unlock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp)
+main_specs=(01-setup 02-signin 03-vault 03-folders 04-sync 05-lock 05-unlock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp 28-previous-passwords)
 failures=0
 vault_origin="$e2e_vault_url"
 admin_origin="$e2e_admin_url"
@@ -138,7 +138,7 @@ browsers_phase() {
   for browser in $browsers; do
     say "scenarios in $browser on a fresh stack"
     e2e_up >&2
-    if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: scenarios 01 to 09 passed"; else bad "$browser: the scenarios failed"; fi
+    if run_phase main "$browser" "${main_specs[@]}"; then ok "$browser: main scenarios passed"; else bad "$browser: the scenarios failed"; fi
     state="$(left "$phase_out" state)"
     needles="$(left "$phase_out" needles)"
     if [ -z "$state" ] || [ -z "$needles" ]; then

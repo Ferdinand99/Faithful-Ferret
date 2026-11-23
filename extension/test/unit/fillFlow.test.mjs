@@ -11,8 +11,14 @@
 //   same origin;
 // - a report or a result that names no pending request does nothing.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { createRefs } from "../../src/background/fillFlow.mjs";
+import { reasonOf } from "../../src/background/handlers/fill.handler.mjs";
+import { actionErrorKey } from "../../src/pages/popupFlow.mjs";
+import { FRAME_UNCHECKED } from "../../src/shared/protocol.mjs";
+import { extensionRoot } from "./buildHelpers.mjs";
 import { ITEMS, LOGIN_ORIGIN, LOGIN_URL, OTHER_PASSWORD, PASSWORD, TAB, TOTP_CODE, idOf, itemWorld } from "./itemHelpers.mjs";
 
 /** The calls of the fake core that read a value. @param {any} world */
@@ -592,4 +598,97 @@ test("the_candidates_reply_carries_the_host_the_insecure_mark_and_the_grant_list
   // A tab that shows no web page: no host, nothing offered.
   const none = await popup.request("candidates", { tab_id: TAB + 1 });
   assert.deepEqual(none, { handles: [], insecure: false, grant: [] });
+});
+
+test("an_otp_only_frame_is_not_a_login_form", async () => {
+  // The top reports only a code field, the frame below a sign-in form: the frame is filled, the top gets nothing.
+  const world = await itemWorld({ frames: tied() });
+  await world.open();
+  world.page.fields = ["totp"];
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill((await suggestions(popup))[0], TAB), { ok: true });
+  assert.deepEqual(world.page.filled, {}, "no code went into the top");
+  assert.deepEqual(frame.filled, { username: "ola@example.net", password: PASSWORD });
+
+  // Only code fields (the second step of a sign-in): the first one, the top first, gets the code.
+  const codes = await itemWorld({ frames: tied() });
+  await codes.open();
+  codes.page.fields = ["totp"];
+  const codeFrame = codes.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN }, ["totp"]);
+  const p2 = codes.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: true });
+  assert.deepEqual(codes.page.filled, { totp: TOTP_CODE });
+  assert.deepEqual(codeFrame.filled, {});
+});
+
+test("a_nested_frame_under_another_origin_is_checked_with_https_access_and_refused_as_frame_unchecked_without", async () => {
+  // The form is in frame 3, below a middle frame of another origin. The page matching marks it `unchecked` when the
+  // middle frame's origin has no host permission (frames.test.mjs proves the mark): the fill refuses it with its own
+  // reason, sends no value, and asks no document about it.
+  const below = [{ frameId: 2, documentId: "doc-2" }, { frameId: 0, documentId: "doc-1" }];
+  const nested = (/** @type {boolean} */ unchecked) => [
+    { frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [] },
+    { frameId: 3, documentId: "doc-3", url: FRAME_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)], ancestors: below, ...(unchecked ? { unchecked: true } : {}) },
+  ];
+  const world = await itemWorld({ frames: nested(true) });
+  await world.open();
+  world.page.fields = [];
+  const frame = world.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill((await suggestions(popup))[0], TAB), { ok: false, reason: "frame_unchecked" });
+  assert.deepEqual(frame.filled, {});
+  assert.deepEqual(world.pushed, [], "no value went anywhere");
+  assert.deepEqual(reveals(world), [], "no value was even read");
+  assert.deepEqual(world.frameShown.asked, [], "no document was asked");
+
+  // With the permission (no mark), the middle frame and the top are asked, and the frame is filled.
+  const granted = await itemWorld({ frames: nested(false) });
+  await granted.open();
+  granted.page.fields = [];
+  granted.addFrame({ url: FRAME_URL, frameId: 2, documentId: "doc-2", selfOrigin: "https://mid.example.net" }, []);
+  const filledFrame = granted.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  const p2 = granted.popup();
+  assert.deepEqual(await p2.list.fill((await suggestions(p2))[0], TAB), { ok: true });
+  assert.deepEqual(filledFrame.filled, { username: "ola@example.net", password: PASSWORD });
+  assert.deepEqual(granted.frameShown.asked.slice(0, 2), [{ frameId: 3, documentId: "doc-2" }, { frameId: 2, documentId: "doc-1" }]);
+
+  // A hidden frame elsewhere still wins the more telling reason: frame_hidden comes before frame_unchecked.
+  const mixed = await itemWorld({
+    frames: [
+      { frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, itemIds: [] },
+      { frameId: 3, documentId: "doc-3", url: FRAME_URL, origin: LOGIN_ORIGIN, itemIds: [idOf(1)], ancestors: below, unchecked: true },
+      { frameId: 4, documentId: "doc-4", url: `${FRAME_URL}/b`, origin: LOGIN_ORIGIN, itemIds: [idOf(1)] },
+    ],
+  });
+  await mixed.open();
+  mixed.page.fields = [];
+  mixed.addFrame({ url: FRAME_URL, frameId: 3, documentId: "doc-3", selfOrigin: LOGIN_ORIGIN });
+  mixed.addFrame({ url: `${FRAME_URL}/b`, frameId: 4, documentId: "doc-4", selfOrigin: LOGIN_ORIGIN });
+  mixed.frameShown.verdict = () => "hidden";
+  const p3 = mixed.popup();
+  assert.deepEqual(await p3.list.fill((await suggestions(p3))[0], TAB), { ok: false, reason: "frame_hidden" });
+  assert.deepEqual(mixed.pushed, []);
+});
+
+test("frame_unchecked_has_its_own_text", () => {
+  const read = (/** @type {string} */ lang, /** @type {string} */ name) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, `${name}.json`), "utf8"));
+  // The reason goes through the fill handler as it is (not as `not_filled`), and the popup takes its text from the
+  // frames catalog, not from the text of a hidden frame.
+  assert.equal(FRAME_UNCHECKED, "frame_unchecked");
+  assert.equal(reasonOf("frame_unchecked"), "frame_unchecked");
+  assert.equal(reasonOf("frame_hidden"), "frame_hidden");
+  assert.equal(actionErrorKey("frame_unchecked"), "frames.error.frame_unchecked");
+  assert.equal(actionErrorKey("frame_hidden"), "popup.error.frame_hidden");
+  for (const lang of ["en", "nb"]) {
+    const frames = read(lang, "frames");
+    const popupText = read(lang, "popup");
+    assert.deepEqual(Object.keys(frames), ["frames.error.frame_unchecked"], lang);
+    const text = frames["frames.error.frame_unchecked"];
+    assert.ok(typeof text === "string" && text.length > 20, lang);
+    assert.notEqual(text, popupText["popup.error.frame_hidden"], `${lang}: not the text of a hidden frame`);
+    assert.equal(Object.hasOwn(popupText, "popup.error.frame_unchecked"), false, `${lang}: the text is not in the popup catalog`);
+  }
+  assert.match(read("en", "frames")["frames.error.frame_unchecked"], /could not check/);
+  assert.match(read("nb", "frames")["frames.error.frame_unchecked"], /kunne ikke sjekke/);
 });

@@ -92,6 +92,15 @@ export const REFUSAL_REASONS = Object.freeze([
   "internal_error",
 ]);
 
+/**
+ * The reason of a refused fill when the frame of the form lies below a frame
+ * whose document Ferret may not ask whether the form is shown (a frame of
+ * another origin than the page, without its host permission). It differs from
+ * `frame_hidden` ("hidden or covered") so the popup can say that Ferret could
+ * not check, not that the frame is hidden.
+ */
+export const FRAME_UNCHECKED = "frame_unchecked";
+
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const REASON = /^[a-z][a-z0-9_]*$/;
 

@@ -1,8 +1,10 @@
 // What only the test build has. It is in a folder named test-only: the release
 // build leaves the folder out and the release check refuses it.
 //
-//  * the core operations `argon2_bench` and `measure_open`, and the matching's
-//    probes `frames_probe`, `item_probe` and `match_bench` (matchProbe.mjs);
+//  * the core operations `argon2_bench` and `measure_open`, the matching's
+//    probes `frames_probe`, `item_probe` and `match_bench` (matchProbe.mjs),
+//    and the write path's `offer_plant` and `offer_bench` with the test build's
+//    own offers (offerProbe.mjs);
 //  * a port for the test pages to call core operations by name;
 //  * the lifetime log of the background page and the scenarios of the lifetime
 //    measurement (measureLog.mjs, measureScenario.mjs), with a port to start
@@ -19,9 +21,26 @@
 import { contentSender, isTopLevelExtensionPage, isUiPort } from "../../shared/origin.mjs";
 import * as fillProbe from "./fillProbe.mjs";
 import { createMatchProbe } from "./matchProbe.mjs";
+import { captures, createOfferProbe } from "./offerProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
 import { createWriteProbe } from "./writeProbe.mjs";
+
+// The offers of the test build, for the sync (main.mjs passes them as its `captures`).
+export { captures };
+
+/** The engine the sync made last (the test build's probes make test items with it). @type {any} */
+let made = null;
+
+/**
+ * The sync's engine factory in the test build: the sync's own engine (`make`), kept here as well, so the probes can
+ * make test items with it. main.mjs gives it to the sync only when the hooks exist (never in a release).
+ * @param {Record<string, any>} options @param {(options: Record<string, any>) => any} make
+ */
+export const createEngine = (options, make) => (made = make(options));
+
+/** The engine the sync made last, or null (main.mjs asks only while the sync runs). */
+export const engine = () => made;
 
 export const TEST_CORE_PORT = "ferret-test-core";
 export const TEST_MEASURE_PORT = "ferret-test-measure";
@@ -146,7 +165,7 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
  * @param {{
  *   browser: any,
  *   runtime: { id?: string, getURL: (path: string) => string },
- *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, addOps: (ops: any) => void, state: () => string },
+ *   coreHost: { call: (op: string, args?: unknown) => Promise<unknown>, addOps: (ops: any) => void, state: () => string, onLocked: (listener: () => void) => unknown },
  *   now: () => number,
  *   engine?: () => any,
  * }} deps `engine`: the sync engine of the open vault, or null
@@ -154,7 +173,10 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
 export function install({ browser, runtime, coreHost, now, engine = () => null }) {
   coreHost.addOps(ops);
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
+  coreHost.addOps(createOfferProbe().ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);
+  // A planted offer goes with every lock, as a captured one does.
+  coreHost.onLocked(() => captures.clear());
   const storageLocal = browser.storage.local;
   const { log } = startMeasureLog({
     runtime: browser.runtime,

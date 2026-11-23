@@ -26,6 +26,8 @@ const SAVE_PATHS = Object.freeze({
     "generate", "fill_generated",
     "sync_items", "item_conflict", "item_resolve", "item_discard",
   ]),
+  /** Core operations of the feature (the sync's offer ops): with the feature off each one only refuses. */
+  coreOps: Object.freeze(["offer_classify", "offer_save", "offer_update", "folder_names"]),
   /** The attribute every control of the feature carries, so a page module that builds one is found. */
   control: 'data-feature="save"',
   controlInCode: /["']data-feature["']\s*:\s*["']save["']|data-feature=\\?["']save/,
@@ -42,9 +44,37 @@ const refuses = async (/** @type {any} */ handler) => {
 };
 
 /**
+ * What the core operations of the feature answer in a package, by name: `refused` when the op refuses because the
+ * feature is off (`not_available`), otherwise the code it failed with (or `served`).
+ * @param {string} dir
+ * @returns {Promise<Record<string, string>>}
+ */
+async function coreOpsIn(dir) {
+  const { createSyncHost } = await import(pathToFileURL(join(dir, "background", "sync.mjs")).href);
+  const host = createSyncHost({
+    sessionHost: { store: {}, onOpen() {}, storedServer: async () => null, sessionFor: async () => null, deviceName: async () => "", forget: async () => {}, exclusive: (/** @type {any} */ fn) => fn() },
+    locks: null,
+  });
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const name of SAVE_PATHS.coreOps) {
+    const op = host.ops[name];
+    if (!op) {
+      out[name] = "absent";
+      continue;
+    }
+    out[name] = await op.run({}, { session: "0".repeat(32), offer_id: "0".repeat(32), name: "x", username: null, folder: null, id: "0".repeat(32), rev: 1 }, {}).then(
+      () => "served",
+      (/** @type {any} */ error) => (error?.code === "not_available" ? "refused" : String(error?.code)),
+    );
+  }
+  return out;
+}
+
+/**
  * Every path of the `save` feature that a package still has: a file of the feature, a handler of the register that
- * serves one of its message types and does not refuse it, a page with one of its controls, and a page module that
- * builds such a control without asking FEATURES first.
+ * serves one of its message types and does not refuse it, a core operation of the feature that does not refuse, a page
+ * with one of its controls, and a page module that builds such a control without asking FEATURES first.
  * @param {string} dir the unpacked package
  * @param {Map<string, Buffer>} files
  * @returns {Promise<string[]>}
@@ -60,6 +90,9 @@ async function savePathsIn(dir, files) {
     const handler = (await import(pathToFileURL(join(dir, ...path.split("/"))).href)).default;
     const served = (handler?.types ?? []).filter((/** @type {string} */ type) => SAVE_PATHS.types.includes(type));
     if (served.length > 0 && !(await refuses(handler))) found.push(`handler ${path} serves ${served.join(", ")}`);
+  }
+  for (const [name, answer] of Object.entries(await coreOpsIn(dir))) {
+    if (answer !== "refused" && answer !== "absent") found.push(`core op ${name} answers ${answer}`);
   }
   for (const [path, bytes] of files) {
     const text = bytes.toString("utf8");
@@ -174,6 +207,10 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
     const on = await build({ ...options, out: join(probe.out, "t"), variant: "test" });
     const gated = (await import(pathToFileURL(join(on.dir, "background", "handlers", "generatorProbe.handler.mjs")).href)).default;
     assert.deepEqual(await gated.handle({}, {}), { ok: true });
+    // The offer ops of the sync, the same: past the flag they go on (here to "no sync runs"), so `refused` above is the
+    // flag's doing.
+    assert.deepEqual(await coreOpsIn(on.dir), Object.fromEntries(SAVE_PATHS.coreOps.map((name) => [name, "sync_not_running"])));
+    assert.deepEqual(await coreOpsIn(release.dir), Object.fromEntries(SAVE_PATHS.coreOps.map((name) => [name, "refused"])));
   } finally {
     probe.cleanup();
   }

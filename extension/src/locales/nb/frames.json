@@ -1,0 +1,3 @@
+{
+  "frames.error.frame_unchecked": "Innloggingsskjemaet ligger i en ramme inne i en annen ramme som Ferret ikke har tilgang til, så Ferret kunne ikke sjekke at skjemaet vises, og fylte det ikke."
+}
