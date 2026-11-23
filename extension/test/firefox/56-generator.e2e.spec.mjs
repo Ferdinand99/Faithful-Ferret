@@ -67,6 +67,7 @@ test("generate_fill_and_submit_on_the_sign_up_fixture_gives_one_save_offer", asy
         assert.equal(classified.action, "save", `${channel}: a new item`);
         // The password of the offer is the one that went into the new-password field of the page.
         const shown = await w.ui.body("offer_reveal", { offer_id: offer.offer_id });
+        await w.session.switchTo(w.pageTab);
         const inPage = await w.session.content(() => document.querySelector("#pw")?.value ?? "");
         assert.ok(shown.value.length >= 8, channel);
         assert.equal(shown.value, inPage, `${channel}: the offer's password is the one in the page's new-password field`);

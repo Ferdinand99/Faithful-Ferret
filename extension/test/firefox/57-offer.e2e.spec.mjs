@@ -58,7 +58,10 @@ async function popupWithCard(w, tabId, kind) {
   await w.session.switchTo(handle);
   await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
   await w.page.ready();
-  await w.page.waitVisible(`[data-role="offer-card"][data-kind="${kind}"] [data-role="offer-actions"]`, SLOW);
+  await w.page.waitVisible('[data-role="offer-card"]', SLOW);
+  await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="offer-card"] [data-role="offer-actions"], [data-role="offer-gone"]') !== null), SLOW, "the card");
+  const shown = await w.session.content(() => document.querySelector('[data-role="offer-card"]')?.getAttribute("data-kind") ?? "");
+  assert.equal(shown, kind, `the card is a ${kind} card: ${await w.session.content(() => (document.querySelector('[data-role="offer-card"]')?.textContent ?? "").slice(0, 300))}`);
   // A click is ignored for the first 400 ms after the card appears.
   await sleep(700);
   return handle;
