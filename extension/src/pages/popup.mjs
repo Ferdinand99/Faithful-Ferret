@@ -31,6 +31,7 @@ import {
   createListFlow, createOlderFlow, createPopupFlow, createSyncItemsFlow, followStep, forgetBodyKey, statusKey, stopKey, warningKey,
 } from "./popupFlow.mjs";
 import { createVaultList } from "./popupList.mjs";
+import { openSettings } from "./popupSettings.mjs";
 import { createPopupTabs } from "./popupTabs.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
@@ -446,6 +447,10 @@ async function main() {
     } catch {
       show(await flow.load().catch(() => ({ view: /** @type {const} */ ("signed_out"), host: "", account: "", server: "", sync: null })));
     }
+  });
+
+  byId("settings").addEventListener("click", () => {
+    void openSettings({ runtime: browser.runtime, close: () => window.close() });
   });
 
   popOut.addEventListener("click", async () => {
