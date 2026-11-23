@@ -1,0 +1,27 @@
+{
+  "id": "ho-hidden-frame-de",
+  "class": "negative",
+  "category": "hidden",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-hidden-frame-de/",
+  "frame": {
+    "id": "#versteckt",
+    "host": "forms.example.net",
+    "path": "/ho-hidden-frame-de/inner.html",
+    "kind": "hidden"
+  },
+  "steps": [],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#hbenutzer",
+    "#hkennwort"
+  ],
+  "fields": {},
+  "source": "own"
+}

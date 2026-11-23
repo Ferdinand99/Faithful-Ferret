@@ -1,0 +1,46 @@
+{
+  "id": "ap-signup-email",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-signup-email/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#email"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": "#pw2"
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw",
+    "#pw2"
+  ],
+  "fields": {
+    "#pw": "new_password",
+    "#pw2": "confirm_password"
+  },
+  "source": "own"
+}

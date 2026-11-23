@@ -284,3 +284,89 @@ test("fields_without_a_form_are_grouped_by_their_container_and_only_named_ones_o
   assert.equal(whole.password, flatPass);
   assert.equal(whole.username, undefined);
 });
+
+test("a_change_form_takes_a_user_name_only_from_a_field_the_page_marks_as_one", () => {
+  const profile = (/** @type {Record<string, string>} */ mail) => page([
+    ["input", { id: "dname", type: "text", name: "visningsnavn", value: "Anna" }],
+    ["input", { id: "mail", type: "email", value: "anna@example.net", ...mail }],
+    ["input", { id: "cur", type: "password", autocomplete: "current-password" }],
+    ["input", { id: "new", type: "password", autocomplete: "new-password" }],
+    ["input", { id: "new2", type: "password", autocomplete: "new-password" }],
+  ]);
+  // A profile e-mail address in the same form is no user name of the change.
+  assert.deepEqual(groupsOf(profile({ name: "epost", autocomplete: "email" })), [{ kind: "change", email: "mail", current: "cur", new: "new", confirm: "new2" }]);
+  // A field the page marks as the user name is one, an e-mail one too.
+  assert.deepEqual(groupsOf(profile({ name: "login", autocomplete: "username" })), [{ kind: "change", username: "mail", current: "cur", new: "new", confirm: "new2" }]);
+  // A read-only account field with a user name token (the common change form) is one.
+  const account = page([
+    ["input", { id: "acct", type: "text", name: "login", value: "ola", readonly: "", autocomplete: "username" }],
+    ["input", { id: "cur", type: "password", autocomplete: "current-password" }],
+    ["input", { id: "new", type: "password", autocomplete: "new-password" }],
+  ]);
+  assert.deepEqual(groupsOf(account), [{ kind: "change", username: "acct", current: "cur", new: "new" }]);
+  // A sign-up form still takes the e-mail field (the positive control: the rule is about change forms).
+  const signup = page([
+    ["input", { id: "mail", type: "email", autocomplete: "email" }],
+    ["input", { id: "pw", type: "password", autocomplete: "new-password" }],
+    ["input", { id: "pw2", type: "password", autocomplete: "new-password" }],
+  ]);
+  assert.equal(groupsOf(signup)[0].username, "mail");
+});
+
+test("the_search_for_the_container_of_a_field_without_a_form_stops_at_a_fixed_depth", () => {
+  const nest = (/** @type {number} */ levels) => {
+    const { document } = createPage();
+    addInput(document, document.body, { id: "u", type: "text", autocomplete: "username" }, { top: 20 });
+    /** @type {any} */
+    let node = document.body;
+    for (let i = 0; i < levels; i += 1) node = node.append(document.createElement("div"));
+    addInput(document, node, { id: "p", type: "password", autocomplete: "current-password" }, { top: 60 });
+    return document;
+  };
+  const together = (/** @type {any} */ document) => findGroups(document).some((g) => g.username?.getAttribute("id") === "u" && g.password?.getAttribute("id") === "p");
+  assert.equal(together(nest(10)), true, "a field ten levels down shares its container with the user name (positive control)");
+  assert.equal(together(nest(100)), false, "a field a hundred levels down is not searched for: it is its own group");
+});
+
+test("a_search_box_the_page_marks_as_a_user_name_is_one_and_only_then", () => {
+  // The type alone does not decide when the page's own token says username.
+  const marked = page([["label", "User name", { for: "u" }], ["input", { id: "u", type: "search", name: "username", autocomplete: "username" }], ["input", { id: "p", type: "password", autocomplete: "current-password" }], ["button", "Sign in", { id: "go", type: "submit" }]], { title: "Sign in" });
+  assert.equal(classifyField(marked.byId.u).kind, "username");
+  assert.deepEqual(groupsOf(marked), [{ kind: "login", username: "u", password: "p" }]);
+  // Without the token, or with another mark of a search box (the role, the name q, the words), it stays a search box.
+  for (const attributes of [{ type: "search", name: "x" }, { type: "search", name: "x", autocomplete: "off" }, { type: "search", name: "q", autocomplete: "username" }, { type: "search", role: "searchbox", autocomplete: "username" }, { type: "search", placeholder: "Search", autocomplete: "username" }]) {
+    const p = page([["input", { id: "s", ...attributes }]], { form: false });
+    assert.equal(classifyField(p.byId.s).kind, "search", JSON.stringify(attributes));
+  }
+  // A search box in a search form stays one, whatever its token.
+  const inSearch = page([["input", { id: "s", type: "search", autocomplete: "username" }], ["button", "Go", { type: "submit" }]], { formAttributes: { role: "search" } });
+  assert.equal(classifyField(inSearch.byId.s).kind, "search");
+});
+
+test("a_lone_player_or_member_id_box_under_a_sign_in_button_is_a_user_name_step", () => {
+  for (const label of ["Player ID", "Member ID", "Customer ID", "Client ID"]) {
+    const p = page([["label", label, { for: "u" }], ["input", { id: "u", type: "text", name: "ident", required: "" }], ["button", "Sign in", { id: "go", type: "submit" }]], { title: "Sign in" });
+    assert.equal(classifyField(p.byId.u).kind, "username", label);
+    assert.deepEqual(groupsOf(p), [{ kind: "identifier", username: "u" }], label);
+  }
+  // Other ids are no user name: an order, a coupon, a gift card.
+  for (const label of ["Order ID", "Gift card ID", "Tracking ID"]) {
+    const p = page([["label", label, { for: "u" }], ["input", { id: "u", type: "text", name: "ident" }], ["button", "Continue", { id: "go", type: "submit" }]], { title: "Track" });
+    assert.notEqual(classifyField(p.byId.u).kind, "username", label);
+    assert.deepEqual(groupsOf(p).map((g) => g.kind), ["none"], label);
+  }
+});
+
+test("a_sign_up_with_an_email_and_a_user_name_gives_the_user_name_and_keeps_the_email_apart", () => {
+  const both = page([["label", "Email", { for: "e" }], ["input", { id: "e", type: "email", name: "email", autocomplete: "email" }], ["label", "User name", { for: "u" }], ["input", { id: "u", type: "text", name: "username", autocomplete: "username" }], ["input", { id: "p", type: "password", autocomplete: "new-password" }], ["input", { id: "p2", type: "password", autocomplete: "new-password" }], ["button", "Create account", { id: "go", type: "submit" }]]);
+  const [signup] = findGroups(both.document);
+  assert.equal(signup.kind, "signup");
+  assert.equal(signup.username.getAttribute("id"), "u");
+  assert.equal(signup.email.getAttribute("id"), "e");
+  // The user name first on the page, with one new password: the same.
+  const one = page([["input", { id: "u", type: "text", name: "username", autocomplete: "username" }], ["input", { id: "e", type: "email", name: "email", autocomplete: "email" }], ["input", { id: "p", type: "password", autocomplete: "new-password" }], ["button", "Sign up", { id: "go", type: "submit" }]]);
+  assert.equal(findGroups(one.document)[0].username.getAttribute("id"), "u");
+  // Only an e-mail address: that is the name.
+  const mail = page([["input", { id: "e", type: "email", name: "email", autocomplete: "email" }], ["input", { id: "p", type: "password", autocomplete: "new-password" }], ["input", { id: "p2", type: "password", autocomplete: "new-password" }], ["button", "Create account", { id: "go", type: "submit" }]]);
+  assert.equal(findGroups(mail.document)[0].username.getAttribute("id"), "e");
+});

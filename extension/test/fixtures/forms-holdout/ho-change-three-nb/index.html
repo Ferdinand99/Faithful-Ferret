@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>Endre passord</title>
+<style>body{font-family:sans-serif;background:#eef3f7}.s{max-width:420px;margin:40px auto;background:#fff;padding:20px}label{display:block;margin-top:12px}input{width:100%;padding:8px;box-sizing:border-box}</style></head>
+<body>
+<nav><a href="/konto">Min konto</a> &rsaquo; <a href="/konto/sikkerhet">Sikkerhet</a></nav>
+<div class="s">
+<h1>Endre passord</h1>
+<form id="endre" method="post" action="#endre">
+<label for="gammelt">Nåværende passord</label>
+<input type="password" id="gammelt" name="current" autocomplete="current-password">
+<label for="nytt">Nytt passord</label>
+<input type="password" id="nytt" name="new" autocomplete="new-password">
+<label for="nytt2">Gjenta nytt passord</label>
+<input type="password" id="nytt2" name="confirm" autocomplete="new-password">
+<button type="submit" id="lagre">Lagre nytt passord</button>
+</form>
+</div>
+</body></html>

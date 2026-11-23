@@ -114,8 +114,8 @@ test("the_frame_check_gets_the_points_of_the_boxes", () => {
   const p = boxesPage(8);
   begin(p);
   const where = /** @type {any} */ (p.engine.where("req-1", "totp"));
-  // At most five points, one per box, the first and the last box among them.
-  assert.equal(where.points.length, 5);
+  // One point per box for a code of up to eight boxes, so a cover over any box in the middle is seen by the frame check.
+  assert.equal(where.points.length, 8);
   assert.deepEqual(where.points[0], [121, 120]);
   assert.deepEqual(where.points.at(-1), [100 + 7 * 50 + 21, 120]);
   p.boxes[2].style.visibility = "hidden";

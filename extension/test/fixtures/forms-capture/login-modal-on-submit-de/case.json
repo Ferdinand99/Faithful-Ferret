@@ -1,0 +1,42 @@
+{
+  "id": "login-modal-on-submit-de",
+  "class": "positive",
+  "category": "login",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/login-modal-on-submit-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!adversarial-Vm4$"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 500
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

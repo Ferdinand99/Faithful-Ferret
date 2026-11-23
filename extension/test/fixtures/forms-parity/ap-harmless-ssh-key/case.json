@@ -1,0 +1,29 @@
+{
+  "id": "ap-harmless-ssh-key",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-ssh-key/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#key",
+      "text": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyOnly anna@laptop"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#key"
+  ],
+  "fields": {},
+  "source": "own"
+}

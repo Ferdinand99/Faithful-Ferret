@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { confirmFrame } from "../../src/background/frames.mjs";
 import { CONFUSABLE_A_LABEL_HOST, CONFUSABLE_UNICODE_HOST, HOMOGRAPH_A_LABEL_HOST } from "../fixtures/sites/index.mjs";
-import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_SHORTCUT } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, commandOnPage, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_SHORTCUT } from "./harness.mjs";
 
 after(() => stopFixtures());
 
@@ -99,8 +99,11 @@ async function open(channel) {
     await fromBridge(() => bridge.clearEvents());
     await session.navigate(url);
     await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, url);
-    await session.pressShortcut(TEST_SHORTCUT);
-    const command = await session.waitFor(async () => (await fromBridge(() => bridge.events())).find((e) => e.kind === "command"), 15_000, "the command event");
+    const command = await commandOnPage({
+      clear: () => fromBridge(() => bridge.clearEvents()),
+      press: () => session.pressShortcut(TEST_SHORTCUT),
+      events: () => fromBridge(() => bridge.events()),
+    });
     assert.equal(command.tabUrl, url, `${channel}: activeTab was granted on ${url}`);
     return /** @type {number} */ (command.tabId);
   };

@@ -1,0 +1,42 @@
+{
+  "id": "ho-shadow-declarative-en",
+  "class": "positive",
+  "category": "shadow",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-shadow-declarative-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#sid",
+      "text": "ola"
+    },
+    {
+      "type": "#spw",
+      "text": "Notebook-Slate-9142"
+    },
+    {
+      "click": "#sgo"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#sid": "username",
+        "#spw": "password"
+      }
+    },
+    "capture": {
+      "offer": "update",
+      "target": "forms",
+      "username": "ola",
+      "password_from": "#spw",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

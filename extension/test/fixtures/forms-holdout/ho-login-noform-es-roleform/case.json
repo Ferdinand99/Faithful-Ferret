@@ -1,0 +1,45 @@
+{
+  "id": "ho-login-noform-es-roleform",
+  "class": "positive",
+  "category": "login-noform",
+  "lang": "es",
+  "host": "forms.example.net",
+  "path": "/ho-login-noform-es-roleform/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#usuario",
+      "text": "ola"
+    },
+    {
+      "type": "#clave",
+      "text": "Naranjo-Nuevo-4410"
+    },
+    {
+      "click": "#entrar"
+    },
+    {
+      "wait": 400
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#usuario": "username",
+        "#clave": "password"
+      }
+    },
+    "capture": {
+      "offer": "update",
+      "target": "forms",
+      "username": "ola",
+      "password_from": "#clave",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

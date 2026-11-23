@@ -1,0 +1,19 @@
+{
+  "id": "ap-harmless-passkeys-index",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-passkeys-index/",
+  "frame": null,
+  "steps": [],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,47 @@
+{
+  "id": "ho-noise-contact-address-de",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-noise-contact-address-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#vname",
+      "text": "ola"
+    },
+    {
+      "type": "#mail",
+      "text": "ola@example.net"
+    },
+    {
+      "type": "#gutschein",
+      "text": "SOMMER10"
+    },
+    {
+      "click": "#weiter"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#vname",
+    "#strasse",
+    "#plz",
+    "#ort",
+    "#mail",
+    "#gutschein",
+    "#nachricht"
+  ],
+  "fields": {
+    "#gutschein": "other",
+    "#mail": "email",
+    "#nachricht": "other"
+  },
+  "source": "own"
+}

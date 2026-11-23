@@ -21,15 +21,21 @@
 // its code) and an offer by the SHA-256 of its password.
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { FORMS_DIR } from "./fixtures-server.mjs";
-import { VAULT_USERNAME, loadCorpus } from "./matrixReport.mjs";
+import { CAPTURE_FORMS_DIR, FORMS_DIR } from "./fixtures-server.mjs";
+import { VAULT_USERNAME, followsRules, loadCorpus } from "./matrixReport.mjs";
 import { recentCodes } from "./totp.mjs";
 
-/** Where the hold-out set is added to the repository when the time comes. */
+/** The hold-out set: cases written without sight of the detection code. */
 export const HOLDOUT_DIR = resolve(FORMS_DIR, "..", "forms-holdout");
 
-/** @param {"corpus" | "holdout"} set */
-export const formsDirFor = (set) => (set === "holdout" ? HOLDOUT_DIR : FORMS_DIR);
+/** The own-written autofill-parity suite: one page per form of a public catalogue of autofill test pages. */
+export const PARITY_DIR = resolve(FORMS_DIR, "..", "forms-parity");
+
+/** @param {"corpus" | "holdout" | "parity"} set */
+export const formsDirFor = (set) => (set === "holdout" ? HOLDOUT_DIR : set === "parity" ? PARITY_DIR : FORMS_DIR);
+
+/** What every id of a set starts with before its category. @param {"corpus" | "holdout" | "parity"} set */
+export const idPrefixFor = (set) => (set === "parity" ? "ap-" : "");
 
 /**
  * The entries of the matrix's vault: what the extension should offer where. `rule` is what a fill is judged by
@@ -67,9 +73,15 @@ export function caseUrl(c, server) {
   return `${scheme}://${c.host}${port === standard ? "" : `:${port}`}${c.path}`;
 }
 
-/** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout"} set @param {string} [grep] */
+/** The cases of the adversarial capture specs (fixtures/forms-capture), whose id contains `grep`. @param {string} [grep] */
+export function captureCasesOf(grep = "") {
+  const all = loadCorpus(CAPTURE_FORMS_DIR);
+  return grep === "" ? all : all.filter((c) => c.id.includes(grep));
+}
+
+/** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout" | "parity"} set @param {string} [grep] */
 export function casesOf(set, grep = "") {
-  const all = loadCorpus(formsDirFor(set));
+  const all = loadCorpus(formsDirFor(set), { prefix: idPrefixFor(set), holdout: set === "holdout" });
   return grep === "" ? all : all.filter((c) => c.id.includes(grep));
 }
 
@@ -273,17 +285,23 @@ export async function scanDocs(session) {
   return out;
 }
 
+/** The input types whose value is never something a fill wrote. */
+const UNFILLABLE_TYPES = new Set(["radio", "checkbox", "button", "submit", "reset", "image", "file", "range", "color"]);
+
 /**
  * The vault values of one entry that a scan finds: its password, its user name, its whole code, and the digits of its
  * code in a row of one-character fields of one document (digit n of the code in the n-th of them).
- * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} rows
+ * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} allRows
  * @param {string} key @param {string} password @param {string[]} codes the codes the entry can have now
  * @returns {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>}
  */
-export function fillsIn(rows, key, password, codes) {
+export function fillsIn(allRows, key, password, codes) {
+  // A radio button, a check box or a button has a value the page gave it (the "1" and "5" of a rating): it is not mistaken for a
+  // digit of a code (the split-code scans below), but a whole password, user name or code in any input is still a fill.
+  const rows = allRows.filter((r) => !UNFILLABLE_TYPES.has(r.type));
   /** @type {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>} */
   const out = [];
-  for (const input of rows) {
+  for (const input of allRows) {
     if (input.value === "") continue;
     if (input.value === password) out.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
     else if (input.value === VAULT_USERNAME) out.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });
@@ -342,27 +360,36 @@ export const shortcutWentToAnExtensionPage = (error) => /gave no activeTab/.test
 
 /**
  * Opens a case's page and does its `prepare` steps. Returns the tab's id. `count.n` counts the times the real shortcut
- * went to the bridge tab and the page was opened again (twice at most).
- * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count]
+ * went to the bridge tab and the page was opened again (four times at most). `beforePrepare` runs with the tab's id after the
+ * page is open and before the `prepare` steps (the capture phase clears the tab's offers and kept user names there, so that
+ * what the steps leave, such as the user name of a first step, still counts for the case).
+ * @param {World} w @param {Record<string, any>} c @param {{ n: number }} [count] @param {(tabId: number) => Promise<void>} [beforePrepare]
  */
-async function openCase(w, c, count = { n: 0 }) {
+async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) {
   // The real shortcut goes to the tab the window shows, and now and then that is still the bridge tab: try again,
   // and count it. Any other failure, also a command that reached the page and gave no activeTab, fails at once.
-  /** @type {number} */
-  let tabId = 0;
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      tabId = await w.visit(caseUrl(c, w.server));
-      break;
-    } catch (error) {
-      if (attempt >= 3 || !shortcutWentToAnExtensionPage(error)) throw error;
-      count.n += 1;
-      await sleep(1000);
+  /** @param {() => Promise<number>} press */
+  const pressed = async (press) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await press();
+      } catch (error) {
+        if (attempt >= 5 || !shortcutWentToAnExtensionPage(error)) throw error;
+        count.n += 1;
+        await sleep(1000);
+      }
     }
-  }
+  };
+  let tabId = await pressed(() => w.visit(caseUrl(c, w.server)));
   // A frame may load after the page does.
   if (c.frame) await sleep(1200);
+  await beforePrepare(tabId);
+  const opened = await w.session.currentUrl();
   await runSteps(w.session, c.prepare ?? [], { passwords: w.passwords, typed: {} });
+  // The shortcut's permission (activeTab) is for the page it was pressed on. A case whose steps lead to another page is
+  // one where the person goes on and presses the shortcut again on the page they fill.
+  const now = await w.session.currentUrl();
+  if (now !== opened) tabId = await pressed(() => w.pressShortcutOn(now));
   return tabId;
 }
 
@@ -474,9 +501,13 @@ export async function captureCase(w, c) {
   const result = { case: c, ran: { fill: false, capture: false }, observed: { fills: [], tried: [], entries: RULES, offers: [], generated: null } };
   const count = { n: 0 };
   try {
-    const tabId = await openCase(w, c, count);
-    // The tab may hold the offers of the case before it: a case starts with none.
-    const first = await offersPeek(w, tabId, true);
+    // The tab may hold the offers of the case before it: a case starts with none (before its own prepare steps, whose
+    // result, such as the user name typed in a first step, belongs to the case).
+    /** @type {{ available: boolean, offers: Array<Record<string, any>> }} */
+    let first = { available: false, offers: [] };
+    const tabId = await openCase(w, c, count, async (id) => {
+      first = await offersPeek(w, id, true);
+    });
     if (!first.available) {
       result.error = NO_OFFERS;
       return result;
@@ -607,7 +638,9 @@ export async function generatorCase(w, c) {
     if (want.confirm && first !== "" && valueOf(want.confirm) === first) filled.push(want.confirm);
     // Every other field of the page that holds the generated value is a stray fill.
     const stray = first === "" ? [] : rows.filter((r) => `#${r.id}` !== want.new && `#${r.id}` !== want.confirm && r.value === first).map((r) => `#${r.id}`);
-    result.observed = { ...result.observed, generated: { filled, stray } };
+    // Password rules of the page (a case that states them): checked here, where the value is; only the verdict is kept.
+    const rulesOk = want.rules && first !== "" ? followsRules(first, want.rules) : undefined;
+    result.observed = { ...result.observed, generated: { filled, stray, ...(rulesOk === undefined ? {} : { rules_ok: rulesOk }) } };
     result.ran.generated = true;
   } catch (error) {
     result.error = String(error instanceof Error ? error.message : error).slice(0, 300);

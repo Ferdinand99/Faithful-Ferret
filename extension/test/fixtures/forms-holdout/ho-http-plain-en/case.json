@@ -1,0 +1,35 @@
+{
+  "id": "ho-http-plain-en",
+  "class": "negative",
+  "category": "insecure",
+  "lang": "en",
+  "host": "forms.example.net",
+  "scheme": "http",
+  "path": "/ho-http-plain-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mu",
+      "text": "ola"
+    },
+    {
+      "type": "#mp",
+      "text": "Plain-Text-Wire-4412"
+    },
+    {
+      "click": "#mgo"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#mu",
+    "#mp"
+  ],
+  "fields": {},
+  "source": "own"
+}

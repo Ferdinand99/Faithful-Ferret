@@ -1036,13 +1036,106 @@ test("a_layer_that_paints_below_the_field_is_not_a_cover", () => {
   assert.deepEqual(page({ position: "static" }, SHADE, false), COVERED, "a positioned layer over plain content");
   // A layer that makes a stacking context of its own (a transform, a filter) paints with the positioned content.
   assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static", transform: "translateZ(0)" }, false), COVERED, "a transformed layer that is not positioned");
-  // Not positioned, like the content: its background is below the field's content, whatever the order.
-  assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static" }, false), FILLED, "plain boxes");
+  // Not positioned, like the content: tree order decides (a block background before the field is below its content; one after
+  // it is not known to be, and an inline or replaced element pulled over the field with a negative margin paints over it).
+  assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static" }, true), FILLED, "plain boxes, the layer first");
+  assert.deepEqual(page({ position: "static" }, { ...SHADE, position: "static" }, false), COVERED, "plain boxes, the layer after the card");
   // A shadow of a layer below the card is no cover either, an outline always is.
   const shadow = { "box-shadow": `${WHITE} 0px 0px 0px 9999px` };
   assert.deepEqual(page({ "z-index": "1" }, shadow, true, { left: 10, top: 400, width: 20, height: 20 }), FILLED, "a shadow of a layer below the card");
   assert.deepEqual(page({ "z-index": "1" }, { "z-index": "2", ...shadow }, true, { left: 10, top: 400, width: 20, height: 20 }), COVERED, "a shadow of a layer above the card");
   assert.deepEqual(page({ "z-index": "1" }, { "outline-style": "solid", "outline-width": "9999px", "outline-color": WHITE }, true, { left: 10, top: 400, width: 20, height: 20 }), COVERED, "an outline paints on top, whatever its level");
+});
+
+test("a_layer_in_the_top_layer_or_in_a_context_the_pass_did_not_know_is_a_cover", () => {
+  const PAGE = { left: 0, top: 0, width: 1280, height: 800 };
+  const WHITE_FILL = { "pointer-events": "none", "background-color": WHITE, "z-index": "-1" };
+  /** @param {Record<string, string>} wrapper */
+  const nested = (wrapper) => {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    const outer = painter(t.document, PAGE, { "pointer-events": "none", ...wrapper });
+    painter(t.document, PAGE, WHITE_FILL, outer);
+    return t.fill();
+  };
+  // A negative z-index inside a wrapper that makes no stacking context of its own is below the page's content.
+  assert.deepEqual(nested({ position: "absolute" }), FILLED, "an absolute wrapper with no context (positive control)");
+  // Inside a wrapper that does make one, the child's negative level is local to it: the wrapper paints over a plain field.
+  for (const [name, wrapper] of /** @type {Array<[string, Record<string, string>]>} */ ([
+    ["position fixed", { position: "fixed" }],
+    ["position sticky", { position: "sticky" }],
+    ["will-change: transform", { "will-change": "transform" }],
+    ["will-change: opacity, filter", { "will-change": "opacity, filter" }],
+    ["contain: paint", { contain: "paint" }],
+    ["contain: layout style", { contain: "layout style" }],
+    ["container-type: size", { "container-type": "size" }],
+    ["backdrop-filter", { "backdrop-filter": "blur(2px)" }],
+    ["a mask", { "-webkit-mask-image": "linear-gradient(black, black)" }],
+    ["content-visibility: auto", { "content-visibility": "auto" }],
+    ["view-transition-name", { "view-transition-name": "page" }],
+  ])) assert.deepEqual(nested(wrapper), COVERED, name);
+  assert.deepEqual(nested({ position: "absolute", "will-change": "scroll-position" }), FILLED, "a will-change that makes no context");
+  assert.deepEqual(nested({ position: "absolute", contain: "size style" }), FILLED, "containment that makes no context");
+
+  // The top layer paints above the page, whatever the z-index.
+  for (const layer of [":popover-open", ":modal", ":fullscreen"]) {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    const dialog = painter(t.document, PAGE, WHITE_FILL);
+    /** @type {any} */ (dialog).topLayer = layer;
+    assert.deepEqual(t.fill(), COVERED, layer);
+    const calm = setup({}, addLoginForm, COVERAGE_ON);
+    calm.begin();
+    painter(calm.document, PAGE, WHITE_FILL);
+    assert.deepEqual(calm.fill(), FILLED, `${layer}: the same layer when it is not in the top layer (positive control)`);
+  }
+  // An engine that does not know the pseudo-class: the element is not in that layer, and nothing breaks.
+  const unknown = setup({}, addLoginForm, COVERAGE_ON);
+  unknown.begin();
+  const odd = painter(unknown.document, PAGE, WHITE_FILL);
+  odd.matches = () => { throw new Error("unknown pseudo-class"); };
+  assert.deepEqual(unknown.fill(), FILLED);
+});
+
+test("a_click_through_picture_over_most_of_the_viewport_is_decoration_and_a_smaller_one_is_a_cover", () => {
+  const PAGE = { left: 0, top: 0, width: 1280, height: 800 };
+  const MOST = { left: 0, top: 0, width: 1280, height: 740 };
+  const HALF = { left: 0, top: 0, width: 1280, height: 400 };
+  for (const [name, tag, style] of /** @type {Array<[string, string, Record<string, string>]>} */ ([
+    ["a canvas", "canvas", {}],
+    ["an svg", "svg", {}],
+    ["a background image", "div", { "background-image": 'url("https://cdn.example/grain.png")' }],
+    ["a gradient scrim", "div", { "background-image": "linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1))" }],
+  ])) {
+    const over = (/** @type {typeof PAGE} */ rect) => {
+      const t = setup({}, addLoginForm, COVERAGE_ON);
+      t.begin();
+      painter(t.document, rect, { "pointer-events": "none", ...style }, t.document.body, tag);
+      return t.fill();
+    };
+    assert.deepEqual(over(PAGE), FILLED, `${name} over the whole viewport`);
+    assert.deepEqual(over(MOST), FILLED, `${name} over 90 percent of it`);
+    assert.deepEqual(over(HALF), COVERED, `${name} over half of it (it holds the field)`);
+  }
+  // A gradient of opaque colours is a colour (a white sheet), whatever its size; a faint one stays decoration (above).
+  for (const style of [{ "background-image": "linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))" }, { "background-image": "linear-gradient(rgb(255, 255, 255), rgba(255, 255, 255, 0.2))" }]) {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    painter(t.document, PAGE, { "pointer-events": "none", ...style }, t.document.body, "div");
+    assert.deepEqual(t.fill(), style["background-image"].includes("0.2") ? FILLED : COVERED, JSON.stringify(style));
+  }
+  // An opaque colour, a video or an image is no decoration, whatever its size.
+  for (const [name, tag, style] of /** @type {Array<[string, string, Record<string, string>]>} */ ([
+    ["a white layer", "div", { "background-color": WHITE }],
+    ["an image", "img", {}],
+    ["a video", "video", {}],
+    ["a frame", "iframe", {}],
+  ])) {
+    const t = setup({}, addLoginForm, COVERAGE_ON);
+    t.begin();
+    painter(t.document, PAGE, { "pointer-events": "none", ...style }, t.document.body, tag);
+    assert.deepEqual(t.fill(), COVERED, name);
+  }
 });
 
 test("the_coverage_pass_refuses_a_box_shadow_cover", () => {
@@ -1126,6 +1219,16 @@ test("a_floating_label_is_not_a_cover", () => {
   };
   const forPass = labelled("label", { for: "pass" });
   assert.deepEqual(forPass.t.fill(), FILLED, "a label for the field");
+  // A label that is larger than its field is no label at rest: a layer that fills the page, or one taller than the field.
+  const huge = labelled("label", { for: "pass" });
+  huge.label.rect = { left: 0, top: 0, width: 1280, height: 800 };
+  assert.deepEqual(huge.t.fill(), COVERED, "a label as large as the page");
+  const tall = labelled("label", { for: "pass" });
+  tall.label.rect = { left: 104, top: 140, width: 220, height: 80 };
+  assert.deepEqual(tall.t.fill(), COVERED, "a label much taller than the field");
+  const wide = labelled("label", { for: "pass" });
+  wide.label.rect = { left: 90, top: 166, width: 400, height: 20 };
+  assert.deepEqual(wide.t.fill(), FILLED, "a long label that crosses the centre but is smaller than the field in area (positive control)");
   assert.deepEqual(labelled("label", { for: "user" }).t.fill(), COVERED, "the label of another field");
   assert.deepEqual(labelled("div", { for: "pass" }).t.fill(), COVERED, "a div is no label");
   // What is inside the label is the label's.
@@ -1213,7 +1316,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   const walk = (dir) => readdirSync(join(dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const files = new Map(walk(src).filter((p) => /\.(?:mjs|js)$/.test(p)).map((p) => [posix.normalize(p.slice(src.length + 1).split("\\").join("/")), Buffer.from(readFileSync(p))]));
 
-  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
+  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/protocol.mjs", "shared/schema.mjs"]);
   const FORBIDDEN_TEXT = /\bsubtle\b|SubtleCrypto|importKey|deriveKey|deriveBits|WebAssembly|\bWorker\b|indexedDB|localStorage|sessionStorage|\.storage\b|background\/|pkg-web|client\.mjs|\bargon2|\bhkdf\b|\bsha-?256\b/i;
   /** @param {Map<string, Buffer>} map @returns {string[]} */
   const problems = (map) => {
@@ -1237,7 +1340,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.deepEqual(problems(files), []);
   // Not vacuous: the content files exist, reach the protocol, and the reader sees their imports.
   assert.ok(files.has("content/fill.mjs") && files.has("content/entry.mjs"));
-  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs"]);
+  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs", "./passwordRules.mjs"]);
   assert.deepEqual(importsOf(files.get("content/entry.mjs")?.toString("utf8") ?? "").specifiers, ["./fill.mjs"]);
 
   // The check finds what it is for.
@@ -1352,7 +1455,7 @@ test("a_field_of_a_frame_is_shown_only_when_the_holder_passes_the_chain_and_the_
   assert.equal(tall.shown([[220, 2176]]), "shown");
   assert.equal(tall.shown([[220, 5000]]), "hidden", "the same frame, its field out of view");
   // No points, or points of another shape, are no answer.
-  for (const bad of [undefined, [], [[1]], [[1, Number.NaN]], [["1", 2]], Array.from({ length: 6 }, () => [1, 1]), [[1e9, 1]]]) {
+  for (const bad of [undefined, [], [[1]], [[1, Number.NaN]], [["1", 2]], Array.from({ length: 9 }, () => [1, 1]), [[1e9, 1]]]) {
     assert.deepEqual(plain.engine.frameShown(plain.FRAME, bad), { verdict: "hidden" }, String(JSON.stringify(bad)));
   }
 });

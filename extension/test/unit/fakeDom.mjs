@@ -211,8 +211,13 @@ export class FakeElement extends FakeNode {
     this.attributes.set(name, value);
   }
 
-  /** Only `:disabled`: the element itself, or a fieldset with the disabled attribute above it. @param {string} selector */
+  /**
+   * `:disabled`: the element itself, or a fieldset with the disabled attribute above it; the top-layer pseudo-classes
+   * (`:popover-open`, `:modal`, `:fullscreen`) are true for an element a test marked with `topLayer`.
+   * @param {string} selector
+   */
   matches(selector) {
+    if (selector === ":popover-open" || selector === ":modal" || selector === ":fullscreen") return /** @type {any} */ (this).topLayer === selector;
     if (selector !== ":disabled") throw new Error(`the fake page does not know ${selector}`);
     for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
       if (node.disabled === true || (node.localName === "fieldset" && node.hasAttribute("disabled"))) return true;

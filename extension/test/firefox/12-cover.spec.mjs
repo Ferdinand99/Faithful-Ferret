@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { COVER_PAGES } from "./coverPages.mjs";
 import {
-  channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_COMMAND, TEST_SHORTCUT,
+  channels, commandOnPage, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID, TEST_COMMAND, TEST_SHORTCUT,
 } from "./harness.mjs";
 
 process.env.FERRET_SSE_INTERVAL_MS ??= "300";
@@ -60,10 +60,13 @@ test("covers_that_hit_testing_cannot_see_are_refused_and_common_sign_in_layouts_
           return reply.value;
         };
 
-        await session.pressShortcut(TEST_SHORTCUT);
-        const command = await session.waitFor(
-          async () => (await fromBridge(tab, () => bridge.events())).find((e) => e.kind === "command" && e.tabUrl === url), 10_000, `the command event of ${page.id}`);
+        const command = await commandOnPage({
+          clear: () => fromBridge(tab, () => bridge.clearEvents()),
+          press: () => session.pressShortcut(TEST_SHORTCUT),
+          events: () => fromBridge(tab, () => bridge.events()),
+        });
         assert.equal(command.name, TEST_COMMAND);
+        assert.equal(command.tabUrl, url, `${channel}: activeTab was granted on ${page.id}`);
         const tabId = command.tabId;
 
         const requestId = `req-${page.id}`;

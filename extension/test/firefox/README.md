@@ -87,7 +87,7 @@ covered or off-screen one that must never be filled).
 
 ## The detection matrix
 
-`scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>]`
+`scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>]`
 runs `95-matrix.e2e.spec.mjs` on the end-to-end stack: the extension signed in to it, a vault with a few
 entries, and every case of the corpus in `test/fixtures/forms/` (see its README). The fill phase opens each
 page with the real shortcut, asks the extension for the page's entries, fills them and reads every input of
@@ -101,11 +101,51 @@ capture phase counts every case as not run. The first test of the spec proves th
 the rate per category (no positive category below 80 %), the unsafe fills and unsafe offers (any one fails the
 gate), the offers on harmless pages, and the cases that did not run (they count as failed). The reports
 `<channel>-<manifest>.json` and `matrix.md` are unpacked into `test-results/out/u2-matrix/`. The plain `e2e`
-run leaves the matrix out.
+run leaves the matrix out. `--set parity` runs the own-written autofill-parity suite of
+`test/fixtures/forms-parity/` (see its README) with the same rules and writes its reports, apart from the corpus
+ones, to `test-results/out/u2-matrix-parity/`. The parity set is part of the gate too: at least 90 % fill, capture and
+generator, no unsafe fill or offer, no case that did not run and no false offer on a harmless page, in both channels.
 
 The capture phase also reads the vault's item list (ids and revisions, from the test build's measure port) before and
 after each case: the runner never clicks a save control there, so any change is counted as a write without a click,
 whatever the extension reports about itself. A generator pass fills the new-password fields of the cases that expect it
 and is reported as a line of its own, not in the capture rate. A frame the driver cannot enter makes its case not run.
+A case starts with no offers and no kept user names in its tab, cleared before its `prepare` steps (the user name typed in a first step
+belongs to the case). The shortcut that gives the page its permission (`activeTab`) is pressed on the page the case opens; a case whose
+`prepare` steps lead to another page presses it again there, as a person who has gone on would.
 A run of one part (`--part`) or of some cases (`--grep`) has no gate: `matrix.md` says "partial run" and whether the
 part it measured is met.
+
+### The hold-out set
+
+`test/fixtures/forms-holdout/` is a second set of cases (`--set holdout`), written without sight of the detection code or of the corpus
+(see its README for the cases, the numbers of record, the target and the closed list of explained misses). Fill and capture are held to
+90 % per channel over the cases the stated rules allow, with no unsafe fill or offer; the raw rate is always printed beside the adjusted
+one (`holdout_detection_is_at_least_90_percent`). Its cases keep the names their author gave them (`ho-...`). The runner maps what the
+schema leaves open (category names, frame and field kinds, split-code indexes, absent keys, hosts; `HOLDOUT_LANGUAGES`, and the `ho-`
+id prefix), and never an expectation. Six sign-in pages were edited, one `action` each, to post to the landing page instead of back
+to themselves (listed in the set's README, in a commit of their own).
+
+Run each channel on a stack of its own: a second channel on the same stack finds the first one's entries, so a page matches two items
+and gets a choice where one item was expected. The gate script does so.
+
+### The adversarial capture and the end-to-end specs
+
+`72-capture-adversarial.e2e.spec.mjs` drives pages that try to cheat the capture (a page that plants a password and submits,
+or submits on a timer with no click; a script that rewrites the typed password; a burst of submits; a look-alike host; a
+tab that goes to another site; an offer nobody answers; a lock between the submit and the click) in the real popup and the web
+vault. The pages that are not in the corpus (frozen) or the hold-out set are in `test/fixtures/forms-capture/`, with the
+corpus' `case.json`; `matrix.mjs` loads them with `captureCasesOf` and the fixture server serves them next to the others.
+
+`81-u2-end-to-end.e2e.spec.mjs` is the whole of saving and updating passwords in one browser: generate, save in a folder, see it in
+the web vault, change, update (folders unchanged, "Previous passwords"), sign in with the new password, "Not now" and "Never",
+and a save made while the server cannot be reached that goes out after the unlock. It also takes the access to https pages
+back and checks that the vault still syncs.
+
+`scripts/lanbox-ext.sh gate` runs the firefox step, the e2e step (these two specs included) and then the matrix of the corpus,
+of the hold-out set and of the parity set, one channel at a time, each on a stack of its own.
+
+### Timing bounds
+
+The footprint specs (`58-capture`) have bounds for a quiet machine. `FERRET_TIMING_SLACK` loosens them for a shared runner:
+a number from 1 to 2, nothing else (a larger factor would switch the bounds off). The build host and the gate keep 1.

@@ -1,0 +1,25 @@
+{
+  "id": "ap-harmless-totp-setup",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-totp-setup/",
+  "frame": null,
+  "steps": [
+    {
+      "click": "#copy"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#uri"
+  ],
+  "fields": {},
+  "source": "own"
+}

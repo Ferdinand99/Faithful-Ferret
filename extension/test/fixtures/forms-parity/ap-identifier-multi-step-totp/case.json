@@ -1,0 +1,43 @@
+{
+  "id": "ap-identifier-multi-step-totp",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-identifier-multi-step-totp/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!apidentifi-Vm4$"
+    },
+    {
+      "click": "#next2"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

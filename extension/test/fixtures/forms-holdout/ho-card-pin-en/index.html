@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Payment</title>
+<style>body{font-family:sans-serif;background:#f3f3f3}form{max-width:380px;margin:24px auto;background:#fff;padding:18px}label{display:block;margin-top:10px}input{padding:8px;width:100%;box-sizing:border-box}.half{display:inline-block;width:48%}</style></head>
+<body>
+<form id="pay" action="/pay" method="post" autocomplete="on">
+<h2>Pay with card</h2>
+<label for="ccname">Name on card</label><input id="ccname" name="cardname" type="text" autocomplete="cc-name">
+<label for="ccnum">Card number</label><input id="ccnum" name="cardnumber" type="text" inputmode="numeric" autocomplete="cc-number">
+<div><div class="half"><label for="ccexp">Expiry (MM/YY)</label><input id="ccexp" name="exp" type="text" autocomplete="cc-exp"></div>
+<div class="half"><label for="cvc">Security code (CVC)</label><input id="cvc" name="cvc" type="password" inputmode="numeric" maxlength="4" autocomplete="cc-csc"></div></div>
+<h3>Confirm with PIN</h3>
+<label for="pin">4-digit PIN</label>
+<input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off">
+<button type="submit" id="paybtn">Pay now</button>
+</form>
+</body></html>

@@ -1,0 +1,52 @@
+{
+  "id": "ho-change-two-en",
+  "class": "positive",
+  "category": "change",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-change-two-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#current",
+      "text": "{{password:forms}}"
+    },
+    {
+      "type": "#fresh",
+      "text": "Marigold-Kettle-5073"
+    },
+    {
+      "click": "#update"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#current": "password"
+      }
+    },
+    "allow": [
+      "#acct"
+    ],
+    "generated": {
+      "new": "#fresh",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "update",
+      "target": "forms",
+      "username": "ola",
+      "password_from": "#fresh",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#fresh",
+    "#bio"
+  ],
+  "fields": {
+    "#fresh": "new_password"
+  },
+  "source": "own"
+}

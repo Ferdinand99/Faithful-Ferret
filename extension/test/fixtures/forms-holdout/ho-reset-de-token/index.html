@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Neues Passwort festlegen</title>
+<style>body{font-family:Arial;background:#e8f0e8}.b{max-width:380px;margin:60px auto;background:#fff;padding:24px}input{width:100%;padding:9px;box-sizing:border-box;margin:5px 0 14px}</style></head>
+<body>
+<div class="b">
+<h1>Neues Passwort festlegen</h1>
+<p>Der Link ist 30 Minuten gültig.</p>
+<form id="zuruecksetzen" method="post" action="#zuruecksetzen">
+  <input type="hidden" name="token" value="e1c0ffee-0000-4d2a-9f11-aaaa00000001">
+  <label for="neu">Neues Passwort</label>
+  <input type="password" id="neu" name="password" autocomplete="new-password">
+  <label for="neu2">Neues Passwort bestätigen</label>
+  <input type="password" id="neu2" name="password_confirmation" autocomplete="new-password">
+  <button type="submit" id="speichern">Passwort speichern</button>
+</form>
+</div>
+</body></html>

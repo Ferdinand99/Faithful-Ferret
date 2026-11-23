@@ -1,0 +1,41 @@
+{
+  "id": "ho-reset-nl-www-choose",
+  "class": "positive",
+  "category": "reset",
+  "lang": "nl",
+  "host": "www.forms.example.net",
+  "path": "/ho-reset-nl-www-choose/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#nw",
+      "text": "Klaproos-Najaar-2284"
+    },
+    {
+      "type": "#nw2",
+      "text": "Klaproos-Najaar-2284"
+    },
+    {
+      "click": "#opslaan"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#nw",
+      "confirm": "#nw2"
+    },
+    "capture": {
+      "offer": "choose",
+      "username": null,
+      "password_from": "#nw",
+      "origin": "https://www.forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#nw": "new_password",
+    "#nw2": "new_password"
+  },
+  "source": "own"
+}

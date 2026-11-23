@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Anmelden</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 440px; color: #111; background: #fff; }
+label { display: block; margin: 8px 0 2px; }
+input, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+button { width: auto; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<h1>Anmelden</h1>
+<form id="login" method="post" action="/static/login-done.html">
+<label for="u">Benutzername</label>
+<input id="u" name="username" type="text" autocomplete="username">
+<label for="p">Passwort</label>
+<input id="p" name="password" type="password" autocomplete="current-password">
+<button id="go" type="submit">Anmelden</button>
+</form>
+<dialog id="wait"><p>Bitte warten, Sie werden angemeldet ...</p></dialog>
+<script>
+// Beim Absenden oeffnet die Seite sofort einen modalen Dialog (der Rest der Seite wird inert) und geht dann weiter.
+document.getElementById("login").addEventListener("submit", function (e) {
+  e.preventDefault();
+  document.getElementById("wait").showModal();
+  setTimeout(function () { location.assign("/static/login-done.html"); }, 600);
+});
+</script>
+</body>
+</html>

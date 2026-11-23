@@ -200,3 +200,16 @@ test("a_generated_request_ignores_an_aim_and_a_sign_in_request_never_reports_a_n
   ], "Change password"));
   assert.deepEqual(change.begin(undefined).map((f) => f.kind), ["username", "password"]);
 });
+
+test("a_generated_request_reports_the_classes_of_characters_a_new_password_field_refuses", () => {
+  const t = setup({ url: "https://example.com/signup" }, (document) => formWith(document, [
+    { type: "text", name: "user", autocomplete: "username" },
+    { type: "password", name: "pw", autocomplete: "new-password", pattern: "[A-Za-z0-9]{8,12}", maxlength: "12" },
+    { type: "password", name: "pw2", autocomplete: "new-password", passwordrules: "minlength: 8; required: lower; allowed: upper, digit" },
+  ]));
+  const fields = /** @type {Array<{ kind: string, forbid?: string[] }>} */ (t.begin("generated"));
+  assert.deepEqual(fields.map((f) => [f.kind, f.forbid]), [["new_password", ["symbol"]], ["confirm_password", ["symbol"]]]);
+  // A page that states nothing reports nothing; a sign-in field is never asked.
+  const plain = setup({ url: "https://example.com/signup" }, (document) => formWith(document, SIGN_UP));
+  assert.deepEqual(/** @type {Array<{ forbid?: string[] }>} */ (plain.begin("generated")).map((f) => f.forbid), [undefined, undefined]);
+});

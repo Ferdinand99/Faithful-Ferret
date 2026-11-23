@@ -250,6 +250,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     /** What the frame reports to a generated fill (the new and the confirm field), and each field's `maxlength`. */
     generatedFields: /** @type {string[]} */ (["new_password", "confirm_password"]),
     limits: /** @type {Record<string, number>} */ ({}),
+    /** The classes of characters each field refuses (`passwordrules`, `pattern`). */
+    forbid: /** @type {Record<string, string[]>} */ ({}),
     /** The kind of form a generated fill reports (null: the report names none). @type {string | null} */
     group: "signup",
     /** What was filled, by kind. @type {Record<string, string>} */
@@ -325,6 +327,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
               kind,
               id: `f${i}`,
               ...(mode === "generated" && sim.limits[kind] !== undefined ? { max: sim.limits[kind] } : {}),
+              ...(mode === "generated" && sim.forbid[kind] !== undefined ? { forbid: sim.forbid[kind] } : {}),
             })),
             ...(mode === "generated" && sim.group !== null ? { group: sim.group } : {}),
           }, sim);

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Anmeldung - Schritt 2</title>
+<style>body{font-family:Georgia,serif;background:#f0efe9}.k{max-width:360px;margin:60px auto;background:#fff;padding:22px}input{width:100%;padding:9px;box-sizing:border-box;margin:6px 0 14px}</style></head>
+<body>
+<div class="k">
+<h1>Passwort eingeben</h1>
+<p>Konto: <strong id="anzeige"></strong></p>
+<form action="willkommen.html" method="post">
+  <input type="hidden" id="konto" name="konto" value="" autocomplete="username">
+  <label for="kennwort">Passwort</label>
+  <input type="password" id="kennwort" name="kennwort" autocomplete="current-password">
+  <button type="submit" id="anmelden">Anmelden</button>
+</form>
+</div>
+<script>
+(function(){
+  var m=/[?&]konto=([^&]*)/.exec(location.search);
+  var v=m?decodeURIComponent(m[1].replace(/\+/g,' ')):'';
+  document.getElementById('anzeige').textContent=v;
+  document.getElementById('konto').value=v;
+})();
+</script>
+</body></html>

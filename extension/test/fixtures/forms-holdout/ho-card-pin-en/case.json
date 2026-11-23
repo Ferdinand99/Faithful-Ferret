@@ -1,0 +1,53 @@
+{
+  "id": "ho-card-pin-en",
+  "class": "negative",
+  "category": "card",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-card-pin-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#ccname",
+      "text": "Ola Test"
+    },
+    {
+      "type": "#ccnum",
+      "text": "4000000000000002"
+    },
+    {
+      "type": "#ccexp",
+      "text": "1230"
+    },
+    {
+      "type": "#cvc",
+      "text": "737"
+    },
+    {
+      "type": "#pin",
+      "text": "4821"
+    },
+    {
+      "click": "#paybtn"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#cvc",
+    "#pin",
+    "#ccname",
+    "#ccnum",
+    "#ccexp"
+  ],
+  "fields": {
+    "#cvc": "card_cvc",
+    "#pin": "pin",
+    "#ccnum": "card_number"
+  },
+  "source": "own"
+}

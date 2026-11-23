@@ -1,0 +1,39 @@
+{
+  "id": "ho-foreign-frame-en",
+  "class": "negative",
+  "category": "foreign-frame",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-foreign-frame-en/",
+  "frame": {
+    "id": "#partner",
+    "host": "forms-evil.test",
+    "path": "/ho-foreign-frame-en/inner.html",
+    "kind": "foreign"
+  },
+  "steps": [
+    {
+      "type": "#pemail",
+      "text": "ola"
+    },
+    {
+      "type": "#ppass",
+      "text": "Partner-Poeng-8800"
+    },
+    {
+      "click": "#pgo"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#pemail",
+    "#ppass"
+  ],
+  "fields": {},
+  "source": "own"
+}

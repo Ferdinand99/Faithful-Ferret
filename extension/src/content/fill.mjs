@@ -106,6 +106,7 @@
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, isInside, shadowOf } from "./forms.mjs";
+import { refusedClasses } from "./passwordRules.mjs";
 
 /** The smallest width and height, in CSS pixels, of a field the engine fills. */
 export const MIN_SIDE = 8;
@@ -129,9 +130,18 @@ const COVER_SHARE = 0.25;
 const OPAQUE = 0.9;
 /** The least alpha of a background that counts as a cover when the element lets clicks through. */
 const BACKGROUND_COVER = 0.5;
-/** Elements that paint nothing the page shows. */
+/**
+ * The share of the viewport that a click-through canvas, SVG or background image must reach to count as decoration
+ * (grain, confetti, a scrim: mostly transparent, and the pass cannot see its alpha) and not as a cover.
+ */
+const DECORATION_SHARE = 0.9;
+/** The most a label may stick out of its field, in pixels, and still count as the field's label. */
+const LABEL_SLACK = 4;
 /** Elements whose content is no background but is drawn all the same. */
 const REPLACED = new Set(["img", "video", "canvas", "svg", "iframe", "embed", "object"]);
+/** Elements that paint nothing the page shows. */
+/** The selectors of the elements that paint in the top layer. */
+const TOP_LAYER = Object.freeze([":popover-open", ":modal", ":fullscreen"]);
 const NOT_PAINTED = new Set(["head", "script", "style", "meta", "link", "title", "noscript", "template", "base"]);
 /** The name under which the injected script offers `begin` and `aim` to the extension (not reachable by the page). */
 export const FILL_GLOBAL = "__ferretFill";
@@ -144,7 +154,7 @@ const NEW_PASSWORD_GROUPS = Object.freeze(["signup", "change", "reset"]);
 /** The elements that can hold a frame. */
 const FRAME_HOLDERS = new Set(["iframe", "frame", "object", "embed"]);
 /** The most points of a field that are checked in the documents above its frame. */
-const MAX_POINTS = 5;
+const MAX_POINTS = 8;
 
 /**
  * Whether `points` is a list of 1 to MAX_POINTS points [x, y] of finite numbers.
@@ -240,6 +250,17 @@ function splitTop(text, separator) {
   }
   out.push(text.slice(start));
   return out.map((part) => part.trim()).filter((part) => part !== "");
+}
+
+/**
+ * Whether a background image is a gradient (no `url()` in it) all of whose colour stops are opaque enough, drawn at `shown`
+ * opacity, to hide what is below. A value with no colour the pass can read is not.
+ * @param {string} image @param {number} shown
+ */
+function opaqueGradient(image, shown) {
+  if (image === "" || image === "none" || /url\(|image-set\(|element\(|cross-fade\(/i.test(image)) return false;
+  const stops = image.match(/(?:rgba?|hsla?)\([^)]*\)/gi) ?? [];
+  return stops.length > 0 && stops.every((stop) => alphaOf(stop) * shown >= BACKGROUND_COVER);
 }
 
 /**
@@ -428,7 +449,19 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       const value = style ? read(style, name) : "";
       return value === "" || value === normal;
     };
+    // What the page may make a stacking context of: the values that do so by themselves, and a will-change that names one
+    // (position included, for fixed and sticky), containment, a container query, a backdrop filter, a mask and a view transition.
+    const will = style ? read(style, "will-change") : "";
+    const contain = style ? read(style, "contain") : "";
+    const containerType = style ? read(style, "container-type") : "";
+    const contentVisibility = style ? read(style, "content-visibility") : "";
     const context =
+      position === "fixed" || position === "sticky" ||
+      /(^|[\s,])(opacity|transform|translate|rotate|scale|filter|backdrop-filter|perspective|clip-path|mask|mask-image|mask-border|mask-border-source|isolation|position|contain|view-transition-name)([\s,]|$)/.test(will) ||
+      /\b(layout|paint|strict|content)\b/.test(contain) ||
+      containerType.includes("size") ||
+      contentVisibility === "auto" || contentVisibility === "hidden" ||
+      !plain("backdrop-filter", "none") || !plain("-webkit-backdrop-filter", "none") || !plain("-webkit-mask-image", "none") || !plain("mask-border-source", "none") || !plain("view-transition-name", "none") ||
       (Number.isFinite(opacity) && opacity < 1) ||
       !plain("transform", "none") || !plain("filter", "none") || !plain("perspective", "none") ||
       !plain("translate", "none") || !plain("rotate", "none") || !plain("scale", "none") ||
@@ -489,6 +522,25 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
+   * Whether an element of the chain is in the top layer. An engine that does not know a pseudo-class throws for it: each
+   * is asked on its own.
+   * @param {any[]} chain
+   */
+  function inTopLayer(chain) {
+    for (const node of chain) {
+      if (typeof node.matches !== "function") continue;
+      for (const selector of TOP_LAYER) {
+        try {
+          if (node.matches(selector)) return true;
+        } catch {
+          // Not known here: the element cannot be in that layer.
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Whether `painter` paints below `field` in the stack: it can then not cover the field, whatever its box is. A
    * heuristic (see `levelOf`); "no" whenever it cannot tell.
    * @param {any} painter @param {any} field
@@ -503,12 +555,16 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     const fieldIndex = here.indexOf(above[meeting]);
     if (fieldIndex <= 0) return false;
     const painterChain = above.slice(0, meeting);
+    // An element in the top layer (a popover that is open, a modal dialog, a fullscreen element) paints above the whole page,
+    // whatever its z-index: it never lies below the field.
+    if (inTopLayer(painterChain)) return false;
     const fieldChain = here.slice(0, fieldIndex);
     const painterLevel = levelOf(painterChain);
     const fieldLevel = levelOf(fieldChain);
     if (painterLevel !== fieldLevel) return painterLevel < fieldLevel;
-    // Neither is positioned: the painter's background comes before the field's content.
-    if (painterLevel === -0.5) return true;
+    // The same level, also for two branches that are not positioned: tree order decides. (Only a block background paints
+    // before inline content, and an inline or replaced element later in the tree, pulled over the field with a negative
+    // margin, paints over it.)
     const first = painterChain[painterChain.length - 1];
     const second = fieldChain[fieldChain.length - 1];
     if (typeof first.compareDocumentPosition !== "function") return false;
@@ -587,7 +643,17 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
 
     // A cover that clicks go through: only when it has a background of its own (a label with none shows only its text),
     // or is an image or the like.
-    if (throughPaints && (REPLACED.has(node.localName) || (background !== "" && alphaOf(background) * shown >= BACKGROUND_COVER) || (image !== "" && image !== "none"))) add("through", own(), null);
+    if (throughPaints) {
+      const coloured = background !== "" && alphaOf(background) * shown >= BACKGROUND_COVER;
+      if (REPLACED.has(node.localName) || coloured || (image !== "" && image !== "none")) {
+        // A click-through canvas, SVG or background picture over most of the viewport is decoration (grain, confetti, a scrim):
+        // the pass cannot see its alpha, and a page can hide a field with a pseudo-element anyway. A background image that is no
+        // picture (a gradient) shows its colours: when they are opaque it is a colour, like a background colour.
+        const picture = !coloured && !opaqueGradient(image, shown) && (node.localName === "canvas" || node.localName === "svg" || !REPLACED.has(node.localName));
+        const full = areaOf(meet(own(), screen)) >= DECORATION_SHARE * areaOf(screen);
+        if (!(picture && full)) add("through", own(), null);
+      }
+    }
     // An opaque shadow of the element, outside its own box (which the hit test sees).
     for (const layer of parseShadows(shadows)) {
       if (layer.inset || layer.alpha * shown < OPAQUE) continue;
@@ -613,6 +679,21 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
+   * Whether a label's paint stays within the field's box: no taller than the field (a few pixels more allowed) and no
+   * larger in area, so a long text that crosses the field's centre is still a label, and a layer that fills the page is not.
+   * @param {Box} box @param {any} target
+   */
+  function fitsLabel(box, target) {
+    try {
+      const rect = target.getBoundingClientRect();
+      const field = boxOf(rect);
+      return box.bottom - box.top <= field.bottom - field.top + LABEL_SLACK && areaOf(box) <= areaOf(field) + LABEL_SLACK * (field.right - field.left);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Whether `paint` counts against the element `target`: its element is not the target or above it (which paint below
    * it), it is not the label of the target when it only lets clicks through (a label at rest sits over its field), and
    * it does not paint below the target in the stack (an outline always paints on top).
@@ -620,7 +701,7 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    */
   function counts(paint, target, mine, labels) {
     if (mine.has(paint.element)) return false;
-    if (paint.kind === "through" && labels.some((label) => isInside(label, paint.element))) return false;
+    if (paint.kind === "through" && labels.some((label) => isInside(label, paint.element)) && fitsLabel(paint.box, target)) return false;
     if (paint.kind !== "outline" && paintsBelow(paint.element, target)) return false;
     return true;
   }
@@ -895,8 +976,9 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
    * Where the field of `kind` of the pending request `requestId` is: its
    * sample points in this frame's viewport, when it passes every check now,
    * else why not. For the documents above this frame (see `frameShown`). The
-   * boxes of a split code give the centre of each box (at most MAX_POINTS of
-   * them, the first and the last among them), and every box must pass.
+   * boxes of a split code give the centre of each box (all of them up to MAX_POINTS,
+   * which holds the longest code of eight boxes; beyond that the first two, the middle
+   * one and the last two), and every box must pass.
    * @param {unknown} requestId
    * @param {unknown} kind
    * @returns {{ points: Array<[number, number]> } | { problem: "gone" | "hidden" | "covered" | "wrong_kind" }}
@@ -1115,6 +1197,17 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
+   * The classes of characters (lower, upper, digit, symbol) that a new or confirm field refuses by its `passwordrules` or its
+   * `pattern`, for the generator to leave out; none for any other field.
+   * @param {Field} field
+   * @returns {string[]}
+   */
+  function refusedOf({ kind, element }) {
+    if (kind !== "new_password" && kind !== "confirm_password") return [];
+    return isElement(element) ? refusedClasses(element) : [];
+  }
+
+  /**
    * Starts a pending request: finds the fields and reports them.
    * @param {string} requestId
    * @param {string} [mode] "generated": the new and the confirm field of a sign-up, change or reset group
@@ -1136,7 +1229,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       self_origin: selfOrigin(),
       fields: fields.map((field) => {
         const max = limitOf(field);
-        return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}) };
+        const forbid = refusedOf(field);
+        return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}), ...(forbid.length > 0 ? { forbid } : {}) };
       }),
       ...(generated && foundGroup !== null && fields.length > 0 ? { group: foundGroup } : {}),
     });

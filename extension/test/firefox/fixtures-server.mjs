@@ -35,8 +35,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 /** The detection corpus (extension/test/fixtures/forms). */
 export const FORMS_DIR = resolve(here, "..", "fixtures", "forms");
-/** The set that is added to the repository later (a folder that does not exist is skipped). */
+/** The hold-out set: cases written without sight of the detection (a folder that does not exist is skipped). */
 const HOLDOUT_FORMS_DIR = resolve(here, "..", "fixtures", "forms-holdout");
+/** The pages of the adversarial capture specs: cases of the corpus schema that the corpus (frozen) does not have. */
+export const CAPTURE_FORMS_DIR = resolve(here, "..", "fixtures", "forms-capture");
+/** The autofill-parity suite (extension/test/fixtures/forms-parity): own pages for the forms of a public catalogue. */
+export const PARITY_FORMS_DIR = resolve(here, "..", "fixtures", "forms-parity");
 const FORM_FILE_TYPES = /** @type {Record<string, string>} */ ({
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -202,11 +206,11 @@ export function makeCertificates(dir, hosts) {
  * The runner uses 443, 8443 and 80, so the test sites have the same origins as
  * a real site (https://login.example.net/ has no port in it). Two listeners
  * cannot share a port.
- * `forms` lists the corpus directories (default: the corpus of test/fixtures/forms and, where it exists, forms-holdout).
+ * `forms` lists the corpus directories (default: the corpus of test/fixtures/forms and, where they exist, forms-holdout, forms-capture and forms-parity).
  * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string, forms?: string[] }} [options]
  * @returns {Promise<Fixtures>}
  */
-export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir, forms = [FORMS_DIR, HOLDOUT_FORMS_DIR] } = {}) {
+export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir, forms = [FORMS_DIR, HOLDOUT_FORMS_DIR, CAPTURE_FORMS_DIR, PARITY_FORMS_DIR] } = {}) {
   const formCases = listFormCases(forms);
   const wanted = [port, altPort, httpPort].filter((p) => p !== 0);
   if (new Set(wanted).size !== wanted.length) throw new Error(`fixtures: two listeners want the same port (${port}, ${altPort}, ${httpPort})`);

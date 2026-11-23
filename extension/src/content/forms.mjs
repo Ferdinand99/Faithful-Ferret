@@ -15,8 +15,9 @@
 //
 // - a card's security code, a PIN and a one-time code are never a password,
 //   also when the page makes them `type=password`;
-// - a search box is never a user name, nor is a name, address, phone, coupon
-//   or card field;
+// - a search box is never a user name (a box of the type `search` that the page itself
+//   marks `autocomplete="username"` is not taken for one), nor is a name, address,
+//   phone, coupon or card field;
 // - a password field that repeats, or sets, a new password is never the
 //   account's password.
 //
@@ -54,6 +55,8 @@ export const TEXT_TYPES = Object.freeze(new Set(["text", "email", "tel", "number
 /** Bounds that stop a hostile page from making the walks run long. */
 const MAX_NODES = 20_000;
 const MAX_DEPTH = 1_000;
+/** How far up the search for the container of a field without a form goes: a hostile page's deep nesting costs no more than this. */
+const GROUP_DEPTH = 64;
 /** The most fields of one page that are classified. */
 const MAX_FIELDS = 500;
 /** The longest text read from one label, button or heading. */
@@ -180,12 +183,14 @@ export function hintsOf(element) {
  * Whether a text input is part of a site search rather than a sign-in: its
  * type is `search`, its role is `searchbox`, its name is `q`, its words say
  * so, or it lies in a `<search>` element or an element (its form too) with
- * `role="search"`.
+ * `role="search"`. `byType: false` leaves the type out: a box of the type `search` that the page itself
+ * marks as a user name (`autocomplete="username"`) is one, and only its other marks can still make it a search box.
  * @param {any} element
  * @param {string} [hints]
+ * @param {{ byType?: boolean }} [options]
  */
-export function isSearchField(element, hints = hintsOf(element)) {
-  if (typeOf(element) === "search") return true;
+export function isSearchField(element, hints = hintsOf(element), { byType = true } = {}) {
+  if (byType && typeOf(element) === "search") return true;
   if (attr(element, "role").toLowerCase() === "searchbox") return true;
   if (attr(element, "name").toLowerCase() === "q") return true;
   if (SEARCH.test(hints)) return true;
@@ -232,10 +237,9 @@ export function classifyField(element, ctx = {}) {
   const password = type === "password";
   if (!password && !TEXT_TYPES.has(type)) return { kind: "other", reasons: ["type"] };
   const hints = ctx.hints ?? hintsOf(element);
-  if (!password && isSearchField(element, hints)) return { kind: "search", reasons: ["search"] };
-
   // The page's own token decides first.
   const token = autocompleteField(element);
+  if (!password && isSearchField(element, hints, { byType: token !== "username" })) return { kind: "search", reasons: ["search"] };
   if (token === "one-time-code") return { kind: codeKind(element), reasons: ["autocomplete"] };
   if (token === "cc-csc") return { kind: "card_cvc", reasons: ["autocomplete"] };
   if (token === "cc-number") return { kind: "card_number", reasons: ["autocomplete"] };
@@ -396,13 +400,13 @@ export function findGroups(root, { maxNodes = MAX_NODES, shown = () => true } = 
     return { element, kind, reasons, order, shown: visible, password: typeOf(element) === "password" };
   });
 
-  // The container of a field without a form: the nearest ancestor that holds another field without a form.
+  // The container of a field without a form: the nearest ancestor (within GROUP_DEPTH levels) that holds another field without a form.
   const loose = fields.filter((f) => !isElement(f.element.form));
   /** @type {Map<Field, any>} */
   const containerOf = new Map();
   for (const field of loose) {
     let container = null;
-    for (let node = flatParent(field.element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
+    for (let node = flatParent(field.element), depth = 0; node && node !== UNRENDERED && depth <= GROUP_DEPTH; node = flatParent(node), depth += 1) {
       if (loose.some((other) => other !== field && isInside(node, other.element))) {
         container = node;
         break;
@@ -503,14 +507,18 @@ function decide(form, members, wholePage, context, submit) {
   };
 
   /** The user name of a sign-in: the last user name or e-mail field before `anchor`, else the first after it, else (not
-   * on the whole page) the last unnamed text field before it. @param {Field} anchor */
-  const userFor = (anchor) => {
-    const before = users.filter((f) => f.order < anchor.order);
-    const named = before.at(-1) ?? users.find((f) => f.order > anchor.order);
+   * on the whole page) the last unnamed text field before it. @param {Field} anchor @param {Field[]} [among] the fields that may be it */
+  const userFor = (anchor, among = users) => {
+    const before = among.filter((f) => f.order < anchor.order);
+    const named = before.at(-1) ?? among.find((f) => f.order > anchor.order);
     if (named) return named.element;
     if (wholePage) return undefined;
     return visible.filter((f) => f.order < anchor.order && f.kind === "other" && f.reasons.includes("unnamed") && !f.password).at(-1)?.element;
   };
+
+  /** The user name of a sign-up or reset form: a field the page names a user name wins over an e-mail address (the name the
+   * account is known by, when the form asks for both), else the first one. @returns {any} */
+  const accountName = () => (users.find((f) => f.kind === "username") ?? users[0])?.element;
 
   const resetWords = RESET.test(context.submit) || RESET.test(context.form);
 
@@ -527,13 +535,15 @@ function decide(form, members, wholePage, context, submit) {
     if (current) {
       group.kind = "change";
       group.current = current.element;
-      const user = userFor(current);
+      // In a change form an e-mail field is a field of the person's profile unless the page marks it as the user name: the
+      // password in use says which item the form is for, and a profile address is no name to offer.
+      const user = userFor(current, users.filter((f) => f.kind === "username"));
       if (user) group.username = user;
       return group;
     }
     group.kind = resetWords || !anyUser ? "reset" : "signup";
-    const user = users[0];
-    if (user) group.username = user.element;
+    const user = accountName();
+    if (user) group.username = user;
     return group;
   }
 
@@ -542,7 +552,8 @@ function decide(form, members, wholePage, context, submit) {
     if (first.kind === "new_password" || first.kind === "confirm_password") {
       group.new = first.element;
       group.kind = resetWords || !anyUser ? "reset" : "signup";
-      if (users[0]) group.username = users[0].element;
+      const user = accountName();
+      if (user) group.username = user;
       return group;
     }
     // One password in use (or more than three fields, where nothing can be told apart: the first one).
@@ -557,7 +568,8 @@ function decide(form, members, wholePage, context, submit) {
     if (kind !== "login") {
       group.kind = kind;
       group.new = first.element;
-      if (users[0]) group.username = users[0].element;
+      const user = accountName();
+      if (user) group.username = user;
       return group;
     }
     group.kind = "login";

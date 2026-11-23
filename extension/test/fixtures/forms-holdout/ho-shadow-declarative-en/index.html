@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<style>body{font-family:sans-serif;background:#f8f8f8}</style></head>
+<body>
+<h1 style="text-align:center">Fieldnote</h1>
+<sign-in-card>
+  <template shadowrootmode="open">
+    <style>.c{width:320px;margin:30px auto;background:#fff;padding:20px;font-family:sans-serif}input{display:block;width:100%;padding:8px;margin:4px 0 12px;box-sizing:border-box}</style>
+    <div class="c">
+      <slot name="heading"><h2>Sign in</h2></slot>
+      <form id="sf" method="post" action="#sf">
+        <label for="sid">Username</label>
+        <input id="sid" name="username" type="text" autocomplete="username">
+        <label for="spw">Password</label>
+        <input id="spw" name="password" type="password" autocomplete="current-password">
+        <button id="sgo" type="submit">Sign in</button>
+      </form>
+      <slot name="footer"></slot>
+    </div>
+  </template>
+  <h2 slot="heading">Welcome back</h2>
+  <p slot="footer"><a href="/reset">Forgot password?</a></p>
+</sign-in-card>
+</body></html>

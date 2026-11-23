@@ -33,15 +33,24 @@
 #                                 Firefox runs. A per-run stack that a killed run left
 #                                 (older than six hours) is removed by the next run.
 #   scripts/lanbox-ext.sh gate [--channel release|esr] [--manifest mv3|mv2]
-#                                 the extension's gate run: the firefox step and then
+#                                 the extension's gate run: the firefox step, then
 #                                 the e2e step (default manifest mv2, the Firefox
 #                                 build), with the screenshots the e2e specs take
 #                                 unpacked into test-results/out/gate-shots/ (or
-#                                 $FERRET_EXT_OUT_DIR/gate-shots/). Fails if either fails.
-#   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>] [--headed] [--no-up]
+#                                 $FERRET_EXT_OUT_DIR/gate-shots/), then the detection
+#                                 matrix of the corpus, of the hold-out set and of the
+#                                 autofill-parity set (the matrix step, one channel at
+#                                 a time, each on a stack of its own, because every
+#                                 channel makes entries in the account and a second
+#                                 channel would find twice as many); their reports
+#                                 are unpacked into
+#                                 $FERRET_EXT_OUT_DIR/gate-matrix/<set>/<channel>/.
+#                                 Fails if any step fails.
+#   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>] [--headed] [--no-up]
 #                                 the detection matrix: the extension, signed in to the end-to-end
 #                                 stack (as for e2e), against the corpus of extension/test/fixtures/forms
-#                                 (--set holdout: forms-holdout/): the fill phase tries every case, the
+#                                 (--set holdout: forms-holdout/; --set parity: forms-parity/, the own-written
+#                                 autofill-parity suite, reported on its own in u2-matrix-parity/): the fill phase tries every case, the
 #                                 capture phase types what a person types and reads the offers. The default
 #                                 manifest is mv2, the Firefox build. --grep keeps the cases whose id
 #                                 contains the text. The reports (<channel>-<manifest>.json and matrix.md)
@@ -123,7 +132,7 @@ usage() {
   echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | measure [options]" >&2
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  (e2e only: --no-up)" >&2
   echo "  options of gate: --channel release|esr  --manifest mv3|mv2" >&2
-  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout  --grep <case id>  --headed  --no-up" >&2
+  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N" >&2
   exit 2
 }
@@ -161,7 +170,7 @@ done
 case "$channel" in "" | release | esr) ;; *) usage ;; esac
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
 case "$matrix_part" in fill | capture | all) ;; *) usage ;; esac
-case "$matrix_set" in corpus | holdout) ;; *) usage ;; esac
+case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
 # A case id is lower case letters, digits and dashes; the text goes into the container's environment.
 case_re='^[a-z0-9-]{0,80}$'
 if [ "$mode" = matrix ] && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
@@ -352,6 +361,20 @@ sweep_stale_stacks() {
   done
 }
 
+# Removes the stack this run made (or the one the caller named) so that the next e2e_setup makes a fresh one: a stack has one
+# account, made by the first spec that needs it, and a spec that runs again on it finds the entries of the one before.
+e2e_reset() {
+  # Never the stack with the default name (one user at a time, not this run's to remove).
+  if [ -n "${FERRET_E2E_SUFFIX:-}" ] && [ "$FERRET_E2E_SUFFIX" != e2e ]; then
+    FERRET_E2E_SUFFIX="$FERRET_E2E_SUFFIX" bash "$stack" e2e-down >&2 || echo "lanbox-ext.sh: e2e-down of the stack $FERRET_E2E_SUFFIX failed" >&2
+  fi
+  # A stack of this run's own is made again with a new name; a named one keeps its name (and its subnet).
+  if [ -n "$own_stack" ]; then
+    own_stack=""
+    unset FERRET_E2E_SUFFIX FERRET_E2E_SUBNET
+  fi
+}
+
 # The end-to-end stack: one of this run's own (FERRET_E2E_SUFFIX unset, no --no-up), so two runs on
 # the build host never remove each other's stack, or the stack the caller names.
 e2e_setup() {
@@ -461,7 +484,9 @@ if [ "$mode" = matrix ]; then
   if [ -s "$work/matrix.tar" ]; then
     tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || rc=$?
   fi
-  echo "lanbox-ext.sh: matrix: the reports are in $out_dir/u2-matrix/ (exit status $rc)" >&2
+  report_dir=u2-matrix
+  if [ "$matrix_set" = parity ]; then report_dir=u2-matrix-parity; fi
+  echo "lanbox-ext.sh: matrix: the reports are in $out_dir/$report_dir/ (exit status $rc)" >&2
   exit "$rc"
 fi
 
@@ -485,6 +510,28 @@ if [ "$mode" = gate ]; then
     status=$rc
   fi
   echo "lanbox-ext.sh: gate: screenshots are in $out_dir/gate-shots/ (exit status $status)" >&2
+  # The detection matrix: the corpus, the hold-out set and the parity set, each channel on a stack of its own. What a container writes comes
+  # out as a tar archive on stdout and is unpacked, also after a failure.
+  gate_channels="${channel:-release esr}"
+  for matrix_set in corpus holdout parity; do
+    for ch in $gate_channels; do
+      e2e_reset
+      e2e_setup
+      make_run "$ch" "gate-matrix-$matrix_set-$ch" matrix 0
+      rc=0
+      "${run[@]}" < "$work/in.tar" > "$work/gate-matrix.tar" || rc=$?
+      mkdir -p "$out_dir/gate-matrix/$matrix_set/$ch"
+      if [ -s "$work/gate-matrix.tar" ]; then
+        tar -x --no-same-owner -C "$out_dir/gate-matrix/$matrix_set/$ch" -f "$work/gate-matrix.tar" || rc=$?
+      fi
+      if [ "$rc" -ne 0 ]; then
+        echo "lanbox-ext.sh: gate: the $matrix_set matrix on $ch failed ($rc)" >&2
+        status=$rc
+      fi
+    done
+  done
+  e2e_reset
+  echo "lanbox-ext.sh: gate: the matrix reports are in $out_dir/gate-matrix/ (exit status $status)" >&2
   exit "$status"
 fi
 

@@ -1,0 +1,23 @@
+{
+  "id": "ap-harmless-device-trust",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-device-trust/",
+  "frame": null,
+  "steps": [
+    {
+      "click": "#add-block"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

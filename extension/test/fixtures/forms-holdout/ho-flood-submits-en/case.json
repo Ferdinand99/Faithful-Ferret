@@ -1,0 +1,39 @@
+{
+  "id": "ho-flood-submits-en",
+  "class": "negative",
+  "category": "flood",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-flood-submits-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "mari.sand@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Burst-Of-Events-7345"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 1200
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "max_offers": 1,
+    "generated": null,
+    "capture": null,
+    "no_offer": false,
+    "allow": [
+      "#u",
+      "#p"
+    ]
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

@@ -297,8 +297,29 @@ STUB
   done
   [ "$(awk 'END { print $1 }' "$ext/stack.log")" = e2e-down ] || fail "ext: gate: the run's stack was not removed"
   [ -d "$ext/gate-out" ] || fail "ext: gate: the screenshot folder was not made"
+  # The matrix of the three sets follows, one channel at a time, each on a stack of its own that is removed again: the e2e step and
+  # six matrix steps, so seven stacks, up and down in pairs, with seven different names.
+  [ "$(grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-* | wc -l)" -eq 6 ] || fail "ext: gate: expected six matrix steps"
+  [ "$(grep -c '^e2e-up' "$ext/stack.log")" -eq 7 ] || fail "ext: gate: expected seven stacks up ($(stack_words))"
+  [ "$(grep -c '^e2e-down' "$ext/stack.log")" -eq 7 ] || fail "ext: gate: expected seven stacks down ($(stack_words))"
+  [ "$(grep '^e2e-up' "$ext/stack.log" | awk '{ print $2 }' | sort -u | wc -l)" -eq 7 ] || fail "ext: gate: two steps used one stack"
+  for want in corpus holdout parity; do
+    for ch in release esr; do
+      grep -lx "FERRET_MATRIX_SET=$want" "$ext"/calls/call-* | xargs grep -lx "FERRET_CHANNELS=$ch" | xargs grep -lx FERRET_EXT_STEP=matrix > /dev/null || fail "ext: gate: no $want matrix step for $ch"
+    done
+  done
+  while read -r f; do
+    grep -qx 'FERRET_MANIFEST=mv2' "$f" || fail "ext: gate: a matrix step is not the MV2 build"
+    grep -qx 'FERRET_MATRIX_PART=all' "$f" || fail "ext: gate: a matrix step does not run every part"
+    grep -qx 'FERRET_MATRIX_GREP=' "$f" || fail "ext: gate: a matrix step has a case filter"
+    grep -qxE 'ferret-x[0-9a-f]{8}-net' "$f" || fail "ext: gate: a matrix step is not on a stack of the run"
+    grep -qxE 'ferret-ext-probe-g-gate-matrix-(corpus|holdout|parity)-(release|esr)-[0-9]+' "$f" || fail "ext: gate: a matrix container name is wrong"
+  done < <(grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-*)
+  [ -d "$ext/gate-out/gate-matrix/corpus/release" ] || fail "ext: gate: the matrix report folder was not made"
   run_ext FERRET_EXT_OUT_DIR="$ext/gate-out" scripts/lanbox-ext.sh gate --manifest mv3 --channel esr || fail "ext: gate --manifest mv3 failed"
   grep -qx 'FERRET_MANIFEST=mv3' "$(grep -lx FERRET_EXT_STEP=e2e "$ext"/calls/call-*)" || fail "ext: gate: --manifest is not passed on"
+  [ "$(grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-* | wc -l)" -eq 3 ] || fail "ext: gate --channel esr: expected a matrix step for each set"
+  grep -lx FERRET_EXT_STEP=matrix "$ext"/calls/call-* | xargs grep -qx 'FERRET_MANIFEST=mv3' || fail "ext: gate: --manifest is not passed on to the matrix"
 
   # matrix: the e2e step on the run's own stack (not the firefox step), MV2 unless told otherwise, the choices of the
   # run in the environment, and the reports unpacked into the folder named by FERRET_EXT_OUT_DIR.

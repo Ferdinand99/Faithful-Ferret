@@ -222,18 +222,25 @@ export function createGeneratorHost({ now = Date.now, newId, clipboard, ttlMs = 
     get: (id) => generations.get(id),
 
     /**
-     * Makes the generation `id` fit a field that takes at most `limit` characters: a password is made again by the
-     * core at that length (never shorter than MIN_FIT), a passphrase is never cut. The generation keeps its id and its
-     * lifetime. `{ ok: false }` when it cannot fit.
-     * @param {string} id @param {number} limit
+     * Makes the generation `id` fit a field that takes at most `limit` characters (`null`: the length stays) and refuses the
+     * classes of characters in `forbid` (`lower`, `upper`, `digit`, `symbol`): a password is made again by the core at that
+     * length (never shorter than MIN_FIT) and with those classes switched off, a passphrase is never cut. The generation keeps
+     * its id and its lifetime. `{ ok: false }` when it cannot fit, also when no class is left.
+     * @param {string} id @param {number | null} limit @param {readonly string[]} [forbid]
      * @returns {Promise<{ ok: true } | { ok: false }>}
      */
-    async fit(id, limit) {
+    async fit(id, limit, forbid = []) {
       gate();
       const held = generations.get(id);
-      if (held === null || held.kind !== "password" || !Number.isSafeInteger(limit) || limit < MIN_FIT) return { ok: false };
+      if (held === null || held.kind !== "password") return { ok: false };
+      if (limit !== null && (!Number.isSafeInteger(limit) || limit < MIN_FIT)) return { ok: false };
       if (host === null) return { ok: false };
-      const options = { ...held.options, length: limit };
+      /** @type {Record<string, any>} */
+      const options = { ...held.options, ...(limit !== null ? { length: limit } : {}) };
+      for (const [name, key] of /** @type {const} */ ([["lower", "lower"], ["upper", "upper"], ["digit", "digits"], ["symbol", "symbols"]])) {
+        if (forbid.includes(name)) options[key] = false;
+      }
+      if (!(options.lower || options.upper || options.digits || options.symbols)) return { ok: false };
       try {
         const { value, bits } = await makeValue(host.liveClient({ open: true }).vault, "password", options);
         return generations.replace(id, { value, bits, options }) === null ? { ok: false } : { ok: true };

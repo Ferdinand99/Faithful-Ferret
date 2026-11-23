@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Connexion</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 440px; color: #111; background: #fff; }
+label { display: block; margin: 8px 0 2px; }
+input, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+button { width: auto; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<h1>Connexion</h1>
+<div id="app"></div>
+<script>
+// Le formulaire vit dans une racine fantome ; apres un echec il est reconstruit avec un message d erreur.
+var root = document.getElementById("app").attachShadow({ mode: "open" });
+function draw(error) {
+  root.innerHTML = '<form id="login" method="post" action="/static/login-done.html">' + (error ? '<p role="alert">Mot de passe incorrect.</p>' : "") +
+    '<label for="u">Identifiant</label><input id="u" name="username" type="text" autocomplete="username">' +
+    '<label for="p">Mot de passe</label><input id="p" name="password" type="password" autocomplete="current-password">' +
+    '<button id="go" type="submit">Se connecter</button></form>';
+  root.getElementById("login").addEventListener("submit", function (e) {
+    e.preventDefault();
+    setTimeout(function () { draw(true); }, 300);
+  });
+}
+draw(false);
+</script>
+</body>
+</html>

@@ -176,6 +176,46 @@ test("no_mutation_observer_before_a_trusted_event_in_a_password_field", () => {
   assert.equal(captures(world).length, 1);
 });
 
+test("a_submit_the_page_fires_itself_is_no_submission_without_a_trusted_click_or_enter", () => {
+  // `form.requestSubmit()` makes the browser fire a trusted `submit` event, so a page can do it on a timer or on blur.
+  const world = createWorld();
+  const { user, pass, form, go } = loginForm(world);
+  world.start();
+  world.type(user, "anna");
+  world.type(pass, PASSWORD);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "a trusted submit with no click or Enter before it");
+  // A click that a script made is no gesture.
+  world.click(world.document.body, { trusted: false });
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "after a click from a script");
+  // The person's click is one, for two seconds (a page that checks the form with a request first).
+  world.click(world.document.body);
+  world.clock.advance(2001);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 0, "a click more than two seconds earlier");
+  world.click(world.document.body);
+  world.clock.advance(1500);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 1, "a click one and a half seconds earlier (positive control)");
+  assert.equal(captures(world)[0].password, PASSWORD);
+  // Enter pressed anywhere is one too (on a button, which is no field: no trigger of its own).
+  world.clock.advance(2001);
+  world.fire(go, "keydown", { key: "Enter" });
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 2, "Enter on a button, then the submit");
+  // The person typed, and the page fires the submit on its own a moment later, long after the last click: nothing.
+  world.clock.advance(10_000);
+  world.submit(form, { gesture: false });
+  world.settle();
+  assert.equal(captures(world).length, 2, "a submit ten seconds after the last gesture");
+});
+
 test("submit_click_and_enter_each_capture_once", () => {
   // In a form: a click on the submit button and the submit event that follows it are one submission. So are Enter and
   // the submit event it causes, and a submit event alone. A second submission within two seconds gives nothing.
@@ -1288,6 +1328,34 @@ test("a_control_deeper_in_the_password_fields_wrapper_is_a_toggle_and_an_offscre
   world.settle();
   assert.equal(JSON.stringify(world.sent).includes("honeypot-name"), false);
   assert.equal(captures(world).length, 1);
+
+  // A text field wholly below the window with a value the page wrote is no user name either, and the field the person typed in
+  // (before it in the page) is the user name instead.
+  const below = createWorld();
+  const g = /** @type {any} */ ({});
+  g.form = below.document.body.append(below.document.createElement("form", { id: "login" }));
+  g.user = addInput(below.document, g.form, { type: "text", name: "username", id: "user" }, { top: 100 });
+  const honeypot = addInput(below.document, g.form, { type: "text", name: "alt", id: "alt", autocomplete: "username" }, { top: 4000 });
+  g.pass = addInput(below.document, g.form, { type: "password", name: "password", id: "pass" }, { top: 160 });
+  for (const el of [g.user, honeypot, g.pass]) el.form = g.form;
+  honeypot.value = "honeypot@example.net";
+  below.start();
+  below.type(g.user, "anna");
+  below.type(g.pass, PASSWORD);
+  below.submit(g.form);
+  below.settle();
+  assert.equal(JSON.stringify(below.sent).includes("honeypot@example.net"), false, "the honeypot's value is not sent");
+  assert.equal(captures(below)[0]?.username, "anna", "the typed user name is the one sent");
+  // The same field once the person typed in it (it scrolled into reach) counts, and so does a password field below the window.
+  const typedBelow = createWorld();
+  const h = loginForm(typedBelow);
+  h.user.rect = { left: 100, top: 4000, width: 240, height: 32 };
+  typedBelow.start();
+  typedBelow.type(h.user, "anna");
+  typedBelow.type(h.pass, PASSWORD);
+  typedBelow.submit(h.form);
+  typedBelow.settle();
+  assert.equal(captures(typedBelow)[0]?.username, "anna", "a user name the person typed in below the window");
 });
 
 test("the_capture_script_stops_and_reads_nothing_after_it", () => {
@@ -1492,6 +1560,8 @@ test("the_built_capture_script_starts_on_https_only_and_sends_what_the_extension
       fire("input", el);
     }
   }
+  // The person clicks (the body: no control), and the form is submitted.
+  fire("click", document.body);
   fire("submit", form);
   clock.advance(0);
   const messages = raw.map((r) => decode(r, CONTENT_TYPES));
@@ -1541,4 +1611,34 @@ test("the_capture_files_import_no_crypto_no_store_and_no_other_shared_module", (
     assert.doesNotMatch(text, /\bsubtle\b|SubtleCrypto|importKey|deriveKey|deriveBits|WebAssembly|\bWorker\b|indexedDB|localStorage|sessionStorage|\.storage\b|background\/|pkg-web|client\.mjs|\bargon2|\bhkdf\b|\bsha-?256\b/i, name);
     assert.doesNotMatch(text, /Math\.random|MutationObserver|postMessage|sendBeacon|XMLHttpRequest|\bfetch\s*\(|document\.(?:createElement|write)|\.(?:append|appendChild|insertBefore|prepend|replaceWith|setAttribute|removeAttribute|remove|innerHTML|outerHTML|insertAdjacentHTML)\b|\.style\b|\.classList\b|\.dataset\b/, `${name}: it reads the page and changes nothing`);
   }
+});
+
+test("a_sign_up_with_a_generated_password_on_a_page_that_removes_its_form_is_a_join_request_with_the_typed_user_name", () => {
+  // A single-page sign-up with no form element: the person types the address, Ferret generates the password, the person clicks a
+  // styled button (words of a new account in Norwegian), and the page removes the whole step in the same click.
+  const world = createWorld();
+  const { document } = world;
+  const section = document.body.append(document.createElement("section", { id: "view-signup" }));
+  const wrap = section.append(document.createElement("div", { id: "signup-fields" }));
+  const mail = addInput(document, wrap, { id: "epost", type: "email", autocomplete: "email" }, { top: 100 });
+  const pw = addInput(document, wrap, { id: "nyttpw", type: "password", autocomplete: "new-password" }, { top: 160 });
+  const pw2 = addInput(document, wrap, { id: "nyttpw2", type: "password", autocomplete: "new-password" }, { top: 220 });
+  const go = addText(document, wrap, "button", "Opprett bruker", { id: "opprett", type: "button" });
+  world.start();
+  world.type(mail, "silje.haugen@example.net");
+  // The generator fills with scripted input events: nothing a script wrote is sent.
+  for (const el of [pw, pw2]) {
+    el.value = "Generated-Value-123!";
+    world.fire(el, "input", { trusted: false });
+  }
+  world.click(go);
+  section.parentNode.remove(section);
+  world.settle();
+  const [capture] = world.of("form_capture");
+  assert.ok(capture, "the click on the button is a submission");
+  assert.equal(capture.body.kind, "signup");
+  assert.equal(capture.body.username, "silje.haugen@example.net");
+  assert.equal(capture.body.username_from, "typed");
+  assert.equal(capture.body.password, null, "the generated value is not sent");
+  assert.equal(JSON.stringify(world.sent).includes("Generated-Value-123!"), false);
 });

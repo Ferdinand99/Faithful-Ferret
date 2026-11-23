@@ -1,0 +1,46 @@
+{
+  "id": "ho-frame-sameorigin-es",
+  "class": "positive",
+  "category": "frame",
+  "lang": "es",
+  "host": "forms.example.net",
+  "path": "/ho-frame-sameorigin-es/",
+  "frame": {
+    "id": "#acceso",
+    "host": "forms.example.net",
+    "path": "/ho-frame-sameorigin-es/inner.html",
+    "kind": "same-site"
+  },
+  "steps": [
+    {
+      "type": "#fcorreo",
+      "text": "lucia.mora@example.net"
+    },
+    {
+      "type": "#fclave",
+      "text": "Granado-Verde-1190"
+    },
+    {
+      "click": "#fentrar"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#fcorreo": "username",
+        "#fclave": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "lucia.mora@example.net",
+      "password_from": "#fclave",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

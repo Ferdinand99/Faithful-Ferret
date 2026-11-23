@@ -26,7 +26,8 @@ function browserWorld({ granted = false, stored = {}, registered = false, failRe
       state.calls.push("unregister");
       state.registered = false;
     },
-    getRegisteredContentScripts: async () => (state.registered ? [{ id: CAPTURE_SCRIPT_ID }] : []),
+    // What the browser reports: the definition it was given, or (a registration left from before) just the id.
+    getRegisteredContentScripts: async () => (state.registered ? [state.definitions.at(-1) ?? { id: CAPTURE_SCRIPT_ID }] : []),
   };
   const permissions = {
     contains: async (/** @type {{ origins: string[] }} */ wanted) => state.granted && wanted.origins.every((o) => CAPTURE_ORIGINS.includes(o)),
@@ -130,6 +131,39 @@ test("registration_permission_and_setting_are_reconciled_on_every_start", async 
   };
   assert.equal((await broken.registry.reconcile()).on, false);
   assert.equal(broken.state.registered, false);
+});
+
+test("a_start_leaves_the_current_registration_alone_and_replaces_a_stale_one", async () => {
+  const w = browserWorld({ granted: true });
+  await w.registry.enable();
+  assert.deepEqual(w.state.calls, ["register"]);
+  // Every later start finds the current definition: nothing is taken away and put back.
+  for (let start = 0; start < 3; start += 1) assert.deepEqual(await w.registry.reconcile(), { on: true, permission: true, registered: true });
+  assert.deepEqual(w.state.calls, ["register"], "three starts, no unregister and no register");
+  // The browser may report the file without the slash in front: still the current definition.
+  const held = w.state.definitions.at(-1);
+  w.state.definitions[w.state.definitions.length - 1] = { ...held, js: [CAPTURE_SCRIPT_FILE.replace(/^\//, "")] };
+  await w.registry.reconcile();
+  assert.deepEqual(w.state.calls, ["register"], "a leading slash is the same file");
+  // Defaults a browser may report are the same registration.
+  for (const same of [{ world: "ISOLATED" }, { excludeMatches: [] }, { matchOriginAsFallback: false }]) {
+    const v = browserWorld({ granted: true });
+    await v.registry.enable();
+    v.state.definitions[v.state.definitions.length - 1] = { ...v.state.definitions.at(-1), ...same };
+    v.state.calls.length = 0;
+    await v.registry.reconcile();
+    assert.deepEqual(v.state.calls, [], `kept: ${JSON.stringify(same)}`);
+  }
+  // A registration of an earlier version (another file, no frames, another run time, not kept across sessions) is replaced.
+  for (const stale of [{ js: ["content/old.js"] }, { allFrames: false }, { runAt: "document_start" }, { persistAcrossSessions: false }, { matches: ["https://example.net/*"] }, { excludeMatches: ["https://vault.example.net/*"] }, { matchOriginAsFallback: true }, { world: "MAIN" }, { css: ["x.css"] }, {}]) {
+    const v = browserWorld({ granted: true });
+    await v.registry.enable();
+    v.state.definitions[v.state.definitions.length - 1] = Object.keys(stale).length === 0 ? { id: CAPTURE_SCRIPT_ID } : { ...v.state.definitions.at(-1), ...stale };
+    v.state.calls.length = 0;
+    await v.registry.reconcile();
+    assert.deepEqual(v.state.calls, ["unregister", "register"], `replaced: ${JSON.stringify(stale)}`);
+    assert.deepEqual(v.state.definitions.at(-1)?.js, [CAPTURE_SCRIPT_FILE], `the current definition again: ${JSON.stringify(stale)}`);
+  }
 });
 
 test("the_never_list_keeps_a_label_at_most_500_hosts_and_reads_only_hosts", async () => {
