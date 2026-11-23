@@ -2,6 +2,8 @@
   "generator.tabs.label": "Faner",
   "generator.tab.vault": "Hvelv",
   "generator.tab.generator": "Generator",
+  "generator.tab.health": "Helse",
+  "generator.tab.soon": "Kommer snart",
   "generator.title": "Passordgenerator",
   "generator.mode.label": "Hva skal lages",
   "generator.mode.password": "Passord",

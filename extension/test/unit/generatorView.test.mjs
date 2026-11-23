@@ -76,7 +76,7 @@ function fakeBackground({ answer } = {}) {
 /** Every `data-role` below the root, for a quick look at what is shown. @param {any} root @param {string} role */
 const roles = (root, role) => byRole(root, role);
 
-test("the_bottom_bar_shows_vault_and_settings_and_with_the_save_feature_on_the_generator_too", async () => {
+test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_on_the_generator_too", async () => {
   useDocument();
   // The test variant: three items, the generator's part made only when its item is first chosen.
   const on = packageOf((await pkg()).dir);
@@ -98,13 +98,24 @@ test("the_bottom_bar_shows_vault_and_settings_and_with_the_save_feature_on_the_g
   });
   assert.notEqual(tabs.root, vault);
   const names = ["tab-vault", "tab-generator", "tab-settings"].map((role) => one(tabs.root, role)?.textContent);
+  assert.deepEqual(roles(tabs.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-generator", "tab-health", "tab-settings"], "the order of the layout");
   assert.deepEqual(names, ["Vault", "Generator", "Settings"]);
+  assert.equal(one(tabs.root, "tab-health")?.getAttribute("aria-disabled"), "true", "Health is in the bar, not available yet");
   assert.equal(one(tabs.root, "tabs")?.tagName, "NAV");
   assert.equal(made, 0, "opening the popup makes no generator");
   assert.equal(tabs.selected(), "vault");
   assert.equal(one(tabs.root, "panel-generator")?.hidden, true);
   assert.equal(one(tabs.root, "tab-vault")?.getAttribute("aria-current"), "page");
   assert.equal(one(tabs.root, "tab-generator")?.hasAttribute("aria-current"), false);
+  // "Health" has no view yet: disabled, tagged, out of the tab order, and a click does nothing.
+  const health = one(tabs.root, "tab-health");
+  assert.equal(health?.getAttribute("tabindex"), "-1");
+  assert.equal(one(health, "tab-soon")?.textContent, "Coming soon");
+  assert.equal(health?.getAttribute("title"), "Coming soon");
+  assert.equal(health?.textContent, "HealthComing soon");
+  await click(health);
+  assert.equal(tabs.selected(), "vault", "a click on Health changes nothing");
+  assert.equal(health?.hasAttribute("aria-current"), false);
   // The generator's item: its part is made once, shown, and the vault's part is only hidden (still in the page).
   await click(one(tabs.root, "tab-generator"));
   assert.equal(made, 1);
@@ -146,6 +157,10 @@ test("the_bottom_bar_shows_vault_and_settings_and_with_the_save_feature_on_the_g
     assert.equal(roles(plain.root, "tab-generator").length, 0);
     assert.deepEqual(withAttribute(plain.root, "data-feature"), []);
     assert.deepEqual(["tab-vault", "tab-settings"].map((role) => one(plain.root, role)?.textContent), ["Vault", "Settings"]);
+    assert.deepEqual(roles(plain.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-health", "tab-settings"], "Vault, Health (not yet) and Settings");
+    assert.equal(one(plain.root, "tab-health")?.getAttribute("aria-disabled"), "true");
+    await click(one(plain.root, "tab-health"));
+    assert.equal(plain.selected(), "vault");
     assert.equal(one(plain.root, "tab-vault")?.getAttribute("aria-current"), "page");
     plain.select("generator");
     assert.equal(madeOff, 0);

@@ -191,8 +191,12 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
       await w.page.ready();
       await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
-      const labels = await w.session.content(() => [...document.querySelectorAll('[data-role="tabs"] button')].map((b) => (b.textContent ?? "").trim()));
-      assert.deepEqual(labels, ["Vault", "Generator", "Settings"], channel);
+      const roles = await w.session.content(() => [...document.querySelectorAll('[data-role="tabs"] button')].map((b) => b.getAttribute("data-role")));
+      assert.deepEqual(roles, ["tab-vault", "tab-generator", "tab-health", "tab-settings"], channel);
+      assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-health"]')?.getAttribute("aria-disabled")), "true", `${channel}: Health is not available yet`);
+      assert.equal(await w.page.text('[data-role="tab-soon"]'), "Coming soon", channel);
+      await w.page.click('[data-role="tab-health"]');
+      assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-vault"]')?.getAttribute("aria-current")), "page", `${channel}: a click on Health changes nothing`);
       assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-vault"]')?.getAttribute("aria-current")), "page", `${channel}: the vault is marked`);
       await w.page.click('[data-role="tab-generator"]');
       assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-generator"]')?.getAttribute("aria-current")), "page", channel);

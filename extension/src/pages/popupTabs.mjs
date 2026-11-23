@@ -1,7 +1,8 @@
 // The bottom navigation bar of the open popup (the approved layout): the vault, in a build with saving from the
 // extension on the generator (design document, section 10.2), and the settings. "Vault" and "Generator" show one part
-// each; "Settings" is not a part of the popup: it opens the settings page and the popup closes. The item that shows now
-// is marked with `aria-current`. A build without the feature has no generator: the bar is Vault and Settings.
+// each; "Health" is in the layout but has no view yet: it is shown disabled, with a "Coming soon" tag, and a click on it does
+// nothing; "Settings" is not a part of the popup: it opens the settings page and the popup closes. The item that shows now
+// is marked with `aria-current`. A build without the feature has no generator: the bar is Vault, Health and Settings.
 //
 // The vault's part stays in the page when the generator is shown (it is only hidden), so its search and open item are as
 // they were left. The generator's part is made when its item is first chosen: opening the popup alone never asks the
@@ -49,6 +50,13 @@ export function createPopupTabs({ texts, vault, makeGenerator, onSettings }) {
   /** @type {Partial<Record<Part, HTMLElement>>} */
   const buttons = { vault: item({ role: "tab-vault", icon: "vault", label: texts.t("generator.tab.vault") }) };
   if (withGenerator) buttons.generator = item({ role: "tab-generator", icon: "generator", label: texts.t("generator.tab.generator"), feature: true });
+  // Not available yet: no listener, so a click does nothing; `aria-disabled` and the visible tag say so, and the item is out of
+  // the tab order (it is no dead link and no focus trap).
+  const health = item({ role: "tab-health", icon: "health", label: texts.t("generator.tab.health") });
+  health.setAttribute("aria-disabled", "true");
+  health.setAttribute("tabindex", "-1");
+  health.setAttribute("title", texts.t("generator.tab.soon"));
+  health.append(el("span", { class: "ff-tab-soon", "data-role": "tab-soon" }, texts.t("generator.tab.soon")));
   const settings = item({ role: "tab-settings", icon: "settings", label: texts.t("session.settings") });
 
   /** @param {Part} id */
@@ -74,7 +82,7 @@ export function createPopupTabs({ texts, vault, makeGenerator, onSettings }) {
 
   /** @type {HTMLElement[]} */
   const items = [];
-  for (const button of [buttons.vault, buttons.generator, settings]) if (button !== undefined) items.push(button);
+  for (const button of [buttons.vault, buttons.generator, health, settings]) if (button !== undefined) items.push(button);
   const bar = el("nav", { class: "ff-tabbar", "aria-label": texts.t("generator.tabs.label"), "data-role": "tabs" }, ...items);
   const root = el("div", { class: "ff-tabs", "data-role": "popup-tabs" }, vaultPanel, ...(withGenerator ? [generatorPanel] : []), bar);
   select("vault");
