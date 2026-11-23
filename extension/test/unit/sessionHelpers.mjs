@@ -66,6 +66,8 @@ export function portPair(name, sender) {
   const toPage = [];
   /** @type {Array<() => void>} */
   const pageDisconnect = [];
+  /** @type {Array<() => void>} */
+  const backgroundDisconnect = [];
   /** Everything the background sent to the page. @type {string[]} */
   const fromBackground = [];
   let open = true;
@@ -86,6 +88,8 @@ export function portPair(name, sender) {
       }, 0);
     },
     onMessage: { addListener: (/** @type {any} */ fn) => toBackground.push(fn) },
+    // The page went away (it closed its port): the background hears it in a later turn.
+    onDisconnect: { addListener: (/** @type {any} */ fn) => backgroundDisconnect.push(fn) },
     get disconnected() {
       return !open;
     },
@@ -100,6 +104,9 @@ export function portPair(name, sender) {
     },
     disconnect() {
       open = false;
+      setTimeout(() => {
+        for (const fn of backgroundDisconnect) fn();
+      }, 0);
     },
     onMessage: { addListener: (/** @type {any} */ fn) => toPage.push(fn) },
     onDisconnect: { addListener: (/** @type {any} */ fn) => pageDisconnect.push(fn) },
@@ -395,8 +402,18 @@ export function fakeLocks() {
 /**
  * A fake of the shared sync engine: it records what it was made with and what is asked of it, and a test makes
  * it announce states (`emit`), stop (`halt`), go on (`clear`) and raise a standing warning (`stand`).
- * `behaviour.start` runs in `start()`, `behaviour.resume` in `resumeAfterHalt()`.
- * @param {{ start?: (engine: any) => unknown, resume?: (engine: any) => unknown }} [behaviour]
+ * `behaviour.start` runs in `start()`, `behaviour.resume` in `resumeAfterHalt()`; `behaviour.preview` and
+ * `behaviour.accept` answer `restorePreview()` and `acceptOlderState()` (or throw), `behaviour.resolve` and
+ * `behaviour.discard` run in `resolve()` and `discard()`. A test sets `items` (what `list()` answers) and `conflicts`
+ * (the versions `conflict(id)` gives, by id).
+ * @param {{
+ *   start?: (engine: any) => unknown,
+ *   resume?: (engine: any) => unknown,
+ *   preview?: (engine: any) => any,
+ *   accept?: (engine: any) => any,
+ *   resolve?: (engine: any, id: string, choice: string, seen: any) => unknown,
+ *   discard?: (engine: any, id: string) => unknown,
+ * }} [behaviour]
  */
 export function fakeEngines(behaviour = {}) {
   /** @type {any[]} */
@@ -456,6 +473,40 @@ export function fakeEngines(behaviour = {}) {
       stand(code) {
         standing.push(code);
         engine.emit("state", { kind: "warning", code });
+      },
+      /** @type {any[]} */
+      items: [],
+      list: () => engine.items,
+      previews: 0,
+      accepts: 0,
+      async restorePreview() {
+        engine.previews += 1;
+        return behaviour.preview ? behaviour.preview(engine) : { reupload: 0, conflicts: 0, manifestOlder: false };
+      },
+      async acceptOlderState() {
+        engine.accepts += 1;
+        return behaviour.accept ? behaviour.accept(engine) : { reuploaded: 0, conflicts: 0, manifestOlder: false };
+      },
+      /** @type {Map<string, any>} */
+      conflicts: new Map(),
+      /** How many times the handles of a conflict's versions were closed. */
+      closed: 0,
+      async conflict(/** @type {string} */ id) {
+        const data = engine.conflicts.get(id);
+        if (!data) throw Object.assign(new Error("not in conflict"), { code: "not_found" });
+        return { ...data, close: async () => { engine.closed += 1; } };
+      },
+      /** @type {Array<{ id: string, choice: string, seen: any }>} */
+      resolved: [],
+      async resolve(/** @type {string} */ id, /** @type {string} */ choice, /** @type {any} */ seen) {
+        engine.resolved.push({ id, choice, seen });
+        await behaviour.resolve?.(engine, id, choice, seen);
+      },
+      /** @type {string[]} */
+      discarded: [],
+      async discard(/** @type {string} */ id) {
+        engine.discarded.push(id);
+        await behaviour.discard?.(engine, id);
       },
     };
     made.push(engine);
@@ -563,7 +614,7 @@ export function fakeSessions(behaviour = {}) {
  */
 export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {}, sync = null } = {}) {
   const { load } = await pkg();
-  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler, lockHandler, settingsHandler] = await Promise.all([
+  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler, syncWriteHandler, lockHandler, settingsHandler] = await Promise.all([
     load("background/session.mjs"),
     load("background/coreHost.mjs"),
     load("background/lock.mjs"),
@@ -572,6 +623,7 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     load("pages/ui.mjs"),
     load("background/sync.mjs"),
     load("background/handlers/sync.handler.mjs"),
+    load("background/handlers/syncWrite.handler.mjs"),
     load("background/handlers/lock.handler.mjs"),
     load("background/handlers/settings.handler.mjs"),
   ]);
@@ -634,7 +686,14 @@ export async function sessionWorld({ createSession, client = coreClient(), store
   const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal: local, timers, now: clock.now, coreHost });
   // As in the background: the deadline is checked before every use of the vault, also by the modules beside the messages.
   coreHost.setGuard(() => lock.isDue());
-  const router = createRouter({ runtime: fake.runtime, lock, coreHost, handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default] : [])] });
+  const router = createRouter({
+    runtime: fake.runtime,
+    lock,
+    coreHost,
+    handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default, syncWriteHandler.default] : [])],
+    // As in the background: what a page got ends with its port.
+    onSessionEnd: (/** @type {string} */ session) => syncHost?.endSession(session),
+  });
   /** Every port a page opened. @type {ReturnType<typeof portPair>[]} */
   const ports = [];
   /** A page of the extension at `path`: its `runtime` for `connectUi`. */

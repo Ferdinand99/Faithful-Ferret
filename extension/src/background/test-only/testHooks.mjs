@@ -24,6 +24,7 @@ import { createMatchProbe } from "./matchProbe.mjs";
 import { captures, createOfferProbe } from "./offerProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
+import { createWriteProbe } from "./writeProbe.mjs";
 
 // The offers of the test build, for the sync (main.mjs passes them as its `captures`).
 export { captures };
@@ -173,6 +174,7 @@ export function install({ browser, runtime, coreHost, now, engine = () => null }
   coreHost.addOps(ops);
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
   coreHost.addOps(createOfferProbe().ops);
+  coreHost.addOps(createWriteProbe({ engine }).ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());
   const storageLocal = browser.storage.local;

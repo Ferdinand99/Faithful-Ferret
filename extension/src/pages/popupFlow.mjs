@@ -10,15 +10,24 @@
 //                "Fill"), the favourites and all items, a search and a filter
 //                by type, and one item's view
 //
-// A stop of the sync offers exactly two ways on, "Try again" and "Forget this
-// server", and nothing else (accepting an older state of the server comes in
-// a later version). A warning is a text and has no button. Every text comes
-// from a code the background sent, through a fixed list here; a code the list
-// does not know gets the general text, never the code itself.
+// A stop of the sync offers "Try again" and "Forget this server"; a stop
+// because the server was restored to an earlier state offers "Accept the older
+// state" before them (design document, section 8.6): the popup shows what
+// accepting would do (counts only), and accepts only after the user typed the
+// word, as the web vault does. A warning is a text and has no button. Every
+// text comes from a code the background sent, through a fixed list here; a code
+// the list does not know gets the general text, never the code itself.
 //
 // "Forget this server" is also offered on a locked or signed-out device that
 // still names a server, so a device that cannot unlock any more, or that is to
-// be signed in at another server, has a way out.
+// be signed in at another server, has a way out. Its question names the
+// changes that were never sent and an account that another address of the
+// server keeps, with the web vault's words.
+//
+// In a build with saving from the extension on, the sync's part also counts
+// the items whose change waits to be sent, was refused or is in conflict, and
+// lists them (`createSyncItemsFlow`): a conflict is settled with "Keep mine" or
+// "Keep the server's", a refused change is dropped with "Discard the draft".
 //
 // The list holds names, user names and marks, and a reference per item that is
 // good only in this popup's session. A password or a code never reaches the
@@ -33,6 +42,12 @@ import { unlockWith } from "./signinFlow.mjs";
 
 /** The ways on from a stop of the sync, in the order the popup shows them. */
 export const STOP_ACTIONS = Object.freeze(["try_again", "forget"]);
+
+/** The ways on from the stop of a server that was restored to an earlier state: accepting that state comes first. */
+export const RESTORED_ACTIONS = Object.freeze(["accept_older", "try_again", "forget"]);
+
+/** The ways on from a stop. @param {string} code */
+export const actionsOf = (code) => [...(code === "server_restored" ? RESTORED_ACTIONS : STOP_ACTIONS)];
 
 /** The stops the popup has a text of its own for (`sync.stop.<code>`); any other stop gets `sync.stop.generic`. */
 export const STOP_TEXTS = Object.freeze(["rollback_suspected", "server_restored", "restore_epoch_lowered", "sync_memory_full", "unsupported"]);
@@ -77,7 +92,10 @@ export const warningKey = (code) => `sync.warning.${WARNING_TEXTS.includes(code)
 export const statusKey = (status) => `sync.status.${status !== null && STATUS_TEXTS.includes(status) ? status : "starting"}`;
 
 /**
- * @typedef {{ running: boolean, status: string | null, live: string, halted: string | null, actions: string[], warnings: string[] }} SyncView
+ * @typedef {{
+ *   running: boolean, status: string | null, live: string, halted: string | null, actions: string[], warnings: string[],
+ *   pending: number, blocked: number, conflicts: number,
+ * }} SyncView `pending`, `blocked`, `conflicts`: how many items have a change that waits, a refused change, a conflict
  * @typedef {{ view: "signed_out" | "locked" | "unlocked", host: string, account: string, server: string, sync: SyncView | null, ended?: string }} PopupView
  *   `ended`: why the server ended the device's tokens, when the background knows it (signed out only; one of ENDED_TEXTS)
  */
@@ -99,9 +117,168 @@ export function syncViewOf(reply) {
     // Whether the server's event stream is open (only a hint for the tests and the eye: the feed is read in any case).
     live: running && isCode(reply?.live) ? reply.live : "offline",
     halted,
-    // A stop has exactly these ways on, whatever its code; nothing else is offered.
-    actions: halted !== null ? [...STOP_ACTIONS] : [],
+    // A stop has exactly these ways on: "Try again" and "Forget this server", with "Accept the older state" first for a
+    // restored server. Nothing else is offered.
+    actions: halted !== null ? actionsOf(halted) : [],
     warnings: running && Array.isArray(reply?.warnings) ? [...new Set(reply.warnings.filter(isCode))] : [],
+    pending: running ? countOf(reply?.pending) : 0,
+    blocked: running ? countOf(reply?.blocked) : 0,
+    conflicts: running ? countOf(reply?.conflicts) : 0,
+  };
+}
+
+/** A count from the background, or 0. @param {unknown} n */
+const countOf = (n) => (typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0);
+
+/** The form of a typed word for comparing: composed, trimmed and in lower case (as the web vault compares it). @param {string} word */
+export const plainWord = (word) => word.normalize("NFC").trim().toLocaleLowerCase();
+
+/**
+ * The i18n key of the question of "Forget this server", from what it would lose (`forget_preview`): the web vault's
+ * four cases. Unsent changes are lost, unless another address of the server keeps the same account; then they stay,
+ * with the saved items, for that address. Without an answer the question says that unsent changes, if there are any,
+ * are lost.
+ * @param {{ pending: number, shared: boolean } | null} preview
+ */
+export function forgetBodyKey(preview) {
+  if (preview === null) return "sync.forget.body_unknown";
+  const pending = preview.pending > 0;
+  if (preview.shared) return pending ? "sync.forget.body_shared_pending" : "sync.forget.body_shared";
+  return pending ? "sync.forget.body_pending" : "sync.forget.body";
+}
+
+/** The reasons of the older state's answers that the popup has a text for (`sync.older.error.<reason>`). */
+export const OLDER_ERRORS = Object.freeze(["not_verified", "not_verified_no_checkpoint", "invalid_state", "busy", "bad_feed", "vault_locked", "word_wrong", "not_confirmed"]);
+
+/** The i18n key of the text of a refused preview or accept. @param {unknown} reason @param {"preview" | "accept"} phase */
+export const olderErrorKey = (reason, phase) =>
+  typeof reason === "string" && OLDER_ERRORS.includes(reason) ? `sync.older.error.${reason}` : `sync.older.error.${phase === "preview" ? "preview_failed" : "failed"}`;
+
+/**
+ * "Accept the older state" of a restored server, for its panel: what accepting would do, then the accept, which is
+ * sent only when the typed word is the word the panel asks for.
+ * @param {import("./ui.mjs").Request} request
+ */
+export function createOlderFlow(request) {
+  return {
+    /**
+     * What accepting would do: counts only.
+     * @returns {Promise<{ ok: true, reupload: number, conflicts: number, manifestOlder: boolean } | { ok: false, reason: string }>}
+     */
+    async preview() {
+      try {
+        const reply = await request("sync_older_preview", {});
+        if (reply?.ok !== true) return { ok: false, reason: String(reply?.reason ?? "unknown") };
+        return { ok: true, reupload: countOf(reply.reupload), conflicts: countOf(reply.conflicts), manifestOlder: reply.manifest_older === true };
+      } catch {
+        return { ok: false, reason: "unknown" };
+      }
+    },
+
+    /**
+     * The accept. Nothing is sent unless `typed` is `word` (compared as the web vault compares it).
+     * @param {string} typed what the user typed @param {string} word the word the panel asked for
+     * @returns {Promise<{ ok: true, reuploaded: number, conflicts: number, manifestOlder: boolean, unreadable: number } | { ok: false, reason: string }>}
+     */
+    async accept(typed, word) {
+      if (typeof typed !== "string" || plainWord(typed) === "" || plainWord(typed) !== plainWord(word)) return { ok: false, reason: "word_wrong" };
+      try {
+        const reply = await request("sync_accept_older", { confirmed: true });
+        if (reply?.ok !== true) return { ok: false, reason: String(reply?.reason ?? "unknown") };
+        return {
+          ok: true,
+          reuploaded: countOf(reply.reuploaded),
+          conflicts: countOf(reply.conflicts),
+          manifestOlder: reply.manifest_older === true,
+          unreadable: countOf(reply.unreadable),
+        };
+      } catch {
+        return { ok: false, reason: "unknown" };
+      }
+    },
+  };
+}
+
+/** The refused changes that the popup has a text of their own for (`sync.blocked.<code>`); any other gets `sync.blocked.generic`. */
+export const BLOCKED_TEXTS = Object.freeze(["quota_exceeded", "too_large", "reupload_refused", "restore_epoch_refused", "forbidden", "read_only", "storage"]);
+
+/** The i18n key of why a change was refused. @param {unknown} code */
+export const blockedKey = (code) => `sync.blocked.${typeof code === "string" && BLOCKED_TEXTS.includes(code) ? code : "generic"}`;
+
+/** The reasons of the item answers that the popup has a text for (`sync.item.error.<reason>`); any other gets `unknown`. */
+export const ITEM_ERRORS = Object.freeze([
+  "not_offered", "not_shown", "not_found", "in_conflict", "conflict_changed", "conflict_unsettled", "busy", "invalid_state",
+  "sync_not_running", "vault_locked", "worker_failed",
+]);
+
+/** The i18n key of a refused item answer. @param {unknown} reason */
+export const itemErrorKey = (reason) => `sync.item.error.${typeof reason === "string" && ITEM_ERRORS.includes(reason) ? reason : "unknown"}`;
+
+/**
+ * @typedef {{ ref: string, name: string, username: string, state: "conflict" | "blocked" | "pending", reason: string | null }} SyncItem
+ * @typedef {{ deleted: boolean, name: string | null, username: string, modified: number | null, device: string }} ConflictSideView
+ */
+
+/** @param {any} side @returns {ConflictSideView} */
+const sideViewOf = (side) => ({
+  deleted: side?.deleted === true,
+  name: typeof side?.name === "string" ? side.name : null,
+  username: typeof side?.username === "string" ? side.username : "",
+  modified: Number.isSafeInteger(side?.modified) && side.modified > 0 ? side.modified : null,
+  device: typeof side?.device === "string" ? side.device : "",
+});
+
+/**
+ * The items whose change waits, was refused or is in conflict, as the popup works with them (a build with saving from
+ * the extension on). Names, user names, states and references only.
+ * @param {import("./ui.mjs").Request} request
+ */
+export function createSyncItemsFlow(request) {
+  /** @param {string} type @param {Record<string, unknown>} body @returns {Promise<{ ok: boolean, reason?: string }>} */
+  const act = async (type, body) => {
+    try {
+      const reply = await request(type, body);
+      return reply?.ok === true ? { ok: true } : { ok: false, reason: String(reply?.reason ?? "unknown") };
+    } catch {
+      return { ok: false, reason: "unknown" };
+    }
+  };
+  return {
+    /** @returns {Promise<{ items: SyncItem[], total: number }>} */
+    async items() {
+      const reply = await request("sync_items", {});
+      const items = (Array.isArray(reply?.items) ? reply.items : [])
+        .filter((/** @type {any} */ i) => typeof i?.ref === "string" && ["conflict", "blocked", "pending"].includes(i.state))
+        .map((/** @type {any} */ i) => ({
+          ref: i.ref,
+          name: typeof i.name === "string" ? i.name : "",
+          username: typeof i.username === "string" ? i.username : "",
+          state: i.state,
+          reason: typeof i.reason === "string" ? i.reason : null,
+        }));
+      return { items, total: countOf(reply?.total) };
+    },
+
+    /**
+     * The two versions of an item in conflict.
+     * @param {string} ref
+     * @returns {Promise<{ ok: true, mine: ConflictSideView, theirs: ConflictSideView } | { ok: false, reason: string }>}
+     */
+    async conflict(ref) {
+      try {
+        const reply = await request("item_conflict", { ref });
+        if (reply?.ok !== true) return { ok: false, reason: String(reply?.reason ?? "unknown") };
+        return { ok: true, mine: sideViewOf(reply.mine), theirs: sideViewOf(reply.theirs) };
+      } catch {
+        return { ok: false, reason: "unknown" };
+      }
+    },
+
+    /** "Keep mine" or "Keep the server's". @param {string} ref @param {"mine" | "theirs"} choice */
+    resolve: (ref, choice) => act("item_resolve", { ref, choice }),
+
+    /** "Discard the draft". @param {string} ref */
+    discard: (ref) => act("item_discard", { ref }),
   };
 }
 
@@ -178,12 +355,27 @@ export function createPopupFlow(request) {
     },
 
     /**
+     * What "Forget this server" would lose, for its question: null when the background could not say.
+     * @param {string} server the server the popup shows
+     * @returns {Promise<{ pending: number, shared: boolean } | null>}
+     */
+    async forgetPreview(server) {
+      try {
+        const reply = await request("forget_preview", { server });
+        return reply?.ok === true ? { pending: countOf(reply.pending), shared: reply.shared === true } : null;
+      } catch {
+        return null;
+      }
+    },
+
+    /**
      * "Forget this server", after the user confirmed it in the popup.
      * @param {string} server the server the popup showed
+     * @param {number | null} [expectPending] the count of unsent changes the question named (null: it named none)
      * @returns {Promise<{ result: { ok: boolean, reason?: string }, view: PopupView }>}
      */
-    async forget(server) {
-      const result = await request("forget_server", { server });
+    async forget(server, expectPending = null) {
+      const result = await request("forget_server", { server, ...(expectPending !== null ? { expect_pending: expectPending } : {}) });
       return { result, view: await load() };
     },
   };

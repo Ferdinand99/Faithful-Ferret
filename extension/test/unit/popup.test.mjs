@@ -304,7 +304,7 @@ test("the_field_border_has_at_least_3_to_1_contrast_in_the_popup_and_the_tabs", 
 });
 
 test("an_open_forget_question_still_follows_a_lock", () => {
-  const sync = { running: true, status: "idle", live: "live", halted: "rollback_suspected", actions: ["try_again", "forget"], warnings: [] };
+  const sync = { running: true, status: "idle", live: "live", halted: "rollback_suspected", actions: ["try_again", "forget"], warnings: [], pending: 0, blocked: 0, conflicts: 0 };
   /** @type {import("../../src/pages/popupFlow.mjs").PopupView} */
   const shown = { view: "unlocked", host: "vault.example.com", account: "ola@example.com", server: "https://vault.example.com", sync };
   const changed = { ...shown, sync: { ...sync, status: "syncing" } };
@@ -324,7 +324,7 @@ test("an_open_forget_question_still_follows_a_lock", () => {
   // The popup reads the state on every round, with the question open or not.
   const code = readFileSync(join(src, "pages", "popup.mjs"), "utf8");
   assert.match(code, /\n\s*next = await flow\.load\(\);\n/);
-  assert.match(code, /followStep\(view, next, root\.querySelector\('\[data-role="forget-confirm"\]'\) !== null\)/);
+  assert.match(code, /followStep\(view, next, root\.querySelector\('\[data-role="forget-confirm"\], \[data-hold="1"\]'\) !== null\)/);
 
   // Those reads (`state`, `sync_state`) never move the deadline, and `state` after the deadline says "locked": see
   // a_message_that_needs_no_key_does_not_move_the_deadline and state_after_the_deadline_reports_locked (router tests).

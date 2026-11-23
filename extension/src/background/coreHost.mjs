@@ -33,12 +33,12 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
 /**
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
- * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe`, `match_bench`,
- * `offer_plant` and `offer_bench` are only available in the test build, which
- * passes their implementations in (`ops`); in a release they are refused like
- * any other name. The offer ops (`offer_classify`, `offer_save`, `offer_update`,
- * `folder_names`) refuse with `not_available` in a build without the `save`
- * feature.
+ * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe`, `item_rename_probe`,
+ * `match_bench`, `offer_plant` and `offer_bench` are only available in the test
+ * build, which passes their implementations in (`ops`); in a release they are
+ * refused like any other name. The offer ops (`offer_classify`, `offer_save`,
+ * `offer_update`, `folder_names`) refuse with `not_available` in a build without
+ * the `save` feature.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -50,7 +50,14 @@ export const CORE_OPS = Object.freeze([
   "unlock",
   "sync_state",
   "sync_retry",
+  "sync_older_preview",
+  "sync_accept_older",
+  "forget_preview",
   "forget_server",
+  "sync_items",
+  "item_conflict",
+  "item_resolve",
+  "item_discard",
   "page_origin",
   "same_site",
   "display_host",
@@ -58,6 +65,7 @@ export const CORE_OPS = Object.freeze([
   "grant_listed",
   "frames_probe",
   "item_probe",
+  "item_rename_probe",
   "match_bench",
   "fill_offer",
   "fill",

@@ -919,6 +919,10 @@ test("only_offer_write_calls_engine_create_or_update", async () => {
               // Positive control in a real package: the probe that makes test items with the engine is found.
               assert.ok(writesIn(text).includes("running.create"), `${manifest}: the check finds the probe's write`);
             }
+            if (path === "background/test-only/writeProbe.mjs") {
+              // The same for the probe that edits a test item through the engine.
+              assert.ok(writesIn(text).includes("running.update"), `${manifest}: the check finds the rename probe's write`);
+            }
             continue;
           }
           scanned.push(path);
@@ -928,7 +932,10 @@ test("only_offer_write_calls_engine_create_or_update", async () => {
         assert.deepEqual(makers, ["background/sync.mjs"], `${variant} ${manifest}: only the sync makes an engine`);
         // The test build's hooks get the sync's engine only as the second argument of their factory.
         assert.deepEqual(factories, ["background/sync.mjs"], `${variant} ${manifest}: the engine's factory is named in the sync only`);
-        if (variant === "test") assert.ok(files.has("background/test-only/matchProbe.mjs"), `${manifest}: the control file is there`);
+        if (variant === "test") {
+          assert.ok(files.has("background/test-only/matchProbe.mjs"), `${manifest}: the control file is there`);
+          assert.ok(files.has("background/test-only/writeProbe.mjs"), `${manifest}: the second control file is there`);
+        }
       } finally {
         env.cleanup();
       }

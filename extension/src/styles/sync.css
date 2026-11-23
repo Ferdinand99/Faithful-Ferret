@@ -54,3 +54,87 @@
   color: var(--on-inverse);
   border-color: transparent;
 }
+
+/* "Accept the older state", the items that wait or need the user, and the conflict card. */
+
+.ff-older,
+.ff-sync-list,
+.ff-conflict {
+  margin-block: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.ff-older h2,
+.ff-sync-list h2,
+.ff-conflict h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.ff-older p,
+.ff-conflict p {
+  font-size: 0.875rem;
+}
+
+.ff-older-preview,
+.ff-sync-rows {
+  margin: var(--sp-2) 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.ff-sync-row {
+  display: grid;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--sp-2);
+}
+
+.ff-sync-row-name,
+.ff-conflict-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ff-sync-row-state {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.ff-sync-items {
+  margin-top: var(--sp-2);
+}
+
+.ff-conflict-sides {
+  display: grid;
+  gap: var(--sp-3);
+  margin-block: var(--sp-3);
+}
+
+.ff-conflict-side h3 {
+  margin: 0 0 var(--sp-1);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.ff-conflict-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.ff-conflict-facts dt {
+  color: var(--muted);
+}
+
+.ff-conflict-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

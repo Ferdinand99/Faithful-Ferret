@@ -239,9 +239,19 @@ test("every UI request and reply round-trips with a sample body", () => {
     item: [{ ref: "h1" }, { ok: true, name: "Example", username: "me", type: "login", favorite: false, urls: ["https://example.com/login"], copyable: ["username", "password", "totp"] }],
     open_site: [{ ref: "h1" }, { ok: false, reason: "no_site" }],
     settings: [{ lock_seconds: 900 }, { lock_seconds: 900 }],
-    sync_state: [{}, { running: true, status: "idle", live: "live", halted: "server_restored", warnings: ["rev_lower_than_local"] }],
+    sync_state: [{}, { running: true, status: "idle", live: "live", halted: "server_restored", warnings: ["rev_lower_than_local"], pending: 2, blocked: 1, conflicts: 1 }],
     sync_retry: [{}, { ok: false, reason: "sync_still_halted" }],
+    sync_older_preview: [{}, { ok: true, reupload: 3, conflicts: 1, manifest_older: false }],
+    sync_accept_older: [{ confirmed: true }, { ok: true, reuploaded: 3, conflicts: 1, manifest_older: true, unreadable: 0 }],
+    forget_preview: [{ server: "https://vault.example" }, { ok: true, pending: 2, shared: false }],
     forget_server: [{ server: "https://vault.example" }, { ok: true }],
+    sync_items: [{}, { items: [{ ref: "h1", name: "Example", username: "me", state: "blocked", reason: "quota_exceeded" }, { ref: "h2", name: "Other", state: "conflict" }], total: 2 }],
+    item_conflict: [
+      { ref: "h2" },
+      { ok: true, mine: { deleted: false, name: "Other", username: "me", modified: 1_700_000_000_000, device: "Ferret for Firefox (Windows)" }, theirs: { deleted: true } },
+    ],
+    item_resolve: [{ ref: "h2", choice: "mine" }, { ok: false, reason: "conflict_changed" }],
+    item_discard: [{ ref: "h1" }, { ok: true }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {
