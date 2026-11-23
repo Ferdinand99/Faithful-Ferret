@@ -284,3 +284,46 @@ test("fields_without_a_form_are_grouped_by_their_container_and_only_named_ones_o
   assert.equal(whole.password, flatPass);
   assert.equal(whole.username, undefined);
 });
+
+test("a_change_form_takes_a_user_name_only_from_a_field_the_page_marks_as_one", () => {
+  const profile = (/** @type {Record<string, string>} */ mail) => page([
+    ["input", { id: "dname", type: "text", name: "visningsnavn", value: "Anna" }],
+    ["input", { id: "mail", type: "email", value: "anna@example.net", ...mail }],
+    ["input", { id: "cur", type: "password", autocomplete: "current-password" }],
+    ["input", { id: "new", type: "password", autocomplete: "new-password" }],
+    ["input", { id: "new2", type: "password", autocomplete: "new-password" }],
+  ]);
+  // A profile e-mail address in the same form is no user name of the change.
+  assert.deepEqual(groupsOf(profile({ name: "epost", autocomplete: "email" })), [{ kind: "change", email: "mail", current: "cur", new: "new", confirm: "new2" }]);
+  // A field the page marks as the user name is one, an e-mail one too.
+  assert.deepEqual(groupsOf(profile({ name: "login", autocomplete: "username" })), [{ kind: "change", username: "mail", current: "cur", new: "new", confirm: "new2" }]);
+  // A read-only account field with a user name token (the common change form) is one.
+  const account = page([
+    ["input", { id: "acct", type: "text", name: "login", value: "ola", readonly: "", autocomplete: "username" }],
+    ["input", { id: "cur", type: "password", autocomplete: "current-password" }],
+    ["input", { id: "new", type: "password", autocomplete: "new-password" }],
+  ]);
+  assert.deepEqual(groupsOf(account), [{ kind: "change", username: "acct", current: "cur", new: "new" }]);
+  // A sign-up form still takes the e-mail field (the positive control: the rule is about change forms).
+  const signup = page([
+    ["input", { id: "mail", type: "email", autocomplete: "email" }],
+    ["input", { id: "pw", type: "password", autocomplete: "new-password" }],
+    ["input", { id: "pw2", type: "password", autocomplete: "new-password" }],
+  ]);
+  assert.equal(groupsOf(signup)[0].username, "mail");
+});
+
+test("the_search_for_the_container_of_a_field_without_a_form_stops_at_a_fixed_depth", () => {
+  const nest = (/** @type {number} */ levels) => {
+    const { document } = createPage();
+    addInput(document, document.body, { id: "u", type: "text", autocomplete: "username" }, { top: 20 });
+    /** @type {any} */
+    let node = document.body;
+    for (let i = 0; i < levels; i += 1) node = node.append(document.createElement("div"));
+    addInput(document, node, { id: "p", type: "password", autocomplete: "current-password" }, { top: 60 });
+    return document;
+  };
+  const together = (/** @type {any} */ document) => findGroups(document).some((g) => g.username?.getAttribute("id") === "u" && g.password?.getAttribute("id") === "p");
+  assert.equal(together(nest(10)), true, "a field ten levels down shares its container with the user name (positive control)");
+  assert.equal(together(nest(100)), false, "a field a hundred levels down is not searched for: it is its own group");
+});

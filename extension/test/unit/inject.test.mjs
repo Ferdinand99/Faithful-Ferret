@@ -158,7 +158,7 @@ test("a_field_hidden_or_covered_in_any_document_above_its_frame_is_refused_with_
     assert.equal(own.calls.length, 1);
   }
   // A frame that gives no points, or points of another shape, is gone.
-  for (const field of [null, {}, { points: [] }, { points: [[1, 2, 3]] }, { points: [[Number.NaN, 1]] }, { points: Array.from({ length: 6 }, () => [1, 1]) }, { problem: "nonsense" }]) {
+  for (const field of [null, {}, { points: [] }, { points: [[1, 2, 3]] }, { points: [[Number.NaN, 1]] }, { points: Array.from({ length: 9 }, () => [1, 1]) }, { problem: "nonsense" }]) {
     const odd = frameScripting({ "doc-5:9": "shown", "doc-0:5": "shown" }, { field });
     assert.equal(await frameChainShown({ scripting: odd, tabId: 7, frame: NESTED, ...ASK }), "gone", JSON.stringify(field));
   }
