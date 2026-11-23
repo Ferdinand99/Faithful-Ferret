@@ -118,6 +118,9 @@ async function main() {
 
   /** The timer that refreshes the sync's part of the unlocked view. @type {ReturnType<typeof setTimeout> | null} */
   let refresh = null;
+  /** What to empty before the view is built again or the popup closes. @type {(() => void) | null} */
+  let teardown = null;
+  window.addEventListener("pagehide", () => teardown?.());
 
   /**
    * @param {PopupView} view
@@ -126,6 +129,10 @@ async function main() {
   function show(view, note = null) {
     if (refresh !== null) clearTimeout(refresh);
     refresh = null;
+    // Whatever the last view held that must not outlive it (a password the user chose to show on an offer card) is emptied
+    // before the next one is built, also when the next one is the locked view.
+    teardown?.();
+    teardown = null;
     header(view);
     if (view.view === "signed_out") return signedOut(view);
     if (view.view === "locked") return locked(view);
@@ -363,6 +370,7 @@ async function main() {
       offerFlow === null
         ? null
         : createOfferSection({ texts, flow: offerFlow, tabId, onChange: () => void vault.reload({ automatic: true }).catch(() => {}) });
+    teardown = () => offers?.hide();
     // The bottom bar: the vault, in a build with saving on the generator, and the settings.
     const tabs = createPopupTabs({
       texts,

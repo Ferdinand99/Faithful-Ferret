@@ -46,12 +46,12 @@ test("the_capture_and_write_rules_are_in_the_spec", () => {
     // Origin and frames.
     "It never runs on `http://` pages; a capture from a frame whose ancestors are not all same-site with the top, secure and not opaque, or whose frame the page hides, is dropped; the origin is taken from the browser, never from the page.",
     // Where the captured value is held, and for how long.
-    "Ferret keeps the captured values only in the memory of the background page and drops them after at most five minutes, on every lock of the vault, and when the tab closes; they are never written to extension storage or a log and never sent to the popup or a content script.",
+    "Ferret keeps the captured values only in the memory of the background page and drops them after at most five minutes, on every lock of the vault, and when the tab closes; they are never written to extension storage or a log and never sent to a content script; the popup gets the password of one offer only when the user asks to see it (below).",
     "Copies made by the browser's JavaScript engine are freed but cannot be wiped; the copy inside the core is wiped, except that for a value with characters outside ASCII the start of it that the glue copies first may remain in freed WebAssembly memory.",
     // When an offer comes.
     "A login form leads to an offer only after the page navigated or the form went away and no password form is shown afterwards; a sign-up, change or reset form leads to an offer three seconds after the last input.",
     // Where it is shown.
-    "The offer is shown only in Ferret's UI (the popup and a badge on the toolbar button), never in the page, and it never shows the password.",
+    "The offer is shown only in Ferret's UI (the popup and a badge on the toolbar button), never in the page. The card shows the password hidden, and shows it only after the user clicks \"Show\" on that card: the request must come from a top-level page of the extension, in the popup session that was told of the offer, with the vault open, and a click counts only after the card's buttons have been on screen for 400 milliseconds. Only the answer to that request carries the password. The popup keeps it only in the card's field while it is shown, empties the field when the user hides it, when the card is answered or rebuilt, when the vault locks and when the popup closes, and asks again for each \"Show\".",
     // Save or update, and the target.
     'Whether it is "save" or "update" is decided in the core, which compares passwords without revealing them; "update" is offered only for items that match the exact host (or the exact address), and an offer names other items that use the same password.',
     // The write.
@@ -93,7 +93,7 @@ test("the_capture_and_write_rules_are_in_the_spec", () => {
   // Section 7.2: captured and generated values are not vault data, and where they live.
   assert.ok(
     section72().includes(
-      "  - **Captured form values and generated passwords** (§ 10.9) are not vault data. Ferret keeps them only in the memory of the background page: captured values for at most five minutes, a generated password for at most fifteen minutes. Every lock of the vault drops both, as do sign-out, forgetting the server, closing the tab and a restart.",
+      "  - **Captured form values and generated passwords** (§ 10.9) are not vault data. Ferret keeps them only in the memory of the background page, and a captured password also in the popup's card while the user has chosen to show it (§ 10.9): captured values for at most five minutes, a generated password for at most fifteen minutes. Every lock of the vault drops both, as do sign-out, forgetting the server, closing the tab and a restart.",
     ),
     "7.2",
   );

@@ -165,6 +165,7 @@ function optionalText(v, max) {
  *   sessions: Set<string>,
  *   login: LoginState | null,
  *   removed: boolean,
+ *   announced: boolean,
  *   originP: Promise<string | null>,
  * }} Entry
  * @typedef {{
@@ -222,7 +223,7 @@ export function createOffers({
   const newId = () => Array.from(random(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 
   /** @param {number} tabId */
-  const readyIn = (tabId) => [...entries.values()].filter((e) => e.tabId === tabId && e.state === "ready").length;
+  const readyIn = (tabId) => [...entries.values()].filter((e) => e.tabId === tabId && e.state === "ready" && e.announced).length;
 
   const refreshBadges = () => {
     for (const tabId of [...dirty]) {
@@ -359,16 +360,21 @@ export function createOffers({
           (outcome) => {
             if (entry.removed) return;
             if (outcome?.action === "none") drop(entry);
-            else dirty.add(entry.tabId);
+            else {
+              entry.announced = true;
+              dirty.add(entry.tabId);
+            }
             refreshBadges();
           },
           () => {
             if (entry.removed) return;
+            entry.announced = true;
             dirty.add(entry.tabId);
             refreshBadges();
           },
         );
     } else {
+      entry.announced = true;
       dirty.add(entry.tabId);
     }
   }
@@ -582,6 +588,7 @@ export function createOffers({
         sessions: new Set(),
         login: kind === "login" ? { via: null, start: 0, landing: null, completedAt: null, settleAt: null, readies: [] } : null,
         removed: false,
+        announced: false,
         originP: Promise.resolve().then(() => frames.origin(sender.url)).catch(() => null),
       };
       const mine = entry;
@@ -777,6 +784,7 @@ export function createOffers({
         sessions: new Set(),
         login: null,
         removed: false,
+        announced: true,
         originP: Promise.resolve(origin),
       };
       entries.set(entry.id, entry);
@@ -801,7 +809,7 @@ export function createOffers({
   function forTab(tabId, uiSession) {
     sweep();
     const found = [...entries.values()]
-      .filter((e) => e.tabId === tabId && e.state === "ready" && e.capture !== null && e.host !== null)
+      .filter((e) => e.tabId === tabId && e.state === "ready" && e.announced && e.capture !== null && e.host !== null)
       .sort((a, b) => b.createdAt - a.createdAt);
     for (const entry of found) {
       if (typeof uiSession === "string" && uiSession !== "" && (entry.sessions.has(uiSession) || entry.sessions.size < MAX_SESSIONS)) entry.sessions.add(uiSession);

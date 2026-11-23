@@ -126,10 +126,12 @@ test("the_password_can_be_shown_on_a_click_and_is_wiped_when_hidden_or_when_the_
   assert.equal(input?.value, SECRET);
   assert.equal(input?.getAttribute("type"), "text");
   assert.equal(toggle?.getAttribute("aria-pressed"), "true");
-  assert.equal(toggle?.getAttribute("aria-label"), "Hide password");
+  assert.equal(toggle?.getAttribute("aria-label"), "Show password", "one state for a screen reader: a fixed name and aria-pressed");
+  assert.ok(one(card.root, "offer-password-hint")?.textContent.startsWith("Shown until"), "the hint says it is shown");
   await click(toggle);
   assert.equal(input?.value, "");
   assert.equal(input?.getAttribute("type"), "password");
+  assert.ok(one(card.root, "offer-password-hint")?.textContent.startsWith("Hidden."));
   assert.equal(card.root.textContent.includes(SECRET), false);
   // Shown again and then the card is closed (a lock, a rebuild): the field is emptied.
   await click(toggle);
@@ -271,8 +273,9 @@ test("several_candidates_are_a_list_to_pick_from_and_a_changed_item_shows_the_ne
   assert.equal(card.root.getAttribute("data-kind"), "update");
   assert.equal(one(card.root, "offer-target-name")?.textContent, "Shop B");
   assert.ok(one(card.root, "offer-error")?.textContent.includes("changed in the meantime"));
-  // An offer that is gone says so and leaves nothing to answer.
+  // An offer that is gone says so and leaves nothing to answer (the rebuilt card ignores a click for its first 400 ms).
   fake.flow.updatePassword = async () => ({ ok: false, reason: "not_offered" });
+  clock.t += 500;
   await click(one(card.root, "offer-update"));
   assert.ok(one(card.root, "offer-gone")?.textContent.includes("This offer is gone"));
   assert.equal(one(card.root, "offer-update"), null);
@@ -281,10 +284,9 @@ test("several_candidates_are_a_list_to_pick_from_and_a_changed_item_shows_the_ne
 test("not_now_and_never_answer_and_a_private_window_says_how_long_never_lasts", async () => {
   const { mod, clock, now, texts } = await setup();
   const fake = fakeFlow();
-  const card = mod.createOfferCard({ texts, flow: fake.flow, offer: offerOf({ incognito: true, generated: true }), now });
+  const card = mod.createOfferCard({ texts, flow: fake.flow, offer: offerOf({ incognito: true }), now });
   await card.loaded;
   assert.ok(one(card.root, "offer-private")?.textContent.includes("until the browser closes"));
-  assert.ok(one(card.root, "offer-generated")?.textContent.includes("generator"));
   clock.t += 500;
   await click(one(card.root, "offer-never"));
   assert.deepEqual(fake.calls.map((c) => c.call).slice(2), ["never"]);
@@ -359,4 +361,103 @@ test("the_flow_sends_only_ids_and_choices_and_every_text_exists_in_both_language
   }
   assert.equal(nb["offer.title.save"], "Lagre i Ferret?");
   assert.equal(nb["offer.master"], "Ferret ber aldri om hovedpassordet ditt inne i en nettside.");
+});
+
+test("the_click_guard_counts_from_when_the_buttons_appear_also_after_a_classification_that_took_long", async () => {
+  const { mod, clock, now, texts } = await setup();
+  const a = { id: "b2".repeat(16), rev: 1, name: "Shop A", username: "anna", how: "host" };
+  const fake = fakeFlow({ classify: classification() });
+  // The classification takes 500 ms: the card was made then, but its buttons appear only now.
+  fake.flow.classify = async () => {
+    clock.t += 500;
+    return classification();
+  };
+  const card = mod.createOfferCard({ texts, flow: fake.flow, offer: offerOf(), now });
+  await card.loaded;
+  const writes = () => fake.calls.filter((c) => ["save", "updatePassword", "dismiss", "never"].includes(c.call));
+  clock.t += 399;
+  await click(one(card.root, "offer-save"));
+  assert.deepEqual(writes(), [], "399 ms after the buttons appeared nothing counts");
+  clock.t += 1;
+  await click(one(card.root, "offer-save"));
+  assert.equal(writes().length, 1, "at 400 ms it counts");
+
+  // A rebuild after a changed item puts new buttons under the cursor: the guard starts again.
+  const second = fakeFlow({ classify: classification({ action: "choose", targets: [a, { ...a, id: "b3".repeat(16), name: "Shop B" }] }) });
+  const card2 = mod.createOfferCard({ texts, flow: second.flow, offer: offerOf({ kind: "change" }), now });
+  await card2.loaded;
+  clock.t += 500;
+  let attempts = 0;
+  second.flow.updatePassword = async () => {
+    attempts += 1;
+    return { ok: false, reason: "item_changed", classification: classification({ action: "update", targets: [a] }) };
+  };
+  await click(byRole(card2.root, "offer-choice-update")[0]);
+  assert.equal(card2.root.getAttribute("data-kind"), "update");
+  const count = () => attempts;
+  assert.equal(count(), 1);
+  clock.t += 399;
+  await click(one(card2.root, "offer-update"));
+  assert.equal(count(), 1, "the rebuilt card ignores a click for 400 ms");
+  clock.t += 1;
+  await click(one(card2.root, "offer-update"));
+  assert.equal(count(), 2);
+});
+
+test("a_card_for_a_password_ferret_generated_has_no_never_button", async () => {
+  const { mod, now, texts } = await setup();
+  const made = mod.createOfferCard({ texts, flow: fakeFlow().flow, offer: offerOf({ generated: true }), now });
+  await made.loaded;
+  assert.equal(one(made.root, "offer-never"), null);
+  assert.ok(one(made.root, "offer-generated")?.textContent.includes("generator"));
+  assert.notEqual(one(made.root, "offer-not-now"), null);
+  const typed = mod.createOfferCard({ texts, flow: fakeFlow().flow, offer: offerOf(), now });
+  await typed.loaded;
+  assert.notEqual(one(typed.root, "offer-never"), null);
+});
+
+test("a_reveal_that_answers_after_a_rebuild_is_dropped_and_a_hidden_section_empties_the_field", async () => {
+  const { mod, clock, now, texts } = await setup();
+  const a = { id: "b2".repeat(16), rev: 1, name: "Shop A", username: "anna", how: "host" };
+  const fake = fakeFlow({ classify: classification({ action: "update", targets: [a] }) });
+  /** @type {(v: any) => void} */
+  let answer = () => {};
+  fake.flow.reveal = () => new Promise((resolve) => { answer = resolve; });
+  const card = mod.createOfferCard({ texts, flow: fake.flow, offer: offerOf(), now });
+  await card.loaded;
+  clock.t += 500;
+  const oldInput = one(card.root, "offer-password");
+  await click(one(card.root, "offer-password-toggle"));
+  // While the answer is on its way, a refused write rebuilds the card.
+  fake.flow.updatePassword = async () => ({ ok: false, reason: "item_changed", classification: classification({ action: "update", targets: [{ ...a, rev: 2 }] }) });
+  await click(one(card.root, "offer-update"));
+  const newInput = one(card.root, "offer-password");
+  assert.notEqual(newInput, oldInput);
+  answer({ ok: true, value: SECRET });
+  await settle();
+  assert.equal(oldInput?.value, "", "the answer did not land in the old field");
+  assert.equal(newInput?.value, "");
+
+  // The section's hide (a lock, a rebuild, the popup closing) empties a shown password at once.
+  const shownFlow = fakeFlow();
+  shownFlow.flow.list = async () => ({ ok: true, offers: [offerOf()], notice: null });
+  const section = mod.createOfferSection({ texts, flow: shownFlow.flow, tabId: 7, now });
+  await section.loaded;
+  clock.t += 500;
+  const field = one(section.root, "offer-password");
+  await click(one(section.root, "offer-password-toggle"));
+  assert.equal(field?.value, SECRET);
+  section.hide();
+  assert.equal(field?.value, "");
+  assert.equal(field?.getAttribute("type"), "password");
+});
+
+test("the_popup_empties_what_a_card_shows_before_it_builds_its_view_again_and_when_it_closes", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const source = readFileSync(join((await pkg()).dir, "pages", "popup.mjs"), "utf8");
+  // `show` empties first (a lock rebuilds the view through it), the offers section hides on the way, and a closing page does too.
+  assert.match(source, /function show\(view, note = null\) \{[\s\S]{0,400}teardown\?\.\(\);\s*teardown = null;/);
+  assert.match(source, /teardown = \(\) => offers\?\.hide\(\);/);
+  assert.match(source, /addEventListener\("pagehide", \(\) => teardown\?\.\(\)\)/);
 });

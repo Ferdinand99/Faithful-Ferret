@@ -241,7 +241,8 @@ const defaultName = (host) => host.unicode.replace(/^www\./i, "");
 export function createOfferCard({ texts, flow, offer, now = () => Date.now(), onClosed = () => {} }) {
   if (!FEATURES.save) throw Object.assign(new Error("not_available"), { code: "not_available" });
   const t = texts.t;
-  const shownAt = now();
+  /** When the buttons of the card appeared: the guard counts from here (each build of the card starts it again). */
+  let shownAt = now();
   const FEATURE = { "data-feature": "save" };
   const titleId = `ff-offer-title-${offer.offerId.slice(0, 8)}`;
   const root = el("section", { class: "ff-offer", "data-role": "offer-card", "data-offer": offer.offerId, "data-hold": "1", "aria-labelledby": titleId, ...FEATURE });
@@ -350,7 +351,9 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
       el("input", { id: `${titleId}-pw`, type: "password", readonly: true, autocomplete: "off", class: "ff-input", placeholder: "••••••••", "aria-describedby": `${titleId}-pwhint`, "data-role": "offer-password", ...FEATURE })
     );
     const eye = el("span", { class: "ff-eye", "aria-hidden": "true", "data-icon": "eye" });
+    // One state for a screen reader: a fixed name and `aria-pressed` (the label does not flip).
     const toggle = el("button", { type: "button", class: "ff-reveal-toggle", "aria-pressed": "false", "aria-label": t("offer.password.show"), "data-role": "offer-password-toggle", ...FEATURE }, eye);
+    const hint = el("p", { class: "ff-hint", id: `${titleId}-pwhint`, "data-role": "offer-password-hint" }, t("offer.password.hidden"));
     let shown = false;
     let asking = false;
     /** @param {boolean} on */
@@ -358,7 +361,7 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
       shown = on;
       input.setAttribute("type", on ? "text" : "password");
       toggle.setAttribute("aria-pressed", on ? "true" : "false");
-      toggle.setAttribute("aria-label", t(on ? "offer.password.hide" : "offer.password.show"));
+      hint.textContent = t(on ? "offer.password.shown" : "offer.password.hidden");
       eye.setAttribute("data-icon", on ? "eye-off" : "eye");
     };
     toggle.addEventListener("click", async () => {
@@ -371,7 +374,8 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
       asking = true;
       try {
         const got = await flow.reveal(offer.offerId);
-        if (closed) return;
+        // An answer that lands after the card was closed or built again belongs to a field that is gone.
+        if (closed || secret !== input) return;
         if (!got.ok) {
           say(offerErrorKey(got.reason));
           return;
@@ -388,7 +392,7 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
       { class: "ff-field", "data-role": "offer-password-row" },
       el("label", { for: `${titleId}-pw`, class: "ff-label" }, t("offer.password")),
       el("div", { class: "ff-secret-input" }, input, toggle),
-      el("p", { class: "ff-hint", id: `${titleId}-pwhint`, "data-role": "offer-password-hint" }, t("offer.password.hidden")),
+      hint,
     );
   }
 
@@ -523,7 +527,7 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
       passwordRow(),
       domainList(c),
       reuseWarning(c),
-      el("div", { class: "ff-actions ff-offer-actions", "data-role": "offer-actions" }, save, ...dismissButtons(true)),
+      el("div", { class: "ff-actions ff-offer-actions", "data-role": "offer-actions" }, save, ...dismissButtons(!offer.generated)),
       offer.incognito ? el("p", { class: "ff-hint", "data-role": "offer-private" }, t("offer.never.private")) : null,
     ];
   }
@@ -626,6 +630,9 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
   function render() {
     wipeSecret();
     controls = [];
+    // The buttons appear now: a click counts only 400 ms after this (not from when the card was made, which the
+    // classification may have used up).
+    shownAt = now();
     if (classification === null) return;
     const c = classification;
     const parts = c.action === "update" && c.targets.length > 0 ? updateCard(c) : c.action === "choose" && c.targets.length > 0 ? chooseCard(c) : c.action === "none" ? noneCard() : saveCard(c);

@@ -191,3 +191,25 @@ test("a_login_the_vault_holds_gets_no_badge_and_no_popup", async () => {
   assert.equal(w.popup.attempts, 0);
   assert.equal(w.badgeText.get(TAB) ?? "", "");
 });
+
+test("a_login_is_not_counted_or_listed_until_the_core_has_said_it_is_not_saved", async () => {
+  const w = await uiWorld([item(9, { name: "Other", username: "x", password: "Another-password-1", urls: [["https://other.example.org/", "host"]] })]);
+  /** @type {(outcome: { action: string }) => void} */
+  let answer = () => {};
+  /** @type {any} */ (w.sync).classifyCapture = () => new Promise((resolve) => { answer = resolve; });
+  await w.capture({ kind: "login", capture_id: "login1" });
+  for (const fn of w.listeners.committed) fn({ tabId: TAB, frameId: 0, url: ORIGIN + "/home", documentId: "doc-new" });
+  await w.wait(100);
+  for (const fn of w.listeners.completed) fn({ tabId: TAB, frameId: 0, url: ORIGIN + "/home", documentId: "doc-new" });
+  await w.wait(3600);
+  // The offer is ready, the write path has not answered: nothing is counted, shown on the button or listed to a popup that asks.
+  assert.equal(w.badgeText.get(TAB) ?? "", "");
+  assert.equal(w.popup.attempts, 0);
+  assert.deepEqual(w.offers.forTab(TAB), []);
+  w.captureHost.offers.forTab(TAB, "a".repeat(32));
+  assert.equal(w.badgeText.get(TAB) ?? "", "", "another look at the tab does not count it either");
+  answer({ action: "save" });
+  await w.flush();
+  assert.equal(w.badgeText.get(TAB), "1");
+  assert.equal(w.offers.forTab(TAB).length, 1);
+});
