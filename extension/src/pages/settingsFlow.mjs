@@ -34,7 +34,7 @@ const reasonOf = (error) => {
 
 /**
  * @typedef {{ ok: true, seconds: number } | { ok: false, reason: string }} Outcome
- * @typedef {{ on: boolean, permission: boolean, never: string[] }} CaptureState
+ * @typedef {{ on: boolean, permission: boolean, never: string[], autoOpen?: boolean, autoOpenState?: "unknown" | "works" | "fails" }} CaptureState
  * @typedef {({ ok: true } & CaptureState) | ({ ok: false, reason: string } & Partial<CaptureState>)} CaptureOutcome
  * @param {import("./ui.mjs").Request} request
  * @param {{
@@ -54,7 +54,13 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
     try {
       const reply = await request("capture_settings", body);
       if (typeof reply?.on !== "boolean" || typeof reply.permission !== "boolean" || !Array.isArray(reply.never)) return { ok: false, reason: "unknown" };
+      /** @type {CaptureState} */
       const state = { on: reply.on, permission: reply.permission, never: reply.never.filter((/** @type {unknown} */ h) => typeof h === "string") };
+      // "Open the popup by itself" and what the browser has shown about it (only when the background says).
+      if (typeof reply.auto_open === "boolean") {
+        state.autoOpen = reply.auto_open;
+        state.autoOpenState = reply.auto_open_state === "works" || reply.auto_open_state === "fails" ? reply.auto_open_state : "unknown";
+      }
       return reply.ok === true ? { ok: true, ...state } : { ok: false, reason: typeof reply.reason === "string" ? reply.reason : "unknown", ...state };
     } catch (error) {
       return { ok: false, reason: reasonOf(error) };
@@ -121,6 +127,8 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
       },
       /** @param {string} host */
       removeNever: (host) => askCapture({ never_remove: host }),
+      /** "Open the popup by itself when there is an offer": the setting only (a click on the offer is still needed to save). @param {boolean} on */
+      setAutoOpen: (on) => askCapture({ auto_open: on === true }),
       clearNever: () => askCapture({ never_clear: true }),
     }),
     /**

@@ -1,4 +1,4 @@
-// "Offer to save passwords" and the never list, from the settings page (over
+// "Offer to save passwords", "Open the popup by itself" and the never list, from the settings page (over
 // the UI port), in a build with saving from the extension on. The page asks for
 // the permission for https pages in its own click and then says `enable`; the
 // background checks the permission itself, registers the capture script and
@@ -22,6 +22,9 @@ async function handle(body, ctx) {
     on: reply?.on === true,
     permission: reply?.permission === true,
     never: Array.isArray(reply?.never) ? reply.never.filter((/** @type {unknown} */ h) => typeof h === "string") : [],
+    // "Open the popup by itself" and what the browser has shown about it.
+    ...(typeof reply?.auto_open === "boolean" ? { auto_open: reply.auto_open } : {}),
+    ...(["unknown", "works", "fails"].includes(reply?.auto_open_state) ? { auto_open_state: reply.auto_open_state } : {}),
   };
 }
 

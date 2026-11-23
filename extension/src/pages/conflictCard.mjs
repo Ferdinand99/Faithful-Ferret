@@ -264,6 +264,32 @@ export function createConflictCard({ texts, flow, ref, onDone, onBack, now = Dat
     );
   }
 
+  /**
+   * Which parts of the item differ between the two versions: names only (the name, the user name, the addresses, a
+   * field by its label), never a value, and a password or another hidden field only as "a hidden field".
+   * @param {import("./popupFlow.mjs").ConflictDifference[]} differs
+   * @returns {HTMLElement[]}
+   */
+  function differsPart(differs) {
+    if (differs.length === 0) return [];
+    return [el(
+      "div",
+      { class: "ff-conflict-differs", "data-role": "conflict-differs", ...FEATURE },
+      el("p", { class: "ff-hint" }, t("sync.conflict.differs.title")),
+      el(
+        "ul",
+        null,
+        ...differs.map((d) =>
+          el(
+            "li",
+            { "data-role": "conflict-differs-item", "data-what": d.what },
+            d.what === "field" ? t("sync.conflict.differs.field", { label: d.label === "" ? t("popup.item.unnamed") : d.label }) : t(`sync.conflict.differs.${d.what}`),
+          ),
+        ),
+      ),
+    )];
+  }
+
   async function load() {
     disarm();
     const data = await flow.conflict(ref);
@@ -278,6 +304,7 @@ export function createConflictCard({ texts, flow, ref, onDone, onBack, now = Dat
       el("h2", { id: "ff-conflict-title" }, t("sync.conflict.heading")),
       el("p", { class: "ff-hint" }, t("sync.conflict.intro")),
       el("div", { class: "ff-conflict-sides" }, block("mine", data.mine), block("theirs", data.theirs)),
+      ...differsPart(data.differs),
       el("p", { class: "ff-hint", "data-role": "conflict-no-password" }, t("sync.conflict.no_password")),
       el("div", { class: "ff-actions", "data-role": "conflict-choices" }, buttons.mine, buttons.theirs, cancel),
       note,

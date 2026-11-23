@@ -679,6 +679,57 @@ export function createSyncHost({
     };
   }
 
+  /** The field kinds whose value a view shows: the core hides every other kind (and any kind it does not know). */
+  const PLAIN_KINDS = Object.freeze(["text", "url", "email", "phone"]);
+
+  /**
+   * Which parts of an item differ between this device's version and the server's, as names: the name, the user name,
+   * the addresses, the folders, the favourite mark, whether there are notes or a one-time code, and the item's own
+   * fields by their labels. The view holds no secret value, so a password or another hidden field cannot be compared:
+   * it is named as "hidden" when a hidden field is on one side only, changed its label or kind, or the earlier
+   * passwords differ in number (a new password moved the old one into the history). Never a value of a hidden field.
+   * @param {ConflictSide} mine @param {ConflictSide} theirs
+   * @returns {Array<{ what: string, label?: string }>}
+   */
+  function differencesOf(mine, theirs) {
+    const a = mine?.deleted === true || typeof mine?.view !== "object" ? null : mine.view;
+    const b = theirs?.deleted === true || typeof theirs?.view !== "object" ? null : theirs.view;
+    // A deletion on either side is what the card already says; there is no field to compare.
+    if (a === null || b === null) return [];
+    /** @type {Array<{ what: string, label?: string }>} */
+    const out = [];
+    let hidden = false;
+    if (a.name !== b.name) out.push({ what: "name" });
+    /** @param {any} view @returns {Map<string, any>} */
+    const byId = (view) => new Map((Array.isArray(view.fields) ? view.fields : []).map((/** @type {any} */ f) => [String(f?.id), f]));
+    const fa = byId(a);
+    const fb = byId(b);
+    for (const id of new Set([...fa.keys(), ...fb.keys()])) {
+      const x = fa.get(id);
+      const y = fb.get(id);
+      const present = x ?? y;
+      // Only the kinds the core shows are compared; any other kind is secret, whatever a view holds.
+      const secret = !PLAIN_KINDS.includes(present?.kind) || typeof present?.value !== "string";
+      if (x === undefined || y === undefined || x.kind !== y.kind || x.label !== y.label) {
+        if (secret) hidden = true;
+        else out.push(id === "username" ? { what: "username" } : { what: "field", label: itemText(present?.label) });
+        continue;
+      }
+      if (secret || typeof x.value !== "string" || typeof y.value !== "string") continue;
+      if (x.value !== y.value) out.push(id === "username" ? { what: "username" } : { what: "field", label: itemText(x.label) });
+    }
+    const urls = (/** @type {any} */ view) => (Array.isArray(view.urls) ? view.urls.map((/** @type {any} */ u) => `${u?.matching}\u0000${u?.url}`) : []).sort().join("\u0001");
+    if (urls(a) !== urls(b)) out.push({ what: "urls" });
+    const folders = (/** @type {any} */ view) => (Array.isArray(view.folders) ? [...view.folders].map(String).sort().join("\u0001") : "");
+    if (folders(a) !== folders(b)) out.push({ what: "folders" });
+    if ((a.favorite === true) !== (b.favorite === true)) out.push({ what: "favorite" });
+    if ((a.has_notes === true) !== (b.has_notes === true)) out.push({ what: "notes" });
+    if ((a.has_totp === true) !== (b.has_totp === true)) out.push({ what: "totp" });
+    if ((Array.isArray(a.password_history) ? a.password_history.length : 0) !== (Array.isArray(b.password_history) ? b.password_history.length : 0)) hidden = true;
+    if (hidden) out.push({ what: "hidden" });
+    return out.slice(0, 40);
+  }
+
   /**
    * The two versions of an item in conflict, for the card. The handles the engine opens for them are closed before the
    * answer goes out. The server row they were shown against is kept with the reference: a choice is made against it.
@@ -695,7 +746,7 @@ export function createSyncHost({
         const seen = data?.seen;
         if (!Number.isSafeInteger(seen?.rev) || typeof seen?.deleted !== "boolean") throw new SyncHostError("internal");
         entry.seen = { rev: seen.rev, deleted: seen.deleted };
-        return { ok: true, mine: sideOf(data.local), theirs: sideOf(data.server) };
+        return { ok: true, mine: sideOf(data.local), theirs: sideOf(data.server), differs: differencesOf(data.local, data.server) };
       } finally {
         await Promise.resolve(data?.close()).catch(() => {});
       }

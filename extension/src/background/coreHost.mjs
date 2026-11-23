@@ -39,7 +39,8 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * refused like any other name. The offer ops (`offer_classify`, `offer_save`,
  * `offer_update`, `folder_names`) and the generator's (`generate`, `generate_copy`,
  * `fill_generated`) refuse with `not_available` in a build without the `save`
- * feature. The capture ops (`capture_event`, `capture_settings`) are the capture
+ * feature. The capture ops (`capture_event`, `capture_settings`, and the popup's `offer_list`,
+ * `offer_dismiss`, `offer_reveal`) are the capture
  * host's (captureHost.mjs); a build without the feature does not have them.
  */
 export const CORE_OPS = Object.freeze([
@@ -83,6 +84,9 @@ export const CORE_OPS = Object.freeze([
   "offer_plant",
   "offer_bench",
   "offers_peek",
+  "offer_list",
+  "offer_dismiss",
+  "offer_reveal",
   "capture_event",
   "capture_settings",
   "generate",

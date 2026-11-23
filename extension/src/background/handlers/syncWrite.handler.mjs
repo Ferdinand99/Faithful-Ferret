@@ -50,7 +50,7 @@ async function handle(body, ctx) {
           await call(ctx.type, { session, ref: body.ref, ...(ctx.type === "item_resolve" ? { choice: body.choice } : {}) })
         );
         if (reply?.ok !== true) return { ok: false, reason: reasonOf(reply?.reason) };
-        return ctx.type === "item_conflict" ? { ok: true, mine: reply.mine, theirs: reply.theirs } : { ok: true };
+        return ctx.type === "item_conflict" ? { ok: true, mine: reply.mine, theirs: reply.theirs, differs: Array.isArray(reply.differs) ? reply.differs : [] } : { ok: true };
       } catch (error) {
         return { ok: false, reason: reasonOf(/** @type {any} */ (error)?.code) };
       }

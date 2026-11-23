@@ -119,7 +119,8 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
         // The fill value goes down to a page (push); what the person typed into a form goes up (content); the generator's
         // reply carries the value the core has just made. Nothing else.
         const generatorReply = channel === "ui" && type === "generate" && direction === "reply";
-        assert.equal(generatorReply || channel === (type === "form_capture" ? "content" : "push"), true, `${where}: only the push type, the generator's reply and the capture's typed password carry a value`);
+        const revealReply = channel === "ui" && type === "offer_reveal" && direction === "reply";
+        assert.equal(generatorReply || revealReply || channel === (type === "form_capture" ? "content" : "push"), true, `${where}: only the push type, the generator's and the offer's replies and the capture's typed password carry a value`);
         if (type === "form_capture") assert.equal(direction, "request", `${where}: never in a reply`);
         continue;
       }
@@ -254,7 +255,12 @@ test("every UI request and reply round-trips with a sample body", () => {
     sync_items: [{}, { items: [{ ref: "h1", name: "Example", username: "me", state: "blocked", reason: "quota_exceeded" }, { ref: "h2", name: "Other", state: "conflict" }], total: 2 }],
     item_conflict: [
       { ref: "h2" },
-      { ok: true, mine: { deleted: false, name: "Other", username: "me", modified: 1_700_000_000_000, device: "Ferret for Firefox (Windows)" }, theirs: { deleted: true } },
+      {
+        ok: true,
+        mine: { deleted: false, name: "Other", username: "me", modified: 1_700_000_000_000, device: "Ferret for Firefox (Windows)" },
+        theirs: { deleted: true },
+        differs: [{ what: "name" }, { what: "field", label: "Recovery e-mail" }, { what: "hidden" }],
+      },
     ],
     item_resolve: [{ ref: "h2", choice: "mine" }, { ok: false, reason: "conflict_changed" }],
     item_discard: [{ ref: "h1" }, { ok: true }],
@@ -264,7 +270,42 @@ test("every UI request and reply round-trips with a sample body", () => {
     ],
     generate_copy: [{ generation_id: "g1" }, { ok: true }],
     fill_generated: [{ generation_id: "g1", tab_id: 7, frame_id: 0 }, { ok: true, length: 20, offer: true }],
-    capture_settings: [{ enable: true, never_remove: "shop.example.net" }, { ok: true, on: true, permission: true, never: ["shop.example.net"] }],
+    capture_settings: [
+      { enable: true, never_remove: "shop.example.net", auto_open: false },
+      { ok: true, on: true, permission: true, never: ["shop.example.net"], auto_open: false, auto_open_state: "fails" },
+    ],
+    offer_list: [
+      { tab_id: 7 },
+      {
+        ok: true,
+        offers: [{ offer_id: "a1".repeat(16), kind: "signup", host: { a_label: "shop.example.net", unicode: "shop.example.net" }, username: "me", generated: true, incognito: false }],
+        notice: "frame_hidden",
+      },
+    ],
+    offer_classify: [
+      { offer_id: "a1".repeat(16) },
+      {
+        ok: true,
+        action: "update",
+        targets: [{ id: "b2".repeat(16), rev: 2, name: "Shop", username: "me", how: "host" }],
+        domain_only: [{ id: "c3".repeat(16), rev: 1, name: "Shop shared", host: null }],
+        reused: [{ name: "Other", host: { a_label: "other.example.org", unicode: "other.example.org" } }],
+        username_from: "typed",
+      },
+    ],
+    folder_names: [{}, { ok: true, folders: ["Work", "Private"] }],
+    offer_save: [{ offer_id: "a1".repeat(16), name: "Shop", username: "me", folder: "Work" }, { ok: true, pending: true }],
+    offer_update: [
+      { offer_id: "a1".repeat(16), id: "b2".repeat(16), rev: 2, picked: true },
+      {
+        ok: false,
+        reason: "item_changed",
+        classification: { action: "save", targets: [], domain_only: [], reused: [], username_from: null },
+      },
+    ],
+    offer_dismiss: [{ offer_id: "a1".repeat(16) }, { ok: true }],
+    offer_never: [{ offer_id: "a1".repeat(16) }, { ok: false, reason: "not_offered" }],
+    offer_reveal: [{ offer_id: "a1".repeat(16) }, { ok: true, value: "Zq9!sample" }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {
@@ -278,7 +319,7 @@ test("every UI request and reply round-trips with a sample body", () => {
 test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   // Both keys are forbidden names, and the one place that may carry them is the capture of a submitted form.
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
-  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"] });
+  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"] });
   /** @type {string[]} */
   const holders = [];
   for (const { type, channel, direction, schema } of allSchemas()) {
@@ -291,6 +332,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "content/form_capture/request/password",
     "push/fill_field/request/value",
     "ui/generate/reply/value",
+    "ui/offer_reveal/reply/value",
   ]);
   // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) => JSON.stringify({ v: 1, id: "a", type, body });

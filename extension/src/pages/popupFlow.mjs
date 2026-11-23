@@ -219,6 +219,27 @@ export const itemErrorKey = (reason) => `sync.item.error.${typeof reason === "st
  * @typedef {{ deleted: boolean, name: string | null, username: string, modified: number | null, device: string }} ConflictSideView
  */
 
+/**
+ * What differs between the two versions, as the background names it: a part of the item, and for an item's own field its
+ * label. Never a value.
+ * @typedef {{ what: string, label: string }} ConflictDifference
+ */
+
+/** The parts of an item that the card names when they differ (`sync.conflict.differs.<what>`); anything else is left out. */
+export const DIFFERENCE_KINDS = Object.freeze(["name", "username", "urls", "folders", "favorite", "notes", "totp", "hidden", "field"]);
+
+/** @param {unknown} list @returns {ConflictDifference[]} */
+export function differencesOf(list) {
+  if (!Array.isArray(list)) return [];
+  /** @type {ConflictDifference[]} */
+  const out = [];
+  for (const d of list.slice(0, 40)) {
+    if (typeof d?.what !== "string" || !DIFFERENCE_KINDS.includes(d.what)) continue;
+    out.push({ what: d.what, label: typeof d.label === "string" ? d.label : "" });
+  }
+  return out;
+}
+
 /** @param {any} side @returns {ConflictSideView} */
 const sideViewOf = (side) => ({
   deleted: side?.deleted === true,
@@ -262,13 +283,13 @@ export function createSyncItemsFlow(request) {
     /**
      * The two versions of an item in conflict.
      * @param {string} ref
-     * @returns {Promise<{ ok: true, mine: ConflictSideView, theirs: ConflictSideView } | { ok: false, reason: string }>}
+     * @returns {Promise<{ ok: true, mine: ConflictSideView, theirs: ConflictSideView, differs: ConflictDifference[] } | { ok: false, reason: string }>}
      */
     async conflict(ref) {
       try {
         const reply = await request("item_conflict", { ref });
         if (reply?.ok !== true) return { ok: false, reason: String(reply?.reason ?? "unknown") };
-        return { ok: true, mine: sideViewOf(reply.mine), theirs: sideViewOf(reply.theirs) };
+        return { ok: true, mine: sideViewOf(reply.mine), theirs: sideViewOf(reply.theirs), differs: differencesOf(reply.differs) };
       } catch {
         return { ok: false, reason: "unknown" };
       }

@@ -1,0 +1,195 @@
+/* The offer to save or update a password in the popup (the cards of offerCards.mjs), above the vault. Sizes and colours
+   are the Hedgerow tokens of session.css. The section scrolls on its own when the cards are taller than the room the
+   vault's list can spare, so the header and the foot of the popup stay whole. */
+
+.ff-offers {
+  flex: none;
+  max-height: 62%;
+  overflow-y: auto;
+  padding: 0 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ff-offers[hidden] {
+  display: none;
+}
+
+.ff-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+}
+
+.ff-offer-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* The heading takes the focus when the popup opens, so it must not look like a control. */
+.ff-offer-title:focus {
+  outline: none;
+}
+
+.ff-offer-title:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.ff-offer-site {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ff-offer-alabel {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ff-offer-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 13px;
+}
+
+.ff-offer-facts dt {
+  color: var(--muted);
+}
+
+.ff-offer-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ff-offer-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ff-offer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.ff-offer-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.ff-offer-reuse {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+}
+
+.ff-offer-actions {
+  flex-wrap: wrap;
+}
+
+.ff-offer-master {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ff-offer-result {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ff-offer button[aria-busy="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* The password's field with the web vault's eye button at its end: the icon follows the text colour. */
+.ff-secret-input {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.ff-secret-input > input {
+  flex: 1;
+  min-width: 0;
+  padding-inline-end: 40px;
+}
+
+.ff-reveal-toggle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ff-reveal-toggle[aria-pressed="true"] {
+  color: inherit;
+}
+
+.ff-reveal-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ff-reveal-toggle:hover {
+    color: inherit;
+  }
+}
+
+@media (forced-colors: active) {
+  .ff-reveal-toggle {
+    color: ButtonText;
+  }
+}
+
+.ff-eye {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  -webkit-mask: var(--eye) center / contain no-repeat;
+  mask: var(--eye) center / contain no-repeat;
+  --eye: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%271.5%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M2.75%2012S6%205.75%2012%205.75%2021.25%2012%2021.25%2012%2018%2018.25%2012%2018.25%202.75%2012%202.75%2012z%27/%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%272.75%27/%3E%3C/svg%3E);
+}
+
+.ff-eye[data-icon="eye-off"] {
+  --eye: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%271.5%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M2.75%2012S6%205.75%2012%205.75%2021.25%2012%2021.25%2012%2018%2018.25%2012%2018.25%202.75%2012%202.75%2012z%27/%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%272.75%27/%3E%3Cpath%20d=%27M4.5%204.5l15%2015%27/%3E%3C/svg%3E);
+}
+
+/* What differs between the two versions of an item in conflict. */
+.ff-conflict-differs ul {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+  font-size: 13px;
+}

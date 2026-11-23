@@ -19,6 +19,10 @@
 //      more click, which only the popup shows) open the popup instead.
 //   5. The session ends, and its references with it.
 //
+// A fill that was tried and refused (a frame that is hidden or covered, a page that did not answer) leaves no popup to say
+// why, so the refusal is handed to `onRefused` with the tab and the reason: the toolbar button then shows "!" for thirty
+// seconds and the popup, opened next, says what happened (badge.mjs, offerCards.mjs).
+//
 // This module never sees a value or a key: it reaches the vault only through
 // the core host's `call` with the two operation names above, and what it gets
 // back are references and frame numbers. A name or user name in a reply is
@@ -72,6 +76,7 @@ const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0"))
  *   lock: LockCheck,
  *   sessions?: FillSessions | null,
  *   openPopup: () => unknown,
+ *   onRefused?: ((tabId: number, reason: string) => void) | null,
  *   scripting: { executeScript: (injection: any) => Promise<any[]> },
  *   webNavigation: { getFrame(details: { tabId: number, frameId: number }): Promise<{ url?: string, documentId?: string } | null> },
  *   random?: (bytes: Uint8Array) => Uint8Array,
@@ -82,6 +87,7 @@ export function createQuickFill({
   lock,
   sessions = null,
   openPopup,
+  onRefused = null,
   scripting,
   webNavigation,
   random = (bytes) => {
@@ -147,6 +153,12 @@ export function createQuickFill({
       if (result?.ok === true) return "filled";
       // A fill that ended before its request began left the aim armed: it must not steer the next fill there.
       if (aimedAt !== null) await disarmFill({ scripting, tabId, documentId: aimedAt }).catch(() => {});
+      // Nothing opens to say why: the button shows "!" and the popup tells the reason.
+      try {
+        onRefused?.(tabId, typeof result?.reason === "string" ? result.reason : "not_filled");
+      } catch {
+        // The mark is a help; the outcome stands.
+      }
       return "not_filled";
     } finally {
       try {

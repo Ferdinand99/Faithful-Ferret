@@ -25,7 +25,8 @@
 .ff-tabbar {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   border-top: 1px solid var(--line);
   background: var(--card);
 }
@@ -46,9 +47,24 @@
   cursor: pointer;
 }
 
-.ff-tab[aria-selected="true"] {
+.ff-tab[aria-current="page"] {
   color: var(--brand);
   font-weight: 600;
+}
+
+.ff-tab[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ff-tab-soon {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+  background: var(--brand-fill);
+  color: var(--brand);
 }
 
 .ff-tab:focus-visible {
@@ -157,4 +173,12 @@
 
 .ff-gen-check {
   font-size: 0.875rem;
+}
+
+.ff-ico-settings {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%273%27/%3E%3Cpath%20d=%27M12%202v3M12%2019v3M2%2012h3M19%2012h3M5%205l2%202M17%2017l2%202M5%2019l2-2M17%207l2-2%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-health {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M12%2021s-7-4.5-7-10a4%204%200%20017-2.6A4%204%200%200119%2011c0%205.5-7%2010-7%2010z%27/%3E%3C/svg%3E);
 }

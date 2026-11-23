@@ -61,6 +61,7 @@
   "session.server.intro": "Skriv adressen til Ferret-serveren din.",
   "session.server.label": "Serveradresse",
   "session.server.submit": "Fortsett",
+  "session.settings": "Innstillinger",
   "session.signin.at": "Logger inn på",
   "session.signin.submit": "Logg inn",
   "session.signin.title": "Logg inn i Ferret",

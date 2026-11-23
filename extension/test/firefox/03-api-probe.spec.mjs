@@ -44,6 +44,7 @@ export const ROWS = Object.freeze([
   "permissions.auto_grant_pref",
   "menus.getTargetElement",
   "action.openPopup.from_command",
+  "action.openPopup.without_gesture",
   "idle.onStateChanged.locked",
   "wasm.module_workers_under_csp",
   "wasm.instantiate_under_csp",
@@ -364,6 +365,28 @@ async function probeAll(channel, manifest) {
     await row(rows, ctx, "action.openPopup.from_command", async () => {
       const rec = await session.waitFor(async () => (await fromBridge(framesTab, () => bridge.invoke("storage.local.get", "probe_openpopup"))).probe_openpopup, 15_000, "the openPopup result");
       return { status: rec.ok ? "works" : rec.error ? "fails" : "partial", detail: rec };
+    });
+
+    // No user action at all: a timer of the extension's own page, long after the command was handled and with the popup that
+    // the command opened closed first. It works only if a popup is really there afterwards (a call that resolves with none
+    // is not an opening). This decides whether the popup can open by itself when an offer is ready; the extension tries once
+    // and falls back to the badge.
+    await row(rows, ctx, "action.openPopup.without_gesture", async () => {
+      const outcome = await fromBridge(framesTab, () => session.execute(async () => {
+        const api = browser.action ?? browser.browserAction;
+        for (const view of browser.extension.getViews({ type: "popup" })) view.close();
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const before = browser.extension.getViews({ type: "popup" }).length;
+        try {
+          await api.openPopup();
+        } catch (error) {
+          return { ok: false, before, error: String(error && error.message).replace(/\s+/g, " ").slice(0, 160) };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const after = browser.extension.getViews({ type: "popup" }).length;
+        return { ok: after > 0, before, after };
+      }));
+      return { status: outcome.ok ? "works" : "fails", detail: outcome };
     });
 
     /** What the extension can do on the tab it has activeTab for. */

@@ -107,8 +107,8 @@ const encoder = new TextEncoder();
  *   username: string | null, usernameFrom: "typed" | "page" | "identifier" | "fill" | null,
  *   password: string, currentPassword: string | null, generated: boolean,
  * }} Capture a submitted form, held in memory only (the shape the write path reads)
- * @typedef {{ offer_id: string, kind: string, host: Host, username: string | null, generated: boolean }} OfferMeta
- *   what an answer carries of an offer: never a password
+ * @typedef {{ offer_id: string, kind: string, host: Host, username: string | null, generated: boolean, incognito: boolean }} OfferMeta
+ *   what an answer carries of an offer: never a password (`incognito`: the offer came from a private window)
  * @typedef {{ tabId: number, frameId: number, documentId?: string, url: string }} Sender
  *   a content script's sender, as the router checked it
  * @typedef {{ frameId: number, documentId?: string }} FrameRef
@@ -165,6 +165,7 @@ function optionalText(v, max) {
  *   sessions: Set<string>,
  *   login: LoginState | null,
  *   removed: boolean,
+ *   announced: boolean,
  *   originP: Promise<string | null>,
  * }} Entry
  * @typedef {{
@@ -222,7 +223,7 @@ export function createOffers({
   const newId = () => Array.from(random(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 
   /** @param {number} tabId */
-  const readyIn = (tabId) => [...entries.values()].filter((e) => e.tabId === tabId && e.state === "ready").length;
+  const readyIn = (tabId) => [...entries.values()].filter((e) => e.tabId === tabId && e.state === "ready" && e.announced).length;
 
   const refreshBadges = () => {
     for (const tabId of [...dirty]) {
@@ -348,21 +349,33 @@ export function createOffers({
     entry.state = "ready";
     entry.readyAt = entry.readyAt ?? now();
     entry.login = null;
-    dirty.add(entry.tabId);
-    // The write path can say that the vault holds this login already: then there is nothing to offer.
+    // The write path can say that the vault holds this login already: then there is nothing to offer, and the badge (and a
+    // popup that opens by itself) must not show it for a moment first. The tab's count is told only once that is answered;
+    // when it cannot be (the vault is locked, the write path is gone) the offer shows all the same.
     const capture = entry.capture;
     if (writer !== null && capture !== null && !entry.generated) {
       Promise.resolve()
         .then(() => writer.classify({ ...capture }))
         .then(
           (outcome) => {
-            if (outcome?.action === "none" && !entry.removed) {
-              drop(entry);
-              refreshBadges();
+            if (entry.removed) return;
+            if (outcome?.action === "none") drop(entry);
+            else {
+              entry.announced = true;
+              dirty.add(entry.tabId);
             }
+            refreshBadges();
           },
-          () => {},
+          () => {
+            if (entry.removed) return;
+            entry.announced = true;
+            dirty.add(entry.tabId);
+            refreshBadges();
+          },
         );
+    } else {
+      entry.announced = true;
+      dirty.add(entry.tabId);
     }
   }
 
@@ -575,6 +588,7 @@ export function createOffers({
         sessions: new Set(),
         login: kind === "login" ? { via: null, start: 0, landing: null, completedAt: null, settleAt: null, readies: [] } : null,
         removed: false,
+        announced: false,
         originP: Promise.resolve().then(() => frames.origin(sender.url)).catch(() => null),
       };
       const mine = entry;
@@ -770,6 +784,7 @@ export function createOffers({
         sessions: new Set(),
         login: null,
         removed: false,
+        announced: true,
         originP: Promise.resolve(origin),
       };
       entries.set(entry.id, entry);
@@ -794,7 +809,7 @@ export function createOffers({
   function forTab(tabId, uiSession) {
     sweep();
     const found = [...entries.values()]
-      .filter((e) => e.tabId === tabId && e.state === "ready" && e.capture !== null && e.host !== null)
+      .filter((e) => e.tabId === tabId && e.state === "ready" && e.announced && e.capture !== null && e.host !== null)
       .sort((a, b) => b.createdAt - a.createdAt);
     for (const entry of found) {
       if (typeof uiSession === "string" && uiSession !== "" && (entry.sessions.has(uiSession) || entry.sessions.size < MAX_SESSIONS)) entry.sessions.add(uiSession);
@@ -806,6 +821,7 @@ export function createOffers({
       host: { a_label: /** @type {Host} */ (e.host).a_label, unicode: /** @type {Host} */ (e.host).unicode },
       username: /** @type {Capture} */ (e.capture).username,
       generated: e.generated,
+      incognito: e.incognito,
     }));
   }
 
@@ -856,12 +872,15 @@ export function createOffers({
     /**
      * "Not now" (the offer goes) or "Never for this site" (it goes, so does every offer of that host, and the host joins
      * the list; a private window's choice is kept in memory only). Takes only an offer's id, which no page knows.
-     * @param {string} offerId @param {{ never?: boolean }} [options]
+     * With `uiSession` the offer must be one that popup session was told of (what a click in the popup passes).
+     * @param {string} offerId @param {{ never?: boolean, uiSession?: string }} [options]
+     * @returns {boolean} whether an offer was dismissed
      */
-    dismiss(offerId, { never: forever = false } = {}) {
+    dismiss(offerId, { never: forever = false, uiSession } = {}) {
       sweep();
       const entry = typeof offerId === "string" ? entries.get(offerId) : undefined;
-      if (entry === undefined) return;
+      if (entry === undefined) return false;
+      if (uiSession !== undefined && (typeof uiSession !== "string" || uiSession === "" || !entry.sessions.has(uiSession))) return false;
       const host = entry.host;
       const incognito = entry.incognito;
       drop(entry);
@@ -871,6 +890,7 @@ export function createOffers({
       }
       refreshBadges();
       schedule();
+      return true;
     },
 
     /**

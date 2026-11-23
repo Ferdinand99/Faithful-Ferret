@@ -76,14 +76,15 @@ function fakeBackground({ answer } = {}) {
 /** Every `data-role` below the root, for a quick look at what is shown. @param {any} root @param {string} role */
 const roles = (root, role) => byRole(root, role);
 
-test("the_popup_has_vault_and_generator_tabs_only_with_the_save_feature_on", async () => {
+test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_on_the_generator_too", async () => {
   useDocument();
-  // The test variant: two tabs, the generator's part made only when its tab is first chosen.
+  // The test variant: three items, the generator's part made only when its item is first chosen.
   const on = packageOf((await pkg()).dir);
   const tabsOn = await on.load("pages/popupTabs.mjs");
   const el = (await on.load("shared/dom.mjs")).el;
   const vault = el("div", { "data-role": "vault-list" }, "the vault");
   let made = 0;
+  let settingsOpened = 0;
   const tabs = tabsOn.createPopupTabs({
     texts: on.texts("en"),
     vault,
@@ -91,40 +92,53 @@ test("the_popup_has_vault_and_generator_tabs_only_with_the_save_feature_on", asy
       made += 1;
       return el("section", { "data-role": "generator" });
     },
+    onSettings: () => {
+      settingsOpened += 1;
+    },
   });
   assert.notEqual(tabs.root, vault);
-  assert.deepEqual(roles(tabs.root, "tab-vault").length + roles(tabs.root, "tab-generator").length, 2);
-  const names = [one(tabs.root, "tab-vault"), one(tabs.root, "tab-generator")].map((b) => b?.textContent);
-  assert.deepEqual(names, ["Vault", "Generator"]);
-  assert.equal(one(tabs.root, "tabs")?.getAttribute("role"), "tablist");
+  const names = ["tab-vault", "tab-generator", "tab-settings"].map((role) => one(tabs.root, role)?.textContent);
+  assert.deepEqual(roles(tabs.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-generator", "tab-health", "tab-settings"], "the order of the layout");
+  assert.deepEqual(names, ["Vault", "Generator", "Settings"]);
+  assert.equal(one(tabs.root, "tab-health")?.getAttribute("aria-disabled"), "true", "Health is in the bar, not available yet");
+  assert.equal(one(tabs.root, "tabs")?.tagName, "NAV");
   assert.equal(made, 0, "opening the popup makes no generator");
   assert.equal(tabs.selected(), "vault");
   assert.equal(one(tabs.root, "panel-generator")?.hidden, true);
-  assert.equal(one(tabs.root, "tab-vault")?.getAttribute("aria-selected"), "true");
-  // The generator's tab: its part is made once, shown, and the vault's part is only hidden (still in the page).
+  assert.equal(one(tabs.root, "tab-vault")?.getAttribute("aria-current"), "page");
+  assert.equal(one(tabs.root, "tab-generator")?.hasAttribute("aria-current"), false);
+  // "Health" has no view yet: disabled, tagged, out of the tab order, and a click does nothing.
+  const health = one(tabs.root, "tab-health");
+  assert.equal(health?.getAttribute("tabindex"), "-1");
+  assert.equal(one(health, "tab-soon")?.textContent, "Coming soon");
+  assert.equal(health?.getAttribute("title"), "Coming soon");
+  assert.equal(health?.textContent, "HealthComing soon");
+  await click(health);
+  assert.equal(tabs.selected(), "vault", "a click on Health changes nothing");
+  assert.equal(health?.hasAttribute("aria-current"), false);
+  // The generator's item: its part is made once, shown, and the vault's part is only hidden (still in the page).
   await click(one(tabs.root, "tab-generator"));
   assert.equal(made, 1);
   assert.equal(tabs.selected(), "generator");
   assert.equal(one(tabs.root, "panel-generator")?.hidden, false);
   assert.equal(one(tabs.root, "panel-vault")?.hidden, true);
   assert.equal(roles(tabs.root, "vault-list").length, 1);
-  assert.equal(one(tabs.root, "tab-generator")?.getAttribute("aria-selected"), "true");
-  assert.equal(one(tabs.root, "tab-generator")?.getAttribute("tabindex"), "0");
-  assert.equal(one(tabs.root, "tab-vault")?.getAttribute("tabindex"), "-1");
+  assert.equal(one(tabs.root, "tab-generator")?.getAttribute("aria-current"), "page");
+  assert.equal(one(tabs.root, "tab-vault")?.hasAttribute("aria-current"), false);
   await click(one(tabs.root, "tab-vault"));
   await click(one(tabs.root, "tab-generator"));
   assert.equal(made, 1, "the generator is made once");
-  // The arrows move between the two tabs.
-  const bar = one(tabs.root, "tab-generator");
-  const key = (/** @type {string} */ name) => {
-    for (const [type, fn] of /** @type {any} */ (bar).listeners) if (type === "keydown") fn({ key: name });
-  };
-  key("ArrowLeft");
-  assert.equal(tabs.selected(), "vault");
-  // Every control of the feature carries the mark that the release check looks for.
-  assert.ok(withAttribute(tabs.root, "data-feature").length >= 3);
+  // "Settings" is no part of the popup: it opens the settings page and takes no mark.
+  await click(one(tabs.root, "tab-settings"));
+  assert.equal(settingsOpened, 1);
+  assert.equal(one(tabs.root, "tab-settings")?.hasAttribute("aria-current"), false);
+  assert.equal(tabs.selected(), "generator", "the popup stays on the part it showed");
+  // Every item is a button (operable with the keyboard) with an icon that screen readers skip; only the generator's item and
+  // part carry the mark that the release check looks for.
+  for (const role of ["tab-vault", "tab-generator", "tab-settings"]) assert.equal(one(tabs.root, role)?.tagName, "BUTTON", role);
+  assert.deepEqual(withAttribute(tabs.root, "data-feature").map((n) => n.getAttribute("data-role")), ["tab-generator"]);
 
-  // The release variant: no tab bar, no generator; the popup is the vault list as it was.
+  // The release variant: the bar is Vault and Settings; no generator.
   const env = makeRoot();
   try {
     const release = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: env.out, manifest: "mv2", variant: "release" });
@@ -132,13 +146,27 @@ test("the_popup_has_vault_and_generator_tabs_only_with_the_save_feature_on", asy
     const tabsOff = await off.load("pages/popupTabs.mjs");
     const offVault = el("div", { "data-role": "vault-list" }, "the vault");
     let madeOff = 0;
-    const plain = tabsOff.createPopupTabs({ texts: off.texts("en"), vault: offVault, makeGenerator: () => { madeOff += 1; return el("section"); } });
-    assert.equal(plain.root, offVault, "the vault is all there is");
+    let settingsOff = 0;
+    const plain = tabsOff.createPopupTabs({
+      texts: off.texts("en"),
+      vault: offVault,
+      makeGenerator: () => { madeOff += 1; return el("section"); },
+      onSettings: () => { settingsOff += 1; },
+    });
+    assert.deepEqual(roles(plain.root, "tab-vault").length + roles(plain.root, "tab-settings").length, 2);
+    assert.equal(roles(plain.root, "tab-generator").length, 0);
     assert.deepEqual(withAttribute(plain.root, "data-feature"), []);
-    assert.equal(roles(plain.root, "tabs").length, 0);
+    assert.deepEqual(["tab-vault", "tab-settings"].map((role) => one(plain.root, role)?.textContent), ["Vault", "Settings"]);
+    assert.deepEqual(roles(plain.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-health", "tab-settings"], "Vault, Health (not yet) and Settings");
+    assert.equal(one(plain.root, "tab-health")?.getAttribute("aria-disabled"), "true");
+    await click(one(plain.root, "tab-health"));
+    assert.equal(plain.selected(), "vault");
+    assert.equal(one(plain.root, "tab-vault")?.getAttribute("aria-current"), "page");
     plain.select("generator");
     assert.equal(madeOff, 0);
     assert.equal(plain.selected(), "vault");
+    await click(one(plain.root, "tab-settings"));
+    assert.equal(settingsOff, 1, "settings opens in every build");
     // The view is not made either.
     const viewOff = await off.load("pages/generatorView.mjs");
     assert.equal(viewOff.createGeneratorView({ texts: off.texts("en"), flow: {}, store: {}, tabId: 1 }), null);
@@ -327,4 +355,27 @@ test("every_reason_the_generator_can_give_has_a_text_in_both_languages", async (
   for (const reason of ["not_offered", "origin_changed", "busy", "frame_gone", "no_report", "no_fields", "no_answer", "value_too_long", "wrong_kind", "covered", "frame_hidden", "field_too_short", "insecure_page", "vault_locked"]) {
     assert.ok(mod.ERROR_REASONS.includes(reason), reason);
   }
+});
+
+test("a_partial_fill_that_still_holds_an_offer_tells_the_popup_so_the_card_shows", async () => {
+  useDocument();
+  const pack = packageOf((await pkg()).dir);
+  const mod = await pack.load("pages/generatorView.mjs");
+  /** @type {string[]} */
+  const told = [];
+  // One field took the value and the next was covered: the fill refuses, and the background still holds the offer.
+  const partial = fakeBackground({ answer: (type) => (type === "fill_generated" ? { ok: false, reason: "covered", offer: true } : undefined) });
+  const view = mod.createGeneratorView({ texts: pack.texts("en"), flow: mod.createGeneratorFlow(partial.request), store: mod.createOptionsStore(fakeArea()), tabId: 7, onOffer: () => told.push("offer") });
+  await view.ready;
+  await settle();
+  await click(one(view.root, "fill"));
+  assert.deepEqual(told, ["offer"], "the popup is told of the offer");
+  assert.equal(one(view.root, "generator-status")?.getAttribute("data-tone"), "bad", "the refusal is still shown");
+  // A refusal with no offer does not announce one.
+  const plain = fakeBackground({ answer: (type) => (type === "fill_generated" ? { ok: false, reason: "covered" } : undefined) });
+  const other = mod.createGeneratorView({ texts: pack.texts("en"), flow: mod.createGeneratorFlow(plain.request), store: mod.createOptionsStore(fakeArea()), tabId: 7, onOffer: () => told.push("offer") });
+  await other.ready;
+  await settle();
+  await click(one(other.root, "fill"));
+  assert.deepEqual(told, ["offer"]);
 });

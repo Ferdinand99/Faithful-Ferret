@@ -21,6 +21,10 @@ function buildSection(flow, texts) {
   const state = el("p", { class: "ff-status", "data-role": "capture-state", "data-feature": "save", "aria-live": "polite" });
   const list = el("ul", { class: "ff-list", "data-role": "never-list", "data-feature": "save" });
   const clear = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "ff-button", "data-role": "never-clear", "data-feature": "save" }, texts.t("capture.never.clear")));
+  const autoOpen = /** @type {HTMLButtonElement} */ (
+    el("button", { type: "button", class: "ff-button", role: "switch", "aria-checked": "true", "data-role": "auto-open-switch", "data-feature": "save" }, texts.t("capture.auto_open.switch"))
+  );
+  const autoOpenState = el("p", { class: "ff-status", "data-role": "auto-open-state", "data-feature": "save", "aria-live": "polite" });
 
   /** @param {Awaited<ReturnType<typeof flow.capture.load>>} outcome */
   const render = (outcome) => {
@@ -28,7 +32,12 @@ function buildSection(flow, texts) {
       showError(failure, texts, captureErrorKey(outcome.reason));
       return;
     }
-    const known = /** @type {{ on: boolean, never: string[] }} */ (outcome);
+    const known = /** @type {{ on: boolean, never: string[], autoOpen?: boolean, autoOpenState?: string }} */ (outcome);
+    // The popup that opens by itself: the setting, and what the browser has shown about it.
+    const wantsOpen = known.autoOpen !== false;
+    autoOpen.setAttribute("aria-checked", wantsOpen ? "true" : "false");
+    autoOpen.dataset.on = wantsOpen ? "1" : "0";
+    autoOpenState.textContent = !wantsOpen ? texts.t("capture.auto_open.off") : known.autoOpenState === "fails" ? texts.t("capture.auto_open.fails") : texts.t("capture.auto_open.on");
     toggle.setAttribute("aria-checked", known.on ? "true" : "false");
     toggle.dataset.on = known.on ? "1" : "0";
     state.textContent = texts.t(known.on ? "capture.on" : "capture.off");
@@ -56,6 +65,13 @@ function buildSection(flow, texts) {
       toggle.disabled = false;
     });
   });
+  autoOpen.addEventListener("click", () => {
+    const wasOn = autoOpen.getAttribute("aria-checked") === "true";
+    autoOpen.disabled = true;
+    flow.capture.setAutoOpen(!wasOn).then(render).finally(() => {
+      autoOpen.disabled = false;
+    });
+  });
   list.addEventListener("click", (event) => {
     const target = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target)?.closest?.('[data-role="never-remove"]'));
     const host = target?.getAttribute("data-host");
@@ -74,6 +90,9 @@ function buildSection(flow, texts) {
     state,
     el("p", { class: "ff-hint", "data-role": "capture-reload", "data-feature": "save" }, texts.t("capture.reload")),
     failure,
+    autoOpen,
+    autoOpenState,
+    el("p", { class: "ff-hint", "data-role": "auto-open-hint", "data-feature": "save" }, texts.t("capture.auto_open.hint")),
     el("h3", { "data-feature": "save" }, texts.t("capture.never.title")),
     el("p", { class: "ff-hint", "data-feature": "save" }, texts.t("capture.never.hint")),
     list,

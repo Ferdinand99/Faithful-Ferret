@@ -67,13 +67,16 @@ export const FORBIDDEN_KEYS = Object.freeze([
 /**
  * The only places a forbidden key name is allowed: `fill_field` carries the one
  * value that is filled into a page; the reply of `generate` carries the password or passphrase the core has just made,
- * for the popup to show; and `form_capture` (content script to background) carries what the person typed into the
- * form they submitted, the password and, in a change form, the one in use. Nothing is sent back.
+ * for the popup to show; `offer_reveal` answers with the password of one offer, to the popup session that was told of
+ * it, on the click of "Show" (it is never in a list or a classification); and `form_capture` (content script to
+ * background) carries what the person typed into the form they submitted, the password and, in a change form, the one
+ * in use. Nothing is sent back.
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
   generate: Object.freeze(["value"]),
   form_capture: Object.freeze(["password", "current_password"]),
+  offer_reveal: Object.freeze(["value"]),
 });
 
 /**
@@ -171,6 +174,41 @@ const conflictSide = object(
     device: string({ max: 256 }),
   },
   { optional: ["name", "username", "modified", "device"] },
+);
+
+// An offer to save or update a password, as the popup may see it: a reference good only in the popup's session, the
+// kind of form it came from, the host as the core shows it, the user name (editable on the card) and whether Ferret
+// made the password. Never the password.
+const offerId = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
+const itemId = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
+const revision = integer({ min: 1, max: 1_000_000_000 });
+const offerMeta = object(
+  {
+    offer_id: offerId,
+    kind: string({ max: 16, oneOf: ["login", "signup", "change", "reset"] }),
+    host: displayHost,
+    username: string({ max: 512 }),
+    generated: boolean(),
+    // The offer came from a private window ("Never" is then kept for this browser session only).
+    incognito: boolean(),
+  },
+  { optional: ["username"] },
+);
+// What an offer means for the vault, from the core: save as new, update one item, choose among several, or nothing.
+// Item ids, names, user names and hosts only; never a value of an item.
+const classificationShape = {
+  action: string({ max: 8, oneOf: ["save", "update", "choose", "none"] }),
+  targets: array(object({ id: itemId, rev: revision, name: string({ max: 256 }), username: string({ max: 256 }), how: string({ max: 24 }) }), { max: 32 }),
+  domain_only: array(object({ id: itemId, rev: revision, name: string({ max: 256 }), host: nullable(displayHost) }), { max: 32 }),
+  reused: array(object({ name: string({ max: 256 }), host: nullable(displayHost) }), { max: 3 }),
+  username_from: nullable(string({ max: 16, oneOf: ["typed", "page", "identifier", "fill"] })),
+};
+const classification = object(classificationShape);
+// Which parts of a conflicting item differ between the two versions (the item's own fields by their labels). Names of
+// what differs, never a value; a password or another hidden field is named only as "hidden".
+const conflictDiff = object(
+  { what: string({ max: 16, oneOf: ["name", "username", "urls", "folders", "favorite", "notes", "totp", "hidden", "field"] }), label: string({ max: 256 }) },
+  { optional: ["label"] },
 );
 
 /**
@@ -373,8 +411,8 @@ export const UI_TYPES = defineTypes({
   item_conflict: {
     request: object({ ref }),
     reply: object(
-      { ok: boolean(), reason, mine: conflictSide, theirs: conflictSide },
-      { optional: ["reason", "mine", "theirs"] },
+      { ok: boolean(), reason, mine: conflictSide, theirs: conflictSide, differs: array(conflictDiff, { max: 40 }) },
+      { optional: ["reason", "mine", "theirs", "differs"] },
     ),
   },
   // "Keep mine" or "Keep the server's", against the versions `item_conflict` showed this page last.
@@ -384,6 +422,39 @@ export const UI_TYPES = defineTypes({
   },
   // "Discard the draft" of an item whose change the server refused.
   item_discard: { request: object({ ref }), reply: okReply },
+  // The offers to save or update a password that wait for a tab (the popup's own list; `tab_id` is the page the popup
+  // is about), and `notice`: the reason a shortcut or menu click of the tab was refused, shown once.
+  offer_list: {
+    request: object({ tab_id: tabId }),
+    reply: object({ ok: boolean(), reason, offers: array(offerMeta, { max: 4 }), notice: reason }, { optional: ["reason", "offers", "notice"] }),
+  },
+  // What an offer means for the vault now (the core decides: save, update, choose, none).
+  offer_classify: {
+    request: object({ offer_id: offerId }),
+    reply: object({ ok: boolean(), reason, ...classificationShape }, { optional: ["reason", ...Object.keys(classificationShape)] }),
+  },
+  // The folders of the vault the save card offers.
+  folder_names: { request: empty, reply: object({ ok: boolean(), reason, folders: array(string({ max: 256 }), { max: 500 }) }, { optional: ["reason", "folders"] }) },
+  // "Save": a new item from the offer, with the name, user name and folder the user chose on the card. The password is
+  // the one the background holds; it is never in the message.
+  offer_save: {
+    request: object({ offer_id: offerId, name: string({ max: 512 }), username: string({ max: 512 }), folder: string({ max: 256 }) }, { optional: ["username", "folder"] }),
+    reply: object({ ok: boolean(), reason, pending: boolean(), classification }, { optional: ["reason", "pending", "classification"] }),
+  },
+  // "Update": the new password into one item (`id` and `rev` are those of the classification; `picked`: the user chose
+  // an item that matches by domain only, from the list that names its host).
+  offer_update: {
+    request: object({ offer_id: offerId, id: itemId, rev: revision, picked: boolean() }, { optional: ["picked"] }),
+    reply: object({ ok: boolean(), reason, pending: boolean(), classification }, { optional: ["reason", "pending", "classification"] }),
+  },
+  // "Not now", and "Never for this site".
+  offer_dismiss: { request: object({ offer_id: offerId }), reply: okReply },
+  offer_never: { request: object({ offer_id: offerId }), reply: okReply },
+  // "Show" on the card's password: the value of one offer, to the popup session that was told of it.
+  offer_reveal: {
+    request: object({ offer_id: offerId }),
+    reply: object({ ok: boolean(), reason, value: string({ max: 1024 }) }, { optional: ["reason", "value"] }),
+  },
   // The generator (design document, section 10.2). `generate` asks the core for a new password or passphrase with the
   // options the popup keeps in its own storage, and answers the value with a random `generation_id` under which the
   // background keeps it until the vault locks or 15 minutes have passed (`expires_at`, milliseconds since 1970). With
@@ -448,12 +519,21 @@ export const UI_TYPES = defineTypes({
   // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
   capture_settings: {
     request: object(
-      { enable: boolean(), never_remove: host, never_clear: boolean() },
-      { optional: ["enable", "never_remove", "never_clear"] },
+      { enable: boolean(), never_remove: host, never_clear: boolean(), auto_open: boolean() },
+      { optional: ["enable", "never_remove", "never_clear", "auto_open"] },
     ),
     reply: object(
-      { ok: boolean(), reason, on: boolean(), permission: boolean(), never: array(host, { max: 500 }) },
-      { optional: ["reason"] },
+      {
+        ok: boolean(),
+        reason,
+        on: boolean(),
+        permission: boolean(),
+        never: array(host, { max: 500 }),
+        // "Open the popup by itself" and what the browser has shown about it (`unknown` until it was tried).
+        auto_open: boolean(),
+        auto_open_state: string({ max: 8, oneOf: ["unknown", "works", "fails"] }),
+      },
+      { optional: ["reason", "auto_open", "auto_open_state"] },
     ),
   },
 });

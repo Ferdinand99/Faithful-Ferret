@@ -10,11 +10,22 @@
 //   capture_event     a report of the capture script: the router hands over
 //                     the type, the body and the sender it checked, and nothing
 //                     comes back (a content script is never answered)
-//   capture_settings  "Offer to save passwords" and the never list, from the
-//                     settings page: what is on, whether the permission is
-//                     there, the hosts. A host can be taken off the list or the
-//                     list emptied; the page never sends a host to add (the
-//                     offer's own "Never" does that)
+//   capture_settings  "Offer to save passwords", "Open the popup by itself" and
+//                     the never list, from the settings page: what is on,
+//                     whether the permission is there, the hosts. A host can be
+//                     taken off the list or the list emptied; the page never
+//                     sends a host to add (the offer's own "Never" does that)
+//
+// Three more belong to the offer in Ferret's popup (offerCards.mjs); the router
+// refuses their messages while the vault is locked, and they answer from the
+// store of offers, which only holds what the popup session was told of:
+//
+//   offer_list        the offers that are ready for a tab (host from the core,
+//                     user name, kind; never a password), and the reason of a
+//                     refused shortcut or menu click the tab shows, once
+//   offer_dismiss     "Not now", or "Never for this site" with `never`
+//   offer_reveal      the captured password of one offer, only on the click of
+//                     "Show" in the popup, to the session that was told of it
 //
 // A build without the `save` feature does not make this host at all (main.mjs),
 // and each operation refuses `not_available` before anything else if it is
@@ -32,6 +43,9 @@ import { createCaptureRegistry, createNeverList } from "./captureRegistry.mjs";
 import { fillableFrames } from "./frames.mjs";
 import { frameShownIn } from "./inject.mjs";
 import { createOffers } from "./offers.mjs";
+
+/** A popup session and an offer: 16 bytes in lower-case hex. */
+const HEX32 = /^[0-9a-f]{32}$/;
 
 /** The reports of the capture script the router hands over. */
 const EVENT_TYPES = Object.freeze(["form_capture", "form_gone", "page_ready"]);
@@ -86,13 +100,17 @@ async function frameIsShown(scripting, tabId, frame) {
  *   scripting: any,
  *   permissions: any,
  *   storageLocal: any,
- *   badge?: import("./offers.mjs").Badge | null,
+ *   badge?: (import("./offers.mjs").Badge & {
+ *     refusalFor(tabId: number): string | null, acknowledge(tabId: number): void, forget(tabId: number): void,
+ *     reapply(tabId: number): void, clearAll(): void,
+ *   }) | null,
+ *   autoOpen?: ReturnType<typeof import("./autoOpen.mjs").createAutoOpen> | null,
  *   writer?: import("./offers.mjs").Writer | null,
  *   timers?: import("./offers.mjs").Timers,
- * }} deps `writer` classifies a capture with the vault open (the write path); `badge` sets a tab's count on the toolbar
- *   button
+ * }} deps `writer` classifies a capture with the vault open (the write path); `badge` is the toolbar button's per-tab
+ *   count and refusal mark (badge.mjs); `autoOpen` is the setting and the attempt to open the popup by itself
  */
-export function createCaptureHost({ now, random, webNavigation, tabs, scripting, permissions, storageLocal, badge = null, writer = null, timers }) {
+export function createCaptureHost({ now, random, webNavigation, tabs, scripting, permissions, storageLocal, badge = null, autoOpen = null, writer = null, timers }) {
   /** The core host's `call`, set by `attach`. @type {((op: string, args?: unknown) => Promise<any>) | null} */
   let callCore = null;
   /** @param {string} op @param {unknown} args */
@@ -175,16 +193,22 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
   // What happened in a tab, from the browser: the offers that wait for it are told. Registered now, while the page
   // loads, so the event that woke it is not missed.
   webNavigation.onCommitted?.addListener((/** @type {any} */ d) => {
+    // The browser resets a tab's badge when the tab goes to a new page: paint what the tab should show.
+    if (isIndex(d?.tabId) && d.frameId === 0) badge?.reapply(d.tabId);
     if (isIndex(d?.tabId)) offers.onSignal(d.tabId, { type: "committed", frameId: d.frameId, url: String(d.url ?? ""), ...(typeof d.documentId === "string" ? { documentId: d.documentId } : {}) });
   });
   webNavigation.onCompleted?.addListener((/** @type {any} */ d) => {
+    if (isIndex(d?.tabId) && d.frameId === 0) badge?.reapply(d.tabId);
     if (isIndex(d?.tabId)) offers.onSignal(d.tabId, { type: "completed", frameId: d.frameId, url: String(d.url ?? ""), ...(typeof d.documentId === "string" ? { documentId: d.documentId } : {}) });
   });
   webNavigation.onHistoryStateUpdated?.addListener((/** @type {any} */ d) => {
     if (isIndex(d?.tabId)) offers.onSignal(d.tabId, { type: "history", frameId: d.frameId, url: String(d.url ?? "") });
   });
   tabs.onRemoved?.addListener((/** @type {number} */ tabId) => {
-    if (isIndex(tabId)) offers.clear("tab_closed", { tabId });
+    if (isIndex(tabId)) {
+      offers.clear("tab_closed", { tabId });
+      badge?.forget(tabId);
+    }
   });
   permissions.onRemoved?.addListener((/** @type {any} */ removed) => {
     registry.onRemoved(removed).then((gone) => {
@@ -212,10 +236,15 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     return { ok: true };
   }
 
-  /** @returns {Promise<{ on: boolean, permission: boolean, never: string[] }>} */
+  /** @returns {Promise<{ on: boolean, permission: boolean, never: string[], auto_open?: boolean, auto_open_state?: string }>} */
   async function settingsNow() {
     const status = await registry.status();
-    return { on: status.on && status.registered, permission: status.permission, never: await never.list() };
+    return {
+      on: status.on && status.registered,
+      permission: status.permission,
+      never: await never.list(),
+      ...(autoOpen === null ? {} : { auto_open: await autoOpen.isOn(), auto_open_state: autoOpen.probe() }),
+    };
   }
 
   /** @param {any} args */
@@ -223,6 +252,7 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     saveFeature();
     if (args?.never_clear === true) for (const host of await never.list()) await never.remove(host);
     if (typeof args?.never_remove === "string") await never.remove(args.never_remove);
+    if (typeof args?.auto_open === "boolean") await autoOpen?.setOn(args.auto_open);
     if (typeof args?.enable === "boolean") {
       const outcome = args.enable ? await registry.enable() : await registry.disable();
       const now_ = await settingsNow();
@@ -231,7 +261,48 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     return { ok: true, ...(await settingsNow()) };
   }
 
+  /**
+   * The offers ready for a tab, for the popup session that asks (it is told of each, which is what lets it read and take
+   * them afterwards), and the reason a refused shortcut or menu click left on the tab, once.
+   * @param {any} args
+   */
+  async function offerList(args) {
+    saveFeature();
+    if (!isIndex(args?.tab_id) || typeof args?.session !== "string" || !HEX32.test(args.session)) throw fail("invalid_input");
+    const list = offers.forTab(args.tab_id, args.session);
+    const notice = badge?.refusalFor(args.tab_id) ?? null;
+    if (notice !== null) badge?.acknowledge(args.tab_id);
+    return { ok: true, offers: list, ...(notice !== null ? { notice } : {}) };
+  }
+
+  /**
+   * "Not now" or "Never for this site": only an offer this popup session was told of.
+   * @param {any} args
+   */
+  async function offerDismiss(args) {
+    saveFeature();
+    if (typeof args?.offer_id !== "string" || !HEX32.test(args.offer_id) || typeof args?.session !== "string" || !HEX32.test(args.session)) throw fail("invalid_input");
+    const done = offers.dismiss(args.offer_id, { never: args.never === true, uiSession: args.session });
+    return done ? { ok: true } : { ok: false, reason: "not_offered" };
+  }
+
+  /**
+   * The captured password of an offer, to the popup session that was told of it, on the click of "Show". It is read
+   * where it is held and left there (a copy goes out); nothing keeps it.
+   * @param {any} args
+   */
+  async function offerReveal(args) {
+    saveFeature();
+    if (typeof args?.offer_id !== "string" || !HEX32.test(args.offer_id) || typeof args?.session !== "string" || !HEX32.test(args.session)) throw fail("invalid_input");
+    const capture = offers.peek(args.offer_id, args.session);
+    if (capture === null) return { ok: false, reason: "not_offered" };
+    return { ok: true, value: capture.password };
+  }
+
   const ops = Object.freeze({
+    offer_list: { vault: false, worker: /** @type {const} */ ("none"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => offerList(args) },
+    offer_dismiss: { vault: false, worker: /** @type {const} */ ("none"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => offerDismiss(args) },
+    offer_reveal: { vault: false, worker: /** @type {const} */ ("none"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => offerReveal(args) },
     capture_event: { vault: false, worker: /** @type {const} */ ("none"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => captureEvent(args) },
     capture_settings: { vault: false, worker: /** @type {const} */ ("none"), run: async (/** @type {any} */ _client, /** @type {any} */ args) => captureSettings(args) },
   });
@@ -249,7 +320,10 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
      */
     attach(coreHost) {
       callCore = (op, args) => /** @type {Promise<any>} */ (coreHost.call(op, args));
-      coreHost.onLocked((reason) => offers.clear(reason === "sign_out" ? "sign_out" : reason === "restart" ? "restart" : "lock"));
+      coreHost.onLocked((reason) => {
+        offers.clear(reason === "sign_out" ? "sign_out" : reason === "restart" ? "restart" : "lock");
+        badge?.clearAll();
+      });
       registry.reconcile().catch(() => {});
     },
 

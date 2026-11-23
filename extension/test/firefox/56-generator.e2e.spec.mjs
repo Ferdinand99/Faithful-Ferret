@@ -8,8 +8,9 @@
 //   offers then holds exactly one offer for the tab: a new item (save), marked as generated, for the fixture's origin,
 //   with the typed user name joined to it, and whose password is the one that went into the page (its SHA-256, never
 //   the value). The later capture of the submitted form joined the generated offer; it is not a second one. Nothing is
-//   written to the vault, because nobody clicked a save control. The offers are read through the test bridge's
-//   `offers_peek` (the offer UI's own list is a later step); it never carries a password.
+//   written to the vault, because nobody clicked a save control. The offers are read through the offer UI's own list
+//   (`offer_list` and `offer_classify` on a popup session; the password is compared through "Show", `offer_reveal`, with
+//   the value that is in the page's field).
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { world } from "./adversary.mjs";
@@ -50,14 +51,28 @@ test("generate_fill_and_submit_on_the_sign_up_fixture_gives_one_save_offer", asy
       const result = await captureCase(w, c);
       assert.equal(result.error, undefined, `${channel}: ${result.error}`);
       assert.equal(result.ran.capture, true, channel);
-      const offers = result.observed?.offers ?? [];
-      assert.equal(offers.length, 1, `${channel}: exactly one offer (${JSON.stringify(offers)})`);
-      const [offer] = offers;
-      assert.equal(offer.type, "save", `${channel}: a new item`);
-      assert.equal(offer.origin, new URL(caseUrl(c, server)).origin, `${channel}: the fixture's origin`);
-      assert.equal(offer.generated, true, `${channel}: marked as generated`);
-      assert.equal(offer.username, "anna@example.net", `${channel}: the typed user name joined the generated offer`);
-      assert.equal(offer.password_field, "#pw", `${channel}: the offer's password is the one that went into the new-password field`);
+      // The offers as the popup is told of them: one, a new item, made by Ferret, with the typed user name joined to it.
+      const tabs = await w.fromBridge(() => w.bridge.invoke("tabs.query", {}));
+      const tabId = tabs.reduce((/** @type {{ id: number }} */ a, /** @type {{ id: number }} */ b) => (b.id > a.id ? b : a)).id;
+      await w.ui.open();
+      try {
+        const listed = await w.ui.body("offer_list", { tab_id: tabId });
+        assert.equal(listed.offers.length, 1, `${channel}: exactly one offer (${JSON.stringify(listed)})`);
+        const [offer] = listed.offers;
+        assert.equal(offer.kind, "signup", channel);
+        assert.equal(offer.host.a_label, new URL(caseUrl(c, server)).hostname, `${channel}: the fixture's host`);
+        assert.equal(offer.generated, true, `${channel}: marked as generated`);
+        assert.equal(offer.username, "anna@example.net", `${channel}: the typed user name joined the generated offer`);
+        const classified = await w.ui.body("offer_classify", { offer_id: offer.offer_id });
+        assert.equal(classified.action, "save", `${channel}: a new item`);
+        // The password of the offer is the one that went into the new-password field of the page.
+        const shown = await w.ui.body("offer_reveal", { offer_id: offer.offer_id });
+        assert.ok(shown.value.length >= 8, channel);
+        // It is the one that went into the page's new-password field (the matrix's own check of the typed and generated values).
+        assert.equal(result.observed?.offers[0]?.password_field, "#pw", `${channel}: the offer's password is the one that went into the new-password field`);
+      } finally {
+        await w.ui.close();
+      }
       assert.equal(result.observed?.vault_changed, false, `${channel}: nothing was written without a click`);
       assert.deepEqual(await w.vaultState(), vault, `${channel}: the item list stands still`);
     } finally {

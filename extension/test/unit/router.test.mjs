@@ -248,7 +248,7 @@ test("the_handler_context_has_the_call_and_no_key_or_client", async () => {
   const port = connect(router, extensionPageSender(fake));
   await port.send(requests.candidates());
   const { ctx } = log[0];
-  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "getSeconds", "lock", "sender", "session", "setSeconds", "state", "touch", "type"]);
+  assert.deepEqual(Object.keys(ctx).sort(), ["call", "channel", "getSeconds", "lock", "runtime", "sender", "session", "setSeconds", "state", "touch", "type"]);
   assert.equal(ctx.type, "candidates");
   // The session names this port, and a second port gets another one.
   assert.match(ctx.session, /^[0-9a-f]{32}$/);

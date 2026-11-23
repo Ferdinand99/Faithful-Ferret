@@ -16,6 +16,8 @@ const ALLOWED = {
   "runtime.getPlatformInfo": () => browser.runtime.getPlatformInfo(),
   "permissions.getAll": () => browser.permissions.getAll(),
   "tabs.query": (/** @type {any[]} */ args) => browser.tabs.query(args[0] ?? {}),
+  // What the toolbar button shows on one tab (the badge of the offers).
+  "action.getBadgeText": (/** @type {any[]} */ args) => (browser.action ?? browser.browserAction).getBadgeText({ tabId: args[0]?.tab_id }),
   // What the offers store of the background holds for a tab: the offers' metadata and the SHA-256 of each
   // password, never a password. A build without saving passwords has no store, and says there is nothing to read.
   offers_peek: (/** @type {any[]} */ args) => testCore("offers_peek", { tab_id: args[0]?.tab_id, session: freshSession(), ...(args[0]?.clear === true ? { clear: true } : {}) }).catch(() => ({ available: false, offers: [] })),

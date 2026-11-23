@@ -61,6 +61,7 @@
   "session.server.intro": "Type the address of your Ferret server.",
   "session.server.label": "Server address",
   "session.server.submit": "Continue",
+  "session.settings": "Settings",
   "session.signin.at": "Signing in at",
   "session.signin.submit": "Sign in",
   "session.signin.title": "Sign in to Ferret",

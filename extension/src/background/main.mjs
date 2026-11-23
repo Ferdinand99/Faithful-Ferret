@@ -9,13 +9,17 @@
 // The sync engine stays inside the sync (sync.mjs): the matching and the item
 // operations get its items to read, never the engine.
 // The forms the user submitted are held by the capture host (captureHost.mjs): the store of offers, the registration
-// of the capture script and the setting; only in a build with saving passwords on, and only in memory.
+// of the capture script and the setting; only in a build with saving passwords on, and only in memory. The toolbar
+// button's badge (badge.mjs) shows how many offers a tab has, and the popup opens by itself where that is allowed
+// (autoOpen.mjs).
 // Every listener is registered while the module loads, so the event that woke
 // the page reaches it.
 //
 // The background page starts locked. If it dies, the next start is locked too:
 // the keys lived in the page and went with it.
 
+import { createAutoOpen } from "./autoOpen.mjs";
+import { createBadge } from "./badge.mjs";
 import { createCaptureHost } from "./captureHost.mjs";
 import { createClipboard } from "./clipboard.mjs";
 import { createQuickFill, listenForCommands } from "./commands.mjs";
@@ -79,6 +83,21 @@ const syncHost = createSyncHost({
   ...(hooks?.createEngine ? { createEngine: hooks.createEngine } : {}),
 });
 
+// The popup that opens by itself and the badge on the toolbar button (only with saving passwords). The badge tells the
+// popup's opener when a tab gets its first offer; the opener asks the core host whether the vault is open.
+/** @type {any} */
+let coreHostForOpen = null;
+const autoOpen = FEATURES.save
+  ? createAutoOpen({
+      storageLocal: browser.storage.local,
+      action,
+      tabs: browser.tabs,
+      windows: browser.windows,
+      unlocked: () => coreHostForOpen?.state() === "unlocked",
+    })
+  : null;
+const badge = FEATURES.save ? createBadge({ action, now, onAppear: (tabId) => void autoOpen?.maybeOpen(tabId) }) : null;
+
 captureHost = FEATURES.save
   ? createCaptureHost({
       now,
@@ -88,6 +107,8 @@ captureHost = FEATURES.save
       scripting: browser.scripting,
       permissions: browser.permissions,
       storageLocal: browser.storage.local,
+      badge,
+      autoOpen,
       writer: { classify: (capture) => syncHost.classifyCapture(capture) },
     })
   : null;
@@ -147,6 +168,7 @@ const coreHost = createCoreHost({
   ops: { ...sessionHost.ops, ...syncHost.ops, ...matchHost.ops, ...fillHost.ops, ...(captureHost?.ops ?? {}), ...(generatorHost?.ops ?? {}) },
 });
 coreHostRef = coreHost;
+coreHostForOpen = coreHost;
 sessionHost.attach(coreHost);
 syncHost.attach(coreHost);
 matchHost.attach(coreHost);
@@ -190,6 +212,8 @@ const quickFill = createQuickFill({
   // The fill flow's references of each action end with it.
   sessions: fillHost,
   openPopup: () => action.openPopup(),
+  // A fill the shortcut or the menu tried and that was refused: the badge shows "!" and the popup says why.
+  onRefused: badge === null ? null : (tabId, reason) => badge.refuse(tabId, reason),
   scripting: browser.scripting,
   webNavigation: browser.webNavigation,
 });

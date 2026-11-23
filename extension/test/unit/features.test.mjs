@@ -33,7 +33,7 @@ const SAVE_PATHS = Object.freeze({
   /** Message types of the feature, from a content script and from Ferret's pages. */
   types: Object.freeze([
     "form_capture", "form_gone", "page_ready", "capture_settings",
-    "offer_list", "offer_save", "offer_update", "offer_dismiss", "offer_never",
+    "offer_list", "offer_classify", "folder_names", "offer_save", "offer_update", "offer_dismiss", "offer_never", "offer_reveal",
     "generate", "generate_copy", "fill_generated",
     "sync_items", "item_conflict", "item_resolve", "item_discard",
   ]),
@@ -44,7 +44,7 @@ const SAVE_PATHS = Object.freeze({
    */
   coreOps: Object.freeze(["offer_classify", "offer_save", "offer_update", "folder_names"]),
   /** Core operations of the capture host: the same. */
-  captureOps: Object.freeze(["capture_event", "capture_settings"]),
+  captureOps: Object.freeze(["capture_event", "capture_settings", "offer_list", "offer_dismiss", "offer_reveal"]),
   /** Modules that register the capture script: only code that the feature's own modules import may hold them. */
   registers: /registerContentScripts|capture\.inject\.js/,
   /** The attribute every control of the feature carries, so a page module that builds one is found. */
@@ -118,7 +118,8 @@ async function captureOpsIn(dir) {
       out[name] = "absent";
       continue;
     }
-    out[name] = await op.run({}, { type: "form_gone", sender: { tabId: 1, frameId: 0, url: "https://a.example/" }, body: { capture_id: "c" } }, {}).then(
+    const args = { type: "form_gone", sender: { tabId: 1, frameId: 0, url: "https://a.example/" }, body: { capture_id: "c" }, tab_id: 1, session: "0".repeat(32), offer_id: "0".repeat(32) };
+    out[name] = await op.run({}, args, {}).then(
       () => "served",
       (/** @type {any} */ error) => (error?.code === "not_available" ? "refused" : String(error?.code)),
     );
