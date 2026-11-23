@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>Account aanmaken</title>
+<style>body{font-family:Tahoma,sans-serif;background:#f6f1e9}form{max-width:400px;margin:40px auto;background:#fff;padding:22px}label{display:block;margin-top:12px}input[type=text],input[type=email],input[type=password]{width:100%;padding:8px;box-sizing:border-box}</style></head>
+<body>
+<form id="registratie" method="post" action="#registratie">
+<h1>Maak een account</h1>
+<label for="naam">Volledige naam</label>
+<input type="text" id="naam" name="naam" autocomplete="name">
+<label for="epost">E-mailadres</label>
+<input type="email" id="epost" name="email" autocomplete="email">
+<label for="postcode">Postcode</label>
+<input type="text" id="postcode" name="postcode" autocomplete="postal-code">
+<label for="wachtwoord">Wachtwoord <small>(minimaal 10 tekens)</small></label>
+<input type="password" id="wachtwoord" name="wachtwoord" autocomplete="new-password" minlength="10">
+<label for="herhaal">Herhaal wachtwoord</label>
+<input type="password" id="herhaal" name="wachtwoord2" autocomplete="new-password" minlength="10">
+<label><input type="checkbox" name="nieuwsbrief"> Ja, stuur mij de nieuwsbrief</label>
+<label><input type="checkbox" name="voorwaarden" required> Ik ga akkoord met de voorwaarden</label>
+<button type="submit" id="aanmaken">Account aanmaken</button>
+</form>
+</body></html>

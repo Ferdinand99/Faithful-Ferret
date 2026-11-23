@@ -1,0 +1,6 @@
+{ "id": "ho-cross-action-de", "class": "special", "category": "cross-action", "lang": "de",
+  "host": "forms.example.net", "path": "/ho-cross-action-de/", "frame": null,
+  "steps": [ { "type": "#xu", "text": "greta.vogel@example.net" }, { "type": "#xp", "text": "Auslagerung-Dienst-6612" }, { "click": "#xgo" } ],
+  "expect": { "fill": { "entry": "forms", "fields": { "#xu": "username", "#xp": "password" } },
+              "capture": { "offer": "save", "username": "greta.vogel@example.net", "password_from": "#xp", "origin": "https://forms.example.net" } },
+  "must_stay_empty": [], "fields": {}, "source": "own" }

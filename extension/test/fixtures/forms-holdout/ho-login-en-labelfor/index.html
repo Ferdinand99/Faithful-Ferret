@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in - Brightdesk</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:sans-serif;background:#f4f5f7;margin:0}.nav{background:#234;color:#fff;padding:8px 16px;display:flex;justify-content:space-between}.card{max-width:380px;margin:40px auto;background:#fff;padding:24px;border-radius:6px}.form-group{margin-bottom:14px}.form-control{width:100%;padding:8px;box-sizing:border-box}</style></head>
+<body>
+<header class="nav"><span>Brightdesk</span>
+<form role="search" action="/search" method="get"><input type="search" id="q" name="q" placeholder="Search help articles" aria-label="Search help articles"></form></header>
+<main class="card">
+<h1>Sign in to your account</h1>
+<form id="signin" method="post" action="#signin" novalidate>
+<div class="form-group"><label for="user">Email or username</label>
+<input class="form-control" type="text" id="user" name="user" autocomplete="username"></div>
+<div class="form-group"><label for="pw">Password</label>
+<input class="form-control" type="password" id="pw" name="password" autocomplete="current-password"></div>
+<div class="form-group"><label><input type="checkbox" name="remember"> Keep me signed in</label></div>
+<button type="submit" id="go" class="btn btn-primary">Sign in</button>
+<p><a href="/forgot">Forgot your password?</a></p>
+</form>
+</main>
+<footer class="card"><form action="/newsletter" method="post"><label for="nl">Get product news</label><input type="email" id="nl" name="nl" placeholder="you@example.net"><button type="submit">Subscribe</button></form></footer>
+</body></html>

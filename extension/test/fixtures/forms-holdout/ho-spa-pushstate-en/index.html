@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tasklane</title>
+<style>body{font-family:sans-serif;background:#fff}#root{max-width:360px;margin:60px auto}input{display:block;width:100%;box-sizing:border-box;padding:9px;margin:5px 0 12px}</style></head>
+<body>
+<div id="root"></div>
+<script>
+(function(){
+  var root=document.getElementById('root');
+  function loginView(){
+    root.innerHTML='<h1>Welcome to Tasklane</h1><form id="spa-login" novalidate>'
+     +'<label for="handle">Handle</label><input id="handle" name="handle" type="text" autocomplete="username">'
+     +'<label for="secret">Password</label><input id="secret" name="secret" type="password" autocomplete="current-password">'
+     +'<button id="spa-go" type="submit">Log in</button><p id="err" role="alert"></p></form>';
+    document.getElementById('spa-login').addEventListener('submit', function(e){
+      e.preventDefault();
+      var u=document.getElementById('handle').value, p=document.getElementById('secret').value;
+      setTimeout(function(){
+        if(u && p){ history.pushState({}, '', '#/board'); boardView(u); }
+        else document.getElementById('err').textContent='Missing details';
+      }, 150);
+    });
+  }
+  function boardView(u){
+    root.innerHTML='<h1>Board</h1><p>Hello, <span id="me"></span></p><ul><li>Write docs</li><li>Ship it</li></ul>';
+    document.getElementById('me').textContent=u;
+  }
+  loginView();
+})();
+</script>
+</body></html>

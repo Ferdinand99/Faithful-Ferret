@@ -1,0 +1,6 @@
+{ "id": "ho-login-en-labelfor", "class": "positive", "category": "login", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-login-en-labelfor/", "frame": null,
+  "steps": [ { "type": "#user", "text": "ola" }, { "type": "#pw", "text": "Brightdesk-Nytt-7731" }, { "click": "#go" } ],
+  "expect": { "fill": { "entry": "forms", "fields": { "#user": "username", "#pw": "password" } },
+              "capture": { "offer": "update", "target": "forms", "username": "ola", "password_from": "#pw", "origin": "https://forms.example.net" } },
+  "must_stay_empty": ["#q", "#nl"], "fields": { "#q": "search", "#nl": "newsletter" }, "source": "own" }

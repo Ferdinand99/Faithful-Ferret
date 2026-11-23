@@ -1,0 +1,7 @@
+{ "id": "ho-reset-de-token", "class": "positive", "category": "reset", "lang": "de",
+  "host": "forms.example.net", "path": "/ho-reset-de-token/", "frame": null,
+  "steps": [ { "generate_fill": true }, { "click": "#speichern" } ],
+  "expect": { "fill": null,
+              "generated": { "new": "#neu", "confirm": "#neu2" },
+              "capture": { "offer": "update", "target": "forms", "username": null, "password_from": "#neu", "origin": "https://forms.example.net" } },
+  "must_stay_empty": [], "fields": { "#neu": "new_password", "#neu2": "new_password" }, "source": "own" }

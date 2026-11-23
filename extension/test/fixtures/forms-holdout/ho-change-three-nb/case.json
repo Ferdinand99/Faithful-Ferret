@@ -1,0 +1,7 @@
+{ "id": "ho-change-three-nb", "class": "positive", "category": "change", "lang": "nb",
+  "host": "forms.example.net", "path": "/ho-change-three-nb/", "frame": null,
+  "steps": [ { "ferret_fill": true }, { "type": "#nytt", "text": "Elgtopp-Vinter-6618" }, { "type": "#nytt2", "text": "Elgtopp-Vinter-6618" }, { "click": "#lagre" } ],
+  "expect": { "fill": { "entry": "forms", "fields": { "#gammelt": "password" } },
+              "generated": { "new": "#nytt", "confirm": "#nytt2" },
+              "capture": { "offer": "update", "target": "forms", "username": null, "password_from": "#nytt", "origin": "https://forms.example.net" } },
+  "must_stay_empty": ["#nytt", "#nytt2"], "fields": { "#nytt": "new_password", "#nytt2": "new_password" }, "source": "own" }

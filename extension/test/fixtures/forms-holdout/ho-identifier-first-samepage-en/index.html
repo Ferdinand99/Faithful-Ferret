@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Log in</title>
+<style>body{font-family:Helvetica,Arial;background:#fff;margin:0}.box{width:340px;margin:70px auto;border:1px solid #ddd;padding:24px}input{width:100%;padding:10px;box-sizing:border-box;margin:6px 0 12px}.step[hidden]{display:none}</style></head>
+<body>
+<div class="box">
+<h1 id="title">Log in</h1>
+<form id="flow" method="post" action="#flow" novalidate>
+  <div class="step" id="step-1">
+    <label for="email">Email address</label>
+    <input type="email" id="email" name="identifier" autocomplete="username webauthn">
+    <button type="button" id="next">Continue</button>
+  </div>
+  <div class="step" id="step-2" hidden>
+    <p>Signing in as <strong id="who"></strong> <a href="#" id="back">Not you?</a></p>
+    <label for="pw">Password</label>
+    <input type="password" id="pw" name="password" autocomplete="current-password">
+    <button type="submit" id="signin">Log in</button>
+  </div>
+</form>
+</div>
+<script>
+(function(){
+  var s1=document.getElementById('step-1'), s2=document.getElementById('step-2');
+  document.getElementById('next').addEventListener('click', function(){
+    document.getElementById('who').textContent=document.getElementById('email').value;
+    s1.hidden=true; s2.hidden=false;
+    setTimeout(function(){ document.getElementById('pw').focus(); }, 50);
+  });
+  document.getElementById('back').addEventListener('click', function(e){
+    e.preventDefault(); s2.hidden=true; s1.hidden=false;
+  });
+  document.getElementById('flow').addEventListener('submit', function(e){ e.preventDefault(); });
+})();
+</script>
+</body></html>

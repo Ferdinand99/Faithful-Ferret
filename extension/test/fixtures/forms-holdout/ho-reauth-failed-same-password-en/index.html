@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Confirm it is you</title>
+<style>body{font-family:sans-serif;max-width:380px;margin:60px auto}input{display:block;width:100%;box-sizing:border-box;padding:8px;margin:4px 0 12px}.warn{background:#fff4d6;padding:10px}</style></head>
+<body>
+<h1>Confirm your password</h1>
+<p class="warn">You are about to delete your workspace. For your security, enter your password again to continue.</p>
+<form id="reauth" method="post" action="#reauth">
+<input type="text" id="who" name="login" value="ola" readonly autocomplete="username" aria-label="Signed in as">
+<label for="again">Password</label>
+<input type="password" id="again" name="password" autocomplete="current-password">
+<button type="submit" id="confirm">Confirm and continue</button>
+<a href="/workspace">Cancel</a>
+</form>
+</body></html>

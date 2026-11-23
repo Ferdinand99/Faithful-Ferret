@@ -1,0 +1,6 @@
+{ "id": "ho-otp-split-en", "class": "positive", "category": "otp", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-otp-split-en/", "frame": null,
+  "steps": [],
+  "expect": { "fill": { "entry": "forms", "fields": { "#c1": "totp:1", "#c2": "totp:2", "#c3": "totp:3", "#c4": "totp:4", "#c5": "totp:5", "#c6": "totp:6" } },
+              "capture": null },
+  "must_stay_empty": [], "fields": { "#c1": "otp_digit", "#c2": "otp_digit", "#c3": "otp_digit", "#c4": "otp_digit", "#c5": "otp_digit", "#c6": "otp_digit" }, "source": "own" }

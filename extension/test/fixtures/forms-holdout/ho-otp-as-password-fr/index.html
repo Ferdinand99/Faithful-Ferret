@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Vérification par SMS</title>
+<style>body{font-family:Arial;max-width:360px;margin:70px auto}input{width:100%;padding:12px;box-sizing:border-box;font-size:20px}</style></head>
+<body>
+<h1>Vérifiez votre identité</h1>
+<p>Nous avons envoyé un code à usage unique par SMS au numéro se terminant par 42.</p>
+<form id="sms" method="post" action="#sms">
+<label for="sms-code">Code reçu par SMS</label>
+<input type="password" id="sms-code" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+<p><button type="submit" id="valider">Valider</button></p>
+<p><a href="#renvoyer">Renvoyer le code</a></p>
+</form>
+</body></html>

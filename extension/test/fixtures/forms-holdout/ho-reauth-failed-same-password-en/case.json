@@ -1,0 +1,5 @@
+{ "id": "ho-reauth-failed-same-password-en", "class": "negative", "category": "reauth-failed", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-reauth-failed-same-password-en/", "frame": null,
+  "steps": [ { "type": "#again", "text": "{{password:forms}}" }, { "click": "#confirm" } ],
+  "expect": { "fill": { "entry": "forms", "fields": { "#again": "password" } }, "allow": ["#who"], "no_offer": true },
+  "must_stay_empty": [], "fields": {}, "source": "own" }

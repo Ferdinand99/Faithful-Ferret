@@ -1,0 +1,7 @@
+{ "id": "ho-identifier-first-samepage-en", "class": "positive", "category": "identifier-first", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-identifier-first-samepage-en/", "frame": null,
+  "steps": [ { "type": "#email", "text": "ola" }, { "click": "#next" }, { "wait": 300 }, { "type": "#pw", "text": "Lighthouse-Two-Step-90" }, { "click": "#signin" } ],
+  "expect": { "fill": null,
+              "allow": ["#email", "#pw"],
+              "capture": { "offer": "update", "target": "forms", "username": "ola", "password_from": "#pw", "origin": "https://forms.example.net" } },
+  "must_stay_empty": [], "fields": {}, "source": "own" }

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Portal-Anmeldung</title>
+<style>body{font-family:Arial;background:#fdfdfd}</style></head>
+<body>
+<main>
+<h1>Mitarbeiterportal</h1>
+<x-login>
+  <input slot="benutzer" id="mitarbeiter" type="text" name="mitarbeiter" placeholder="Personalnummer oder E-Mail" aria-label="Personalnummer oder E-Mail" autocomplete="username">
+</x-login>
+</main>
+<script>
+(function(){
+  class XLogin extends HTMLElement {
+    constructor(){
+      super();
+      var r=this.attachShadow({mode:'open'});
+      r.innerHTML='<style>.w{max-width:340px;padding:16px;border:1px solid #ccc}input{width:100%;box-sizing:border-box;padding:8px;margin:6px 0}</style>'
+        +'<div class="w"><slot name="benutzer"></slot>'
+        +'<input id="geheim" type="password" placeholder="Passwort" aria-label="Passwort" autocomplete="current-password">'
+        +'<button id="senden" type="button">Einloggen</button><span id="hinweis"></span></div>';
+      var self=this;
+      r.getElementById('senden').addEventListener('click', function(){
+        var u=self.querySelector('input').value, p=r.getElementById('geheim').value;
+        fetch('login', {method:'POST', body:new URLSearchParams({u:u,p:p})}).catch(function(){});
+        r.getElementById('hinweis').textContent=' ...';
+      });
+    }
+  }
+  customElements.define('x-login', XLogin);
+})();
+</script>
+</body></html>

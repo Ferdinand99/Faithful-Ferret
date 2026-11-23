@@ -1,0 +1,5 @@
+{ "id": "ho-planted-autosubmit-en", "class": "negative", "category": "planted", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-planted-autosubmit-en/", "frame": null,
+  "steps": [ { "wait": 900 } ],
+  "expect": { "fill": null, "no_offer": true },
+  "must_stay_empty": [], "fields": {}, "source": "own" }

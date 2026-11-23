@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Contact us</title>
+<style>body{font-family:sans-serif;max-width:480px;margin:40px auto}input,textarea{display:block;width:100%;box-sizing:border-box;padding:7px;margin:4px 0 10px}
+.hp{position:absolute;left:-9999px;top:-9999px}.gone{display:none}.invisible{visibility:hidden;height:0}</style></head>
+<body>
+<h1>Contact support</h1>
+<form id="contact" action="/contact" method="post">
+  <label for="cname">Your name</label><input id="cname" name="name" type="text">
+  <label for="cmsg">Message</label><textarea id="cmsg" name="message" rows="4"></textarea>
+
+  <div class="gone"><input id="h-user" type="text" name="username" autocomplete="username"><input id="h-pass" type="password" name="password" autocomplete="current-password"></div>
+  <div class="invisible"><input id="h-user2" type="text" name="login" autocomplete="username"><input id="h-pass2" type="password" name="pass" autocomplete="current-password"></div>
+  <div aria-hidden="true" style="height:0;overflow:hidden"><input id="h-pass3" type="password" name="pwd" tabindex="-1" autocomplete="current-password"></div>
+  <div class="hp"><label for="website">Leave this field empty</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+  <input id="h-user4" name="user4" type="text" autocomplete="username"><input id="h-pass4" name="pass4" type="password" autocomplete="current-password"></div>
+  <input id="h-hidden" type="hidden" name="csrf" value="x1">
+  <button type="submit" id="sendmsg">Send message</button>
+</form>
+</body></html>

@@ -1,0 +1,6 @@
+{ "id": "ho-otp-single-nl", "class": "positive", "category": "otp", "lang": "nl",
+  "host": "forms.example.net", "path": "/ho-otp-single-nl/", "frame": null,
+  "steps": [],
+  "expect": { "fill": { "entry": "forms", "fields": { "#code": "totp" } },
+              "capture": null },
+  "must_stay_empty": [], "fields": { "#code": "otp" }, "source": "own" }

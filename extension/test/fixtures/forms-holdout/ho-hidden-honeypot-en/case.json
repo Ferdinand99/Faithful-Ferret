@@ -1,0 +1,5 @@
+{ "id": "ho-hidden-honeypot-en", "class": "negative", "category": "hidden", "lang": "en",
+  "host": "forms.example.net", "path": "/ho-hidden-honeypot-en/", "frame": null,
+  "steps": [ { "type": "#cname", "text": "ola" }, { "type": "#cmsg", "text": "Hello, I have a question." }, { "click": "#sendmsg" } ],
+  "expect": { "fill": null, "no_offer": true },
+  "must_stay_empty": ["#h-user", "#h-pass", "#h-user2", "#h-pass2", "#h-pass3", "#website", "#h-user4", "#h-pass4", "#cname", "#cmsg"], "fields": {}, "source": "own" }

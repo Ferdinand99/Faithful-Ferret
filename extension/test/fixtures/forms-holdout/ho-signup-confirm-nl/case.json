@@ -1,0 +1,7 @@
+{ "id": "ho-signup-confirm-nl", "class": "positive", "category": "signup", "lang": "nl",
+  "host": "forms.example.net", "path": "/ho-signup-confirm-nl/", "frame": null,
+  "steps": [ { "type": "#naam", "text": "Sanne Jansen" }, { "type": "#epost", "text": "sanne.jansen@example.net" }, { "type": "#postcode", "text": "1011AB" }, { "generate_fill": true }, { "click": "#aanmaken" } ],
+  "expect": { "fill": null,
+              "generated": { "new": "#wachtwoord", "confirm": "#herhaal" },
+              "capture": { "offer": "save", "username": "sanne.jansen@example.net", "password_from": "#wachtwoord", "origin": "https://forms.example.net" } },
+  "must_stay_empty": ["#postcode", "#naam"], "fields": { "#wachtwoord": "new_password", "#herhaal": "new_password" }, "source": "own" }
