@@ -13,7 +13,7 @@ export const CAPTURE_ORIGINS = Object.freeze(["https://*/*"]);
 export const CAPTURE_SCRIPT_ID = "ferret-capture";
 
 /** The capture script in the package (written by the build; a release has none while saving is off). */
-export const CAPTURE_SCRIPT_FILE = "content/capture.inject.js";
+export const CAPTURE_SCRIPT_FILE = "/content/capture.inject.js";
 
 /** The most hosts the "never" list keeps. */
 export const MAX_NEVER = 500;

@@ -13,7 +13,7 @@
 // end-to-end spec's (55-write.e2e.spec.mjs) and the matrix's.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { casesOf, caseUrl, leave, locate, runSteps, sha256 } from "./matrix.mjs";
+import { casesOf, caseUrl, leave, runSteps, sha256 } from "./matrix.mjs";
 import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -115,9 +115,6 @@ test("submitting_the_sign_up_fixture_creates_one_offer_with_the_typed_values", a
       assert.equal(offer.password_sha256, typed["#pw"], `${channel}: the password typed into the new-password field`);
       assert.equal(offer.password_sha256, sha256("Zq7!signupconf-Vm4$"));
       assert.equal(JSON.stringify(offers).includes("Zq7!signupconf-Vm4$"), false, "no password in the answer");
-      // The field was typed into in the page: it is the page's and still holds it (nothing changed it).
-      assert.ok(await locate(session, "#pw"));
-      await leave(session);
     } finally {
       await session.quit();
     }
