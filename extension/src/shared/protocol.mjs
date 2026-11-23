@@ -54,6 +54,7 @@ export const FORBIDDEN_KEYS = Object.freeze([
   "secret",
   "totp_secret",
   "vk",
+  "current_password",
 ]);
 
 /**
@@ -62,6 +63,8 @@ export const FORBIDDEN_KEYS = Object.freeze([
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
+  // The one message from a content script that carries a secret: what the user typed into a form they submitted.
+  form_capture: Object.freeze(["password", "current_password"]),
 });
 
 /**
@@ -375,6 +378,19 @@ export const UI_TYPES = defineTypes({
     ),
     reply: object({ lock_seconds: integer({ min: LOCK_CHOICES[0], max: LOCK_CHOICES[LOCK_CHOICES.length - 1] }) }),
   },
+  // "Offer to save passwords" and the never list, from the settings page. `enable` follows the page's own request for
+  // the permission for https pages (the background checks it again); `never_remove` takes one host off the list and
+  // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
+  capture_settings: {
+    request: object(
+      { enable: boolean(), never_remove: host, never_clear: boolean() },
+      { optional: ["enable", "never_remove", "never_clear"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, on: boolean(), permission: boolean(), never: array(host, { max: 500 }) },
+      { optional: ["reason"] },
+    ),
+  },
 });
 
 /** Content script to background. A content script only reports; it never asks. */
@@ -401,6 +417,26 @@ export const CONTENT_TYPES = defineTypes({
       { optional: ["reason"] },
     ),
   },
+  // A form the user submitted (design document, section 10.9). The origin is the browser's, never this message's;
+  // `self_origin` only narrows. An absent key is "none": no user name, no password of that kind. Nothing is sent back.
+  form_capture: {
+    request: object(
+      {
+        capture_id: requestId,
+        self_origin: origin,
+        kind: string({ max: 16, oneOf: ["login", "signup", "change", "reset", "identifier"] }),
+        username: string({ max: 512 }),
+        username_from: string({ max: 8, oneOf: ["typed", "page"] }),
+        password: string({ max: 1024 }),
+        current_password: string({ max: 1024 }),
+      },
+      { optional: ["username", "username_from", "password", "current_password"] },
+    ),
+  },
+  // The form of a capture is gone from its page.
+  form_gone: { request: object({ capture_id: requestId }) },
+  // The page shows a password field.
+  page_ready: { request: object({}) },
 });
 
 /** Background to one content script. */

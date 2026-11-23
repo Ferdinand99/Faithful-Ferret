@@ -114,7 +114,9 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     for (const key of keysOf(schema)) {
       const where = `${channel}/${type} ${direction}: ${key}`;
       if (allowed.has(key)) {
-        assert.equal(channel, "push", `${where}: only the push type carries a value`);
+        // The push type carries the one value of a fill; the capture of a submitted form carries what was typed, up.
+        const ok = (channel === "push" && type === "fill_field") || (channel === "content" && type === "form_capture" && direction === "request");
+        assert.ok(ok, `${where}: only the push type and the capture carry a value`);
         continue;
       }
       assert.ok(!FORBIDDEN_KEYS.includes(key), `${where}: forbidden key`);
@@ -133,7 +135,7 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     [...seenTyped].sort(),
     ["sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
-  assert.deepEqual(FORBIDDEN_KEYS, ["password", "value", "secret", "totp_secret", "vk"]);
+  assert.deepEqual(FORBIDDEN_KEYS, ["password", "value", "secret", "totp_secret", "vk", "current_password"]);
 
   // And the decoder refuses them where they are not in the schema.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) =>
