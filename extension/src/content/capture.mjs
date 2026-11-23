@@ -56,7 +56,7 @@
 const RECHECK = [700, 1500, 3000, 4900];
 const MAX_USER = 512;
 const MAX_PASSWORD = 1024;
-/** One capture per frame in this many milliseconds. */
+/** One capture per frame, and one identifier step per frame, in this many milliseconds. */
 const MIN_GAP = 2000;
 /** The smallest side of a field that counts as shown (as in the fill engine). */
 const MIN_SIDE = 8;

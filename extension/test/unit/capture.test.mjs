@@ -432,6 +432,34 @@ test("a_form_the_page_hides_in_its_own_submit_handler_is_captured", () => {
     assert.deepEqual(captures(world).map((c) => [c.kind, c.username, c.username_from, c.password]), [["login", "anna", "typed", PASSWORD]], label);
   }
 
+  // A page that reveals a decoy password field with a value of its own in its submit handler, and hides the real one: the
+  // roles were given at the trigger, so the typed password is the one sent (a login), and a sign-up is not a join request.
+  const decoyLogin = createWorld();
+  const dl = loginForm(decoyLogin);
+  const trap = addInput(decoyLogin.document, dl.form, { type: "password", name: "password", id: "trap" }, { top: 220 });
+  trap.style.display = "none";
+  trap.value = "decoy-from-the-page";
+  dl.form.addEventListener("submit", () => { trap.style.display = "block"; dl.pass.style.display = "none"; });
+  decoyLogin.start();
+  decoyLogin.type(dl.user, "anna");
+  decoyLogin.type(dl.pass, PASSWORD);
+  decoyLogin.submit(dl.form);
+  decoyLogin.settle();
+  assert.deepEqual(captures(decoyLogin).map((m) => [m.kind, m.password]), [["login", PASSWORD]], "a decoy revealed in a login");
+  const decoySignup = createWorld();
+  const ds = signupForm(decoySignup);
+  const spare = addInput(decoySignup.document, ds.form, { type: "password", name: "extra", id: "spare", autocomplete: "new-password" }, { top: 280 });
+  spare.style.display = "none";
+  spare.value = "decoy-from-the-page";
+  ds.form.addEventListener("submit", () => { spare.style.display = "block"; ds.fresh.style.display = "none"; ds.again.style.display = "none"; });
+  decoySignup.start();
+  decoySignup.type(ds.user, "anna");
+  decoySignup.type(ds.fresh, PASSWORD);
+  decoySignup.type(ds.again, PASSWORD);
+  decoySignup.submit(ds.form);
+  decoySignup.settle();
+  assert.deepEqual(captures(decoySignup).map((m) => [m.kind, m.password]), [["signup", PASSWORD]], "a decoy revealed in a sign-up");
+
   // The click on the button hides the form (a page that handles the click itself), and so does a key handler.
   const clicked = createWorld();
   const c = loginForm(clicked);
@@ -566,6 +594,37 @@ test("an_identifier_step_hidden_by_its_own_next_click_is_captured", () => {
   same.click(go);
   same.settle();
   assert.deepEqual(captures(same).map((c) => [c.kind, c.password]), [["identifier", null], ["login", PASSWORD]]);
+
+  // The gap is per kind: a second step that asks for the name within two seconds gives nothing, a second form capture
+  // within two seconds gives nothing, and each is free again after two seconds.
+  const twice = createWorld();
+  const t = loginForm(twice);
+  const idForm = twice.document.body.append(twice.document.createElement("form", { id: "identify" }));
+  addText(twice.document, idForm, "h1", "Sign in");
+  const who2 = addInput(twice.document, idForm, { type: "text", name: "identifier", autocomplete: "username" }, { top: 400 });
+  who2.form = idForm;
+  const next2 = addText(twice.document, idForm, "button", "Next", { type: "submit" });
+  next2.form = idForm;
+  twice.start();
+  twice.type(who2, "anna@example.net");
+  twice.submit(idForm);
+  twice.settle();
+  twice.clock.advance(300);
+  twice.submit(idForm);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier"], "two identifier steps within two seconds");
+  twice.type(t.user, "anna");
+  twice.type(t.pass, PASSWORD);
+  twice.submit(t.form);
+  twice.settle();
+  twice.clock.advance(300);
+  twice.submit(t.form);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier", "login"], "a login right after an identifier step, and not twice");
+  twice.clock.advance(2001);
+  twice.submit(idForm);
+  twice.settle();
+  assert.deepEqual(captures(twice).map((c) => c.kind), ["identifier", "login", "identifier"], "an identifier step is free after two seconds");
 
   // A name the page put there is still no step, even when the page hides the step in its own handler.
   const quiet = createWorld();
