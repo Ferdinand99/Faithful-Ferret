@@ -145,8 +145,17 @@ test("a_start_leaves_the_current_registration_alone_and_replaces_a_stale_one", a
   w.state.definitions[w.state.definitions.length - 1] = { ...held, js: [CAPTURE_SCRIPT_FILE.replace(/^\//, "")] };
   await w.registry.reconcile();
   assert.deepEqual(w.state.calls, ["register"], "a leading slash is the same file");
+  // Defaults a browser may report are the same registration.
+  for (const same of [{ world: "ISOLATED" }, { excludeMatches: [] }, { matchOriginAsFallback: false }]) {
+    const v = browserWorld({ granted: true });
+    await v.registry.enable();
+    v.state.definitions[v.state.definitions.length - 1] = { ...v.state.definitions.at(-1), ...same };
+    v.state.calls.length = 0;
+    await v.registry.reconcile();
+    assert.deepEqual(v.state.calls, [], `kept: ${JSON.stringify(same)}`);
+  }
   // A registration of an earlier version (another file, no frames, another run time, not kept across sessions) is replaced.
-  for (const stale of [{ js: ["content/old.js"] }, { allFrames: false }, { runAt: "document_start" }, { persistAcrossSessions: false }, { matches: ["https://example.net/*"] }, {}]) {
+  for (const stale of [{ js: ["content/old.js"] }, { allFrames: false }, { runAt: "document_start" }, { persistAcrossSessions: false }, { matches: ["https://example.net/*"] }, { excludeMatches: ["https://vault.example.net/*"] }, { matchOriginAsFallback: true }, { world: "MAIN" }, { css: ["x.css"] }, {}]) {
     const v = browserWorld({ granted: true });
     await v.registry.enable();
     v.state.definitions[v.state.definitions.length - 1] = Object.keys(stale).length === 0 ? { id: CAPTURE_SCRIPT_ID } : { ...v.state.definitions.at(-1), ...stale };

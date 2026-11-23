@@ -296,12 +296,12 @@ const UNFILLABLE_TYPES = new Set(["radio", "checkbox", "button", "submit", "rese
  * @returns {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>}
  */
 export function fillsIn(allRows, key, password, codes) {
-  // A radio button, a check box or a button has a value the page gave it (the "1" and "5" of a rating): nothing can be filled
-  // into it, and its value must not be mistaken for a digit of a code.
+  // A radio button, a check box or a button has a value the page gave it (the "1" and "5" of a rating): it is not mistaken for a
+  // digit of a code (the split-code scans below), but a whole password, user name or code in any input is still a fill.
   const rows = allRows.filter((r) => !UNFILLABLE_TYPES.has(r.type));
   /** @type {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>} */
   const out = [];
-  for (const input of rows) {
+  for (const input of allRows) {
     if (input.value === "") continue;
     if (input.value === password) out.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
     else if (input.value === VAULT_USERNAME) out.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });

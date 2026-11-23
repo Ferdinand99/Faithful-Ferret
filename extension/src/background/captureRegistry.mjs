@@ -183,9 +183,18 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
    */
   const current = (held) => {
     const want = /** @type {Record<string, any>} */ (definition());
-    const names = (/** @type {unknown} */ list) => (Array.isArray(list) ? JSON.stringify(list.map((x) => String(x).replace(/^\//, "")).sort()) : null);
-    return names(held.js) === names(want.js) && names(held.matches) === names(want.matches) &&
-      held.allFrames === want.allFrames && held.runAt === want.runAt && held.persistAcrossSessions === want.persistAcrossSessions;
+    // Lists compare as sets of names without a leading slash; anything else as it is.
+    const norm = (/** @type {unknown} */ v) => (Array.isArray(v) ? JSON.stringify(v.map((x) => String(x).replace(/^\//, "")).sort()) : v);
+    for (const key of Object.keys(want)) if (key !== "id" && norm(held[key]) !== norm(want[key])) return false;
+    // What the definition does not name must be absent or its default: a registration that also excludes matches, adds styles, matches
+    // by origin fallback or runs in the page's own world is not the one this module makes.
+    for (const key of ["excludeMatches", "excludeJs", "css", "matchOriginAsFallback", "world"]) {
+      if (key in want) continue;
+      const v = held[key];
+      if (v === undefined || v === null || v === false || (Array.isArray(v) && v.length === 0) || (key === "world" && v === "ISOLATED")) continue;
+      return false;
+    }
+    return true;
   };
 
   const unregister = async () => {
