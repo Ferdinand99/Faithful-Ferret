@@ -45,10 +45,11 @@
 #                                 as many); their reports are unpacked into
 #                                 $FERRET_EXT_OUT_DIR/gate-matrix/<set>/<channel>/.
 #                                 Fails if any step fails.
-#   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout] [--grep <case id>] [--headed] [--no-up]
+#   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>] [--headed] [--no-up]
 #                                 the detection matrix: the extension, signed in to the end-to-end
 #                                 stack (as for e2e), against the corpus of extension/test/fixtures/forms
-#                                 (--set holdout: forms-holdout/): the fill phase tries every case, the
+#                                 (--set holdout: forms-holdout/; --set parity: forms-parity/, the own-written
+#                                 autofill-parity suite, reported on its own in u2-matrix-parity/): the fill phase tries every case, the
 #                                 capture phase types what a person types and reads the offers. The default
 #                                 manifest is mv2, the Firefox build. --grep keeps the cases whose id
 #                                 contains the text. The reports (<channel>-<manifest>.json and matrix.md)
@@ -130,7 +131,7 @@ usage() {
   echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | measure [options]" >&2
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  (e2e only: --no-up)" >&2
   echo "  options of gate: --channel release|esr  --manifest mv3|mv2" >&2
-  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout  --grep <case id>  --headed  --no-up" >&2
+  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N" >&2
   exit 2
 }
@@ -168,7 +169,7 @@ done
 case "$channel" in "" | release | esr) ;; *) usage ;; esac
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
 case "$matrix_part" in fill | capture | all) ;; *) usage ;; esac
-case "$matrix_set" in corpus | holdout) ;; *) usage ;; esac
+case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
 # A case id is lower case letters, digits and dashes; the text goes into the container's environment.
 case_re='^[a-z0-9-]{0,80}$'
 if [ "$mode" = matrix ] && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
@@ -482,7 +483,9 @@ if [ "$mode" = matrix ]; then
   if [ -s "$work/matrix.tar" ]; then
     tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || rc=$?
   fi
-  echo "lanbox-ext.sh: matrix: the reports are in $out_dir/u2-matrix/ (exit status $rc)" >&2
+  report_dir=u2-matrix
+  if [ "$matrix_set" = parity ]; then report_dir=u2-matrix-parity; fi
+  echo "lanbox-ext.sh: matrix: the reports are in $out_dir/$report_dir/ (exit status $rc)" >&2
   exit "$rc"
 fi
 

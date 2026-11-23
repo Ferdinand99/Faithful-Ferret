@@ -1,0 +1,35 @@
+{
+  "id": "ap-harmless-identity-aria-expanded",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-identity-aria-expanded/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#name",
+      "text": "Anna Hansen"
+    },
+    {
+      "type": "#street",
+      "text": "Harbour"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#name",
+    "#street",
+    "#city"
+  ],
+  "fields": {},
+  "source": "own"
+}

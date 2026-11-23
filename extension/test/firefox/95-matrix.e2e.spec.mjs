@@ -7,7 +7,7 @@
 //   If they are not, this fails and the matrix test is skipped: there is no way round it in the test build.
 // - matrix_fill_phase_runs_every_case_and_writes_the_baseline: every case, in the phases FERRET_MATRIX_PART names
 //   (fill, capture or all; the capture phase needs the extension's offers and counts as not run until it has them),
-//   over FERRET_MATRIX_SET (corpus or holdout), the cases whose id contains FERRET_MATRIX_GREP. The report is
+//   over FERRET_MATRIX_SET (corpus, holdout or parity, the own-written autofill-parity suite), the cases whose id contains FERRET_MATRIX_GREP. The report is
 //   what this test produces; it does not demand that the gate is met (the extension has to learn the cases first).
 // - matrix_fill_rate_is_at_least_the_baseline: on a run of the whole corpus with the fill phase, in each channel, the
 //   fill phase ran every positive case with a fill (the one-time-code cases too), filled at least as many of them as
@@ -34,10 +34,10 @@ import { computeMatrix, writeReport } from "./matrixReport.mjs";
 
 after(() => stopFixtures());
 
-const SET = process.env.FERRET_MATRIX_SET === "holdout" ? "holdout" : "corpus";
+const SET = /** @type {"corpus" | "holdout" | "parity"} */ (["holdout", "parity"].includes(process.env.FERRET_MATRIX_SET ?? "") ? process.env.FERRET_MATRIX_SET : "corpus");
 const PART = /** @type {"fill" | "capture" | "all"} */ (["fill", "capture", "all"].includes(process.env.FERRET_MATRIX_PART ?? "") ? process.env.FERRET_MATRIX_PART : "all");
 const GREP = process.env.FERRET_MATRIX_GREP ?? "";
-const OUT = process.env.FERRET_MATRIX_OUT ?? join(tmpdir(), "ferret-u2-matrix");
+const OUT = process.env.FERRET_MATRIX_OUT ?? join(tmpdir(), SET === "parity" ? "ferret-u2-matrix-parity" : "ferret-u2-matrix");
 /** Set by the self-test when WebDriver's key events are trusted in every channel; the matrix test needs it. */
 let trustedKeys = false;
 /**
@@ -260,7 +260,8 @@ test("matrix_has_zero_unsafe_fills_and_zero_unsafe_offers", () => {
     assert.ok(m, `${channel}: the matrix ran`);
     assert.deepEqual(m.unsafeFills.map((x) => `${x.id}: ${x.reason}${x.field ? ` in ${x.field}` : ""}`), [], `${channel}: unsafe fills`);
     assert.deepEqual(m.unsafeOffers.map((x) => `${x.id}: ${x.reason}`), [], `${channel}: unsafe offers`);
-    assert.deepEqual(m.notRun, [], `${channel}: cases that did not run`);
+    // The autofill-parity suite only measures: a case it could not run is reported there, not a failure of this test.
+    if (SET !== "parity") assert.deepEqual(m.notRun, [], `${channel}: cases that did not run`);
   }
 });
 

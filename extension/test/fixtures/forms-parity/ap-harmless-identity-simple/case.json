@@ -1,0 +1,38 @@
+{
+  "id": "ap-harmless-identity-simple",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-identity-simple/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#given",
+      "text": "Anna"
+    },
+    {
+      "type": "#family",
+      "text": "Hansen"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#given",
+    "#family",
+    "#email",
+    "#tel",
+    "#street",
+    "#zip"
+  ],
+  "fields": {},
+  "source": "own"
+}

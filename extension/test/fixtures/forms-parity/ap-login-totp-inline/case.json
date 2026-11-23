@@ -1,0 +1,48 @@
+{
+  "id": "ap-login-totp-inline",
+  "class": "positive",
+  "category": "login",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-login-totp-inline/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!aplogintot-Vm4$"
+    },
+    {
+      "type": "#t",
+      "text": "482915"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username",
+        "#p": "password",
+        "#t": "totp"
+      }
+    },
+    "generated": null,
+    "capture": {
+      "offer": "save",
+      "username": "anna@example.net",
+      "password_from": "#p",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#t": "otp"
+  },
+  "source": "own"
+}

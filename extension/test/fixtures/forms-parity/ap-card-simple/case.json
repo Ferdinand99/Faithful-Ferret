@@ -1,0 +1,42 @@
+{
+  "id": "ap-card-simple",
+  "class": "negative",
+  "category": "card",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-card-simple/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#holder",
+      "text": "Anna Hansen"
+    },
+    {
+      "type": "#number",
+      "text": "4000000000000002"
+    },
+    {
+      "type": "#cvc",
+      "text": "456"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#holder",
+    "#number",
+    "#cvc"
+  ],
+  "fields": {
+    "#number": "card_number",
+    "#cvc": "card_cvc"
+  },
+  "source": "own"
+}
