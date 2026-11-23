@@ -1,9 +1,9 @@
 // The offer in Ferret's own UI in real Firefox, on the form fixtures (test/fixtures/forms), with the vault locked:
 //
-// - the_badge_shows_on_the_offer_tab_and_the_locked_popup_asks_for_the_master_password_first: with "Offer to save passwords"
+// - the_badge_shows_on_the_offer_tab_and_the_popup_shows_no_offer_before_the_vault_is_open: with "Offer to save passwords"
 //   on, a sign-up form that is submitted gives an offer while the vault is locked (a capture is taken then). The toolbar
-//   button shows "1" on that tab and on no other, and the popup about that tab asks for the master password first, with no
-//   offer in the page.
+//   button shows "1" on that tab and on no other, and the popup about that tab shows no offer while the vault is not open (it is not even
+//   signed in here: the sign-in and unlock views come first).
 // - the_settings_page_has_the_switch_for_the_popup_that_opens_by_itself: the switch is there, on by default, and turning it
 //   off is kept.
 //
@@ -50,7 +50,7 @@ async function turnOn(session) {
   await session.waitFor(() => session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "true"), 15_000, "the switch on");
 }
 
-test("the_badge_shows_on_the_offer_tab_and_the_locked_popup_asks_for_the_master_password_first", async () => {
+test("the_badge_shows_on_the_offer_tab_and_the_popup_shows_no_offer_before_the_vault_is_open", async () => {
   const [c] = casesOf("corpus", CASE);
   assert.equal(c?.id, CASE);
   for (const channel of channels()) {
@@ -75,12 +75,12 @@ test("the_badge_shows_on_the_offer_tab_and_the_locked_popup_asks_for_the_master_
       const other = tabs.find((/** @type {{ id: number }} */ t) => t.id !== tab.id);
       if (other) assert.ok(["", null].includes(await fromBridge(() => bridge.invoke("action.getBadgeText", { tab_id: other.id }))), `${channel}: no other tab shows one`);
 
-      // The popup about that tab: the vault is locked, so it asks for the master password and shows no offer.
+      // The popup about that tab: the vault is not open (this browser is not signed in), so it shows a sign-in or unlock view and no offer.
       const popupTab = await session.newTab();
       await session.switchTo(popupTab);
       await session.navigate(`${POPUP_URL}?tab=${tab.id}`);
       await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 20_000, "the popup");
-      assert.equal(await session.content(() => document.querySelector('[data-role="locked-view"]') !== null), true, `${channel}: asks for the master password`);
+      assert.equal(await session.content(() => document.querySelector('[data-role="unlocked-view"]') === null), true, `${channel}: the vault is not open`);
       assert.equal(await session.content(() => document.querySelector('[data-role="offer-card"]') === null), true, `${channel}: no offer is shown before the unlock`);
       await session.closeTab();
       await session.switchTo(pageTab);
