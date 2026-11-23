@@ -92,7 +92,7 @@ test("only_the_content_folder_and_the_protocol_files_may_be_joined", () => {
   // The real closure is exactly the entry, the engine, the detection module with its word lists, the protocol and the
   // schema checker.
   const joined = [...classicScript(CONTENT_ENTRY, files).matchAll(/^\/\/ ---- (.+)$/gm)].map((m) => m[1]);
-  assert.deepEqual(joined, ["shared/schema.mjs", "shared/protocol.mjs", "content/patterns.mjs", "content/forms.mjs", "content/fill.mjs", "content/entry.mjs"]);
+  assert.deepEqual(joined, ["shared/schema.mjs", "shared/protocol.mjs", "content/patterns.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/fill.mjs", "content/entry.mjs"]);
   for (const text of [
     'import "../shared/origin.mjs";\n',
     'import "../background/lock.mjs";\n',

@@ -106,6 +106,7 @@
 
 import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, isInside, shadowOf } from "./forms.mjs";
+import { refusedClasses } from "./passwordRules.mjs";
 
 /** The smallest width and height, in CSS pixels, of a field the engine fills. */
 export const MIN_SIDE = 8;
@@ -249,6 +250,17 @@ function splitTop(text, separator) {
   }
   out.push(text.slice(start));
   return out.map((part) => part.trim()).filter((part) => part !== "");
+}
+
+/**
+ * Whether a background image is a gradient (no `url()` in it) all of whose colour stops are opaque enough, drawn at `shown`
+ * opacity, to hide what is below. A value with no colour the pass can read is not.
+ * @param {string} image @param {number} shown
+ */
+function opaqueGradient(image, shown) {
+  if (image === "" || image === "none" || /url\(|image-set\(|element\(|cross-fade\(/i.test(image)) return false;
+  const stops = image.match(/(?:rgba?|hsla?)\([^)]*\)/gi) ?? [];
+  return stops.length > 0 && stops.every((stop) => alphaOf(stop) * shown >= BACKGROUND_COVER);
 }
 
 /**
@@ -634,9 +646,10 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
     if (throughPaints) {
       const coloured = background !== "" && alphaOf(background) * shown >= BACKGROUND_COVER;
       if (REPLACED.has(node.localName) || coloured || (image !== "" && image !== "none")) {
-        // A click-through canvas, SVG or background image over most of the viewport is decoration (grain, confetti, a scrim):
-        // the pass cannot see its alpha, and a page can hide a field with a pseudo-element anyway.
-        const picture = !coloured && (node.localName === "canvas" || node.localName === "svg" || !REPLACED.has(node.localName));
+        // A click-through canvas, SVG or background picture over most of the viewport is decoration (grain, confetti, a scrim):
+        // the pass cannot see its alpha, and a page can hide a field with a pseudo-element anyway. A background image that is no
+        // picture (a gradient) shows its colours: when they are opaque it is a colour, like a background colour.
+        const picture = !coloured && !opaqueGradient(image, shown) && (node.localName === "canvas" || node.localName === "svg" || !REPLACED.has(node.localName));
         const full = areaOf(meet(own(), screen)) >= DECORATION_SHARE * areaOf(screen);
         if (!(picture && full)) add("through", own(), null);
       }
@@ -1184,6 +1197,17 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
+   * The classes of characters (lower, upper, digit, symbol) that a new or confirm field refuses by its `passwordrules` or its
+   * `pattern`, for the generator to leave out; none for any other field.
+   * @param {Field} field
+   * @returns {string[]}
+   */
+  function refusedOf({ kind, element }) {
+    if (kind !== "new_password" && kind !== "confirm_password") return [];
+    return isElement(element) ? refusedClasses(element) : [];
+  }
+
+  /**
    * Starts a pending request: finds the fields and reports them.
    * @param {string} requestId
    * @param {string} [mode] "generated": the new and the confirm field of a sign-up, change or reset group
@@ -1205,7 +1229,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       self_origin: selfOrigin(),
       fields: fields.map((field) => {
         const max = limitOf(field);
-        return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}) };
+        const forbid = refusedOf(field);
+        return { kind: field.kind, id: field.id, ...(max !== undefined ? { max } : {}), ...(forbid.length > 0 ? { forbid } : {}) };
       }),
       ...(generated && foundGroup !== null && fields.length > 0 ? { group: foundGroup } : {}),
     });

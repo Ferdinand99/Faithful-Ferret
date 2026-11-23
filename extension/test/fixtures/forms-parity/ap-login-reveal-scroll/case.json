@@ -6,6 +6,11 @@
   "host": "forms.example.net",
   "path": "/ap-login-reveal-scroll/",
   "frame": null,
+  "prepare": [
+    {
+      "click": "#after"
+    }
+  ],
   "steps": [
     {
       "type": "#u",

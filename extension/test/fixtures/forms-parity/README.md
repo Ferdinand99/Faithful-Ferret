@@ -80,4 +80,7 @@ allowed (`expect.allow`: a fill or no fill both pass). The payment pages are in 
   user name in the offer.
 - A closed shadow root cannot be reached by the runner (WebDriver finds it only through script access that closed
   roots refuse), so only the open variant is a case.
+- `ap-login-reveal-scroll` has a form four screens below the fold. The fill engine fills only a field the person can see (it checks that the
+  field lies in the window), so the case is the person's: they scroll down until the form and the line under it are in view (a click on that line), and then ask for the fill
+  (`prepare`). Scrolling the page for the person is not done: a form the person cannot see would then be filled too.
 - Multi-step flows use `prepare` to reach the step that is measured; the capture steps then continue from there.

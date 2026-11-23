@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account</title>
+<style>
+body { font: 16px/1.4 sans-serif; margin: 24px; max-width: 460px; color: #111; background: #fff; }
+label { display: block; margin: 8px 0 2px; }
+input, select, textarea, button { font: inherit; box-sizing: border-box; width: 100%; padding: 6px; margin: 2px 0; }
+input[type=checkbox], input[type=radio], input[type=file], input[type=color], input[type=range] { width: auto; }
+button { width: auto; padding: 6px 14px; }
+fieldset { border: 1px solid #bbb; margin: 8px 0; }
+.row { margin: 8px 0; }
+.small { font-size: 13px; color: #555; }
+iframe { width: 420px; height: 280px; border: 1px solid #bbb; }
+dialog { width: 380px; padding: 12px 16px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Staff portal</h1>
+<x-login id="portal">
+  <input slot="who" id="u" type="text" name="staff" placeholder="Staff number or e-mail" aria-label="Staff number or e-mail" autocomplete="username">
+</x-login>
+<p id="status" class="small"></p>
+</main>
+<script>
+class XLogin extends HTMLElement {
+  constructor() {
+    super();
+    var root = this.attachShadow({ mode: "open" });
+    root.innerHTML = '<style>.w { max-width: 340px; padding: 16px; border: 1px solid #ccc; } input { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0; }</style>' +
+      '<div class="w"><slot name="who"></slot>' +
+      '<input id="p" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password">' +
+      '<button id="go" type="button">Sign in</button></div>';
+    var host = this;
+    root.getElementById("go").addEventListener("click", function () {
+      // The page signs the person in on its own and replaces the form with a greeting.
+      setTimeout(function () {
+        host.remove();
+        document.getElementById("status").textContent = "Signed in.";
+      }, 300);
+    });
+  }
+}
+customElements.define("x-login", XLogin);
+</script>
+</body>
+</html>

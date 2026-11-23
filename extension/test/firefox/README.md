@@ -103,12 +103,16 @@ gate), the offers on harmless pages, and the cases that did not run (they count 
 `<channel>-<manifest>.json` and `matrix.md` are unpacked into `test-results/out/u2-matrix/`. The plain `e2e`
 run leaves the matrix out. `--set parity` runs the own-written autofill-parity suite of
 `test/fixtures/forms-parity/` (see its README) with the same rules and writes its reports, apart from the corpus
-ones, to `test-results/out/u2-matrix-parity/`.
+ones, to `test-results/out/u2-matrix-parity/`. The parity set is part of the gate too: at least 90 % fill, capture and
+generator, no unsafe fill or offer, no case that did not run and no false offer on a harmless page, in both channels.
 
 The capture phase also reads the vault's item list (ids and revisions, from the test build's measure port) before and
 after each case: the runner never clicks a save control there, so any change is counted as a write without a click,
 whatever the extension reports about itself. A generator pass fills the new-password fields of the cases that expect it
 and is reported as a line of its own, not in the capture rate. A frame the driver cannot enter makes its case not run.
+A case starts with no offers and no kept user names in its tab, cleared before its `prepare` steps (the user name typed in a first step
+belongs to the case). The shortcut that gives the page its permission (`activeTab`) is pressed on the page the case opens; a case whose
+`prepare` steps lead to another page presses it again there, as a person who has gone on would.
 A run of one part (`--part`) or of some cases (`--grep`) has no gate: `matrix.md` says "partial run" and whether the
 part it measured is met.
 
@@ -138,8 +142,8 @@ the web vault, change, update (folders unchanged, "Previous passwords"), sign in
 and a save made while the server cannot be reached that goes out after the unlock. It also takes the access to https pages
 back and checks that the vault still syncs.
 
-`scripts/lanbox-ext.sh gate` runs the firefox step, the e2e step (these two specs included) and then the matrix of the corpus
-and of the hold-out set, one channel at a time, each on a stack of its own.
+`scripts/lanbox-ext.sh gate` runs the firefox step, the e2e step (these two specs included) and then the matrix of the corpus,
+of the hold-out set and of the parity set, one channel at a time, each on a stack of its own.
 
 ### Timing bounds
 

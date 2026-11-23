@@ -70,7 +70,9 @@
 // shown, now and again before each value, and the origin and address the
 // extension expects). The shortest `maxlength` of the two fields decides the
 // length: a password is made again by the core at that length, never shorter
-// than 8 (`field_too_short`), and a passphrase is never cut. After the fill the
+// than 8 (`field_too_short`), and a passphrase is never cut. A field that refuses
+// a class of characters by its `passwordrules` or its `pattern` (no symbols, say)
+// has that class left out when the core makes the password again. After the fill the
 // background holds an offer to save the value, marked as generated.
 
 import { FRAME_UNCHECKED, encode } from "../shared/protocol.mjs";
@@ -256,8 +258,8 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   report: Deferred,
  *   result: Deferred | null,
  * }} Pending one frame of a fill
- *   `report` settles with `{ kinds: Set<string>, url: string, limits: Map<string, number>, group: string | null }` (`limits`: the `maxlength` of
- *   the fields of a generated fill that have one), `result` with `{ ok: boolean, reason?: string }`
+ *   `report` settles with `{ kinds: Set<string>, url: string, limits: Map<string, number>, forbid: Set<string>, group: string | null }` (`limits`: the
+ *   `maxlength` of the fields of a generated fill that have one; `forbid`: the classes of characters those fields refuse), `result` with `{ ok: boolean, reason?: string }`
  */
 
 /**
@@ -270,7 +272,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   tabs: { sendMessage: (tabId: number, message: string, options: Record<string, unknown>) => Promise<unknown>, create: (info: { url: string }) => Promise<unknown> },
  *   source?: CandidateSource | null,
  *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void } | null,
- *   generator?: { get(id: unknown): { value: string, kind: string, expiresAt: number } | null, fit(id: string, limit: number): Promise<{ ok: boolean }> } | null,
+ *   generator?: { get(id: unknown): { value: string, kind: string, expiresAt: number } | null, fit(id: string, limit: number | null, forbid?: string[]): Promise<{ ok: boolean }> } | null,
  *   offers?: { onGenerated(meta: GeneratedMeta): Promise<string | null> | string | null } | null,
  *   now?: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
@@ -774,7 +776,7 @@ export function createFillHost({
       }
       const request = requests[chosen];
       for (const other of requests) if (other !== request) pending.delete(other.requestId);
-      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string, limits: Map<string, number>, group: string | null }>} */ (reports[chosen]).value;
+      const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string, limits: Map<string, number>, forbid: Set<string>, group: string | null }>} */ (reports[chosen]).value;
       const kinds = GENERATED_ORDER.filter((kind) => report.kinds.has(kind));
 
       // The shortest `maxlength` of the fields decides the length; below the shortest password Ferret makes, nothing is filled.
@@ -782,9 +784,12 @@ export function createFillHost({
       const limit = limits.length > 0 ? Math.min(.../** @type {number[]} */ (limits)) : null;
       const before = generator.get(generationId);
       if (before === null) return { ok: false, reason: "not_offered" };
-      if (limit !== null && before.value.length > limit) {
+      // The classes of characters the fields refuse: only a password can be made again without them (a passphrase is as it is).
+      const forbid = before.kind === "password" ? [...report.forbid] : [];
+      const tooLong = limit !== null && before.value.length > limit;
+      if (tooLong || forbid.length > 0) {
         // `fit` refuses a limit below 8, and a passphrase, which is never cut.
-        if (!(await generator.fit(generationId, limit)).ok) return { ok: false, reason: "field_too_short" };
+        if (!(await generator.fit(generationId, tooLong ? limit : null, forbid)).ok) return { ok: false, reason: "field_too_short" };
       }
       // Read after the fit, and after every await: a lock in between has taken it.
       const generated = generator.get(generationId);
@@ -873,7 +878,10 @@ export function createFillHost({
     const limits = new Map();
     for (const f of fields) if (Number.isSafeInteger(f.max) && f.max >= 0) limits.set(f.kind, f.max);
     const group = request.mode === "generated" && ["signup", "change", "reset"].includes(body.group) ? body.group : null;
-    request.report.resolve({ kinds, url: sender.url, limits, group });
+    /** @type {Set<string>} */
+    const forbid = new Set();
+    for (const f of fields) for (const c of Array.isArray(f.forbid) ? f.forbid : []) if (typeof c === "string") forbid.add(c);
+    request.report.resolve({ kinds, url: sender.url, limits, forbid, group });
     return undefined;
   }
 
