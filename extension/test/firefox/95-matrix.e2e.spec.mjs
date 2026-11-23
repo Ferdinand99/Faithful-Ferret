@@ -196,7 +196,7 @@ test("matrix_fill_rate_is_at_least_the_baseline", (t) => {
 /**
  * The numbers of the run, per channel, or null (with a note) when the test is not about this run: another set, or some cases
  * only (a run of some cases has no gate).
- * @param {import("node:test").TestContext} t @param {"corpus" | "holdout"} set
+ * @param {import("node:test").TestContext} t @param {"corpus" | "holdout" | "parity"} set
  * @returns {Array<[string, ReturnType<typeof computeMatrix>]> | null}
  */
 function numbersOf(t, set) {
@@ -289,6 +289,20 @@ test("holdout_detection_is_at_least_90_percent", (t) => {
   }
 });
 
+test("parity_detection_is_at_least_90_percent_for_fill_capture_and_generator", (t) => {
+  const numbers = numbersOf(t, "parity");
+  if (numbers === null) return;
+  for (const [channel, m] of numbers) {
+    const missesOf = (/** @type {string} */ part) => m.misses.filter((x) => x.part === part).map((x) => x.id).join(", ");
+    if (PART !== "capture") assert.ok(m.fill.rate !== null && m.fill.rate >= 0.9, `${channel}: parity fill ${share(m.fill)} is below 90 % (${missesOf("fill")})`);
+    if (PART !== "fill") {
+      assert.ok(m.capture.rate !== null && m.capture.rate >= 0.9, `${channel}: parity capture ${share(m.capture)} is below 90 % (${missesOf("capture")})`);
+      assert.ok(m.generated.rate !== null && m.generated.rate >= 0.9, `${channel}: parity generator ${share(m.generated)} is below 90 % (${missesOf("generator")})`);
+    }
+    assert.deepEqual(m.notRun, [], `${channel}: parity cases that did not run`);
+  }
+});
+
 test("matrix_has_zero_unsafe_fills_and_zero_unsafe_offers", () => {
   // Also for a run of some cases: safety does not wait for a gate. A case that did not run counts as failed.
   assert.ok(runs.size > 0, "the matrix ran (see the test before)");
@@ -297,8 +311,7 @@ test("matrix_has_zero_unsafe_fills_and_zero_unsafe_offers", () => {
     assert.ok(m, `${channel}: the matrix ran`);
     assert.deepEqual(m.unsafeFills.map((x) => `${x.id}: ${x.reason}${x.field ? ` in ${x.field}` : ""}`), [], `${channel}: unsafe fills`);
     assert.deepEqual(m.unsafeOffers.map((x) => `${x.id}: ${x.reason}`), [], `${channel}: unsafe offers`);
-    // The autofill-parity suite only measures: a case it could not run is reported there, not a failure of this test.
-    if (SET !== "parity") assert.deepEqual(m.notRun, [], `${channel}: cases that did not run`);
+    assert.deepEqual(m.notRun, [], `${channel}: cases that did not run`);
   }
 });
 
@@ -314,9 +327,9 @@ test("false_offers_on_benign_negatives_are_reported", (t) => {
     const m = runs.get(channel);
     assert.ok(m, `${channel}: the matrix ran`);
     if (m.falseOffers.rate !== null) assert.ok(Array.isArray(m.falseOffers.cases), `${channel}: the report lists them`);
-    // The frozen corpus has none; the hold-out set only reports them (its pages were written without sight of the detection).
-    if (SET === "corpus" && GREP === "") {
-      assert.ok(m.falseOffers.rate !== null, `${channel}: the corpus has harmless negative cases that ran`);
+    // The frozen corpus and the parity set have none; the hold-out set only reports them (its pages were written without sight of the detection).
+    if ((SET === "corpus" || SET === "parity") && GREP === "") {
+      assert.ok(m.falseOffers.rate !== null, `${channel}: the ${SET} set has harmless negative cases that ran`);
       assert.deepEqual(m.falseOffers.cases, [], `${channel}: false offers on harmless pages`);
     } else if (m.falseOffers.cases.length > 0) {
       t.diagnostic(`${channel}: false offers on ${m.falseOffers.cases.join(", ")}`);

@@ -38,11 +38,12 @@
 #                                 build), with the screenshots the e2e specs take
 #                                 unpacked into test-results/out/gate-shots/ (or
 #                                 $FERRET_EXT_OUT_DIR/gate-shots/), then the detection
-#                                 matrix of the corpus and of the hold-out set (the
-#                                 matrix step, one channel at a time, each on a stack
-#                                 of its own, because every channel makes entries in
-#                                 the account and a second channel would find twice
-#                                 as many); their reports are unpacked into
+#                                 matrix of the corpus, of the hold-out set and of the
+#                                 autofill-parity set (the matrix step, one channel at
+#                                 a time, each on a stack of its own, because every
+#                                 channel makes entries in the account and a second
+#                                 channel would find twice as many); their reports
+#                                 are unpacked into
 #                                 $FERRET_EXT_OUT_DIR/gate-matrix/<set>/<channel>/.
 #                                 Fails if any step fails.
 #   scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>] [--headed] [--no-up]
@@ -509,10 +510,10 @@ if [ "$mode" = gate ]; then
     status=$rc
   fi
   echo "lanbox-ext.sh: gate: screenshots are in $out_dir/gate-shots/ (exit status $status)" >&2
-  # The detection matrix: the corpus and the hold-out set, each channel on a stack of its own. What a container writes comes
+  # The detection matrix: the corpus, the hold-out set and the parity set, each channel on a stack of its own. What a container writes comes
   # out as a tar archive on stdout and is unpacked, also after a failure.
   gate_channels="${channel:-release esr}"
-  for matrix_set in corpus holdout; do
+  for matrix_set in corpus holdout parity; do
     for ch in $gate_channels; do
       e2e_reset
       e2e_setup
