@@ -185,6 +185,8 @@ test("a_login_the_vault_holds_gets_no_badge_and_no_popup", async () => {
   await w.wait(100);
   for (const fn of w.listeners.completed) fn({ tabId: TAB, frameId: 0, url: ORIGIN + "/home", documentId: "doc-new" });
   await w.wait(3600);
+  // The write path's judgement of the login is asked for when the offer is ready, and comes back a moment later.
+  for (let i = 0; i < 20 && w.offers.size() > 0; i += 1) await w.wait(100);
   assert.equal(w.offers.size(), 0, "the vault holds this login: nothing to offer");
   assert.equal(w.popup.attempts, 0);
   assert.equal(w.badgeText.get(TAB) ?? "", "");

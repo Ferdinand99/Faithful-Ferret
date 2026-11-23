@@ -148,8 +148,8 @@ test("the_password_can_be_shown_on_a_click_and_is_wiped_when_hidden_or_when_the_
 });
 
 test("an_auto_opened_popup_does_not_save_on_enter_or_an_early_click", async () => {
-  const doc = useDocument();
   const { mod, clock, now, texts } = await setup();
+  const doc = /** @type {any} */ (globalThis).document;
   const fake = fakeFlow();
   const card = mod.createOfferCard({ texts, flow: fake.flow, offer: offerOf(), now });
   await card.loaded;
@@ -177,13 +177,14 @@ test("an_auto_opened_popup_does_not_save_on_enter_or_an_early_click", async () =
   assert.equal(fake.calls.some((c) => c.call === "reveal"), false);
   // After that it counts, once.
   clock.t += 1;
-  await click(one(card.root, "offer-save"));
+  const saveButton = one(card.root, "offer-save");
+  await click(saveButton);
   assert.equal(writes().length, 1);
   assert.deepEqual(writes()[0].args, [OFFER, { name: HOST.unicode, username: "anna@example.net", folder: null }]);
   assert.equal(JSON.stringify(writes()[0].args).includes(SECRET), false, "the message carries no password");
   assert.equal(one(card.root, "offer-result")?.textContent, "Saved. Waiting for sync.");
   // The card is answered: another click does nothing.
-  await click(one(card.root, "offer-save"));
+  await click(saveButton);
   assert.equal(writes().length, 1);
 });
 

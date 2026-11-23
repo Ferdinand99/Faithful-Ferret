@@ -139,9 +139,9 @@ test("a_halt_shows_retry_and_forget_in_the_popup_and_nothing_else", async () => 
   assert.equal(channels?.made[0].running, false);
 
   // Nothing else can be asked of a stopped sync than these: the older state is accepted only through its preview and
-  // its accept (acceptOlder.test.mjs); nothing shows "what happened" or checks again.
+  // its accept (acceptOlder.test.mjs); nothing shows "what happened" or checks again. (`folder_names` is the save card's list of folders; the pattern finds "older" in it.)
   const syncTypes = Object.keys(UI_TYPES).filter((type) => /sync|forget|restore|accept|older/.test(type)).sort();
-  assert.deepEqual(syncTypes, ["forget_preview", "forget_server", "sync_accept_older", "sync_items", "sync_older_preview", "sync_retry", "sync_state"]);
+  assert.deepEqual(syncTypes, ["folder_names", "forget_preview", "forget_server", "sync_accept_older", "sync_items", "sync_older_preview", "sync_retry", "sync_state"]);
   const { readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const popupSource = await readFile(join((await pkg()).dir, "pages", "popup.mjs"), "utf8");

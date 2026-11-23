@@ -27,7 +27,8 @@ async function quickFillOver(answer) {
     lock: { checkOrLock: async () => true, touch() {} },
     openPopup: () => void opened.push("popup"),
     onRefused: (tabId, reason) => w.badge.refuse(tabId, reason),
-    scripting: { executeScript: async () => [] },
+    // The menu aims the fill script at the clicked field: the script loads and finds it.
+    scripting: { executeScript: async (/** @type {any} */ injection) => (injection.files !== undefined ? [{}] : [{ result: true }]) },
     webNavigation: { getFrame: async () => ({ url: PAGE, documentId: "d" }) },
   });
   return { w, quick, opened };

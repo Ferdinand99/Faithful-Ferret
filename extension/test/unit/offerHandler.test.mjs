@@ -69,8 +69,9 @@ test("save_needs_a_click_in_the_popup_and_an_offer_id_from_this_popup_session", 
 
   // A message cannot name the session: a key the schema does not list ends the connection.
   const sly = w.connectPopup();
-  const refused = await sly.ask("offer_save", { offer_id: offer.offer_id, name: "Shop", session: "x" });
-  assert.equal(refused.disconnected, true);
+  await sly.port.send(JSON.stringify({ v: 1, id: "s1", type: "offer_save", body: { offer_id: offer.offer_id, name: "Shop", session: "x" } }));
+  assert.equal(sly.port.disconnected, true);
+  assert.throws(() => encode("offer_save", { offer_id: offer.offer_id, name: "Shop", session: "x" }), "the popup cannot even build such a message");
   assert.deepEqual(w.writes, []);
   const handlerSource = readFileSync(join(w.dir ?? (await pkg()).dir, "background", "handlers", "offer.handler.mjs"), "utf8");
   assert.equal(/body\??\.session/.test(handlerSource), false, "the handler never reads a session from a message");
@@ -186,8 +187,7 @@ test("a_page_that_mimics_the_offer_gets_no_message_through", async () => {
     assert.equal(Object.hasOwn(CONTENT_TYPES, type), false, type);
   }
   // A body that carries a password key is refused at the door: the popup never sends the password.
-  const port = w.connectPopup();
-  assert.deepEqual(await port.ask("offer_dismiss", { offer_id: offer.offer_id }), { ok: true });
+  assert.deepEqual(await popup.ask("offer_dismiss", { offer_id: offer.offer_id }), { ok: true });
   assert.throws(() => encode("offer_save", { offer_id: offer.offer_id, name: "x", password: "p" }));
 });
 

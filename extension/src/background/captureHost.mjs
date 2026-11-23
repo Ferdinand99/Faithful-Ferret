@@ -236,15 +236,14 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     return { ok: true };
   }
 
-  /** @returns {Promise<{ on: boolean, permission: boolean, never: string[], auto_open: boolean, auto_open_state: string }>} */
+  /** @returns {Promise<{ on: boolean, permission: boolean, never: string[], auto_open?: boolean, auto_open_state?: string }>} */
   async function settingsNow() {
     const status = await registry.status();
     return {
       on: status.on && status.registered,
       permission: status.permission,
       never: await never.list(),
-      auto_open: autoOpen === null ? false : await autoOpen.isOn(),
-      auto_open_state: autoOpen === null ? "unknown" : autoOpen.probe(),
+      ...(autoOpen === null ? {} : { auto_open: await autoOpen.isOn(), auto_open_state: autoOpen.probe() }),
     };
   }
 
