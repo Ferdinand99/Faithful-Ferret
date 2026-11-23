@@ -174,7 +174,7 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
 export function install({ browser, runtime, coreHost, now, offers = null, engine = () => null }) {
   coreHost.addOps(ops);
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
-  coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args) }).ops);
+  coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args), items: () => engine()?.list() ?? [] }).ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());

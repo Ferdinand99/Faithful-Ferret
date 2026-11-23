@@ -449,7 +449,8 @@ test("offers_peek_reports_kind_origin_user_and_a_hash_of_the_password_never_the_
   const asked = [];
   const probe = createOfferProbe({
     offers: w.offers,
-    call: async (op, args) => (asked.push([op, args]), { ok: true, action: "update", targets: [{ id: "00".repeat(16), rev: 1, name: "Login item", username: "ola", how: "host" }], reused: [{ name: "Other", host: null }] }),
+    call: async (op, args) => (asked.push([op, args]), { ok: true, action: "update", targets: [{ id: "00".repeat(16), rev: 1, name: "Login item", username: "ola", how: "username" }], reused: [{ name: "Other", host: null }] }),
+    items: () => [{ id: "00".repeat(16), urls: ["https://other.example.org/", `${ORIGIN}/`] }],
   });
   const reply = /** @type {any} */ (await probe.ops.offers_peek.run({}, { tab_id: TAB, session }));
   assert.equal(reply.available, true);
@@ -466,6 +467,7 @@ test("offers_peek_reports_kind_origin_user_and_a_hash_of_the_password_never_the_
     password_sha256: createHash("sha256").update(SENTINEL_PASSWORD).digest("hex"),
     reuse: true,
     target_name: "Login item",
+    target_host: "login.example.net",
     target_match: "host",
   });
   assert.equal(JSON.stringify(reply).includes(SENTINEL_PASSWORD), false);

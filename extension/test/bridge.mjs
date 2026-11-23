@@ -18,7 +18,7 @@ const ALLOWED = {
   "tabs.query": (/** @type {any[]} */ args) => browser.tabs.query(args[0] ?? {}),
   // What the offers store of the background holds for a tab: the offers' metadata and the SHA-256 of each
   // password, never a password. A build without saving passwords has no store, and says there is nothing to read.
-  offers_peek: (/** @type {any[]} */ args) => testCore("offers_peek", { tab_id: args[0]?.tab_id, session: freshSession() }).catch(() => ({ available: false, offers: [] })),
+  offers_peek: (/** @type {any[]} */ args) => testCore("offers_peek", { tab_id: args[0]?.tab_id, session: freshSession(), ...(args[0]?.clear === true ? { clear: true } : {}) }).catch(() => ({ available: false, offers: [] })),
 };
 
 /** A popup session of the bridge's own: the offers it is told of are the ones it reads. */
