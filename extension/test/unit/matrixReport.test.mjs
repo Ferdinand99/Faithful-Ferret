@@ -366,6 +366,14 @@ test("the_runner_computes_the_codes_of_rfc_6238_and_finds_a_split_code_by_its_di
     ["#u", "username", undefined], ["#p", "password", undefined], ["#code", "totp", undefined],
     ["#d1", "totp", undefined], ["#d2", "totp", undefined], ["#d3", "totp", undefined],
   ]);
+  // The values of radio buttons, check boxes and buttons are the page's (a rating's "1" and "5"), never a fill, whatever the code.
+  const rating = [
+    { id: "", type: "radio", value: "2", docUrl: doc }, { id: "", type: "radio", value: "8", docUrl: doc },
+    { id: "ok", type: "checkbox", value: "7", docUrl: doc }, { id: "go", type: "submit", value: "0", docUrl: doc },
+    { id: "mail", type: "email", value: "", docUrl: doc },
+  ];
+  assert.deepEqual(fillsIn(rating, "forms", "pw", ["287082"]), [], "a pair of radio buttons that spells a piece of the code");
+  assert.deepEqual(fillsIn([...rating, { id: "u", type: "text", value: "ola", docUrl: doc }], "forms", "pw", ["287082"]).map((f) => f.id), ["#u"], "a text field beside them is still read");
   // Four boxes with the first four digits of a six-digit code.
   const four = [..."2870"].map((d, i) => ({ id: `b${i + 1}`, type: "text", value: d, docUrl: doc }));
   assert.deepEqual(fillsIn(four, "forms", "pw", ["287082"]).map((f) => [f.id, f.index]), [["#b1", undefined], ["#b2", undefined], ["#b3", undefined], ["#b4", undefined]]);

@@ -285,14 +285,20 @@ export async function scanDocs(session) {
   return out;
 }
 
+/** The input types whose value is never something a fill wrote. */
+const UNFILLABLE_TYPES = new Set(["radio", "checkbox", "button", "submit", "reset", "image", "file", "range", "color"]);
+
 /**
  * The vault values of one entry that a scan finds: its password, its user name, its whole code, and the digits of its
  * code in a row of one-character fields of one document (digit n of the code in the n-th of them).
- * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} rows
+ * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} allRows
  * @param {string} key @param {string} password @param {string[]} codes the codes the entry can have now
  * @returns {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>}
  */
-export function fillsIn(rows, key, password, codes) {
+export function fillsIn(allRows, key, password, codes) {
+  // A radio button, a check box or a button has a value the page gave it (the "1" and "5" of a rating): nothing can be filled
+  // into it, and its value must not be mistaken for a digit of a code.
+  const rows = allRows.filter((r) => !UNFILLABLE_TYPES.has(r.type));
   /** @type {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>} */
   const out = [];
   for (const input of rows) {
