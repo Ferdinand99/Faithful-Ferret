@@ -27,7 +27,11 @@
     "max_offers": 1,
     "generated": null,
     "capture": null,
-    "no_offer": false
+    "no_offer": false,
+    "allow": [
+      "#u",
+      "#p"
+    ]
   },
   "must_stay_empty": [],
   "fields": {},
