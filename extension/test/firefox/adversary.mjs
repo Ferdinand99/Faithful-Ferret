@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { ORIGINS } from "../fixtures/sites/index.mjs";
 import { POPUP_URL, SLOW, extensionSignIn, helpers, start, webVaultAccount } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, TEST_SHORTCUT, fixtures, openBridge } from "./harness.mjs";
+import { base32 } from "./totp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -281,11 +282,15 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   const named = {};
   /** @type {Record<string, string>} */
   const passwords = {};
+  /** The one-time-code secrets (base32) of the entries that ask for one (`totp: true`), made up per run. @type {Record<string, string>} */
+  const totps = {};
   for (const [key, entry] of Object.entries(entries)) {
     if (!entry) continue;
     named[key] = `${entry.name} ${tag}`;
     passwords[key] = `Pw-${key}-${randomBytes(6).toString("hex")}`;
-    await core("item_probe", { ...entry, name: named[key], username: USERNAME, password: passwords[key] });
+    const { totp, ...rest } = /** @type {Record<string, unknown>} */ (entry);
+    if (totp === true) totps[key] = base32(randomBytes(20));
+    await core("item_probe", { ...rest, name: named[key], username: USERNAME, password: passwords[key], ...(totps[key] ? { totp: `otpauth://totp/${encodeURIComponent(named[key])}?secret=${totps[key]}` } : {}) });
   }
   const keyOf = (/** @type {string} */ name) => /** @type {EntryKey | undefined} */ (Object.keys(named).find((k) => named[k] === name));
   if (named.host) {
@@ -378,7 +383,7 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
   /** Closes the session; the device is revoked by the next world (or the next run's stack is a new one). */
   const quit = () => session.quit();
 
-  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, popup, named, passwords, keyOf, tag, origins, quit };
+  return { session, page, server, account, vaultTab, bridgeTab, pageTab, bridge, fromBridge, core, lockState, vaultState, ui, visit, popup, named, passwords, totps, keyOf, tag, origins, quit };
 }
 
 /**

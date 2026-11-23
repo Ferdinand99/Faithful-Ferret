@@ -1,0 +1,3 @@
+{
+  "frames.error.frame_unchecked": "The sign-in form is in a frame inside another frame that Ferret has no access to, so Ferret could not check that the form is shown and did not fill it."
+}

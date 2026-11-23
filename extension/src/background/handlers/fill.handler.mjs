@@ -3,7 +3,12 @@
 // for; the background does the rest (fillFlow.mjs). The answer is `{ ok }` or a
 // reason from a fixed list: never a value, never anything of the item.
 
-/** The reasons a page has a text for (`popup.error.<reason>`). Every other code becomes `not_filled`. */
+import { FRAME_UNCHECKED } from "../../shared/protocol.mjs";
+
+/**
+ * The reasons a page has a text for (`popup.error.<reason>`). Every other code becomes `not_filled`, except
+ * `frame_unchecked`, whose text is in the frames catalog (`frames.error.frame_unchecked`).
+ */
 export const REASONS = Object.freeze([
   "not_offered",
   "origin_changed",
@@ -28,6 +33,7 @@ export function reasonOf(code) {
   // What the fill script answers for a field it refused (content/fill.mjs).
   if (code === "hidden") return "covered";
   if (code === "gone") return "frame_gone";
+  if (code === FRAME_UNCHECKED) return FRAME_UNCHECKED;
   return typeof code === "string" && REASONS.includes(code) ? code : "not_filled";
 }
 

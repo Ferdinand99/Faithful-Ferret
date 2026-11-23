@@ -5,8 +5,9 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { mergePhases, scanDocs, shortcutWentToAnExtensionPage, unreadableOf } from "../firefox/matrix.mjs";
+import { fillsIn, mergePhases, scanDocs, shortcutWentToAnExtensionPage, unreadableOf } from "../firefox/matrix.mjs";
 import { computeMatrix, ruleMatches, unsafeFillsOf, unsafeOffersOf, writeReport } from "../firefox/matrixReport.mjs";
+import { base32, recentCodes, totpAt } from "../firefox/totp.mjs";
 
 const ENTRIES = {
   forms: { url: "https://forms.example.net/", matching: "host" },
@@ -328,4 +329,38 @@ test("report_lists_every_miss_with_its_reason", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the_runner_computes_the_codes_of_rfc_6238_and_finds_a_split_code_by_its_digits", () => {
+  // RFC 6238, appendix B (SHA-1): the secret "12345678901234567890" at 59 s gives 94287082; six digits: 287082.
+  const secret = base32(new TextEncoder().encode("12345678901234567890"));
+  assert.equal(secret, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+  assert.equal(totpAt(secret, 1), "287082");
+  assert.equal(totpAt(secret, Math.floor(1111111109 / 30)), "081804");
+  assert.deepEqual(recentCodes(secret, 59_000), [totpAt(secret, 0), "287082", totpAt(secret, 2)]);
+  // A scan: the code whole in one field, its digits in a row of boxes, and the other vault values.
+  const doc = "https://forms.example.net/x/";
+  const rows = [
+    { id: "u", type: "text", value: "ola", docUrl: doc },
+    { id: "p", type: "password", value: "pw", docUrl: doc },
+    { id: "code", type: "text", value: "287082", docUrl: doc },
+    ...[..."287082"].map((d, i) => ({ id: `d${i + 1}`, type: "text", value: d, docUrl: doc })),
+    { id: "lone", type: "text", value: "2", docUrl: doc },
+  ];
+  assert.deepEqual(fillsIn(rows, "forms", "pw", ["287082"]).map((f) => [f.id, f.kind, f.index]), [
+    ["#u", "username", undefined], ["#p", "password", undefined], ["#code", "totp", undefined],
+    ...[1, 2, 3, 4, 5, 6].map((n) => [`#d${n}`, "totp", n - 1]),
+  ]);
+  // Digits that are no piece of a code of the entry are no fill.
+  assert.deepEqual(fillsIn(rows, "forms", "pw", ["999999"]).map((f) => f.id), ["#u", "#p"]);
+  // A code spread over two documents is no whole code; a run of two or more digits in one document that is a piece
+  // of a code is a fill of the code with no index (part of a code, or a code in the wrong boxes).
+  const split = rows.map((r) => (r.id === "d4" ? { ...r, docUrl: "https://forms.example.net/frame/" } : r));
+  assert.deepEqual(fillsIn(split, "forms", "pw", ["287082"]).map((f) => [f.id, f.kind, f.index]), [
+    ["#u", "username", undefined], ["#p", "password", undefined], ["#code", "totp", undefined],
+    ["#d1", "totp", undefined], ["#d2", "totp", undefined], ["#d3", "totp", undefined],
+  ]);
+  // Four boxes with the first four digits of a six-digit code.
+  const four = [..."2870"].map((d, i) => ({ id: `b${i + 1}`, type: "text", value: d, docUrl: doc }));
+  assert.deepEqual(fillsIn(four, "forms", "pw", ["287082"]).map((f) => [f.id, f.index]), [["#b1", undefined], ["#b2", undefined], ["#b3", undefined], ["#b4", undefined]]);
 });

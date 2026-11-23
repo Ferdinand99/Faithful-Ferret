@@ -9,6 +9,10 @@
 //   (fill, capture or all; the capture phase needs the extension's offers and counts as not run until it has them),
 //   over FERRET_MATRIX_SET (corpus or holdout), the cases whose id contains FERRET_MATRIX_GREP. The report is
 //   what this test produces; it does not demand that the gate is met (the extension has to learn the cases first).
+// - matrix_fill_rate_is_at_least_the_baseline: on a run of the whole corpus with the fill phase, in each channel, the
+//   fill phase ran every positive case with a fill (the one-time-code cases too), filled at least as many of them as
+//   the extension did before the detection module (FILL_BASELINE), and made no unsafe fill. It compares rates and the
+//   unsafe fills, never the gate: a fill-only run has no gate.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +31,13 @@ const GREP = process.env.FERRET_MATRIX_GREP ?? "";
 const OUT = process.env.FERRET_MATRIX_OUT ?? join(tmpdir(), "ferret-u2-matrix");
 /** Set by the self-test when WebDriver's key events are trusted in every channel; the matrix test needs it. */
 let trustedKeys = false;
+/**
+ * The fill phase of the corpus as the extension did it before the detection module: 48 of the 55 positive cases with a
+ * fill (the five one-time-code cases did not run then), with 18 unsafe fills.
+ */
+const FILL_BASELINE = Object.freeze({ passed: 48, total: 55 });
+/** The numbers of each channel's run, for the baseline test. @type {Map<string, ReturnType<typeof computeMatrix>>} */
+const runs = new Map();
 
 test("webdriver_key_actions_are_trusted_in_both_channels", async () => {
   trustedKeys = false;
@@ -121,6 +132,7 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
       // was before the phases (each case of the capture phase also compares its own before and after).
       assert.deepEqual(await w.vaultState(), vault, `${channel}: the vault changed during the run`);
       const matrix = computeMatrix(results, { set: SET, part: PART, manifest, grep: GREP });
+      runs.set(channel, matrix);
       writeReport(OUT, channel, matrix);
       assert.ok(existsSync(join(OUT, `${channel}-${manifest}.json`)), `${channel}: the report is written`);
       const text = readFileSync(join(OUT, "matrix.md"), "utf8");
@@ -130,5 +142,23 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
     } finally {
       await w.quit();
     }
+  }
+});
+
+test("matrix_fill_rate_is_at_least_the_baseline", (t) => {
+  if (SET !== "corpus" || GREP !== "" || PART === "capture") {
+    t.skip("the baseline is about a fill phase over the whole corpus");
+    return;
+  }
+  assert.ok(runs.size > 0, "the matrix ran (see the test before)");
+  for (const channel of channels()) {
+    const matrix = runs.get(channel);
+    assert.ok(matrix, `${channel}: the matrix ran`);
+    // Every positive case with a fill ran and counts, the one-time-code cases included.
+    assert.equal(matrix.fill.total, FILL_BASELINE.total, `${channel}: positive cases with a fill`);
+    const fillNotRun = matrix.misses.filter((m) => m.part === "fill" && m.reason.startsWith("did not run"));
+    assert.deepEqual(fillNotRun, [], `${channel}: fill cases that did not run`);
+    assert.ok(matrix.fill.passed / matrix.fill.total >= FILL_BASELINE.passed / FILL_BASELINE.total, `${channel}: fill ${matrix.fill.passed}/${matrix.fill.total} is below the baseline ${FILL_BASELINE.passed}/${FILL_BASELINE.total}`);
+    assert.deepEqual(matrix.unsafeFills, [], `${channel}: unsafe fills`);
   }
 });

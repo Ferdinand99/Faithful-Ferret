@@ -15,7 +15,8 @@
       "The web vault has no runtime npm packages. It embeds a Latin subset of the Inter font and one",
       "file from another project, the QR code generator of Project Nayuki; both are listed after the",
       "Rust crates. Three parts of its source were written from other projects (the CSV reader and the",
-      "readers of the Bitwarden and AliasVault export formats); they are listed last. The container image is based on",
+      "readers of the Bitwarden and AliasVault export formats); they are listed last, and so are the terms of",
+      "AliasVault's form detector that the browser extension's form detection uses. The container image is based on",
       "Alpine Linux; the packages that Alpine installs keep their own licence information in the image",
       "(/lib/apk/db/installed)."
     ],
@@ -58,6 +59,16 @@
       "copyright": "Copyright (c) aliasvault. All rights reserved. (the holder line in the file headers of the project; these TypeScript files carry no copyright line)",
       "files": ["web/src/import/aliasvault.mjs", "web/test/fixtures/import/aliasvault/NOTICE.txt"],
       "note": "Modified by Faithful Ferret: the reader of the AliasVault .avux manifest and CSV export is adapted from the readers of those formats (key names and columns, system field keys, matching names without regard to case, the one manifest version that is read, the otpauth address of a code). It is bounded and strict, returns Faithful Ferret's item drafts and a report, and counts and leaves out attachments, passkeys, folders, tags and the earlier values of a field. The test files are made-up data of the same shape."
+    },
+    {
+      "name": "AliasVault form field terms",
+      "origin": "https://github.com/aliasvault/aliasvault",
+      "source": "apps/browser-extension/src/utils/formDetector/FieldPatterns.ts (commit 7e7cd6f3141c94f884ddd1666987aec3ffcdcdf3)",
+      "license": "AGPL-3.0-only",
+      "licenseFile": "LICENSE",
+      "copyright": "Copyright (c) aliasvault. All rights reserved. (the holder line in the file headers of the project; FieldPatterns.ts itself has no copyright line)",
+      "files": ["extension/src/content/patterns.mjs"],
+      "note": "Modified by Faithful Ferret: the English and Dutch terms that mark a one-time-code field and a search or filter box are taken from that file and written the way the extension compares text; the PIN and card security code terms are kinds of their own, the settings terms of the exclusion list are left out, and German, Norwegian and French terms are added. Every other list in the file is Faithful Ferret's own. The browser extension's form detection reads them."
     },
     {
       "name": "Bitwarden export formats",
