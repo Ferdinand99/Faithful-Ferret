@@ -1,0 +1,37 @@
+{
+  "id": "ap-harmless-broken-login",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-broken-login/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#s",
+      "text": "garden chairs"
+    },
+    {
+      "type": "#box",
+      "text": "oak"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#s",
+    "#box"
+  ],
+  "fields": {
+    "#s": "search",
+    "#box": "search"
+  },
+  "source": "own"
+}

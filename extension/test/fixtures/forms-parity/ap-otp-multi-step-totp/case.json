@@ -1,0 +1,52 @@
+{
+  "id": "ap-otp-multi-step-totp",
+  "class": "positive",
+  "category": "otp",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-otp-multi-step-totp/",
+  "frame": null,
+  "prepare": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!apotpmulti-Vm4$"
+    },
+    {
+      "click": "#next2"
+    },
+    {
+      "wait": 800
+    }
+  ],
+  "steps": [
+    {
+      "type": "#t",
+      "text": "482915"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#t": "totp"
+      }
+    },
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#t": "otp"
+  },
+  "source": "own"
+}

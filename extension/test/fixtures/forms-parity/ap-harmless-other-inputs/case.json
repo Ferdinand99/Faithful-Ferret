@@ -1,0 +1,34 @@
+{
+  "id": "ap-harmless-other-inputs",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-other-inputs/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#notes",
+      "text": "remember the milk"
+    },
+    {
+      "type": "#link",
+      "text": "https://example.net/"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#notes",
+    "#link"
+  ],
+  "fields": {},
+  "source": "own"
+}

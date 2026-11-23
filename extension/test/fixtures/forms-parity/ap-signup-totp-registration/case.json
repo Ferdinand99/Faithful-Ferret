@@ -1,0 +1,44 @@
+{
+  "id": "ap-signup-totp-registration",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-signup-totp-registration/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna_h"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u"
+    ],
+    "generated": {
+      "new": "#pw",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "save",
+      "username": "anna_h",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [
+    "#pw"
+  ],
+  "fields": {
+    "#pw": "new_password"
+  },
+  "source": "own"
+}

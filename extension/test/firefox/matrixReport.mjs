@@ -12,7 +12,8 @@
 //   steps     what a person does for the capture phase (type, click, key, wait, generate_fill, ferret_fill)
 //   expect    fill: { entry, fields: { "#id": "username" | "password" | "totp" | "totp:<n>" } } | null
 //             allow: ["#id"]       fields in which a fill is acceptable (a negative case with a real field beside the trap)
-//             generated: { new, confirm } | null
+//             generated: { new, confirm, rules? } | null   (rules: { minlength?, maxlength?, require?: [lower|upper|digit|symbol], forbid?: [...] }
+//                        the password rules the generated value must follow; the runner reads them, the page's own attributes state them)
 //             capture: { offer, username, password_from, origin, reuse?, info? } | null
 //             no_offer, max_offers
 //   must_stay_empty  fields a fill must never reach
@@ -80,13 +81,46 @@ const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v)
 /** @param {unknown} v */
 const isId = (v) => typeof v === "string" && /^#[A-Za-z][A-Za-z0-9_-]*$/.test(v);
 
+/** The classes of characters a password rule can name. */
+export const CHARACTER_CLASSES = Object.freeze(["lower", "upper", "digit", "symbol"]);
+
+/** @param {unknown} r */
+function rulesAreWellFormed(r) {
+  if (!isObject(r)) return false;
+  for (const key of Object.keys(r)) if (!["minlength", "maxlength", "require", "forbid"].includes(key)) return false;
+  for (const key of ["minlength", "maxlength"]) if (r[key] !== undefined && !(Number.isInteger(r[key]) && r[key] > 0)) return false;
+  for (const key of ["require", "forbid"]) if (r[key] !== undefined && !(Array.isArray(r[key]) && r[key].every((/** @type {unknown} */ x) => CHARACTER_CLASSES.includes(/** @type {string} */ (x))))) return false;
+  return true;
+}
+
 /**
- * What is wrong with a case.json (an empty list for a good one). `folder` is the case's folder name.
+ * Whether a password follows the rules of a case (the runner calls this where it can see the value; a report never holds it).
+ * @param {string} value
+ * @param {{ minlength?: number, maxlength?: number, require?: string[], forbid?: string[] }} rules
+ */
+export function followsRules(value, rules) {
+  const has = {
+    lower: /[a-z]/.test(value),
+    upper: /[A-Z]/.test(value),
+    digit: /[0-9]/.test(value),
+    symbol: /[^A-Za-z0-9]/.test(value),
+  };
+  if (rules.minlength !== undefined && value.length < rules.minlength) return false;
+  if (rules.maxlength !== undefined && value.length > rules.maxlength) return false;
+  if ((rules.require ?? []).some((k) => !has[/** @type {keyof typeof has} */ (k)])) return false;
+  if ((rules.forbid ?? []).some((k) => has[/** @type {keyof typeof has} */ (k)])) return false;
+  return true;
+}
+
+/**
+ * What is wrong with a case.json (an empty list for a good one). `folder` is the case's folder name. `prefix` is what
+ * every id of the set starts with before its category (the autofill-parity suite uses "ap-").
  * @param {unknown} c
  * @param {string} folder
+ * @param {{ prefix?: string }} [options]
  * @returns {string[]}
  */
-export function caseProblems(c, folder) {
+export function caseProblems(c, folder, { prefix = "" } = {}) {
   /** @type {string[]} */
   const p = [];
   if (!isObject(c)) return ["case.json is not an object"];
@@ -97,7 +131,7 @@ export function caseProblems(c, folder) {
   if (!cat) p.push(`unknown category ${JSON.stringify(c.category)}`);
   else {
     if (c.class !== cat.class) p.push(`class ${JSON.stringify(c.class)} but the category ${c.category} is ${cat.class}`);
-    if (typeof c.id === "string" && !c.id.startsWith(`${c.category}-`)) p.push(`the id does not start with ${c.category}-`);
+    if (typeof c.id === "string" && !c.id.startsWith(`${prefix}${c.category}-`)) p.push(`the id does not start with ${prefix}${c.category}-`);
   }
   if (!LANGUAGES.includes(c.lang)) p.push(`lang ${JSON.stringify(c.lang)}`);
   if (typeof c.host !== "string" || !/^[a-z0-9.-]+$/.test(c.host)) p.push("host");
@@ -138,6 +172,7 @@ export function caseProblems(c, folder) {
     if (e.allow !== undefined && !(Array.isArray(e.allow) && e.allow.every(isId))) p.push("expect.allow is a list of #ids");
     if (e.generated !== null && e.generated !== undefined) {
       if (!isObject(e.generated) || !isId(e.generated.new) || !(e.generated.confirm === null || isId(e.generated.confirm))) p.push("expect.generated is { new, confirm }");
+      else if (e.generated.rules !== undefined && !rulesAreWellFormed(e.generated.rules)) p.push("expect.generated.rules is { minlength?, maxlength?, require?, forbid? }");
     } else if (e.generated === undefined) p.push("expect.generated (null when there is none)");
     if (e.capture !== null) {
       const k = e.capture;
@@ -166,16 +201,17 @@ export function caseProblems(c, folder) {
  * Every case of a corpus directory, with the folder (`dir`) it came from.
  * A folder whose name starts with an underscore is not a case (the self-test page).
  * @param {string} dir
+ * @param {{ prefix?: string }} [options] see caseProblems
  * @returns {Array<Record<string, any> & { dir: string }>}
  */
-export function loadCorpus(dir) {
+export function loadCorpus(dir, options = {}) {
   /** @type {Array<Record<string, any> & { dir: string }>} */
   const cases = [];
   if (!existsSync(dir)) return cases;
   for (const name of readdirSync(dir).sort()) {
     const folder = join(dir, name);
     if (name.startsWith("_") || !statSync(folder).isDirectory()) continue;
-    const problems = caseProblems(JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), name);
+    const problems = caseProblems(JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), name, options);
     if (problems.length > 0) throw new Error(`corpus: ${name}/case.json: ${problems.join("; ")}`);
     cases.push({ ...JSON.parse(readFileSync(join(folder, "case.json"), "utf8")), dir: folder });
   }
@@ -221,7 +257,7 @@ export function ruleMatches(rule, docUrl) {
  *   retries?: number,
  *   offers: Array<{ type: string, origin: string, username: string | null, password_field: string | null, reuse?: boolean, generated?: boolean, info?: string,
  *                   target_entry?: string, target_host?: string, target_match?: string, picked?: boolean, written_without_click?: boolean }>,
- *   generated: { filled: string[], stray?: string[] } | null,
+ *   generated: { filled: string[], stray?: string[], rules_ok?: boolean } | null,
  * }} Observed
  * @typedef {{ case: Record<string, any>, ran: { fill: boolean, capture: boolean, generated?: boolean }, observed?: Partial<Observed>, error?: string }} Result
  * @typedef {{ id: string, category: string, kind: "fill" | "offer", reason: string, field?: string }} Miss
@@ -318,6 +354,8 @@ function generatedCheck(r) {
   // No other field may hold it: not the password in use of a change form, not the e-mail box.
   const stray = r.observed?.generated?.stray ?? [];
   if (stray.length > 0) return { status: "fail", reason: `the generated password also went into ${stray.join(", ")}` };
+  // A page that states password rules: the value must follow them (the runner checked; the report never holds the value).
+  if (want.rules && r.observed?.generated?.rules_ok !== true) return { status: "fail", reason: "the generated password does not follow the page's password rules" };
   return { status: "pass" };
 }
 
@@ -366,10 +404,10 @@ function captureCheck(r) {
 
 /**
  * What the numbers need from the cases of a set.
- * @param {"corpus" | "holdout"} set
+ * @param {"corpus" | "holdout" | "parity"} set
  */
 function thresholds(set) {
-  return set === "holdout" ? { overall: 0.9, floor: 0 } : { overall: 0.95, floor: 0.8 };
+  return set === "holdout" ? { overall: 0.9, floor: 0 } : { overall: 0.95, floor: 0.8 }; // the corpus and the parity suite
 }
 
 /** @param {number} passed @param {number} total */
@@ -391,7 +429,7 @@ const rateOf = (passed, total) => (total === 0 ? null : passed / total);
  *   nothing unsafe, nothing unrun. A part that was not selected does not count. The hold-out set has no category floor.
  * - `gate`: `met` for a complete run (every part, no case filter); a partial run has no gate.
  * @param {Result[]} results
- * @param {{ set?: "corpus" | "holdout", part?: "fill" | "capture" | "all", manifest?: string, grep?: string }} [options]
+ * @param {{ set?: "corpus" | "holdout" | "parity", part?: "fill" | "capture" | "all", manifest?: string, grep?: string }} [options]
  */
 export function computeMatrix(results, { set = "corpus", part = "all", manifest = "mv2", grep = "" } = {}) {
   const level = thresholds(set);

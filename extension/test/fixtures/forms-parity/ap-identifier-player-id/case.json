@@ -1,0 +1,31 @@
+{
+  "id": "ap-identifier-player-id",
+  "class": "positive",
+  "category": "identifier",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-identifier-player-id/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna_h"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#u": "username"
+      }
+    },
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

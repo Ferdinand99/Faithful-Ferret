@@ -1,0 +1,23 @@
+{
+  "id": "ap-harmless-device-trust-notifications",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-device-trust-notifications/",
+  "frame": null,
+  "steps": [
+    {
+      "click": "#notify"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

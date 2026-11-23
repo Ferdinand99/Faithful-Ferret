@@ -1,0 +1,35 @@
+{
+  "id": "ap-harmless-identity-datalist",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-identity-datalist/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#country",
+      "text": "Nor"
+    },
+    {
+      "type": "#given",
+      "text": "Anna"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#country",
+    "#given",
+    "#family"
+  ],
+  "fields": {},
+  "source": "own"
+}

@@ -1,0 +1,47 @@
+{
+  "id": "ap-harmless-steps-single-page",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-steps-single-page/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#first",
+      "text": "Anna"
+    },
+    {
+      "type": "#last",
+      "text": "Hansen"
+    },
+    {
+      "click": "#next"
+    },
+    {
+      "type": "#email",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#phone",
+      "text": "5550100"
+    },
+    {
+      "click": "#go"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [
+    "#first",
+    "#last",
+    "#email",
+    "#phone"
+  ],
+  "fields": {},
+  "source": "own"
+}

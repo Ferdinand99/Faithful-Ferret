@@ -1,0 +1,23 @@
+{
+  "id": "ap-harmless-save-identity",
+  "class": "negative",
+  "category": "harmless",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ap-harmless-save-identity/",
+  "frame": null,
+  "steps": [
+    {
+      "click": "#save"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}
