@@ -19,7 +19,7 @@
 //
 // An offer is not shown at once. A login is offered only when it worked: the
 // page has to leave the form within ten seconds (a new document in the tab, a
-// change of the history, or the script saying that the form is gone within five),
+// change of the history, or the script saying that the form is gone within six),
 // has to finish loading, and then two quiet seconds have to pass with no
 // password form shown again by a page of the same site; a landing page the
 // script cannot report from (another site, `http`) counts as unknown and gives
@@ -52,8 +52,8 @@ export const MAX_OFFERS = 16;
 
 /** After a login capture: how long the page has to give a sign that it left the form. */
 export const LOGIN_OUTCOME_MS = 10_000;
-/** After a login capture: how long the script has to say that the form is gone. */
-export const FORM_GONE_MS = 5_000;
+/** After a login capture: how long the script has to say that the form is gone (its last check is at 4.9 s; the window tolerates a late timer and the message on its way). */
+export const FORM_GONE_MS = 6_000;
 /** After the new page has loaded (or the history changed): how long no password form may show again. */
 export const SETTLE_MS = 2_000;
 /** After the last capture of a sign-up, change or reset form. */
@@ -482,8 +482,31 @@ export function createOffers({
       const password = optionalText(body.password, MAX_PASSWORD);
       const current = optionalText(body.current_password, MAX_PASSWORD);
       if (username === undefined || password === undefined || current === undefined) return;
-      const usernameFrom = body.username_from === "typed" || body.username_from === "page" ? body.username_from : null;
+      const sourceOf = body.username_from;
+      if (sourceOf !== undefined && sourceOf !== null && sourceOf !== "typed" && sourceOf !== "page") return;
       if (encoder.encode(JSON.stringify(body)).length > MAX_MESSAGE) return;
+
+      // The shapes the script sends, and only those: a message of another shape is refused, never filled in.
+      //   identifier    the user name that was typed, and no password
+      //   login         the password that was typed; no current password
+      //   signup, reset the new password that was typed; no current password. With no password at all it is a join
+      //                 request: the new password was not typed (Ferret filled the one it generated)
+      //   change        the new password that was typed, and the current one if that was typed too; or a join request
+      // A source with no user name is refused; a user name with no source is the page's, never the person's.
+      if (username === null && sourceOf !== undefined && sourceOf !== null) return;
+      /** @type {Capture["usernameFrom"]} */
+      const usernameFrom = username === null ? null : sourceOf === "typed" ? "typed" : "page";
+      const joinRequest = !identifierStep && password === null && current === null;
+      if (identifierStep) {
+        if (password !== null || current !== null || username === null || usernameFrom !== "typed") return;
+      } else if (kind === "login") {
+        if (password === null || current !== null) return;
+      } else if (kind === "change") {
+        if (password === null && current !== null) return;
+      } else if (current !== null) {
+        return;
+      }
+      if (password === "" || current === "" || username === "") return;
 
       // The limits: one per frame in two seconds, twenty per tab a minute. A flood is dropped, not queued.
       const frameKey = `${sender.tabId}:${sender.frameId}`;
@@ -494,15 +517,7 @@ export function createOffers({
       frameLast.set(frameKey, at);
       tabRecent.set(sender.tabId, [...recent, at]);
 
-      if (identifierStep) {
-        if (username === null || username === "") return;
-      } else {
-        // The password of the form: a login's is its one password field; a change form has the new one beside the
-        // current one. A form with no password to keep is nothing to offer.
-        if (kind === "change" ? password === null || password === "" : (password ?? current) === null || (password ?? current) === "") return;
-      }
-
-      const savedPassword = identifierStep ? "" : /** @type {string} */ (password ?? current);
+      const savedPassword = password ?? "";
       entry = {
         id: newId(),
         state: "verifying",
@@ -560,7 +575,7 @@ export function createOffers({
 
       // 3. The user name: typed or from the page as it came, else the one from an identifier step of this tab and site.
       /** @type {Capture["usernameFrom"]} */
-      let from = username === null ? null : usernameFrom ?? "typed";
+      let from = usernameFrom;
       let name = username;
       if (name === null) {
         for (const ident of [...identifiers].reverse()) {
@@ -574,7 +589,30 @@ export function createOffers({
         if (stale()) return;
       }
 
-      // 4. A capture whose password is the one Ferret generated for this tab and origin joins that offer.
+      // 4a. A join request (the form was submitted with the password Ferret generated, which the script is not allowed to
+      // send) is never an offer of its own: it gives its user name to the generated offer of this very frame and
+      // document, found by identity and never by comparing values; with no such offer it is dropped.
+      if (joinRequest) {
+        const target = [...entries.values()].find(
+          (e) =>
+            e.generated &&
+            e.state === "ready" &&
+            e.capture !== null &&
+            e.tabId === sender.tabId &&
+            e.frameId === sender.frameId &&
+            e.documentId !== undefined &&
+            e.documentId === mine.documentId &&
+            e.capture.origin === origin,
+        );
+        drop(mine);
+        if (target?.capture && name !== null) target.capture = { ...target.capture, username: name, usernameFrom: from };
+        dirty.add(sender.tabId);
+        refreshBadges();
+        return;
+      }
+
+      // 4b. A capture whose password is the one Ferret generated for this tab and origin joins that offer (the person
+      // pasted it, which is typing: the value is compared in this memory only).
       const generated = [...entries.values()].find(
         (e) => e.generated && e.state === "ready" && e.capture !== null && e.tabId === sender.tabId && e.capture.origin === origin && e.capture.password === savedPassword,
       );

@@ -347,7 +347,7 @@ test("captured_values_are_never_written_to_any_storage_or_console", async () => 
     // A real capture of each kind, with the known values, and what a user does with them.
     await w.capture({ kind: "change", current_password: SENTINEL_CURRENT });
     w.clock.advance(3000);
-    await w.capture({ kind: "login", password: undefined, current_password: SENTINEL_PASSWORD });
+    await w.capture({ kind: "login", password: SENTINEL_CURRENT });
     w.clock.advance(2100);
     await w.capture({ kind: "login" });
     await w.offers.onGenerated({ tabId: 6, frameId: 0, frameUrl: PAGE, kind: "signup", password: "Generated-sentinel-w5Hn8", username: SENTINEL_USER });

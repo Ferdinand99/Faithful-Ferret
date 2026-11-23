@@ -219,10 +219,17 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
   await gone.offers.onSignal(TAB, { type: "form_gone", frameId: 0, captureId: "cap1" });
   gone.clock.advance(2000);
   assert.equal(gone.offers.forTab(TAB).length, 1);
-  // Gone after six seconds, or reported for another capture: no outcome.
+  // The script's last look is at 4.9 s: a message that is a little late still counts (the window is six seconds).
+  const tolerant = world();
+  await tolerant.send();
+  tolerant.clock.advance(5600);
+  await tolerant.offers.onSignal(TAB, { type: "form_gone", frameId: 0, captureId: "cap1" });
+  tolerant.clock.advance(2000);
+  assert.equal(tolerant.offers.forTab(TAB).length, 1);
+  // Gone after seven seconds, or reported for another capture: no outcome.
   const late = world();
   await late.send();
-  late.clock.advance(6000);
+  late.clock.advance(7000);
   await late.offers.onSignal(TAB, { type: "form_gone", frameId: 0, captureId: "cap1" });
   late.clock.advance(5000);
   assert.deepEqual(late.offers.forTab(TAB), []);
@@ -679,5 +686,100 @@ test("the_badge_follows_the_ready_offers_of_a_tab_and_a_saved_login_is_not_offer
     kept.offers.forTab(TAB);
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(kept.offers.forTab(TAB).length, 1);
+  }
+});
+
+test("an_identifier_capture_is_never_an_offer_by_itself", async () => {
+  const w = world();
+  await w.send({ kind: "identifier", username: "step@example.net", password: undefined });
+  // Not a badge, not an offer, not a classification, however long it waits and whatever the tab does.
+  await w.landOn();
+  w.clock.advance(60_000);
+  assert.equal(w.offers.size(), 0);
+  assert.deepEqual(w.offers.forTab(TAB), []);
+});
+
+test("a_capture_of_an_inconsistent_shape_is_refused_and_never_filled_in", async () => {
+  /** @type {Array<[string, Record<string, any>]>} */
+  const refused = [
+    ["an identifier with a password", { kind: "identifier", password: PASSWORD }],
+    ["an identifier with a current password", { kind: "identifier", password: undefined, current_password: PASSWORD }],
+    ["an identifier with no user name", { kind: "identifier", password: undefined, username: undefined, username_from: undefined }],
+    ["an identifier whose name came from the page", { kind: "identifier", password: undefined, username_from: "page" }],
+    ["a login with no password", { kind: "login", password: undefined }],
+    ["a login with only a current password", { kind: "login", password: undefined, current_password: PASSWORD }],
+    ["a login with a current password", { kind: "login", current_password: "Old-password-1" }],
+    ["a sign-up with a current password", { kind: "signup", current_password: "Old-password-1" }],
+    ["a reset with a current password", { kind: "reset", current_password: "Old-password-1" }],
+    ["a change with only a current password", { kind: "change", password: undefined, current_password: "Old-password-1" }],
+    ["a source with no user name", { kind: "signup", username: undefined, username_from: "typed" }],
+    ["a source of another kind", { kind: "signup", username_from: "guess" }],
+  ];
+  for (const [name, over] of refused) {
+    const w = world();
+    await w.send(over);
+    w.clock.advance(3000);
+    assert.equal(w.offers.size(), 0, name);
+    assert.deepEqual(w.offers.forTab(TAB), [], name);
+  }
+  // A user name with no source is the page's, never the person's.
+  const page = world();
+  await page.signup({ username_from: undefined });
+  page.clock.advance(3000);
+  const [offer] = page.offers.forTab(TAB, "7".repeat(32));
+  assert.equal(page.offers.peek(offer.offer_id, "7".repeat(32))?.usernameFrom, "page");
+  // And a login's password is the password field's, not a current password.
+  const login = world();
+  await login.send();
+  assert.equal(login.offers.size(), 1);
+});
+
+test("a_join_request_gives_its_user_name_to_the_generated_offer_of_its_own_frame_and_document_and_is_never_an_offer", async () => {
+  const w = world();
+  const id = await w.offers.onGenerated({ tabId: TAB, frameId: 0, documentId: `doc-${TAB}-0`, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" });
+  assert.ok(id);
+  const session = "8".repeat(32);
+  assert.equal(w.offers.forTab(TAB, session)[0].username, null);
+  // The form was submitted with the generated password, which the script cannot send: no password at all, the user name
+  // as usual. It joins by tab, frame and document.
+  w.clock.advance(1000);
+  await w.signup({ password: undefined, username: "ola@example.net" });
+  const [joined] = w.offers.forTab(TAB, session);
+  assert.equal(joined.offer_id, id);
+  assert.equal(joined.username, "ola@example.net");
+  assert.equal(w.offers.size(), 1, "no offer of its own");
+  assert.equal(w.offers.peek(id, session)?.password, "Generated-by-Ferret-9", "the password stays the generator's");
+  assert.equal(w.offers.peek(id, session)?.usernameFrom, "typed");
+  w.clock.advance(5000);
+  assert.equal(w.offers.size(), 1);
+
+  // Not by value, and not by another document, frame or tab: such a request is dropped and changes nothing.
+  for (const [name, senderOver, openAt] of /** @type {Array<[string, Record<string, any>, number | null]>} */ ([
+    ["another document", { documentId: "doc-other" }, null],
+    ["another frame", { frameId: 2, url: "https://login.example.net/embedded" }, 2],
+    ["another tab", { tabId: 9 }, 9],
+  ])) {
+    const x = world();
+    await x.offers.onGenerated({ tabId: TAB, frameId: 0, documentId: `doc-${TAB}-0`, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" });
+    if (openAt === 9) x.openFrame(9, PAGE);
+    if (openAt === 2) x.openFrame(TAB, "https://login.example.net/embedded", {}, 2);
+    await x.signup({ password: undefined, username: "ola@example.net" }, senderOver);
+    assert.equal(x.offers.forTab(TAB)[0].username, null, name);
+    assert.equal(x.offers.size(), 1, name);
+    assert.equal(x.offers.forTab(9).length, 0, name);
+  }
+  // With no generated offer at all the request is nothing; for a login or an identifier it is not a join request.
+  const none = world();
+  await none.signup({ password: undefined });
+  await none.send({ kind: "login", password: undefined });
+  none.clock.advance(5000);
+  assert.equal(none.offers.size(), 0);
+  // The same for a change and a reset form.
+  for (const kind of ["change", "reset"]) {
+    const k = world();
+    await k.offers.onGenerated({ tabId: TAB, frameId: 0, documentId: `doc-${TAB}-0`, frameUrl: PAGE, kind: /** @type {any} */ (kind), password: "Generated-by-Ferret-9" });
+    await k.send({ kind, password: undefined, username: "ola@example.net" });
+    assert.equal(k.offers.forTab(TAB)[0].username, "ola@example.net", kind);
+    assert.equal(k.offers.size(), 1, kind);
   }
 });
