@@ -127,10 +127,9 @@ test("a_lookalike_offer_names_the_lookalike_host_with_its_a_label_and_warns_of_r
         assert.equal(await w.session.content(() => document.querySelector('[data-role="offer-card"] [data-role="offer-host"]')?.getAttribute("data-a-label") ?? ""), host, `${channel}: ${id}: the host of the card is the look-alike's`);
         const hostText = await w.session.content(() => (document.querySelector('[data-role="offer-card"] [data-role="offer-host"]')?.textContent ?? "").trim());
         assert.ok(hostText.length > 0, `${channel}: ${id}: the host line is not empty`);
-        if (host.includes("xn--")) {
-          assert.ok(hostText.includes(host), `${channel}: ${id}: the A-label is shown (${hostText})`);
-          assert.equal(await w.page.visible('[data-role="offer-card"] [data-role="offer-a-label"]'), true, `${channel}: ${id}: the A-label is its own element`);
-        }
+        // A name that mixes scripts is shown as its A-label (the display form keeps it); one in a single script is shown in
+        // Unicode with the A-label beside it. Either way the A-label is on the card.
+        if (host.includes("xn--")) assert.ok(hostText.includes(host), `${channel}: ${id}: the A-label is shown (${hostText})`);
         // The warning names the item that has the same password, and the host that item is for.
         await w.page.waitVisible('[data-role="offer-card"] [data-role="offer-reuse"]', SLOW);
         const warning = await allText(w, '[data-role="offer-card"] [data-role="offer-reuse-item"]');

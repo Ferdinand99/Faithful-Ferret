@@ -39,6 +39,7 @@ export const ROWS = Object.freeze([
   "runtime.sender.origin",
   "webNavigation.getAllFrames.documentId",
   "tabs.sendMessage.documentId",
+  "webNavigation.onCommitted.documentId",
   "optional_host_permissions",
   "permissions.request.from_tab",
   "permissions.auto_grant_pref",
@@ -467,6 +468,33 @@ async function probeAll(channel, manifest) {
       const byDoc = flow.sendByDocumentId;
       const works = byDoc?.pong === "doc";
       return { status: works ? "works" : "fails", detail: { byFrameId: flow.sendByFrameId, byDocumentId: byDoc } };
+    });
+    // Does the navigation the browser reports carry the document's id? The offers module tells the capturing document's own load
+    // from a later one by it (and by the frame and the address when the id is missing).
+    await row(rows, ctx, "webNavigation.onCommitted.documentId", async () => {
+      await fromBridge(framesTab, () => session.execute(() => {
+        const w = /** @type {any} */ (window);
+        w.__nav = [];
+        for (const name of /** @type {const} */ (["onCommitted", "onCompleted"])) {
+          browser.webNavigation[name].addListener((/** @type {any} */ d) => { w.__nav.push({ event: name, frameId: d.frameId, url: d.url, documentId: d.documentId ?? null }); });
+        }
+        return true;
+      }));
+      const navTab = await session.newTab();
+      await session.switchTo(navTab);
+      const address = server.url(server.hosts[0], "/static/login.html");
+      await session.navigate(address);
+      await session.waitFor(() => session.content(() => document.readyState === "complete"), 15_000, "the page");
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const events = /** @type {Array<{ event: string, frameId: number, url: string, documentId: string | null }>} */ (await fromBridge(navTab, () => session.execute(() => /** @type {any} */ (window).__nav)));
+      await session.closeTab();
+      await session.switchTo(framesTab);
+      const top = events.filter((e) => e.frameId === 0 && e.url === address);
+      const committed = top.find((e) => e.event === "onCommitted");
+      const completed = top.find((e) => e.event === "onCompleted");
+      const has = (/** @type {{ documentId: string | null } | undefined} */ e) => typeof e?.documentId === "string" && e.documentId !== "";
+      const status = has(committed) && has(completed) ? (committed?.documentId === completed?.documentId ? "works" : "partial") : has(committed) || has(completed) ? "partial" : "absent";
+      return { status, detail: { committed: committed ?? null, completed: completed ?? null } };
     });
     await row(rows, ctx, "scripting.executeScript.opaque_frames", async () => {
       /** @param {string} url */

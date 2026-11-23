@@ -1612,3 +1612,33 @@ test("the_capture_files_import_no_crypto_no_store_and_no_other_shared_module", (
     assert.doesNotMatch(text, /Math\.random|MutationObserver|postMessage|sendBeacon|XMLHttpRequest|\bfetch\s*\(|document\.(?:createElement|write)|\.(?:append|appendChild|insertBefore|prepend|replaceWith|setAttribute|removeAttribute|remove|innerHTML|outerHTML|insertAdjacentHTML)\b|\.style\b|\.classList\b|\.dataset\b/, `${name}: it reads the page and changes nothing`);
   }
 });
+
+test("a_sign_up_with_a_generated_password_on_a_page_that_removes_its_form_is_a_join_request_with_the_typed_user_name", () => {
+  // A single-page sign-up with no form element: the person types the address, Ferret generates the password, the person clicks a
+  // styled button (words of a new account in Norwegian), and the page removes the whole step in the same click.
+  const world = createWorld();
+  const { document } = world;
+  const section = document.body.append(document.createElement("section", { id: "view-signup" }));
+  const wrap = section.append(document.createElement("div", { id: "signup-fields" }));
+  const mail = addInput(document, wrap, { id: "epost", type: "email", autocomplete: "email" }, { top: 100 });
+  const pw = addInput(document, wrap, { id: "nyttpw", type: "password", autocomplete: "new-password" }, { top: 160 });
+  const pw2 = addInput(document, wrap, { id: "nyttpw2", type: "password", autocomplete: "new-password" }, { top: 220 });
+  const go = addText(document, wrap, "button", "Opprett bruker", { id: "opprett", type: "button" });
+  world.start();
+  world.type(mail, "silje.haugen@example.net");
+  // The generator fills with scripted input events: nothing a script wrote is sent.
+  for (const el of [pw, pw2]) {
+    el.value = "Generated-Value-123!";
+    world.fire(el, "input", { trusted: false });
+  }
+  world.click(go);
+  section.parentNode.remove(section);
+  world.settle();
+  const [capture] = world.of("form_capture");
+  assert.ok(capture, "the click on the button is a submission");
+  assert.equal(capture.body.kind, "signup");
+  assert.equal(capture.body.username, "silje.haugen@example.net");
+  assert.equal(capture.body.username_from, "typed");
+  assert.equal(capture.body.password, null, "the generated value is not sent");
+  assert.equal(JSON.stringify(world.sent).includes("Generated-Value-123!"), false);
+});

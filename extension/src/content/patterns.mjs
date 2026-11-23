@@ -221,11 +221,11 @@ export const SHOW_WORDS = Object.freeze([
  * text has one of them sends the form.
  */
 export const SUBMIT_WORDS = Object.freeze({
-  en: Object.freeze(["log in", "login", "sign in", "sign up", "register", "create account", "submit", "continue", "next", "save", "change password", "reset password", "update password", "confirm", "verify"]),
-  nb: Object.freeze(["logg inn", "logg på", "registrer", "opprett konto", "send", "fortsett", "neste", "lagre", "bytt passord", "endre passord", "tilbakestill", "bekreft"]),
-  de: Object.freeze(["anmelden", "einloggen", "registrieren", "konto erstellen", "absenden", "weiter", "fortfahren", "speichern", "passwort ändern", "zurücksetzen", "bestätigen", "prüfen"]),
-  fr: Object.freeze(["se connecter", "connexion", "s inscrire", "créer un compte", "envoyer", "continuer", "suivant", "enregistrer", "changer le mot de passe", "réinitialiser", "confirmer", "vérifier"]),
-  nl: Object.freeze(["inloggen", "aanmelden", "registreren", "account aanmaken", "versturen", "doorgaan", "volgende", "opslaan", "wachtwoord wijzigen", "bevestigen", "controleren"]),
+  en: Object.freeze(["log in", "login", "sign in", "sign up", "register", "create account", "create user", "submit", "continue", "next", "save", "change password", "reset password", "update password", "confirm", "verify"]),
+  nb: Object.freeze(["logg inn", "logg på", "registrer", "opprett konto", "opprett bruker", "registrer deg", "send", "fortsett", "neste", "lagre", "bytt passord", "endre passord", "tilbakestill", "bekreft"]),
+  de: Object.freeze(["anmelden", "einloggen", "registrieren", "konto erstellen", "benutzer erstellen", "absenden", "weiter", "fortfahren", "speichern", "passwort ändern", "zurücksetzen", "bestätigen", "prüfen"]),
+  fr: Object.freeze(["se connecter", "connexion", "s inscrire", "créer un compte", "créer mon compte", "envoyer", "continuer", "suivant", "enregistrer", "changer le mot de passe", "réinitialiser", "confirmer", "vérifier"]),
+  nl: Object.freeze(["inloggen", "aanmelden", "registreren", "account aanmaken", "gebruiker aanmaken", "versturen", "doorgaan", "volgende", "opslaan", "wachtwoord wijzigen", "bevestigen", "controleren"]),
 });
 
 /**

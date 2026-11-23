@@ -338,8 +338,17 @@ test("full_u2_flow_end_to_end", async () => {
       }
       assert.ok(newId, "the new item has an id");
       await w.session.switchTo(w.vaultTab);
+      // The server's own feed has it. (The web vault's list is not looked at: the web vault's sync went through the same lying
+      // server and stands still until it is loaded again.)
       await w.session.waitFor(() => serverHas(w.session, /** @type {string} */ (newId), 1), 90_000, `${channel}: the server took the save after the unlock`);
-      assert.ok(await vaultItemHref(w, `E2E-offline-${tag}`), `${channel}: the web vault lists the save that waited`);
+      await w.session.switchTo(w.pageTab);
+      await w.session.waitFor(async () => (await w.vaultState()).rows.some((/** @type {string} */ r) => r.startsWith(`${newId}:`)), 60_000, `${channel}: the extension lists the item`);
+      await w.ui.open();
+      try {
+        await w.session.waitFor(async () => ((await w.ui.body("sync_state", {})).pending ?? 0) === 0, 60_000, `${channel}: nothing waits any more`);
+      } finally {
+        await w.ui.close();
+      }
     } finally {
       await w.quit();
     }
