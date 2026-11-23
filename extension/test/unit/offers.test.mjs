@@ -855,6 +855,29 @@ test("a_new_document_of_the_same_frame_may_capture_within_two_seconds_of_the_one
   assert.equal(flood.offers.forTab(TAB).length, 1);
 });
 
+test("the_password_step_that_follows_an_identifier_step_in_the_same_document_is_not_dropped_by_the_frame_gap", async () => {
+  // One page, two steps: the name step and, a moment later, the password step, in the same document.
+  const w = world();
+  await w.send({ kind: "identifier", username: "step@example.net", password: undefined });
+  w.clock.advance(300);
+  await w.send({ kind: "signup", username: undefined, username_from: undefined });
+  w.clock.advance(3000);
+  assert.equal(w.offers.forTab(TAB)[0].username, "step@example.net");
+  // An identifier step is held to one in two seconds on its own, and so is the form.
+  const flood = world();
+  await flood.send({ kind: "identifier", username: "one@example.net", password: undefined });
+  flood.clock.advance(300);
+  await flood.send({ kind: "identifier", username: "two@example.net", password: undefined });
+  flood.clock.advance(300);
+  await flood.signup({ username: undefined, username_from: undefined });
+  flood.clock.advance(300);
+  await flood.signup({ username: undefined, username_from: undefined, password: "Another-PASSWORD-2" });
+  flood.clock.advance(3000);
+  const offers = flood.offers.forTab(TAB);
+  assert.equal(offers.length, 1);
+  assert.equal(offers[0].username, "one@example.net");
+});
+
 test("a_lock_or_a_closed_tab_while_a_generated_offer_is_judged_leaves_no_generated_password", async () => {
   for (const [name, clear] of /** @type {Array<[string, (offers: any) => void]>} */ ([
     ["lock", (offers) => offers.clear("lock")],

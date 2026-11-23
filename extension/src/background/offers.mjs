@@ -546,8 +546,9 @@ export function createOffers({
 
       // The limits: one per frame in two seconds, twenty per tab a minute. A flood is dropped, not queued.
       // Deviation: one capture per frame document, not per frame, so that the password step of a two-page sign-in (a new
-      // document of the same frame a moment after the identifier step) is not dropped; the per-tab limit still holds.
-      const frameKey = `${sender.tabId}:${sender.frameId}:${typeof sender.documentId === "string" ? sender.documentId : ""}`;
+      // document of the same frame a moment after the identifier step) is not dropped; the per-tab limit still holds. An identifier
+      // step has a gap of its own for the same reason: the password step that follows it on the same page is not dropped.
+      const frameKey = `${sender.tabId}:${sender.frameId}:${typeof sender.documentId === "string" ? sender.documentId : ""}:${identifierStep ? "identifier" : "form"}`;
       const last = frameLast.get(frameKey);
       if (last !== undefined && at >= last && at - last < FRAME_GAP_MS) return;
       const recent = (tabRecent.get(sender.tabId) ?? []).filter((t) => at - t <= TAB_WINDOW_MS);
