@@ -1,4 +1,6 @@
 {
+  "settings.credits.eff": "The passphrase generator draws its words from the EFF large word list by the Electronic Frontier Foundation (source: {source_url}), used under the Creative Commons Attribution 3.0 United States licence (CC BY 3.0 US, {license_url}). The dice numbers were removed from the list; the words are unchanged.",
+  "settings.credits.title": "Credits",
   "settings.error.disconnected": "Ferret's background stopped while it worked. Open this page again.",
   "settings.error.internal_error": "The setting could not be saved. Nothing was changed.",
   "settings.error.invalid_input": "That is not one of the choices. Nothing was changed.",
