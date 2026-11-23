@@ -332,6 +332,20 @@ test("a_changed_item_is_classified_again_and_the_offer_stays_for_another_click",
   assert.deepEqual(w.writes, []);
 });
 
+test("an_offer_without_a_user_name_is_listed_with_no_user_name_key", async () => {
+  // A change form has no user name: the offer is still listed, and the popup is told of none.
+  const w = await uiWorld([item(1, { name: "Shop", username: USER, password: OLD, urls: [[`${ORIGIN}/`, "host"]] })]);
+  await w.offerReady({ kind: "change", username: undefined, username_from: undefined, current_password: OLD, password: NEW });
+  const popup = w.connectPopup();
+  const listed = await popup.ask("offer_list", { tab_id: TAB });
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.offers.length, 1);
+  assert.equal(Object.hasOwn(listed.offers[0], "username"), false);
+  assert.equal(listed.offers[0].kind, "change");
+  const classified = await popup.ask("offer_classify", { offer_id: listed.offers[0].offer_id });
+  assert.equal(classified.action, "update", "the current password names the item");
+});
+
 test("the_popup_can_read_the_offered_password_only_on_its_own_click_and_never_in_a_list", async () => {
   const w = await uiWorld();
   await w.offerReady();

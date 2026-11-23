@@ -74,7 +74,12 @@ async function handle(body, ctx) {
       case "offer_list": {
         const reply = /** @type {any} */ (await call("offer_list", { tab_id: body.tab_id, session }));
         if (reply?.ok !== true) return { ok: false, reason: reasonOf(reply?.reason) };
-        return { ok: true, offers: reply.offers, ...(typeof reply.notice === "string" ? { notice: reply.notice } : {}) };
+        // A change form has no user name: the key is left out, not null.
+        const offers = (Array.isArray(reply.offers) ? reply.offers : []).map((/** @type {any} */ o) => {
+          const { username, ...rest } = o;
+          return typeof username === "string" ? { ...rest, username } : rest;
+        });
+        return { ok: true, offers, ...(typeof reply.notice === "string" ? { notice: reply.notice } : {}) };
       }
       case "offer_classify": {
         const reply = /** @type {any} */ (await call("offer_classify", { session, offer_id: body.offer_id }));
