@@ -21,11 +21,11 @@
 // its code) and an offer by the SHA-256 of its password.
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { FORMS_DIR } from "./fixtures-server.mjs";
+import { CAPTURE_FORMS_DIR, FORMS_DIR } from "./fixtures-server.mjs";
 import { VAULT_USERNAME, followsRules, loadCorpus } from "./matrixReport.mjs";
 import { recentCodes } from "./totp.mjs";
 
-/** Where the hold-out set is added to the repository when the time comes. */
+/** The hold-out set: cases written without sight of the detection code. */
 export const HOLDOUT_DIR = resolve(FORMS_DIR, "..", "forms-holdout");
 
 /** The own-written autofill-parity suite: one page per form of a public catalogue of autofill test pages. */
@@ -73,9 +73,15 @@ export function caseUrl(c, server) {
   return `${scheme}://${c.host}${port === standard ? "" : `:${port}`}${c.path}`;
 }
 
+/** The cases of the adversarial capture specs (fixtures/forms-capture), whose id contains `grep`. @param {string} [grep] */
+export function captureCasesOf(grep = "") {
+  const all = loadCorpus(CAPTURE_FORMS_DIR);
+  return grep === "" ? all : all.filter((c) => c.id.includes(grep));
+}
+
 /** Loads the cases of a set, keeping the ones whose id contains `grep`. @param {"corpus" | "holdout" | "parity"} set @param {string} [grep] */
 export function casesOf(set, grep = "") {
-  const all = loadCorpus(formsDirFor(set), { prefix: idPrefixFor(set) });
+  const all = loadCorpus(formsDirFor(set), { prefix: idPrefixFor(set), holdout: set === "holdout" });
   return grep === "" ? all : all.filter((c) => c.id.includes(grep));
 }
 
@@ -279,17 +285,23 @@ export async function scanDocs(session) {
   return out;
 }
 
+/** The input types whose value is never something a fill wrote. */
+const UNFILLABLE_TYPES = new Set(["radio", "checkbox", "button", "submit", "reset", "image", "file", "range", "color"]);
+
 /**
  * The vault values of one entry that a scan finds: its password, its user name, its whole code, and the digits of its
  * code in a row of one-character fields of one document (digit n of the code in the n-th of them).
- * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} rows
+ * @param {Array<{ id: string, type: string, value: string, docUrl: string }>} allRows
  * @param {string} key @param {string} password @param {string[]} codes the codes the entry can have now
  * @returns {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>}
  */
-export function fillsIn(rows, key, password, codes) {
+export function fillsIn(allRows, key, password, codes) {
+  // A radio button, a check box or a button has a value the page gave it (the "1" and "5" of a rating): it is not mistaken for a
+  // digit of a code (the split-code scans below), but a whole password, user name or code in any input is still a fill.
+  const rows = allRows.filter((r) => !UNFILLABLE_TYPES.has(r.type));
   /** @type {Array<{ entry: string, kind: "username" | "password" | "totp", index?: number, id: string, docUrl: string }>} */
   const out = [];
-  for (const input of rows) {
+  for (const input of allRows) {
     if (input.value === "") continue;
     if (input.value === password) out.push({ entry: key, kind: "password", id: `#${input.id}`, docUrl: input.docUrl });
     else if (input.value === VAULT_USERNAME) out.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });

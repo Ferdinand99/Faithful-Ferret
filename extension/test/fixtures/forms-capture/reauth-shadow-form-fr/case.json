@@ -1,0 +1,38 @@
+{
+  "id": "reauth-shadow-form-fr",
+  "class": "negative",
+  "category": "reauth",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/reauth-shadow-form-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#u",
+      "text": "anna@example.net"
+    },
+    {
+      "type": "#p",
+      "text": "Zq7!adversarial-Vm4$"
+    },
+    {
+      "click": "#go"
+    },
+    {
+      "wait": 600
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#u",
+      "#p"
+    ],
+    "generated": null,
+    "capture": null,
+    "no_offer": true
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

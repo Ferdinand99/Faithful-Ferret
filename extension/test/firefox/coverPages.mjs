@@ -185,5 +185,93 @@ add({
 <div id="late" style="position:fixed;inset:0;pointer-events:none;background:#fff"></div>`),
 });
 
+// ---------------------------------------------------------------- the top layer, unknown stacking contexts, pictures
+
+add({
+  id: "popover-over-field",
+  expect: "refuse",
+  summary: "an open popover in the top layer, click-through, white and with a negative z-index: the top layer paints above the page whatever the z-index",
+  html: doc("A popover over the form", "", `<main>${form(PLAIN_FIELDS)}</main>
+<div id="veil" popover="manual" style="position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;z-index:-1;pointer-events:none;background:#fff;overflow:visible"></div>`,
+  `<script>document.getElementById("veil").showPopover();</script>`),
+});
+
+add({
+  id: "fixed-wrapper-negative-child",
+  expect: "refuse",
+  summary: "a fixed, click-through wrapper (it makes a stacking context of its own) whose child has z-index -1 and a white background: the wrapper paints over a plain form",
+  html: doc("A fixed wrapper over the form", "", `<main>${form(PLAIN_FIELDS)}</main>
+<div id="wrap" style="position:fixed;inset:0;pointer-events:none"><div id="panel" style="position:absolute;inset:0;z-index:-1;pointer-events:none;background:#fff"></div></div>`),
+});
+
+add({
+  id: "absolute-wrapper-negative-child",
+  expect: "fill",
+  summary: "the same with an absolute wrapper that makes no stacking context: the child's negative level puts it below the page, so it covers nothing",
+  html: doc("An absolute wrapper behind the form", "", `<main>${form(PLAIN_FIELDS)}</main>
+<div id="wrap" style="position:absolute;inset:0;pointer-events:none"><div id="panel" style="position:absolute;inset:0;z-index:-1;pointer-events:none;background:#fff"></div></div>`),
+});
+
+const PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+add({
+  id: "inline-image-over-field",
+  expect: "refuse",
+  summary: "an inline image after the password field, pulled over it with a negative margin, click-through and not positioned: it paints over the field (a fake field)",
+  html: doc("An image over the field", "", `<main>${form(`<input id="username" name="username" type="text" autocomplete="username" aria-label="User name" style="display:block;width:300px;box-sizing:border-box;height:40px;margin-bottom:12px;padding:0 10px">
+<input id="password" name="password" type="password" autocomplete="current-password" aria-label="Password" style="display:inline-block;width:300px;box-sizing:border-box;height:40px;padding:0 10px">
+<img id="fake" alt="" src="${PIXEL}" style="display:inline-block;width:300px;height:40px;margin-left:-300px;pointer-events:none">
+<div><button type="submit" id="submit">Sign in</button></div>`)}</main>`),
+});
+
+add({
+  id: "page-sized-label",
+  expect: "refuse",
+  summary: "a label of the password field that fills the whole page, click-through, with a white background: no label at rest sits over its field like that",
+  html: doc("A label as large as the page", "", `<main>${form(`<input id="username" name="username" type="text" autocomplete="username" aria-label="User name" style="display:block;width:300px;box-sizing:border-box;height:40px;margin-bottom:12px;padding:0 10px">
+<input id="password" name="password" type="password" autocomplete="current-password" style="display:block;width:300px;box-sizing:border-box;height:40px;padding:0 10px">
+<label for="password" style="position:fixed;inset:0;background:#fff;pointer-events:none">Password</label>
+<button type="submit" id="submit">Sign in</button>`)}</main>`),
+});
+
+add({
+  id: "grain-overlay",
+  expect: "fill",
+  summary: "a full-page, click-through layer with a background image (a film grain or a scrim) over the form: mostly transparent, and the pass cannot see its alpha",
+  html: doc("A grain over the page", "", `<main>${form(PLAIN_FIELDS)}</main>
+<div id="grain" style="position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(0,0,0,.04),rgba(0,0,0,.04))"></div>`),
+});
+
+add({
+  id: "confetti-canvas",
+  expect: "fill",
+  summary: "a full-page, click-through canvas that draws confetti (transparent where nothing is drawn) over the form",
+  html: doc("Confetti", "", `<main>${form(PLAIN_FIELDS)}</main>
+<canvas id="confetti" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none"></canvas>`,
+  `<script>
+const c = document.getElementById("confetti");
+c.width = 200; c.height = 120;
+const g = c.getContext("2d");
+g.fillStyle = "#e91e63"; g.fillRect(10, 10, 4, 4); g.fillStyle = "#03a9f4"; g.fillRect(150, 90, 4, 4);
+</script>`),
+});
+
+add({
+  id: "svg-noise-overlay",
+  expect: "fill",
+  summary: "a full-page, click-through SVG with a few faint dots (noise) over the form",
+  html: doc("Noise over the page", "", `<main>${form(PLAIN_FIELDS)}</main>
+<svg id="noise" width="100%" height="100%" style="position:fixed;inset:0;pointer-events:none" aria-hidden="true"><circle cx="40" cy="40" r="2" fill="#000" fill-opacity=".05"></circle><circle cx="300" cy="200" r="2" fill="#000" fill-opacity=".05"></circle></svg>`),
+});
+
+add({
+  id: "small-canvas-over-field",
+  expect: "refuse",
+  summary: "a canvas the size of the password field, click-through, over it: a drawing of a field, and no decoration of the page",
+  html: doc("A canvas over the field", "", `<main>${form(`<input id="username" name="username" type="text" autocomplete="username" aria-label="User name" style="display:block;width:300px;box-sizing:border-box;height:40px;margin-bottom:12px;padding:0 10px">
+<div style="position:relative;width:300px"><input id="password" name="password" type="password" autocomplete="current-password" aria-label="Password" style="display:block;width:300px;box-sizing:border-box;height:40px;padding:0 10px"><canvas id="fake" width="300" height="40" style="position:absolute;left:0;top:0;width:300px;height:40px;pointer-events:none"></canvas></div>
+<button type="submit" id="submit">Sign in</button>`)}</main>`),
+});
+
 /** @param {string} id @returns {CoverPage | undefined} */
 export const coverPage = (id) => COVER_PAGES.find((page) => page.id === id);

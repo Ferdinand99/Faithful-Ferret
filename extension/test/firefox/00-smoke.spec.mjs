@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { after, test } from "node:test";
 import {
-  ABOUT_URL, channels, fixtures, FIXED_UUID, launch, openBridge, pinnedVersions, stopFixtures,
+  ABOUT_URL, channels, commandOnPage, fixtures, FIXED_UUID, launch, openBridge, pinnedVersions, stopFixtures,
   TEST_ADDON_ID, TEST_COMMAND, TEST_SHORTCUT,
 } from "./harness.mjs";
 
@@ -228,9 +228,11 @@ test("chrome_context_can_press_a_shortcut_and_click_a_context_menu_item", async 
       // A real shortcut, on a tab that never had a grant: the command saw the page's address.
       const first = await openPage(server.hosts[0]);
       await assertHidden(first.tab, first.url, "shortcut tab");
-      await session.pressShortcut(TEST_SHORTCUT);
-      const commandEvent = await session.waitFor(
-        async () => (await fromBridge(first.tab, () => bridge.events())).find((e) => e.kind === "command"), 10_000, "the command event");
+      const commandEvent = await commandOnPage({
+        clear: () => fromBridge(first.tab, () => bridge.clearEvents()),
+        press: () => session.pressShortcut(TEST_SHORTCUT),
+        events: () => fromBridge(first.tab, () => bridge.events()),
+      });
       assert.equal(commandEvent.name, TEST_COMMAND);
       assert.equal(commandEvent.tabUrl, first.url, `${channel}: the command was called with activeTab`);
 

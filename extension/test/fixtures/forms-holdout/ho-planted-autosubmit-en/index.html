@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Signing you in</title>
+<style>body{font-family:sans-serif;max-width:340px;margin:70px auto}input{display:block;width:100%;box-sizing:border-box;padding:8px;margin:4px 0 10px}</style></head>
+<body>
+<h1>Signing you in...</h1>
+<p>This page continues a session handed over from our partner site.</p>
+<form id="handoff" action="session" method="get">
+<label for="hu">Username</label><input id="hu" name="u" type="text" autocomplete="username">
+<label for="hp">Password</label><input id="hp" name="p" type="password" autocomplete="current-password">
+<button type="submit" id="hgo">Continue</button>
+</form>
+<script>
+// The page plants a value of its own and submits the form without a person typing.
+(function(){
+  document.getElementById('hu').value='handoff-user';
+  document.getElementById('hp').value='planted-by-the-page-4471';
+  setTimeout(function(){ document.getElementById('handoff').requestSubmit(); }, 400);
+})();
+</script>
+</body></html>

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>Verificatie in twee stappen</title>
+<style>body{font-family:Arial;max-width:340px;margin:70px auto}input{width:100%;padding:12px;font-size:22px;letter-spacing:6px;text-align:center;box-sizing:border-box}</style></head>
+<body>
+<h1>Verificatiecode</h1>
+<p>Voer de 6-cijferige code uit je authenticator-app in.</p>
+<form method="post" action="#verifieer">
+<label for="code">Code</label>
+<input id="code" name="totp" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
+<p><button type="submit" id="verstuur">Bevestigen</button></p>
+</form>
+</body></html>

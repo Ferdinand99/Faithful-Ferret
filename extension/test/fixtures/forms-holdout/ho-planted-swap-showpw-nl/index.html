@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>Inloggen</title>
+<style>body{font-family:Arial;max-width:340px;margin:60px auto}input{width:100%;box-sizing:border-box;padding:8px;margin:4px 0 10px}.pwrow{display:flex;gap:6px}.pwrow input{margin:0}</style></head>
+<body>
+<h1>Inloggen</h1>
+<form id="login" method="get" action="ingelogd.html">
+<label for="gebruiker">Gebruikersnaam</label><input id="gebruiker" name="u" type="text" autocomplete="username">
+<label for="ww">Wachtwoord</label>
+<div class="pwrow"><input id="ww" name="p" type="password" autocomplete="current-password">
+<button type="button" id="toon" aria-pressed="false">Toon</button></div>
+<button type="submit" id="aanmelden">Aanmelden</button>
+</form>
+<script>
+(function(){
+  var wm=document.getElementById('ww'), t=document.getElementById('toon');
+  t.addEventListener('click', function(){
+    var show=wm.type==='password';
+    wm.type=show?'text':'password';
+    t.textContent=show?'Verberg':'Toon';
+    t.setAttribute('aria-pressed', show?'true':'false');
+  });
+  // The page rewrites the typed value on submit (client-side "hashing"), so what is sent is not what was typed.
+  document.getElementById('login').addEventListener('submit', function(){
+    wm.type='password';
+    wm.value='h$'+wm.value.split('').reverse().join('')+'$'+wm.value.length;
+  });
+})();
+</script>
+</body></html>

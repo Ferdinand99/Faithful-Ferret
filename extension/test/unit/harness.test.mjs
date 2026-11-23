@@ -10,7 +10,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FIXED_UUID as UUID_OF_IDS, TEST_COMMAND_ID, TEST_MENU_ITEM_ID } from "../../scripts/lib/testIds.mjs";
 import { FIXED_UUID, policiesJson, profilePrefs, TEST_ADDON_ID, userJs } from "../firefox/profile.mjs";
+import { timingSlack } from "../firefox/harness.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
+
+test("the_timing_slack_is_one_unless_the_runner_says_two_and_nothing_else_passes", () => {
+  assert.equal(timingSlack(undefined), 1);
+  assert.equal(timingSlack(""), 1);
+  assert.equal(timingSlack("1"), 1);
+  assert.equal(timingSlack("1.5"), 1.5);
+  assert.equal(timingSlack("2"), 2);
+  for (const bad of ["abc", "0", "0.5", "2.01", "3", "1e9", "Infinity", "-Infinity", "NaN", "-1", "1,5"]) {
+    assert.throws(() => timingSlack(bad), /FERRET_TIMING_SLACK/, bad);
+  }
+});
 
 test("test_profile_prefs_and_policies_are_what_the_harness_needs", () => {
   assert.equal(TEST_ADDON_ID, TEST_ID);

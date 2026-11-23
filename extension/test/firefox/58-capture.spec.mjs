@@ -27,7 +27,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import {
-  channels, fixtures, launch, openBridge, stopFixtures, TEST_COMMAND, TEST_SHORTCUT,
+  channels, fixtures, launch, openBridge, stopFixtures, TEST_COMMAND, TEST_SHORTCUT, timingSlack,
 } from "./harness.mjs";
 
 process.env.FERRET_SSE_INTERVAL_MS ??= "300";
@@ -39,7 +39,7 @@ const sleep = (/** @type {number} */ ms) => new Promise((done) => setTimeout(don
 const PASSWORD = "Zq7!footprint-Vm4$";
 // Deviation: the bounds below are for a quiet machine. On the shared runners of the CI workflow the same code measures about
 // twice as slow, so the workflow sets FERRET_TIMING_SLACK=2; every other run (the build host, the gate) keeps 1.
-const SLACK = Number(process.env.FERRET_TIMING_SLACK ?? 1);
+const SLACK = timingSlack();
 
 /**
  * Firefox with the test build, a bridge tab and a page tab, and the calls these tests make.

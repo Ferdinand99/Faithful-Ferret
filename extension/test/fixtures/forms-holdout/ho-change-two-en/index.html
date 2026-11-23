@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Account security</title>
+<style>body{font-family:system-ui;margin:0}.layout{display:flex}.side{width:180px;background:#eee;padding:16px}.main{padding:24px;max-width:420px}input{display:block;width:100%;padding:8px;margin:4px 0 14px;box-sizing:border-box}</style></head>
+<body>
+<div class="layout">
+<aside class="side"><ul><li>Profile</li><li><b>Security</b></li><li>Billing</li></ul></aside>
+<main class="main">
+<h2>Update your password</h2>
+<form id="pwform" method="post" action="#pwform">
+  <input type="text" id="acct" name="login" value="ola" readonly autocomplete="username" aria-label="Account">
+  <label for="current">Current password</label>
+  <input type="password" id="current" name="current_password" autocomplete="current-password">
+  <label for="fresh">New password</label>
+  <input type="password" id="fresh" name="new_password" autocomplete="new-password">
+  <button type="submit" id="update">Update password</button>
+</form>
+<hr>
+<form action="/profile/bio" method="post"><label for="bio">Short bio</label><input type="text" id="bio" name="bio"><button type="submit">Save bio</button></form>
+</main></div>
+</body></html>

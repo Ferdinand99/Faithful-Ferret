@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Two-step verification</title>
+<style>body{font-family:sans-serif;text-align:center;padding-top:70px}.digits input{width:42px;height:52px;font-size:24px;text-align:center;margin:0 4px}</style></head>
+<body>
+<h1>Enter your verification code</h1>
+<p>Open your authenticator app and type the 6-digit code.</p>
+<form id="mfa" method="post" action="#mfa">
+<div class="digits" role="group" aria-label="Verification code">
+<input id="c1" name="d1" type="text" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
+<input id="c2" name="d2" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 2">
+<input id="c3" name="d3" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 3">
+<input id="c4" name="d4" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 4">
+<input id="c5" name="d5" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 5">
+<input id="c6" name="d6" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 6">
+</div>
+<p><button type="submit" id="verify">Verify</button></p>
+</form>
+<script>
+(function(){
+  var boxes=[].slice.call(document.querySelectorAll('.digits input'));
+  boxes.forEach(function(b,i){
+    b.addEventListener('input', function(){ if(b.value && boxes[i+1]) boxes[i+1].focus(); });
+    b.addEventListener('keydown', function(e){ if(e.key==='Backspace' && !b.value && boxes[i-1]) boxes[i-1].focus(); });
+  });
+})();
+</script>
+</body></html>

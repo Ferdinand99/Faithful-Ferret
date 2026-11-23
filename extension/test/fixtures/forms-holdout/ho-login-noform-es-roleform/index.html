@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Acceso</title>
+<style>body{font-family:Verdana;background:#eef}.panel{width:320px;margin:50px auto;background:#fff;padding:20px}.btn{display:block;text-align:center;background:#06c;color:#fff;padding:10px;cursor:pointer}.f{margin-bottom:10px}</style></head>
+<body>
+<div class="panel" role="form" aria-label="Acceso de usuarios">
+<h3>Accede a tu cuenta</h3>
+<div class="f"><input type="text" id="usuario" name="usuario" placeholder="Usuario" aria-label="Usuario" autocomplete="username"></div>
+<div class="f"><input type="password" id="clave" name="clave" placeholder="Contraseña" aria-label="Contraseña" autocomplete="current-password"></div>
+<div id="entrar" class="btn" role="button" tabindex="0">Entrar</div>
+<div id="msg"></div>
+</div>
+<script>
+(function(){
+  function enviar(){
+    var x=new XMLHttpRequest();
+    x.open('POST','entrar.json');
+    x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    x.onloadend=function(){document.getElementById('msg').textContent='Enviado';};
+    x.send('u='+encodeURIComponent(document.getElementById('usuario').value)+'&p='+encodeURIComponent(document.getElementById('clave').value));
+  }
+  var b=document.getElementById('entrar');
+  b.addEventListener('click',enviar);
+  b.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' ')enviar();});
+})();
+</script>
+</body></html>

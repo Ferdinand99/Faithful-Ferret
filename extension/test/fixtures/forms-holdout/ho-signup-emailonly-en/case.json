@@ -1,0 +1,39 @@
+{
+  "id": "ho-signup-emailonly-en",
+  "class": "positive",
+  "category": "signup",
+  "lang": "en",
+  "host": "forms.example.net",
+  "path": "/ho-signup-emailonly-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#email",
+      "text": "nora.hale@example.net"
+    },
+    {
+      "generate_fill": true
+    },
+    {
+      "click": "#create"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "generated": {
+      "new": "#pw",
+      "confirm": null
+    },
+    "capture": {
+      "offer": "save",
+      "username": "nora.hale@example.net",
+      "password_from": "#pw",
+      "origin": "https://forms.example.net"
+    }
+  },
+  "must_stay_empty": [],
+  "fields": {
+    "#pw": "new_password"
+  },
+  "source": "own"
+}

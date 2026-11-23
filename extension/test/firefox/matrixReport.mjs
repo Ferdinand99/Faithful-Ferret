@@ -28,6 +28,9 @@ export const VAULT_USERNAME = "ola";
 /** The languages a case may be written in. */
 export const LANGUAGES = Object.freeze(["en", "nb", "de", "fr", "nl"]);
 
+/** The hold-out set also has a case in Spanish. */
+export const HOLDOUT_LANGUAGES = Object.freeze([...LANGUAGES, "es"]);
+
 /** The field kinds a case may name in `fields`. */
 export const FIELD_KINDS = Object.freeze([
   "username", "email", "current_password", "new_password", "confirm_password",
@@ -114,13 +117,14 @@ export function followsRules(value, rules) {
 
 /**
  * What is wrong with a case.json (an empty list for a good one). `folder` is the case's folder name. `prefix` is what
- * every id of the set starts with before its category (the autofill-parity suite uses "ap-").
+ * every id of the set starts with before its category (the autofill-parity suite uses "ap-"). `holdout`: the hold-out set
+ * names its cases `ho-<own name>-...` (its ids start with that, not with the category) and has a Spanish case.
  * @param {unknown} c
  * @param {string} folder
- * @param {{ prefix?: string }} [options]
+ * @param {{ prefix?: string, holdout?: boolean }} [options]
  * @returns {string[]}
  */
-export function caseProblems(c, folder, { prefix = "" } = {}) {
+export function caseProblems(c, folder, { prefix = "", holdout = false } = {}) {
   /** @type {string[]} */
   const p = [];
   if (!isObject(c)) return ["case.json is not an object"];
@@ -131,9 +135,10 @@ export function caseProblems(c, folder, { prefix = "" } = {}) {
   if (!cat) p.push(`unknown category ${JSON.stringify(c.category)}`);
   else {
     if (c.class !== cat.class) p.push(`class ${JSON.stringify(c.class)} but the category ${c.category} is ${cat.class}`);
-    if (typeof c.id === "string" && !c.id.startsWith(`${prefix}${c.category}-`)) p.push(`the id does not start with ${prefix}${c.category}-`);
+    const wanted = holdout ? "ho-" : `${prefix}${c.category}-`;
+    if (typeof c.id === "string" && !c.id.startsWith(wanted)) p.push(`the id does not start with ${wanted}`);
   }
-  if (!LANGUAGES.includes(c.lang)) p.push(`lang ${JSON.stringify(c.lang)}`);
+  if (!(holdout ? HOLDOUT_LANGUAGES : LANGUAGES).includes(c.lang)) p.push(`lang ${JSON.stringify(c.lang)}`);
   if (typeof c.host !== "string" || !/^[a-z0-9.-]+$/.test(c.host)) p.push("host");
   if (c.scheme !== undefined && c.scheme !== "https" && c.scheme !== "http") p.push("scheme");
   if (typeof c.path !== "string" || !c.path.startsWith(`/${folder}/`)) p.push(`path must start with /${folder}/`);
@@ -201,7 +206,7 @@ export function caseProblems(c, folder, { prefix = "" } = {}) {
  * Every case of a corpus directory, with the folder (`dir`) it came from.
  * A folder whose name starts with an underscore is not a case (the self-test page).
  * @param {string} dir
- * @param {{ prefix?: string }} [options] see caseProblems
+ * @param {{ prefix?: string, holdout?: boolean }} [options] see caseProblems
  * @returns {Array<Record<string, any> & { dir: string }>}
  */
 export function loadCorpus(dir, options = {}) {
@@ -392,8 +397,10 @@ function captureCheck(r) {
   if (offers.length === 0) return { status: "fail", reason: "no offer" };
   if (offers.length > 1) return { status: "fail", reason: `${offers.length} offers for one submission` };
   const [o] = offers;
-  if (o.type !== want.offer) return { status: "fail", reason: `offer is ${o.type}, not ${want.offer}` };
-  if (o.username !== want.username) return { status: "fail", reason: "the user name of the offer is wrong" };
+  // What the offer holds goes into the reason (the names are test data, never a password), so a miss can be understood from the report.
+  const held = `user name ${o.username === null ? "none" : JSON.stringify(o.username)}${o.generated === true ? ", made by Ferret" : ""}`;
+  if (o.type !== want.offer) return { status: "fail", reason: `offer is ${o.type}, not ${want.offer} (${held})` };
+  if (o.username !== want.username) return { status: "fail", reason: `the user name of the offer is wrong (${held})` };
   if (o.password_field !== want.password_from) return { status: "fail", reason: `the password came from ${o.password_field}, not ${want.password_from}` };
   if (o.origin !== want.origin) return { status: "fail", reason: `the origin of the offer is ${o.origin}` };
   if (want.reuse === true && o.reuse !== true) return { status: "fail", reason: "no reuse warning" };

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<style>body{font-family:sans-serif;max-width:340px;margin:60px auto}input{display:block;width:100%;box-sizing:border-box;padding:8px;margin:4px 0 12px}</style></head>
+<body>
+<h1>Sign in</h1>
+<form id="f" method="post" action="#f" novalidate>
+<label for="u">Username</label><input id="u" name="u" type="text" autocomplete="username">
+<label for="p">Password</label><input id="p" name="p" type="password" autocomplete="current-password">
+<button type="submit" id="go">Sign in</button>
+<p id="n"></p>
+</form>
+<script>
+// A noisy page: every click produces a burst of submit events and requests.
+(function(){
+  var f=document.getElementById('f'), n=0;
+  f.addEventListener('submit', function(e){ e.preventDefault(); n++; document.getElementById('n').textContent='Attempts: '+n; });
+  document.getElementById('go').addEventListener('click', function(){
+    var i=0, t=setInterval(function(){
+      try{ f.requestSubmit(); }catch(e){}
+      fetch('ping?i='+i).catch(function(){});
+      if(++i>=40) clearInterval(t);
+    }, 15);
+  });
+})();
+</script>
+</body></html>

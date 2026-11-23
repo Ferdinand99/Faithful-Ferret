@@ -54,6 +54,8 @@ export const TEXT_TYPES = Object.freeze(new Set(["text", "email", "tel", "number
 /** Bounds that stop a hostile page from making the walks run long. */
 const MAX_NODES = 20_000;
 const MAX_DEPTH = 1_000;
+/** How far up the search for the container of a field without a form goes: a hostile page's deep nesting costs no more than this. */
+const GROUP_DEPTH = 64;
 /** The most fields of one page that are classified. */
 const MAX_FIELDS = 500;
 /** The longest text read from one label, button or heading. */
@@ -396,13 +398,13 @@ export function findGroups(root, { maxNodes = MAX_NODES, shown = () => true } = 
     return { element, kind, reasons, order, shown: visible, password: typeOf(element) === "password" };
   });
 
-  // The container of a field without a form: the nearest ancestor that holds another field without a form.
+  // The container of a field without a form: the nearest ancestor (within GROUP_DEPTH levels) that holds another field without a form.
   const loose = fields.filter((f) => !isElement(f.element.form));
   /** @type {Map<Field, any>} */
   const containerOf = new Map();
   for (const field of loose) {
     let container = null;
-    for (let node = flatParent(field.element), depth = 0; node && node !== UNRENDERED && depth <= MAX_DEPTH; node = flatParent(node), depth += 1) {
+    for (let node = flatParent(field.element), depth = 0; node && node !== UNRENDERED && depth <= GROUP_DEPTH; node = flatParent(node), depth += 1) {
       if (loose.some((other) => other !== field && isInside(node, other.element))) {
         container = node;
         break;
@@ -503,10 +505,10 @@ function decide(form, members, wholePage, context, submit) {
   };
 
   /** The user name of a sign-in: the last user name or e-mail field before `anchor`, else the first after it, else (not
-   * on the whole page) the last unnamed text field before it. @param {Field} anchor */
-  const userFor = (anchor) => {
-    const before = users.filter((f) => f.order < anchor.order);
-    const named = before.at(-1) ?? users.find((f) => f.order > anchor.order);
+   * on the whole page) the last unnamed text field before it. @param {Field} anchor @param {Field[]} [among] the fields that may be it */
+  const userFor = (anchor, among = users) => {
+    const before = among.filter((f) => f.order < anchor.order);
+    const named = before.at(-1) ?? among.find((f) => f.order > anchor.order);
     if (named) return named.element;
     if (wholePage) return undefined;
     return visible.filter((f) => f.order < anchor.order && f.kind === "other" && f.reasons.includes("unnamed") && !f.password).at(-1)?.element;
@@ -527,7 +529,9 @@ function decide(form, members, wholePage, context, submit) {
     if (current) {
       group.kind = "change";
       group.current = current.element;
-      const user = userFor(current);
+      // In a change form an e-mail field is a field of the person's profile unless the page marks it as the user name: the
+      // password in use says which item the form is for, and a profile address is no name to offer.
+      const user = userFor(current, users.filter((f) => f.kind === "username"));
       if (user) group.username = user;
       return group;
     }

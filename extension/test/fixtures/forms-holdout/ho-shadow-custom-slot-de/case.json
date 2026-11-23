@@ -1,0 +1,44 @@
+{
+  "id": "ho-shadow-custom-slot-de",
+  "class": "positive",
+  "category": "shadow",
+  "lang": "de",
+  "host": "forms.example.net",
+  "path": "/ho-shadow-custom-slot-de/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#mitarbeiter",
+      "text": "p.4711@example.net"
+    },
+    {
+      "type": "#geheim",
+      "text": "Portal-Schluessel-0815"
+    },
+    {
+      "click": "#senden"
+    },
+    {
+      "wait": 300
+    }
+  ],
+  "expect": {
+    "fill": {
+      "entry": "forms",
+      "fields": {
+        "#mitarbeiter": "username",
+        "#geheim": "password"
+      }
+    },
+    "capture": {
+      "offer": "save",
+      "username": "p.4711@example.net",
+      "password_from": "#geheim",
+      "origin": "https://forms.example.net"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

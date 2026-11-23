@@ -18,7 +18,8 @@
 //                 bridge (the detection matrix and the capture specs read it):
 //                 each ready offer with its kind, origin, user name, the
 //                 SHA-256 of the password it took and, with the vault open,
-//                 what the write path makes of it. Never a password. The
+//                 what the write path makes of it (and "domain_hit" as `info` when
+//                 only items that match by domain exist). Never a password. The
 //                 session is the bridge's own, made for the call; `clear`
 //                 drops the tab's offers first (a case of the matrix starts
 //                 in the tab of the case before it)
@@ -150,6 +151,8 @@ export function createOfferProbe({ now = () => performance.now(), offers = null,
             username_from: capture.usernameFrom,
             password_sha256: hex(digest),
             ...(classified?.ok === true && classified.reused.length > 0 ? { reuse: true } : {}),
+            // A page the saved items match by domain only: the write path offers "Save as new" and says why.
+            ...(classified?.ok === true && Array.isArray(classified.domain_only) && classified.domain_only.length > 0 ? { info: "domain_hit" } : {}),
             ...(typeof target?.name === "string" ? { target_name: target.name } : {}),
             ...(savedUrl !== undefined ? { target_host: hostOf(savedUrl), target_match: hostOf(savedUrl) === pageHost ? (savedUrl === capture.frameUrl ? "exact" : "host") : "domain" } : {}),
           });

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>Inloggen</title>
+<style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+body{font-family:system-ui;margin:0;background:#fafafa}.wrap{max-width:420px;margin:48px auto;padding:0 16px}.rounded-md{border-radius:6px}.w-full{width:100%;box-sizing:border-box}.border{border:1px solid #bbb;padding:10px;margin-top:-1px}</style></head>
+<body>
+<div class="wrap">
+<h2 class="text-3xl">Log in op je account</h2>
+<form class="mt-8 space-y-6" action="/static/login-done.html" method="post">
+<div class="rounded-md shadow-sm">
+<div><label for="email-address" class="sr-only">E-mailadres</label>
+<input id="email-address" name="email" type="email" autocomplete="username" required class="border w-full" aria-label="E-mailadres" placeholder="E-mailadres"></div>
+<div><label for="wachtwoord" class="sr-only">Wachtwoord</label>
+<input id="wachtwoord" name="password" type="password" autocomplete="current-password" required class="border w-full" aria-label="Wachtwoord" placeholder="Wachtwoord"></div>
+</div>
+<div class="flex"><input id="onthoud" name="remember-me" type="checkbox"><label for="onthoud">Onthoud mij</label>
+<a href="/wachtwoord-vergeten">Wachtwoord vergeten?</a></div>
+<button id="inloggen" type="submit" class="w-full">Inloggen</button>
+</form>
+</div>
+</body></html>

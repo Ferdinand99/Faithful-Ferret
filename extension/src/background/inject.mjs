@@ -96,7 +96,7 @@ export async function aimFill({ scripting, tabId, frameId, documentId, targetEle
 }
 
 /** The most points of a field that are checked in the documents above its frame (content/fill.mjs). */
-const MAX_POINTS = 5;
+const MAX_POINTS = 8;
 /** What the fill script of a frame can say against a field of its own (content/fill.mjs `where`). */
 const FIELD_PROBLEMS = new Set(["gone", "hidden", "covered", "wrong_kind"]);
 

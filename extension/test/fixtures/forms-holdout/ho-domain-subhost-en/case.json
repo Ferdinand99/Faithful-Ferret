@@ -1,0 +1,40 @@
+{
+  "id": "ho-domain-subhost-en",
+  "class": "special",
+  "category": "domain-entry",
+  "lang": "en",
+  "host": "shop.forms.example.org",
+  "path": "/ho-domain-subhost-en/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#su",
+      "text": "ola"
+    },
+    {
+      "type": "#sp",
+      "text": "Shopfront-Different-5521"
+    },
+    {
+      "click": "#sgo"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "allow": [
+      "#su",
+      "#sp"
+    ],
+    "capture": {
+      "offer": "save",
+      "username": "ola",
+      "password_from": "#sp",
+      "origin": "https://shop.forms.example.org",
+      "info": "domain_hit"
+    },
+    "generated": null
+  },
+  "must_stay_empty": [],
+  "fields": {},
+  "source": "own"
+}

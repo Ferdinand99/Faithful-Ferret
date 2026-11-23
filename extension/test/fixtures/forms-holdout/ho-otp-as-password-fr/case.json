@@ -1,0 +1,31 @@
+{
+  "id": "ho-otp-as-password-fr",
+  "class": "negative",
+  "category": "otp-masked",
+  "lang": "fr",
+  "host": "forms.example.net",
+  "path": "/ho-otp-as-password-fr/",
+  "frame": null,
+  "steps": [
+    {
+      "type": "#sms-code",
+      "text": "482913"
+    },
+    {
+      "click": "#valider"
+    }
+  ],
+  "expect": {
+    "fill": null,
+    "no_offer": true,
+    "generated": null,
+    "capture": null
+  },
+  "must_stay_empty": [
+    "#sms-code"
+  ],
+  "fields": {
+    "#sms-code": "otp"
+  },
+  "source": "own"
+}

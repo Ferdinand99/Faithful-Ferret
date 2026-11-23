@@ -65,6 +65,48 @@ export function channels() {
   return /** @type {("release" | "esr")[]} */ (wanted);
 }
 
+/**
+ * The factor the timing bounds of the footprint specs are loosened by: 1 on a quiet machine (the build host, the gate), at most 2 on
+ * the shared CI runners. Anything else (a word, `Infinity`, `1e9`, a negative number) is refused, because a large factor would
+ * switch the bounds off without a word.
+ * @param {string | undefined} [raw]
+ * @returns {number}
+ */
+export function timingSlack(raw = process.env.FERRET_TIMING_SLACK) {
+  if (raw === undefined || raw === "") return 1;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1 || value > 2) throw new Error(`harness: FERRET_TIMING_SLACK is a number from 1 to 2, not ${JSON.stringify(raw)}`);
+  return value;
+}
+
+/**
+ * Presses the test shortcut and returns the command event once it reached the page's tab. Now and then the browser sends the
+ * command to the extension's own tab first (the focus is not on the page yet): that event names a moz-extension address, and the
+ * press is made again, up to three times. Any other event is returned as it is for the caller to judge; no event in ten
+ * seconds is an error.
+ * @param {{ clear: () => Promise<unknown>, press: () => Promise<unknown>, events: () => Promise<Array<Record<string, any>>> }} io
+ * @returns {Promise<Record<string, any>>}
+ */
+export async function commandOnPage({ clear, press, events }) {
+  for (let attempt = 1; ; attempt += 1) {
+    await clear();
+    await press();
+    const until = Date.now() + 10_000;
+    /** @type {Record<string, any> | undefined} */
+    let command;
+    while (command === undefined && Date.now() < until) {
+      command = (await events()).find((e) => e.kind === "command");
+      if (command === undefined) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (command === undefined) throw new Error("harness: the shortcut gave no command event in ten seconds");
+    if (attempt < 3 && typeof command.tabUrl === "string" && command.tabUrl.startsWith("moz-extension:")) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
+    }
+    return command;
+  }
+}
+
 /** @returns {"mv3" | "mv2"} */
 export function defaultManifest() {
   const value = process.env.FERRET_MANIFEST ?? "mv3";

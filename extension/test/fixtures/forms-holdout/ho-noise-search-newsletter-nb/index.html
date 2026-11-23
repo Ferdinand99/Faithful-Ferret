@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>Fjellsport - forsiden</title>
+<style>body{font-family:sans-serif;margin:0}header{display:flex;gap:16px;align-items:center;padding:10px 20px;background:#143}section{padding:20px}input,select,textarea{padding:7px}</style></head>
+<body>
+<header>
+<strong style="color:#fff">Fjellsport</strong>
+<form action="/sok" method="get" role="search"><input type="search" id="sok" name="q" placeholder="Søk i butikken"><button type="submit" id="sokknapp">Søk</button></form>
+<form action="/sprak" method="post"><label for="sprak" style="color:#fff">Språk</label>
+<select id="sprak" name="lang"><option value="nb">Norsk</option><option value="en">English</option><option value="de">Deutsch</option></select></form>
+</header>
+<section>
+<h2>Hold deg oppdatert</h2>
+<form action="/nyhetsbrev" method="post"><label for="nyhet">E-postadresse</label>
+<input type="email" id="nyhet" name="email" placeholder="navn@example.net" autocomplete="email"><button type="submit" id="abonner">Meld meg på</button></form>
+<h2>Kommentar til innlegget</h2>
+<form action="/kommentar" method="post"><label for="komm">Din kommentar</label><textarea id="komm" name="comment" rows="3"></textarea>
+<label for="kommnavn">Navn</label><input type="text" id="kommnavn" name="name"><button type="submit" id="send">Send</button></form>
+</section>
+</body></html>

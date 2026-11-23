@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Inscription</title>
+<style>body{font-family:'Trebuchet MS',sans-serif;background:#fff7f0}fieldset{max-width:440px;margin:30px auto;border:1px solid #d9b99b}.r{display:flex;gap:10px;margin:8px 0}.r>div{flex:1}input,select{width:100%;padding:7px;box-sizing:border-box}</style></head>
+<body>
+<form id="inscription" method="post" action="#inscription" autocomplete="on">
+<fieldset>
+<legend>Créer mon compte</legend>
+<div class="r">
+  <div><label for="prenom">Prénom</label><input type="text" id="prenom" name="prenom" autocomplete="given-name"></div>
+  <div><label for="nom">Nom</label><input type="text" id="nom" name="nom" autocomplete="family-name"></div>
+</div>
+<div class="r"><div><label for="courriel">Adresse e-mail</label><input type="email" id="courriel" name="courriel" autocomplete="email"></div></div>
+<div class="r"><div><label for="naissance">Date de naissance</label><input type="text" id="naissance" name="naissance" placeholder="JJ/MM/AAAA" autocomplete="bday"></div></div>
+<div class="r"><div><label for="mdp">Mot de passe</label><input type="password" id="mdp" name="mdp" autocomplete="new-password"></div>
+<div><label for="mdp2">Confirmation du mot de passe</label><input type="password" id="mdp2" name="mdp2" autocomplete="new-password"></div></div>
+<div class="r"><label><input type="checkbox" name="offres"> Je souhaite recevoir les offres</label></div>
+<button type="submit" id="valider">S'inscrire</button>
+</fieldset>
+</form>
+</body></html>
