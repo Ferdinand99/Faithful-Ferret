@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.8.0...v0.9.0) (2026-11-23)
+
+
+### Features
+
+* **ext:** accept an older server state, resolve conflicts and name unsent writes in the popup ([#250](https://github.com/Ferdinand99/Faithful-Ferret/issues/250)) ([ba804eb](https://github.com/Ferdinand99/Faithful-Ferret/commit/ba804eb39999eabfb559fc1089c2af85287f4fb3))
+* **ext:** classify, save and update a captured password through the sync engine ([#256](https://github.com/Ferdinand99/Faithful-Ferret/issues/256)) ([55a6a65](https://github.com/Ferdinand99/Faithful-Ferret/commit/55a6a655a54b343be881dac4bfc9f8081fa59a4c))
+* **ext:** detect form purpose before filling ([#257](https://github.com/Ferdinand99/Faithful-Ferret/issues/257)) ([823cbbd](https://github.com/Ferdinand99/Faithful-Ferret/commit/823cbbd3e84f0b9ca543aab2f48643be72a2b999))
+* **web:** show previous passwords and keep them on password edits ([#254](https://github.com/Ferdinand99/Faithful-Ferret/issues/254)) ([f3cd688](https://github.com/Ferdinand99/Faithful-Ferret/commit/f3cd688972a316d3faec46dd89dee4a1823ce6e6))
+
+
+### Bug Fixes
+
+* **web:** reach both import and export from the side menu, style the file picker ([#253](https://github.com/Ferdinand99/Faithful-Ferret/issues/253)) ([693aac2](https://github.com/Ferdinand99/Faithful-Ferret/commit/693aac2a11bca0657c02e5f2e6f1ca5c9999f420))
+
 ## [0.8.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.7.0...v0.8.0) (2026-11-22)
 
 
