@@ -32,7 +32,7 @@ pages that carried no `allow` list; none is a security finding), false offers 0,
 first run (capture).**
 
 On the final head of the matrix change (both channels, identical): raw fill 14/14 (100 %), capture 15/20 (75.0 %); adjusted (the five
-explained positive cases out of the denominator) fill 14/14, capture 15/15; unsafe fills 0, unsafe offers 0.
+explained positive cases out of the denominator) fill 10/10, capture 15/15; unsafe fills 0, unsafe offers 0.
 
 ## What was mapped, and what was edited
 
