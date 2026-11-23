@@ -101,7 +101,9 @@ capture phase counts every case as not run. The first test of the spec proves th
 the rate per category (no positive category below 80 %), the unsafe fills and unsafe offers (any one fails the
 gate), the offers on harmless pages, and the cases that did not run (they count as failed). The reports
 `<channel>-<manifest>.json` and `matrix.md` are unpacked into `test-results/out/u2-matrix/`. The plain `e2e`
-run leaves the matrix out.
+run leaves the matrix out. `--set parity` runs the own-written autofill-parity suite of
+`test/fixtures/forms-parity/` (see its README) with the same rules and writes its reports, apart from the corpus
+ones, to `test-results/out/u2-matrix-parity/`.
 
 The capture phase also reads the vault's item list (ids and revisions, from the test build's measure port) before and
 after each case: the runner never clicks a save control there, so any change is counted as a write without a click,
