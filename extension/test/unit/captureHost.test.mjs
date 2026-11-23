@@ -238,7 +238,7 @@ test("the_browsers_events_reach_the_offers_and_a_removed_permission_ends_capture
   await flush();
   completed({ tabId: TAB, frameId: 0, url: to, documentId: "doc-new" });
   await flush();
-  w.clock.advance(2000);
+  w.clock.advance(3500);
   assert.equal(w.offers.forTab(TAB).length, 1);
   // The tab closes: its offers go.
   w.listeners.tabRemoved[0](TAB);
@@ -249,7 +249,7 @@ test("the_browsers_events_reach_the_offers_and_a_removed_permission_ends_capture
   w.clock.advance(500);
   w.listeners.history[0]({ tabId: TAB, frameId: 0, url: "https://login.example.net/app" });
   await flush();
-  w.clock.advance(2000);
+  w.clock.advance(3500);
   assert.equal(w.offers.forTab(TAB).length, 1);
   // The permission is taken back: the script goes, the setting goes off, the offers go.
   w.state.granted = false;

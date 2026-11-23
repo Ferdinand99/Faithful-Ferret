@@ -37,11 +37,14 @@ const reasonOf = (error) => {
  * @typedef {{ on: boolean, permission: boolean, never: string[] }} CaptureState
  * @typedef {({ ok: true } & CaptureState) | ({ ok: false, reason: string } & Partial<CaptureState>)} CaptureOutcome
  * @param {import("./ui.mjs").Request} request
- * @param {{ requestPermission?: ((wanted: { origins: string[] }) => Promise<boolean>) | null }} [options]
+ * @param {{
+ *   requestPermission?: ((wanted: { origins: string[] }) => Promise<boolean>) | null,
+ *   removePermission?: ((gone: { origins: string[] }) => Promise<boolean>) | null,
+ * }} [options]
  *   `requestPermission` is `browser.permissions.request`, which the browser lets a page call only from a click: the
- *   steps that need it call it first, before anything is awaited
+ *   steps that need it call it first, before anything is awaited; `removePermission` is `browser.permissions.remove`
  */
-export function createSettingsFlow(request, { requestPermission = null } = {}) {
+export function createSettingsFlow(request, { requestPermission = null, removePermission = null } = {}) {
   /**
    * What the background says about capture: whether it is on, whether the permission for https pages is there, and
    * the hosts of the never list. An answer of another shape is not shown.
@@ -98,8 +101,24 @@ export function createSettingsFlow(request, { requestPermission = null } = {}) {
         }
         return askCapture({ enable: true });
       },
-      /** Turns it off. */
-      turnOff: () => askCapture({ enable: false }),
+      /**
+       * Turns it off: the capture script goes and so does the access to https pages that was asked for with it (the
+       * permission goes only once the background has switched capture off; the browser then tells the background, which
+       * finds nothing left to switch off).
+       * @returns {Promise<CaptureOutcome>}
+       */
+      async turnOff() {
+        const outcome = await askCapture({ enable: false });
+        if (outcome.ok && typeof removePermission === "function") {
+          try {
+            await removePermission({ origins: [...CAPTURE_ORIGINS] });
+          } catch {
+            // The access stays and says so in the state that is read next.
+          }
+          return askCapture({});
+        }
+        return outcome;
+      },
       /** @param {string} host */
       removeNever: (host) => askCapture({ never_remove: host }),
       clearNever: () => askCapture({ never_clear: true }),

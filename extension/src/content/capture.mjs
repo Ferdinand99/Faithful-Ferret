@@ -345,6 +345,8 @@ export function createCapture({ window, document, send, clock, forms }) {
   ready();
   if (document.readyState !== "complete") on("load", ready);
   later(ready, 1500);
+  // A page that draws its form late (a failed sign-in whose error form comes after the page's own scripts): one more look.
+  later(ready, 3000);
 
   return {
     stop() {

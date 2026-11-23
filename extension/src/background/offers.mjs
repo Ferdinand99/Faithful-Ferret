@@ -20,7 +20,7 @@
 // An offer is not shown at once. A login is offered only when it worked: the
 // page has to leave the form within ten seconds (a new document in the tab, a
 // change of the history, or the script saying that the form is gone within six),
-// has to finish loading, and then two quiet seconds have to pass with no
+// has to finish loading, and then three and a half quiet seconds have to pass with no
 // password form shown again by a page of the same site; a landing page the
 // script cannot report from (another site, `http`) counts as unknown and gives
 // no offer. A sign-up, a change or a reset is offered three seconds after the
@@ -54,8 +54,12 @@ export const MAX_OFFERS = 16;
 export const LOGIN_OUTCOME_MS = 10_000;
 /** After a login capture: how long the script has to say that the form is gone (its last check is at 4.9 s; the window tolerates a late timer and the message on its way). */
 export const FORM_GONE_MS = 6_000;
-/** After the new page has loaded (or the history changed): how long no password form may show again. */
-export const SETTLE_MS = 2_000;
+/**
+ * After the new page has loaded (or the history changed): how long no password form may show again.
+ * Deviation: 3.5 s, not 2 s. The capture script's last look for a password form is 3 s after the page is idle, so a
+ * failed sign-in whose form is drawn late must still be seen before the offer is made.
+ */
+export const SETTLE_MS = 3_500;
 /** After the last capture of a sign-up, change or reset form. */
 export const QUIET_MS = 3_000;
 /** A login whose new page has not finished loading by then is dropped. */
@@ -67,9 +71,15 @@ export const TAB_MAX = 20;
 export const TAB_WINDOW_MS = 60_000;
 /** How long the user name of an identifier step is kept. */
 export const IDENTIFIER_MS = 300_000;
-/** How far back a navigation reported just before a capture still counts for it. */
-export const LOOKBACK_MS = 1_500;
+/**
+ * How far back a navigation reported just before a capture still counts for it.
+ * Deviation: an outcome is a navigation after the submit; the capture is sent one task after the trigger, so a route change
+ * of the same turn is reported within tens of milliseconds, and half a second is the most that is taken as the same turn.
+ */
+export const LOOKBACK_MS = 500;
 const MAX_RECENT = 16;
+/** The most password-form reports one login keeps (a decided one already ends the login). */
+const MAX_READIES = 32;
 /** The longest the page's own timer waits before it reads the wall clock again. */
 export const RECHECK_MS = 15_000;
 
@@ -467,6 +477,7 @@ export function createOffers({
           case "page_ready":
             // A password form shown after the outcome, by a page of the same site: not by the document that was left.
             if (login.via !== null && at >= login.start && !(login.via === "commit" && signal.documentId !== undefined && signal.documentId === entry.documentId)) {
+              if (login.readies.length >= MAX_READIES) break;
               const reading = { at, same: /** @type {boolean | null} */ (null) };
               login.readies.push(reading);
               checks.push(
@@ -534,6 +545,8 @@ export function createOffers({
       if (password === "" || current === "" || username === "") return;
 
       // The limits: one per frame in two seconds, twenty per tab a minute. A flood is dropped, not queued.
+      // Deviation: one capture per frame document, not per frame, so that the password step of a two-page sign-in (a new
+      // document of the same frame a moment after the identifier step) is not dropped; the per-tab limit still holds.
       const frameKey = `${sender.tabId}:${sender.frameId}:${typeof sender.documentId === "string" ? sender.documentId : ""}`;
       const last = frameLast.get(frameKey);
       if (last !== undefined && at >= last && at - last < FRAME_GAP_MS) return;
@@ -569,13 +582,17 @@ export function createOffers({
       const stale = () => mine.removed || epochOf(sender.tabId) !== started;
       if (!identifierStep) {
         entries.set(mine.id, mine);
-        enforceCaps();
         // A navigation the browser reported a moment before this capture arrived belongs to it (the page can move on
         // in the same turn as the submit).
         if (mine.login !== null) {
           /** @type {Array<Promise<unknown>>} */
           const early = [];
-          for (const r of recentSignals) if (r.tabId === sender.tabId && at - r.at <= LOOKBACK_MS && at >= r.at) applySignal(mine, r.signal, r.at, 0, early);
+          for (const r of recentSignals) {
+            if (r.tabId !== sender.tabId || at - r.at > LOOKBACK_MS || at < r.at) continue;
+            // The load of the capturing document itself, reported late, is no outcome (not every browser gives a document id).
+            if (r.signal.type !== "history" && r.signal.frameId === sender.frameId && "url" in r.signal && r.signal.url === sender.url && !(typeof r.signal.documentId === "string" && r.signal.documentId !== sender.documentId)) continue;
+            applySignal(mine, r.signal, r.at, 0, early);
+          }
         }
       }
 
@@ -704,11 +721,17 @@ export function createOffers({
       sweep();
       if (!isIndex(meta?.tabId) || !isIndex(meta.frameId) || !isText(meta.frameUrl, MAX_URL) || !["signup", "change", "reset"].includes(meta.kind)) return null;
       if (!isText(meta.password, MAX_PASSWORD)) return null;
+      // A lock or a closed tab while this is judged ends it: no generated password outlives a lock.
+      const started = epochOf(meta.tabId);
+      const stale = () => epochOf(meta.tabId) !== started;
       const origin = await frames.origin(meta.frameUrl);
-      if (origin === null || !origin.startsWith("https://")) return null;
+      if (stale() || origin === null || !origin.startsWith("https://")) return null;
+      // The never list does not stop this: the password was made on the person's own click, and without an offer it
+      // could be lost with the account made from it. ("Never" on an offer does drop the generated ones that exist.)
       const host = await frames.host(meta.frameUrl);
-      if (never !== null && (await never.has(host.a_label))) return null;
+      if (stale()) return null;
       const incognito = await frames.incognito(meta.tabId);
+      if (stale()) return null;
       const at = now();
       // The newest generated password of a tab and origin is the one that is offered.
       for (const old of [...entries.values()]) if (old.generated && old.tabId === meta.tabId && old.capture?.origin === origin) drop(old);

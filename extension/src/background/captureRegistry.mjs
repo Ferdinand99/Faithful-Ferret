@@ -10,7 +10,8 @@
 // granted and the setting is on. `reconcile` makes it so, and runs on every start
 // of the background page; the browser tells when the permission is taken back
 // (`permissions.onRemoved`), and then the script is unregistered and the setting
-// goes off. Tabs that are open when the script is registered get it only after
+// goes off. Turning the setting off takes the permission back too (the settings page removes it; the browser then
+// tells this module, which finds nothing left to switch off). Tabs that are open when the script is registered get it only after
 // they are loaded again; the settings page says so.
 //
 // The "never" list is the hosts the user does not want offers for: A-labels in

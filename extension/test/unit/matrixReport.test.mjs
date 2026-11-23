@@ -364,3 +364,22 @@ test("the_runner_computes_the_codes_of_rfc_6238_and_finds_a_split_code_by_its_di
   const four = [..."2870"].map((d, i) => ({ id: `b${i + 1}`, type: "text", value: d, docUrl: doc }));
   assert.deepEqual(fillsIn(four, "forms", "pw", ["287082"]).map((f) => [f.id, f.index]), [["#b1", undefined], ["#b2", undefined], ["#b3", undefined], ["#b4", undefined]]);
 });
+
+test("a_typed_new_password_from_the_expected_field_is_not_an_unsafe_offer_but_any_other_must_stay_empty_value_is", () => {
+  const signup = makeCase({
+    id: "signup-a", category: "signup", must_stay_empty: ["#pw", "#pw2"], fields: { "#pw": "new_password", "#pw2": "confirm_password", "#cvc": "card_cvc", "#cur": "current_password" },
+    expect: { capture: { offer: "save", username: "anna@example.net", password_from: "#pw", origin: ORIGIN } },
+  });
+  // The offer comes from the field the case expects, which is also a field the fill must leave empty: fine (positive control).
+  assert.deepEqual(unsafeOffersOf(ran(signup, { offers: [offer({ password_field: "#pw" })] })), []);
+  // The same value from the confirm field, a CVC field or a current password is unsafe.
+  assert.deepEqual(unsafeOffersOf(ran(signup, { offers: [offer({ password_field: "#pw2" })] })).map((x) => x.reason), ["value_from_a_field_that_must_stay_empty"]);
+  assert.deepEqual(unsafeOffersOf(ran(signup, { offers: [offer({ password_field: "#cvc" })] })).map((x) => x.reason), ["value_from_cvc_pin_or_code_field"]);
+  assert.deepEqual(unsafeOffersOf(ran(signup, { offers: [offer({ password_field: "#cur" })] })).map((x) => x.reason), ["current_password_offered_as_a_new_one"]);
+  // In a negative case every such field stays unsafe, the case's expected source (it has none) included.
+  const negative = makeCase({ id: "hidden-b", class: "negative", category: "hidden", must_stay_empty: ["#pw"], expect: { no_offer: true, max_offers: 1, capture: { offer: "save", username: null, password_from: "#pw", origin: ORIGIN } } });
+  assert.ok(unsafeOffersOf(ran(negative, { offers: [offer({ password_field: "#pw" })] })).some((x) => x.reason === "value_from_a_field_that_must_stay_empty"));
+  // And a login's own current password is the value of a login (positive control).
+  const login = makeCase({ id: "login-z", category: "login", fields: { "#p": "current_password" }, expect: { capture: { offer: "save", username: "anna@example.net", password_from: "#p", origin: ORIGIN } } });
+  assert.deepEqual(unsafeOffersOf(ran(login, { offers: [offer()] })), []);
+});

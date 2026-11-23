@@ -9,6 +9,8 @@ import { test } from "node:test";
 import {
   FRAME_GAP_MS,
   GENERATED_TTL_MS,
+  LOOKBACK_MS,
+  SETTLE_MS,
   MAX_MESSAGE,
   MAX_OFFERS,
   MAX_OFFERS_PER_TAB,
@@ -194,7 +196,7 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
   // A new document, finished loading, then two quiet seconds.
   w.clock.advance(1000);
   await w.landOn();
-  w.clock.advance(1999);
+  w.clock.advance(SETTLE_MS - 1);
   assert.deepEqual(w.offers.forTab(TAB), []);
   w.clock.advance(1);
   const offers = w.offers.forTab(TAB);
@@ -207,7 +209,7 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
   await spa.send();
   spa.clock.advance(500);
   await spa.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/home" });
-  spa.clock.advance(1999);
+  spa.clock.advance(SETTLE_MS - 1);
   assert.deepEqual(spa.offers.forTab(TAB), []);
   spa.clock.advance(1);
   assert.equal(spa.offers.forTab(TAB).length, 1);
@@ -217,14 +219,14 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
   await gone.send();
   gone.clock.advance(4000);
   await gone.offers.onSignal(TAB, { type: "form_gone", frameId: 0, captureId: "cap1" });
-  gone.clock.advance(2000);
+  gone.clock.advance(SETTLE_MS);
   assert.equal(gone.offers.forTab(TAB).length, 1);
   // The script's last look is at 4.9 s: a message that is a little late still counts (the window is six seconds).
   const tolerant = world();
   await tolerant.send();
   tolerant.clock.advance(5600);
   await tolerant.offers.onSignal(TAB, { type: "form_gone", frameId: 0, captureId: "cap1" });
-  tolerant.clock.advance(2000);
+  tolerant.clock.advance(SETTLE_MS);
   assert.equal(tolerant.offers.forTab(TAB).length, 1);
   // Gone after seven seconds, or reported for another capture: no outcome.
   const late = world();
@@ -255,16 +257,25 @@ test("a_login_offer_needs_an_outcome_signal_and_no_password_form_after_it", asyn
 });
 
 test("a_failed_login_whose_form_reappears_after_document_idle_gives_no_offer", async () => {
-  const w = world();
-  await w.send();
-  w.clock.advance(500);
-  // The page reloads with its error and shows the form again: its script says so at document idle.
-  await w.landOn("https://login.example.net/signin?error=1");
-  w.clock.advance(800);
-  await w.offers.onSignal(TAB, { type: "page_ready", frameId: 0, url: "https://login.example.net/signin?error=1", documentId: "doc-new" });
-  w.clock.advance(5000);
-  assert.deepEqual(w.offers.forTab(TAB), []);
-  assert.equal(w.offers.size(), 0);
+  // The page reloads with its error and shows the form again: its script says so at document idle, or at its last look,
+  // 3 seconds on (a page that draws the error form late).
+  for (const after of [800, 3000]) {
+    const w = world();
+    await w.send();
+    w.clock.advance(500);
+    await w.landOn("https://login.example.net/signin?error=1");
+    w.clock.advance(after);
+    await w.offers.onSignal(TAB, { type: "page_ready", frameId: 0, url: "https://login.example.net/signin?error=1", documentId: "doc-new" });
+    w.clock.advance(5000);
+    assert.deepEqual(w.offers.forTab(TAB), [], `a form ${after} ms after the load`);
+    assert.equal(w.offers.size(), 0, `a form ${after} ms after the load`);
+  }
+  // The control: a form that never comes back after the load gives the offer.
+  const kept = world();
+  await kept.send();
+  await kept.landOn("https://login.example.net/home");
+  kept.clock.advance(SETTLE_MS);
+  assert.equal(kept.offers.forTab(TAB).length, 1);
 
   // A form of another site on the landing page does not count against the login.
   const foreign = world();
@@ -272,7 +283,7 @@ test("a_failed_login_whose_form_reappears_after_document_idle_gives_no_offer", a
   await foreign.landOn();
   foreign.clock.advance(500);
   await foreign.offers.onSignal(TAB, { type: "page_ready", frameId: 1, url: "https://ads.other.org/widget", documentId: "doc-ad" });
-  foreign.clock.advance(2000);
+  foreign.clock.advance(SETTLE_MS);
   assert.equal(foreign.offers.forTab(TAB).length, 1);
 
   // The page the user left reporting late does not count: it is not the new document.
@@ -281,7 +292,7 @@ test("a_failed_login_whose_form_reappears_after_document_idle_gives_no_offer", a
   await old.landOn();
   old.clock.advance(500);
   await old.offers.onSignal(TAB, { type: "page_ready", frameId: 0, url: PAGE, documentId: `doc-${TAB}-0` });
-  old.clock.advance(2000);
+  old.clock.advance(SETTLE_MS);
   assert.equal(old.offers.forTab(TAB).length, 1);
 });
 
@@ -300,7 +311,7 @@ test("a_login_that_lands_on_a_page_without_the_script_gives_no_update_offer", as
   await back.send();
   await back.offers.onSignal(TAB, { type: "committed", frameId: 0, url: "https://sso.other.org/step", documentId: "d1" });
   await back.landOn("https://login.example.net/home", "d2");
-  back.clock.advance(2000);
+  back.clock.advance(SETTLE_MS);
   assert.equal(back.offers.forTab(TAB).length, 1);
 });
 
@@ -611,7 +622,12 @@ test("a_never_listed_host_gets_no_offer", async () => {
   await w.send({ kind: "login" });
   w.clock.advance(FRAME_GAP_MS + 1);
   assert.equal(w.offers.size(), 0);
-  assert.equal(await w.offers.onGenerated({ tabId: TAB, frameId: 0, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" }), null);
+  // A password Ferret generated is still offered for it: it is the answer to the person's own click, and without an
+  // offer it could be lost with the account made from it.
+  assert.match(String(await w.offers.onGenerated({ tabId: TAB, frameId: 0, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" })), /^[0-9a-f]{32}$/);
+  assert.equal(w.offers.size(), 1);
+  // "Never" on an offer drops the generated ones that exist at that moment too.
+  w.offers.dismiss(w.offers.forTab(TAB, "9".repeat(32))[0].offer_id, { never: true });
   assert.equal(w.offers.size(), 0);
   // Another host is not affected.
   w.openFrame(8, "https://shop.example.org/login");
@@ -790,8 +806,15 @@ test("a_navigation_reported_just_before_the_capture_counts_for_it_but_the_own_do
   await early.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/home" });
   early.clock.advance(300);
   await early.send();
-  early.clock.advance(2000);
+  early.clock.advance(SETTLE_MS);
   assert.equal(early.offers.forTab(TAB).length, 1);
+  // One second before is no longer the same turn: an identifier step that moved the route is not this sign-in's outcome.
+  const before = world();
+  await before.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/password" });
+  before.clock.advance(LOOKBACK_MS + 500);
+  await before.send();
+  before.clock.advance(20_000);
+  assert.deepEqual(before.offers.forTab(TAB), []);
   // The same a long time before is another page's business.
   const old = world();
   await old.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/home" });
@@ -804,7 +827,7 @@ test("a_navigation_reported_just_before_the_capture_counts_for_it_but_the_own_do
   await doc.landOn();
   doc.clock.advance(200);
   await doc.send();
-  doc.clock.advance(2000);
+  doc.clock.advance(SETTLE_MS);
   assert.equal(doc.offers.forTab(TAB).length, 1);
   // The load of the very document that sent the capture is no outcome, however late it is reported.
   const own = world();
@@ -830,4 +853,37 @@ test("a_new_document_of_the_same_frame_may_capture_within_two_seconds_of_the_one
   await flood.signup({ password: "Another-PASSWORD-2" });
   flood.clock.advance(3000);
   assert.equal(flood.offers.forTab(TAB).length, 1);
+});
+
+test("a_lock_or_a_closed_tab_while_a_generated_offer_is_judged_leaves_no_generated_password", async () => {
+  for (const [name, clear] of /** @type {Array<[string, (offers: any) => void]>} */ ([
+    ["lock", (offers) => offers.clear("lock")],
+    ["sign out", (offers) => offers.clear("sign_out")],
+    ["closed tab", (offers) => offers.clear("tab_closed", { tabId: TAB })],
+  ])) {
+    const w = world();
+    // The core answers late: a gate holds `origin`, and the lock comes while it is held.
+    /** @type {() => void} */
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const slow = createOffers({
+      now: w.clock.now,
+      random: (bytes) => bytes.fill(7),
+      frames: { ...w.frames, origin: async (url) => (await gate, new URL(url).origin) },
+    });
+    const pending = slow.onGenerated({ tabId: TAB, frameId: 0, documentId: `doc-${TAB}-0`, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" });
+    clear(slow);
+    release();
+    assert.equal(await pending, null, name);
+    assert.equal(slow.size(), 0, name);
+    assert.deepEqual(slow.forTab(TAB), [], name);
+  }
+  // Another tab's clear does not end it (positive control).
+  const w = world();
+  const other = createOffers({ now: w.clock.now, random: (bytes) => bytes.fill(9), frames: w.frames });
+  const id = other.onGenerated({ tabId: TAB, frameId: 0, frameUrl: PAGE, kind: "signup", password: "Generated-by-Ferret-9" });
+  other.clear("tab_closed", { tabId: 99 });
+  assert.match(String(await id), /^[0-9a-f]{32}$/);
 });

@@ -17,7 +17,10 @@ async function main() {
   const texts = await loadTexts();
   translateStatic(document, texts);
   const ui = connectUi(browser.runtime);
-  const flow = createSettingsFlow(ui.request, { requestPermission: (wanted) => browser.permissions.request(wanted) });
+  const flow = createSettingsFlow(ui.request, {
+    requestPermission: (wanted) => browser.permissions.request(wanted),
+    removePermission: (gone) => browser.permissions.remove(gone),
+  });
 
   const select = el(
     "select",

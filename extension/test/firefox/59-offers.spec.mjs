@@ -1,8 +1,8 @@
 // The capture and the store of offers in real Firefox, on the form fixtures (test/fixtures/forms):
 //
-// - capture_is_off_until_the_settings_tab_turns_it_on: a new profile registers no capture script, so a sign-up
-//   submitted in a page makes no offer, and the settings tab asks for access to https pages in the click that turns
-//   the setting on.
+// - capture_is_off_until_the_settings_tab_turns_it_on_and_off_again_takes_the_access_back: a new profile registers no
+//   capture script, the settings tab asks for access to https pages in the click that turns the setting on, and turning
+//   it off takes that access back.
 // - submitting_the_sign_up_fixture_creates_one_offer_with_the_typed_values: with it on, a page opened afterwards,
 //   typed into with real key events and submitted, gives one offer whose kind, origin, user name and password
 //   (compared by its SHA-256) are what was typed. The offers are read through the test bridge's `offers_peek`, which
@@ -62,7 +62,7 @@ async function turnOn(session) {
   await session.waitFor(() => session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "true"), 15_000, "the switch on");
 }
 
-test("capture_is_off_until_the_settings_tab_turns_it_on", async () => {
+test("capture_is_off_until_the_settings_tab_turns_it_on_and_off_again_takes_the_access_back", async () => {
   for (const channel of channels()) {
     const { session, bridge, fromBridge } = await open(channel);
     try {
@@ -73,6 +73,17 @@ test("capture_is_off_until_the_settings_tab_turns_it_on", async () => {
       assert.equal((after.origins ?? []).includes("https://*/*"), true, `${channel}: the click asked for it and got it`);
       const stored = await fromBridge(() => bridge.invoke("storage.local.get", "offer_to_save"));
       assert.equal(stored.offer_to_save, true, channel);
+      // Turning it off takes the script and the access to https pages back (the permission goes with the setting).
+      const [toggle] = await session.findAll('[data-role="capture-switch"]');
+      await session.click(toggle);
+      await session.waitFor(() => session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "false"), 15_000, "the switch off");
+      const gone = await session.waitFor(async () => {
+        const all = await fromBridge(() => bridge.invoke("permissions.getAll"));
+        return (all.origins ?? []).includes("https://*/*") ? null : all;
+      }, 15_000, "the access removed");
+      assert.equal((gone.origins ?? []).includes("https://*/*"), false, `${channel}: the access to https pages went with the setting`);
+      const off = await fromBridge(() => bridge.invoke("storage.local.get", "offer_to_save"));
+      assert.equal(off.offer_to_save, false, channel);
     } finally {
       await session.quit();
     }

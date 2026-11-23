@@ -226,3 +226,41 @@ test("a_release_build_with_save_off_shows_the_eff_word_list_credit_on_the_settin
     env.cleanup();
   }
 });
+
+test("turning_offer_to_save_off_takes_the_access_to_https_pages_back", async () => {
+  /** @type {string[]} */
+  const order = [];
+  const make = (/** @type {{ refuse?: boolean, removeFails?: boolean, withRemove?: boolean }} */ { refuse = false, removeFails = false, withRemove = true } = {}) =>
+    createSettingsFlow(
+      async (type, body) => {
+        encode(type, body);
+        order.push(`request ${JSON.stringify(body)}`);
+        return refuse && body.enable === false ? { ok: false, reason: "unknown", on: true, permission: true, never: [] } : { ok: true, on: body.enable !== false, permission: body.enable !== false, never: [] };
+      },
+      withRemove
+        ? {
+            removePermission: async (gone) => {
+              order.push(`remove ${JSON.stringify(gone)}`);
+              if (removeFails) throw new Error("x");
+              return true;
+            },
+          }
+        : {},
+    );
+  // The background switches capture off first; then the access goes; the state is read again.
+  const off = await make().capture.turnOff();
+  assert.deepEqual(order, ['request {"enable":false}', 'remove {"origins":["https://*/*"]}', "request {}"]);
+  assert.equal(off.ok, true);
+  // A background that refuses leaves the access alone.
+  order.length = 0;
+  const refused = await make({ refuse: true }).capture.turnOff();
+  assert.deepEqual(order, ['request {"enable":false}']);
+  assert.equal(refused.ok, false);
+  // An access that cannot be removed is not an error of turning it off (the state read next says what is true).
+  order.length = 0;
+  assert.equal((await make({ removeFails: true }).capture.turnOff()).ok, true);
+  // A page with no way to remove it only switches capture off.
+  order.length = 0;
+  assert.equal((await make({ withRemove: false }).capture.turnOff()).ok, true);
+  assert.deepEqual(order, ['request {"enable":false}']);
+});
