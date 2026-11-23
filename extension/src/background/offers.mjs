@@ -67,6 +67,9 @@ export const TAB_MAX = 20;
 export const TAB_WINDOW_MS = 60_000;
 /** How long the user name of an identifier step is kept. */
 export const IDENTIFIER_MS = 300_000;
+/** How far back a navigation reported just before a capture still counts for it. */
+export const LOOKBACK_MS = 1_500;
+const MAX_RECENT = 16;
 /** The longest the page's own timer waits before it reads the wall clock again. */
 export const RECHECK_MS = 15_000;
 
@@ -201,6 +204,8 @@ export function createOffers({
   let epoch = 0;
   /** @type {Map<number, number>} */
   const tabEpoch = new Map();
+  /** The last navigations of the tabs, for a login that arrives just after one. @type {Array<{ tabId: number, at: number, signal: Signal }>} */
+  let recentSignals = [];
   /** @param {number} tabId */
   const epochOf = (tabId) => epoch * 1_000_000 + (tabEpoch.get(tabId) ?? 0);
 
@@ -385,12 +390,36 @@ export function createOffers({
       if (!isIndex(tabId) || typeof signal !== "object" || signal === null) return;
       sweep();
       const at = now();
+      // The navigation of a page that was just submitted may be reported before the capture that caused it arrives:
+      // the last few are kept for a moment, and a login that arrives sees them (see `onCapture`).
+      if (signal.type === "committed" || signal.type === "completed" || signal.type === "history") {
+        recentSignals = [...recentSignals.filter((r) => at - r.at <= LOOKBACK_MS && at >= r.at), { tabId, at, signal }].slice(-MAX_RECENT);
+      }
       /** @type {Array<Promise<unknown>>} */
       const checks = [];
       for (const entry of pendingLogins(tabId)) {
-        const login = /** @type {LoginState} */ (entry.login);
         const age = at - entry.receivedAt;
         if (age < 0) continue;
+        applySignal(entry, signal, at, age, checks);
+      }
+      await Promise.all(checks);
+      sweep();
+      refreshBadges();
+      schedule();
+    } catch {
+      // A signal that cannot be judged changes nothing.
+    }
+  }
+
+  /**
+   * What one signal means for one login that waits for it. `age` is how long ago the capture arrived, at the time of the
+   * signal (0 for a signal that was reported a moment before the capture).
+   * @param {Entry} entry @param {Signal} signal @param {number} at @param {number} age @param {Array<Promise<unknown>>} checks
+   */
+  function applySignal(entry, signal, at, age, checks) {
+    {
+      {
+        const login = /** @type {LoginState} */ (entry.login);
         const ownFrame = signal.frameId === entry.frameId;
         switch (signal.type) {
           case "form_gone":
@@ -408,6 +437,8 @@ export function createOffers({
             }
             break;
           case "committed":
+            // The document that sent the capture is not a new one (its own load, reported late, is no outcome).
+            if (signal.documentId !== undefined && signal.documentId === entry.documentId) break;
             // A new document in the tab (or in the frame of the form). Later ones within the give-up time replace the
             // earlier: a login may pass through several redirects; the last page is where it landed.
             if ((signal.frameId === 0 || ownFrame) && typeof signal.url === "string" && (login.via === null ? age <= LOGIN_OUTCOME_MS : age <= LOGIN_GIVE_UP_MS && login.via === "commit")) {
@@ -449,12 +480,6 @@ export function createOffers({
             break;
         }
       }
-      await Promise.all(checks);
-      sweep();
-      refreshBadges();
-      schedule();
-    } catch {
-      // A signal that cannot be judged changes nothing.
     }
   }
 
@@ -509,7 +534,7 @@ export function createOffers({
       if (password === "" || current === "" || username === "") return;
 
       // The limits: one per frame in two seconds, twenty per tab a minute. A flood is dropped, not queued.
-      const frameKey = `${sender.tabId}:${sender.frameId}`;
+      const frameKey = `${sender.tabId}:${sender.frameId}:${typeof sender.documentId === "string" ? sender.documentId : ""}`;
       const last = frameLast.get(frameKey);
       if (last !== undefined && at >= last && at - last < FRAME_GAP_MS) return;
       const recent = (tabRecent.get(sender.tabId) ?? []).filter((t) => at - t <= TAB_WINDOW_MS);
@@ -545,6 +570,13 @@ export function createOffers({
       if (!identifierStep) {
         entries.set(mine.id, mine);
         enforceCaps();
+        // A navigation the browser reported a moment before this capture arrived belongs to it (the page can move on
+        // in the same turn as the submit).
+        if (mine.login !== null) {
+          /** @type {Array<Promise<unknown>>} */
+          const early = [];
+          for (const r of recentSignals) if (r.tabId === sender.tabId && at - r.at <= LOOKBACK_MS && at >= r.at) applySignal(mine, r.signal, r.at, 0, early);
+        }
       }
 
       // 1. The origin is the browser's.
@@ -826,6 +858,7 @@ export function createOffers({
       else tabEpoch.set(tabId, (tabEpoch.get(tabId) ?? 0) + 1);
       for (const entry of [...entries.values()]) if (tabId === undefined || entry.tabId === tabId) drop(entry);
       identifiers = tabId === undefined ? [] : identifiers.filter((i) => i.tabId !== tabId);
+      recentSignals = tabId === undefined ? [] : recentSignals.filter((r) => r.tabId !== tabId);
       if (tabId === undefined) {
         frameLast.clear();
         tabRecent.clear();

@@ -783,3 +783,51 @@ test("a_join_request_gives_its_user_name_to_the_generated_offer_of_its_own_frame
     assert.equal(k.offers.size(), 1, kind);
   }
 });
+
+test("a_navigation_reported_just_before_the_capture_counts_for_it_but_the_own_document_does_not", async () => {
+  // A single-page login moves its route in the same turn as the submit: the browser's report may come first.
+  const early = world();
+  await early.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/home" });
+  early.clock.advance(300);
+  await early.send();
+  early.clock.advance(2000);
+  assert.equal(early.offers.forTab(TAB).length, 1);
+  // The same a long time before is another page's business.
+  const old = world();
+  await old.offers.onSignal(TAB, { type: "history", frameId: 0, url: "https://login.example.net/app/home" });
+  old.clock.advance(5000);
+  await old.send();
+  old.clock.advance(5000);
+  assert.deepEqual(old.offers.forTab(TAB), []);
+  // A new document that was reported just before the capture, finished loading, counts as the landing page.
+  const doc = world();
+  await doc.landOn();
+  doc.clock.advance(200);
+  await doc.send();
+  doc.clock.advance(2000);
+  assert.equal(doc.offers.forTab(TAB).length, 1);
+  // The load of the very document that sent the capture is no outcome, however late it is reported.
+  const own = world();
+  await own.offers.onSignal(TAB, { type: "committed", frameId: 0, url: PAGE, documentId: `doc-${TAB}-0` });
+  await own.offers.onSignal(TAB, { type: "completed", frameId: 0, url: PAGE, documentId: `doc-${TAB}-0` });
+  await own.send();
+  own.clock.advance(20_000);
+  assert.deepEqual(own.offers.forTab(TAB), []);
+});
+
+test("a_new_document_of_the_same_frame_may_capture_within_two_seconds_of_the_one_before", async () => {
+  // The identifier step and the password step are two documents of the same frame, a moment apart.
+  const w = world();
+  await w.send({ kind: "identifier", username: "step@example.net", password: undefined });
+  w.clock.advance(400);
+  await w.send({ kind: "signup", username: undefined, username_from: undefined }, { documentId: "doc-second" });
+  w.clock.advance(3000);
+  assert.equal(w.offers.forTab(TAB)[0].username, "step@example.net");
+  // The same document is still held to one in two seconds.
+  const flood = world();
+  await flood.signup();
+  flood.clock.advance(400);
+  await flood.signup({ password: "Another-PASSWORD-2" });
+  flood.clock.advance(3000);
+  assert.equal(flood.offers.forTab(TAB).length, 1);
+});
