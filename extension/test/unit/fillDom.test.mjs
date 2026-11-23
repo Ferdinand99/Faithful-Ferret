@@ -1179,44 +1179,88 @@ test("the_unsafe_fill_classes_of_the_corpus_get_no_value", () => {
 });
 
 test("a_frame_whose_document_its_parent_wrote_reports_no_field", () => {
-  /** @param {(window: any, document: any) => void} arrange */
-  const framed = (arrange) => {
-    const t = setup({ url: "https://example.com/login" });
-    arrange(t.window, t.document);
+  /**
+   * A frame page at `own`, whose holder in a parent document at `above` has `attributes`.
+   * @param {string} own @param {string | null} above @param {Record<string, string>} [attributes]
+   */
+  const framed = (own, above, attributes = {}) => {
+    const t = setup({ url: own });
+    t.document.URL = own;
+    if (above !== null) {
+      const parent = createPage({ url: above }).document;
+      parent.URL = above;
+      t.window.frameElement = parent.createElement("iframe", attributes);
+    } else {
+      t.window.frameElement = null;
+    }
     return t;
   };
-  const holder = (/** @type {any} */ document, /** @type {Record<string, string>} */ attributes) => document.createElement("iframe", attributes);
-  // `document.open()` from the parent: the frame shows the address of the parent, and its holder has none of its own.
-  const written = framed((window, document) => {
-    window.parent = { location: { href: "https://example.com/login" } };
-    window.frameElement = holder(document, { id: "login-frame" });
-  });
-  assert.deepEqual(written.begin(), []);
-  // An `about:blank` or `srcdoc` holder, even when the address differs.
-  for (const attributes of [{ src: "about:blank" }, { srcdoc: "<form></form>", src: "https://example.com/x" }, { src: "  " }]) {
-    const t = framed((window, document) => {
-      window.parent = { location: { href: "https://example.com/" } };
-      window.frameElement = holder(document, attributes);
-    });
-    assert.deepEqual(t.begin(), [], JSON.stringify(attributes));
-  }
-  // Controls: a frame loaded from its own address, a frame below a parent of another origin (nothing can be read), and
-  // the top (no holder; its parent is itself, which a content script may see as another object with the same address).
-  const loaded = framed((window, document) => {
-    window.parent = { location: { href: "https://example.com/" } };
-    window.frameElement = holder(document, { src: "/login" });
-  });
-  assert.deepEqual(kinds(loaded.begin()), ["username", "password"]);
-  const foreignParent = framed((window) => {
-    window.parent = { get location() { throw new Error("cross-origin"); } };
-    Object.defineProperty(window, "frameElement", { get() { throw new Error("cross-origin"); } });
-  });
+  // `document.open()` from the parent: the frame has the address of the parent, with or without a `src` of its own.
+  assert.deepEqual(framed("https://example.com/login", "https://example.com/login").begin(), [], "no src");
+  assert.deepEqual(framed("https://example.com/login", "https://example.com/login", { src: "/blank.html" }).begin(), [], "a src the parent wrote over");
+  // A `srcdoc` holder.
+  assert.deepEqual(framed("https://example.com/x", "https://example.com/", { srcdoc: "<form></form>", src: "https://example.com/x" }).begin(), []);
+  // Pages: a frame loaded from its own address, a frame with no src that was navigated (by its name), a frame below a
+  // parent of another origin (nothing can be read), and the top (no holder).
+  assert.deepEqual(kinds(framed("https://example.com/login", "https://example.com/", { src: "/login" }).begin()), ["username", "password"]);
+  assert.deepEqual(kinds(framed("https://example.com/login", "https://example.com/", { name: "x" }).begin()), ["username", "password"]);
+  const foreignParent = setup({ url: "https://example.com/login" });
+  Object.defineProperty(foreignParent.window, "frameElement", { get() { throw new Error("cross-origin"); } });
   assert.deepEqual(kinds(foreignParent.begin()), ["username", "password"]);
-  const top = framed((window) => {
-    window.parent = { location: { href: "https://example.com/login" } };
-    window.frameElement = null;
+  assert.deepEqual(kinds(framed("https://example.com/login", null).begin()), ["username", "password"]);
+});
+
+test("a_one_time_password_named_as_a_password_is_a_code_in_every_language", () => {
+  // Masked, with nothing numeric about it: only the words say it is a one-time password.
+  for (const label of ["One-time password", "Engangspassord", "Engangs-passord", "Einmal-Passwort", "Einmalkennwort", "Mot de passe à usage unique", "Mot de passe unique", "Eenmalig wachtwoord"]) {
+    const t = setup({}, (document) => formOf(document, [["label", label, { for: "c" }], ["input", { id: "c", type: "password", name: "f" }]]));
+    assert.deepEqual(t.begin(), [], label);
+    assert.equal(t.fill()?.ok, false, label);
+    assert.equal(nativeValue(t.c), "", label);
+  }
+  // A masked field with a one-time-code term and room for a code only is a code too, whatever else it says.
+  const sized = setup({}, (document) => formOf(document, [["label", "Authenticator password", { for: "c" }], ["input", { id: "c", type: "password", name: "f", maxlength: "6" }]]));
+  assert.deepEqual(sized.begin(), []);
+  // Control: a password field is still a password field.
+  const control = setup({}, (document) => formOf(document, [["label", "Password", { for: "p" }], ["input", { id: "p", type: "password", name: "f" }]]));
+  assert.deepEqual(kinds(control.begin()), ["password"]);
+});
+
+test("a_postal_or_area_code_is_never_a_one_time_code", () => {
+  for (const label of ["Postal code", "Code postal", "Postleitzahl", "Area code", "Sort code"]) {
+    const t = setup({}, (document) => formOf(document, [["label", label, { for: "z" }], ["input", { id: "z", type: "text", name: "f", inputmode: "numeric", maxlength: "6" }]]));
+    assert.deepEqual(t.begin(), [], label);
+    assert.equal(t.fill(fillMessage({ field: "totp", value: "123456" }))?.ok, false, label);
+  }
+  // Control: a numeric field named for a code.
+  const code = setup({}, (document) => formOf(document, [["label", "Code", { for: "z" }], ["input", { id: "z", type: "text", name: "f", inputmode: "numeric", maxlength: "6" }]]));
+  assert.deepEqual(kinds(code.begin()), ["totp"]);
+});
+
+test("sign_up_and_sign_in_are_told_apart_by_the_control_that_sends_the_form", () => {
+  // A sign-up form with a "Log in instead" button beside its submit: a sign-up, nothing reported.
+  const signup = setup({}, (document) => formOf(document, [
+    ["input", { id: "e", type: "email", name: "email" }], ["input", { id: "p", type: "password", name: "pw" }],
+    ["button", "Log in instead", { type: "button" }], ["button", "Create account", { type: "submit" }],
+  ]));
+  assert.deepEqual(signup.begin(), []);
+  // The reverse: a sign-in form with a "Create account" button beside its submit.
+  const login = setup({}, (document) => formOf(document, [
+    ["input", { id: "e", type: "email", name: "email" }], ["input", { id: "p", type: "password", name: "pw" }],
+    ["button", "Create account", { type: "button" }], ["button", "Sign in", { type: "submit" }],
+  ]));
+  assert.deepEqual(kinds(login.begin()), ["username", "password"]);
+  // "Aanmelden" means both in Dutch: the page decides. A page that says "Registreren" is a sign-up.
+  const dutch = setup({}, (document) => {
+    document.title = "Registreren";
+    return formOf(document, [["input", { id: "e", type: "email", name: "email" }], ["input", { id: "p", type: "password", name: "wachtwoord" }], ["button", "Aanmelden", { type: "submit" }]]);
   });
-  assert.deepEqual(kinds(top.begin()), ["username", "password"]);
+  assert.deepEqual(dutch.begin(), []);
+  const dutchLogin = setup({}, (document) => {
+    document.title = "Inloggen";
+    return formOf(document, [["input", { id: "e", type: "email", name: "email" }], ["input", { id: "p", type: "password", name: "wachtwoord" }], ["button", "Aanmelden", { type: "submit" }]]);
+  });
+  assert.deepEqual(kinds(dutchLogin.begin()), ["username", "password"]);
 });
 
 test("fill_keeps_every_visibility_rule", () => {
@@ -1279,4 +1323,24 @@ test("a_password_field_that_the_page_turns_into_a_code_field_after_the_report_ge
   assert.deepEqual(t.fill(), { request_id: "req-1", ok: false, reason: "wrong_kind" }, "a PIN by its shape");
   t.pass.setAttribute("inputmode", "text");
   assert.equal(t.fill()?.ok, true, "control");
+});
+
+test("a_click_on_the_new_or_confirm_field_of_a_change_form_never_gets_the_stored_password", () => {
+  const page = createPage();
+  const fields = formOf(page.document, [["input", { id: "a", type: "password", name: "f1" }], ["input", { id: "b", type: "password", name: "f2" }], ["input", { id: "c", type: "password", name: "f3" }]]);
+  const sent = /** @type {string[]} */ ([]);
+  const engine = createFillEngine({
+    window: page.window, document: page.document, send: (raw) => { sent.push(raw); }, runtimeId: RUNTIME_ID, extensionBase: EXTENSION_BASE,
+    targetOf: (id) => [fields.a, fields.b, fields.c][id - 1],
+  });
+  for (const [id, expected] of /** @type {Array<[number, string[]]>} */ ([[2, []], [3, []], [1, ["password"]]])) {
+    assert.equal(engine.aim(id), true);
+    sent.length = 0;
+    engine.begin("req-1");
+    assert.deepEqual(decodeSent(sent)[0].body.fields.map((/** @type {any} */ f) => f.kind), expected, `field ${id}`);
+    sent.length = 0;
+    engine.onMessage(fillMessage(), BACKGROUND_SENDER);
+    if (expected.length === 0) assert.deepEqual(decodeSent(sent)[0].body, { request_id: "req-1", ok: false, reason: "wrong_kind" }, `field ${id}`);
+  }
+  assert.deepEqual([fields.a, fields.b, fields.c].map(nativeValue), ["s3cret", "", ""]);
 });

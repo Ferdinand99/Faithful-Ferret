@@ -37,7 +37,7 @@
 
 import {
   CARD, CARD_FIELD, COUPON, CONFIRM, CURRENT, CVC, EMAIL, LOGIN, NAME, NEW, NEXT, NOT_LOGIN, OTP, OTP_WEAK,
-  PASSWORD, PHONE, PIN, RESET, SEARCH, SHOW, SIGNUP, SUBMIT, SUBMIT_WORDS, USERNAME, normalize,
+  ONE_TIME_PASSWORD, PASSWORD, PHONE, PIN, RESET, SEARCH, SHOW, SIGNUP, SUBMIT, SUBMIT_WORDS, USERNAME, normalize,
 } from "./patterns.mjs";
 
 export { SUBMIT_WORDS };
@@ -257,9 +257,14 @@ export function classifyField(element, ctx = {}) {
   if (CARD_FIELD.test(hints)) return { kind: "other", reasons: ["word", "card"] };
   if (PIN.test(hints)) return { kind: "pin", reasons: ["word"] };
   const passwordWord = PASSWORD.test(hints);
-  const oneTimePassword = /one time password|engangspassord|einmalpasswort/.test(hints);
-  if (OTP.test(hints) && (!passwordWord || oneTimePassword)) return { kind: codeKind(element), reasons: ["word"] };
-  if (OTP_WEAK.test(hints) && isShortNumeric(element) && !passwordWord && !USERNAME.test(hints)) return { kind: codeKind(element), reasons: ["word", "numeric"] };
+  // A one-time password names a password and is still a code; so is a masked field with a one-time-code term that
+  // has room for a code only.
+  const max = maxLengthOf(element);
+  const codeSized = password && max !== null && max <= 8;
+  if (OTP.test(hints) && (!passwordWord || ONE_TIME_PASSWORD.test(hints) || codeSized)) return { kind: codeKind(element), reasons: ["word"] };
+  if (OTP_WEAK.test(hints) && isShortNumeric(element) && !passwordWord && !USERNAME.test(hints) && !NAME.test(hints) && !PHONE.test(hints)) {
+    return { kind: codeKind(element), reasons: ["word", "numeric"] };
+  }
 
   if (password) {
     // A masked short number is a PIN: a site's password field never asks for a numeric keyboard or digits only.
@@ -428,7 +433,9 @@ export function findGroups(root, { maxNodes = MAX_NODES, shown = () => true } = 
     const own = controls.filter(inGroup).filter((control) => !isToggle(control, members));
     const submit = own.find(isSubmitControl) ?? own.find((control) => SUBMIT.test(controlText(control)));
     const context = {
-      submit: own.map(controlText).join(" ").slice(0, 600),
+      // The words of the control that sends the form; the other controls (a "Log in instead" beside a sign-up
+      // button) only when there is none.
+      submit: submit ? controlText(submit) : own.map(controlText).join(" ").slice(0, 600),
       form: form !== null ? normalize(["id", "name", "aria-label", "class"].map((a) => attr(form, a)).concat(headings.filter((h) => isInside(form, h)).map(textOf)).join(" ")) : normalize(headings.filter((h) => !wholePage && inGroup(h)).map(textOf).join(" ")),
       page: pageText,
       areas: areas.some(inGroup),

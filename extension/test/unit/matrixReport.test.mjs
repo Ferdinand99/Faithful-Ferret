@@ -351,8 +351,16 @@ test("the_runner_computes_the_codes_of_rfc_6238_and_finds_a_split_code_by_its_di
     ["#u", "username", undefined], ["#p", "password", undefined], ["#code", "totp", undefined],
     ...[1, 2, 3, 4, 5, 6].map((n) => [`#d${n}`, "totp", n - 1]),
   ]);
-  // Digits that do not spell a code of the entry, or that are spread over two documents, are no fill.
+  // Digits that are no piece of a code of the entry are no fill.
   assert.deepEqual(fillsIn(rows, "forms", "pw", ["999999"]).map((f) => f.id), ["#u", "#p"]);
+  // A code spread over two documents is no whole code; a run of two or more digits in one document that is a piece
+  // of a code is a fill of the code with no index (part of a code, or a code in the wrong boxes).
   const split = rows.map((r) => (r.id === "d4" ? { ...r, docUrl: "https://forms.example.net/frame/" } : r));
-  assert.deepEqual(fillsIn(split, "forms", "pw", ["287082"]).map((f) => f.id), ["#u", "#p", "#code"]);
+  assert.deepEqual(fillsIn(split, "forms", "pw", ["287082"]).map((f) => [f.id, f.kind, f.index]), [
+    ["#u", "username", undefined], ["#p", "password", undefined], ["#code", "totp", undefined],
+    ["#d1", "totp", undefined], ["#d2", "totp", undefined], ["#d3", "totp", undefined],
+  ]);
+  // Four boxes with the first four digits of a six-digit code.
+  const four = [..."2870"].map((d, i) => ({ id: `b${i + 1}`, type: "text", value: d, docUrl: doc }));
+  assert.deepEqual(fillsIn(four, "forms", "pw", ["287082"]).map((f) => [f.id, f.index]), [["#b1", undefined], ["#b2", undefined], ["#b3", undefined], ["#b4", undefined]]);
 });

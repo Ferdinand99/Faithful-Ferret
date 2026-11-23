@@ -64,7 +64,8 @@ export const OTP_TERMS = Object.freeze([
   // AliasVault, Dutch `totp.include.specific`
   "verificatiecode", "eenmalig", "authenticatie", "tweefactor", "beveiligingscode",
   // Faithful Ferret: German, Norwegian and French
-  "bestätigungscode", "bestatigungscode", "verifizierungscode", "einmalcode", "einmalpasswort", "zwei faktor",
+  "bestätigungscode", "bestatigungscode", "verifizierungscode", "einmalcode", "einmalpasswort", "einmal passwort",
+  "einmalkennwort", "einmal kennwort", "zwei faktor", "engangs passord", "usage unique", "mot de passe unique",
   "engangskode", "engangspassord", "bekreftelseskode", "verifiseringskode", "kode fra sms", "sms kode", "sms code",
   "tofaktor", "to faktor", "code de vérification", "code de verification", "code à usage unique", "code unique",
   "double authentification", "code d authentification",
@@ -105,7 +106,7 @@ export const EMAIL_TERMS = Object.freeze([
 
 /** A phone number (never a user name unless the page's autocomplete token says so). */
 export const PHONE_TERMS = Object.freeze([
-  "tel", "phone", "telephone", "téléphone", "telefon", "telefoon", "mobil", "mobile", "mobilnummer", "handy",
+  "tel", "phone", "area code", "dial code", "country code", "landskode", "vorwahl", "indicatif", "telephone", "téléphone", "telefon", "telefoon", "mobil", "mobile", "mobilnummer", "handy",
   "portable", "gsm",
 ]);
 
@@ -115,6 +116,7 @@ export const NAME_TERMS = Object.freeze([
   "family name", "nickname", "display name", "vorname", "nachname", "vollständiger name", "navn", "fornavn",
   "etternavn", "fullt navn", "kallenavn", "visningsnavn", "nom", "prénom", "prenom", "nom complet", "naam",
   "voornaam", "achternaam", "volledige naam", "street", "address", "adresse", "adres", "straat", "postcode", "zip",
+  "postleitzahl", "postnummer", "code postal", "sort code", "bank code", "bankleitzahl",
   "postal", "city", "stadt", "ville", "plaats", "company", "firma", "message", "nachricht", "melding", "bericht",
   "comment", "kommentar", "commentaire", "subject", "betreff", "sujet", "onderwerp",
 ]);
@@ -177,7 +179,7 @@ export const COUPON_TERMS = Object.freeze([
 /** A sign-in. */
 export const LOGIN_WORDS = Object.freeze([
   "log in", "login", "log on", "logon", "sign in", "signin", "anmelden", "einloggen", "logg inn", "logge inn",
-  "pålogging", "innlogging", "se connecter", "connexion", "connectez", "identifiez", "inloggen", "aanmelden",
+  "pålogging", "innlogging", "se connecter", "connexion", "connectez", "identifiez", "inloggen",
 ]);
 
 /** The step of a sign-in that asks for the user name first and then moves on. */
@@ -226,6 +228,12 @@ export const SUBMIT_WORDS = Object.freeze({
   nl: Object.freeze(["inloggen", "aanmelden", "registreren", "account aanmaken", "versturen", "doorgaan", "volgende", "opslaan", "wachtwoord wijzigen", "bevestigen", "controleren"]),
 });
 
+/**
+ * A one-time password by its own words, in the five languages, with or without the space or hyphen: such a field is
+ * a one-time code although it names a password.
+ */
+export const ONE_TIME_PASSWORD = /one ?time pass|einmal ?(?:pass|kenn)wort|engangs ?passord|eenmalig(?:e)? ?wachtwoord|mot de passe (?:a |à )?(?:usage )?unique/;
+
 // ------------------------------------------------------------------ compiled
 
 export const OTP = termsRegex(OTP_TERMS);
@@ -244,7 +252,8 @@ export const CARD = termsRegex(CARD_TERMS);
 export const CARD_FIELD = termsRegex(CARD_FIELD_TERMS);
 export const PIN = termsRegex(PIN_TERMS);
 export const COUPON = termsRegex(COUPON_TERMS);
-export const LOGIN = termsRegex(LOGIN_WORDS);
+// "anmelden" (de: sign in) is also the end of "aanmelden" (nl: sign up or sign in), which says neither.
+export const LOGIN = new RegExp(`(?<!a)anmelden|${termsRegex(LOGIN_WORDS.filter((w) => w !== "anmelden")).source}`);
 export const NEXT = termsRegex(NEXT_WORDS);
 export const SIGNUP = termsRegex(SIGNUP_WORDS);
 export const RESET = termsRegex(RESET_WORDS);

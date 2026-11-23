@@ -449,15 +449,17 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
   }
 
   /**
-   * Whether this frame's document was written by its parent rather than loaded:
-   * a frame below the top whose holder (the parent's `iframe`, `frame`,
-   * `object` or `embed`, reachable only when the parent has this frame's
-   * origin) has a `srcdoc`, or no address of its own, or an `about:` one. That
-   * is what `document.open()` from the parent leaves (the frame then shows the
-   * parent's address). Such a document is the parent page's markup in a frame,
-   * not a page the user opened, and it reports no field. The top has no holder,
-   * and a frame below a parent of another origin cannot see its holder (the
-   * parent could not have written it either).
+   * Whether this frame's document was written by its parent rather than
+   * loaded: a frame below the top whose holder (the parent's `iframe`,
+   * `frame`, `object` or `embed`, reachable only when the parent has this
+   * frame's origin) has a `srcdoc`, or whose document has the parent
+   * document's own address, which is what `document.open()` from the parent
+   * gives it (with or without a `src` on the holder). Such a document is the
+   * parent page's markup in a frame, not a page the user opened, and it
+   * reports no field. A frame navigated to an address of its own (by its name,
+   * say) is a page, also without a `src`. The top has no holder, and a frame
+   * below a parent of another origin cannot see its holder (the parent could
+   * not have written it either).
    * @returns {boolean}
    */
   function writtenByParent() {
@@ -465,8 +467,9 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       const holder = window.frameElement;
       if (!isElement(holder)) return false;
       if (holder.hasAttribute("srcdoc")) return true;
-      const address = holder.getAttribute(holder.localName === "object" ? "data" : "src");
-      return typeof address !== "string" || address.trim() === "" || /^\s*about:/i.test(address);
+      const own = document.URL;
+      const above = holder.ownerDocument?.URL;
+      return typeof own === "string" && typeof above === "string" && own === above;
     } catch {
       return false;
     }
@@ -534,7 +537,8 @@ export function createFillEngine({ window, document, send, runtimeId, extensionB
       if (!group || !field) return [];
       const signIn = group.kind === "login" || group.kind === "change";
       if (field.password) {
-        if (signIn && field.kind === "current_password") report(group, target);
+        // Only the password the group fills: never its new or confirm field, whatever the field says of itself.
+        if (signIn && (target === group.password || target === group.current)) report(group, target);
       } else if (field.kind === "otp" || field.kind === "otp_digit") {
         const code = group.otp;
         if (code === target || (Array.isArray(code) && code.includes(target))) take("totp", code);

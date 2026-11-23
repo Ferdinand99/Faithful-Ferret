@@ -289,15 +289,32 @@ export function fillsIn(rows, key, password, codes) {
     else if (input.value === VAULT_USERNAME) out.push({ entry: key, kind: "username", id: `#${input.id}`, docUrl: input.docUrl });
     else if (codes.includes(input.value)) out.push({ entry: key, kind: "totp", id: `#${input.id}`, docUrl: input.docUrl });
   }
-  // Split codes: a run of one-character values in one document, in order, that spells a whole code.
+  // Split codes: a run of one-character values in one document, in order, that spells a whole code (digit n in the
+  // n-th field). A shorter run of two or more that is a piece of a code is a fill of the code too, with no index:
+  // part of a code in a field that did not ask for it, or in the wrong boxes.
+  /** @type {Set<number>} */
+  const taken = new Set();
   for (const code of codes) {
     for (let i = 0; i + code.length <= rows.length; i += 1) {
       const run = rows.slice(i, i + code.length);
-      if (run.every((r) => r.value.length === 1 && r.docUrl === run[0].docUrl) && run.map((r) => r.value).join("") === code) {
-        run.forEach((r, n) => out.push({ entry: key, kind: "totp", index: n, id: `#${r.id}`, docUrl: r.docUrl }));
-        i += code.length - 1;
+      if (!run.some((_, n) => taken.has(i + n)) && run.every((r) => r.value.length === 1 && r.docUrl === run[0].docUrl) && run.map((r) => r.value).join("") === code) {
+        run.forEach((r, n) => {
+          taken.add(i + n);
+          out.push({ entry: key, kind: "totp", index: n, id: `#${r.id}`, docUrl: r.docUrl });
+        });
       }
     }
+  }
+  for (let i = 0; i < rows.length; i += 1) {
+    if (taken.has(i) || rows[i].value.length !== 1) continue;
+    let end = i;
+    while (end + 1 < rows.length && !taken.has(end + 1) && rows[end + 1].value.length === 1 && rows[end + 1].docUrl === rows[i].docUrl) end += 1;
+    const run = rows.slice(i, end + 1);
+    const text = run.map((r) => r.value).join("");
+    if (run.length >= 2 && codes.some((code) => code.includes(text))) {
+      run.forEach((r) => out.push({ entry: key, kind: "totp", id: `#${r.id}`, docUrl: r.docUrl }));
+    }
+    i = end;
   }
   return out;
 }
