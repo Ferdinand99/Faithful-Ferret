@@ -15,10 +15,14 @@
 // - nothing_is_written_when_the_popup_is_never_opened: an offer nobody answers writes nothing, in twenty seconds or after a lock.
 // - a_lock_between_submit_and_click_leaves_no_offer: a lock after the submit and before the click on "Save" leaves no offer
 //   and no item; the click writes nothing.
+// - the_capture_follows_what_the_person_saw_at_the_click_and_not_what_the_page_did_after: an overlay or a modal that the page puts
+//   over the form in its own submit handler, a failed sign-in with an error modal, in a shadow root or on a hash route, and a
+//   honeypot below the window: an offer (with the typed user name) where the sign-in went through, none where it failed.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { channels, fixtures, stopFixtures } from "./harness.mjs";
 import { captureCase, captureCasesOf, caseUrl, casesOf, offersPeek } from "./matrix.mjs";
+import { computeMatrix } from "./matrixReport.mjs";
 import { allText, newestTab, popupWithCard, readyWorld, sleep, uniqueSignup, vaultItemHref } from "./offerWorld.mjs";
 import { SLOW, pace } from "./e2e.mjs";
 
@@ -250,5 +254,25 @@ test("a_lock_between_submit_and_click_leaves_no_offer", async () => {
     await w.session.waitFor(async () => (await w.vaultState()).running === true, 60_000, "the sync engine runs again");
     assert.deepEqual([...(await w.vaultState()).rows].sort(), [...vault.rows].sort(), `${channel}: no item was made by the click`);
     assert.equal((await offersPeek(w, tabId)).offers.length, 0, `${channel}: the offer is gone for good`);
+  }
+});
+
+test("the_capture_follows_what_the_person_saw_at_the_click_and_not_what_the_page_did_after", async () => {
+  const ids = ["login-overlay-on-submit-en", "login-modal-on-submit-de", "login-honeypot-below-fold-en", "reauth-error-modal-en", "reauth-shadow-form-fr", "reauth-hash-route-en"];
+  for (const channel of channels()) {
+    const w = await worldOf(channel);
+    const results = [];
+    for (const id of ids) {
+      const result = await captureCase(w, caseOf(id));
+      assert.equal(result.error, undefined, `${channel}: ${id}: ${result.error}`);
+      results.push(result);
+    }
+    const numbers = computeMatrix(results, { set: "corpus", part: "capture" });
+    // The sign-ins that went through give one offer with the typed user name and the typed password; the failed ones none.
+    assert.deepEqual(numbers.misses.map((m) => `${m.id}: ${m.reason}`), [], `${channel}: misses`);
+    assert.deepEqual(numbers.unsafeOffers, [], `${channel}: unsafe offers`);
+    assert.deepEqual(numbers.falseOffers.cases, [], `${channel}: offers after a failed sign-in`);
+    assert.equal(numbers.capture.passed, 3, `${channel}: the three sign-ins that went through gave an offer`);
+    assert.deepEqual(numbers.notRun, [], `${channel}: every case ran`);
   }
 });
