@@ -115,6 +115,14 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
           await w.ui.close();
         }
       }
+      // Every lock clears the offers the extension holds, and a run of the whole corpus lasts longer than the default
+      // "Lock after": the vault stays open for the day.
+      await w.ui.open();
+      try {
+        await w.ui.body("settings", { lock_seconds: 86_400 });
+      } finally {
+        await w.ui.close();
+      }
       // The vault check of the capture phase needs the item list of the sync engine: it has the matrix's entries.
       const vault = await w.vaultState();
       assert.equal(vault.running, true, `${channel}: the sync engine runs`);
