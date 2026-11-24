@@ -349,7 +349,7 @@ export function followStep(shown, next, asking) {
  * is one of the master-password unlock's (a network failure, a sign-out, the attack warning) and has its text there.
  */
 export const PIN_REASONS = Object.freeze([
-  "wrong_pin", "pin_wait", "pin_wiped", "pin_stale", "pin_offline_expired", "out_of_memory", "pin_unavailable",
+  "wrong_pin", "pin_wait", "pin_wiped", "pin_stale", "pin_offline_expired", "out_of_memory", "pin_unavailable", "pin_rule",
 ]);
 
 /** The texts that the settings' PIN code owns and the popup reuses, by reason (the other reasons have `unlock.pin.error.<reason>`). */

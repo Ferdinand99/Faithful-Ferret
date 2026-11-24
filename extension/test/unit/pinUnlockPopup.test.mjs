@@ -609,7 +609,7 @@ test("texts_exist_in_en_and_nb", async () => {
   for (const reason of PIN_REASONS) if (reason !== "pin_stale") wanted.add(`unlock.pin.error.${reason}`);
   const shared = (/** @type {string} */ lang) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "pin.json"), "utf8"));
   assert.ok(shared("en")["pin.error.pin_stale"] && shared("nb")["pin.error.pin_stale"]);
-  assert.equal(PIN_REASONS.length, 7);
+  assert.equal(PIN_REASONS.length, 8);
   for (const key of wanted) {
     if (key.endsWith(".error.")) continue;
     assert.ok(en[key], `en: ${key}`);

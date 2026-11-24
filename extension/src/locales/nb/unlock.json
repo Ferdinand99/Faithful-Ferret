@@ -3,6 +3,7 @@
   "unlock.pin.error.empty": "Skriv inn PIN-en.",
   "unlock.pin.error.out_of_memory": "Denne enheten fikk ikke nok minne til å sjekke PIN-en. Det er ikke en gal PIN, men forsøket teller likevel som ett av de fem.",
   "unlock.pin.error.pin_offline_expired": "PIN-en krever kontakt med serveren: det er mer enn 7 dager siden sist, eller klokka er endret. Sjekk nettforbindelsen og prøv igjen, eller bruk hovedpassordet.",
+  "unlock.pin.error.pin_rule": "Den PIN-en følger ikke regelen til denne serveren (for kort eller for lang). Det telte ikke som et forsøk.",
   "unlock.pin.error.pin_unavailable": "PIN-opplåsing er ikke tilgjengelig nå. Bruk hovedpassordet.",
   "unlock.pin.error.pin_wait": "Du må vente før neste forsøk.",
   "unlock.pin.error.pin_wiped": "PIN-en på denne enheten ble slettet: etter fem gale forsøk, fordi administratoren endret eller slo av PIN-regelen, eller fordi den ikke lenger passet til kontoen din. Bruk hovedpassordet for å åpne hvelvet. Du kan sette en ny PIN i innstillingene.",

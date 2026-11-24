@@ -3,6 +3,7 @@
   "unlock.pin.error.empty": "Enter your PIN.",
   "unlock.pin.error.out_of_memory": "This device did not have enough memory to check the PIN. It is not a wrong PIN, but the try still counts as one of the five.",
   "unlock.pin.error.pin_offline_expired": "The PIN needs contact with the server: it is more than 7 days since the last contact, or the clock was changed. Check the connection and try again, or use your master password.",
+  "unlock.pin.error.pin_rule": "That PIN is not one the rule of this server allows (too short or too long). It did not count as a try.",
   "unlock.pin.error.pin_unavailable": "PIN unlock is not available now. Use your master password.",
   "unlock.pin.error.pin_wait": "You have to wait before the next try.",
   "unlock.pin.error.pin_wiped": "The PIN on this device was deleted: after five wrong tries, because the administrator changed or turned off the PIN rule, or because it no longer matched your account. Use your master password to open the vault. You can set a new PIN in the settings.",
