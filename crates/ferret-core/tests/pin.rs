@@ -342,6 +342,36 @@ fn pin_method_with(profile: PinProfile, salt: u8) -> Method {
 }
 
 #[test]
+fn the_pin_wrap_record_carries_the_device_salt_and_keeps_its_size() {
+    // A caller that stores the wrap reads the salt and the profile from the
+    // record; the wrap is 104 bytes: nonce, vault key, tag, commitment.
+    let c = ctx();
+    let (kek, rec) = wrap_of(pin_method_with(PinProfile::P1, 0xc7), &c);
+    assert_eq!(rec.wrap.len(), 104);
+    assert_eq!(rec.wrap.len(), ferret_core::wrap::WRAP_WITH_COMMIT_LEN);
+    let Method::Pin {
+        device_salt,
+        profile,
+    } = &rec.method
+    else {
+        panic!("a PIN wrap carries the PIN method");
+    };
+    assert_eq!(device_salt, &[0xc7; 16]);
+    assert_eq!(*profile, PinProfile::P1);
+    // Rebuilt from those three parts alone, it opens.
+    let stored = WrapRecord {
+        method_id: rec.method_id,
+        kek_generation: rec.kek_generation,
+        method: Method::Pin {
+            device_salt: *device_salt,
+            profile: PinProfile::from_wire(u32::from(profile.number())).unwrap(),
+        },
+        wrap: rec.wrap.clone(),
+    };
+    assert!(unwrap_vk(&c, &kek, &stored).is_ok());
+}
+
+#[test]
 fn the_pin_aad_binds_the_kdf_and_the_epoch() {
     let c = ctx();
     let (_, rec) = wrap_of(pin_method_with(PinProfile::P1, 0xc0), &c);

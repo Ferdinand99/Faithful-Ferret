@@ -69,6 +69,11 @@ pub enum Method {
         prf_salt: [u8; 32],
     },
     /// A local PIN of the browser extension. Never uploaded.
+    ///
+    /// The `WrapRecord` that [`wrap_vk`] returns carries this method, so the
+    /// caller reads the 16-byte `device_salt` and the `profile` from
+    /// `record.method` and stores them next to `record.wrap` (104 bytes,
+    /// [`WRAP_WITH_COMMIT_LEN`]); opening needs all three.
     Pin {
         /// The 16-byte salt of the Argon2id stretching.
         device_salt: [u8; 16],
