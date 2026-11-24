@@ -50,9 +50,6 @@ const SYNC_REFRESH_MS = 1500;
 /** How often an open popup looks for an offer that arrived after it opened. */
 const OFFER_REFRESH_MS = 1000;
 
-/** How long the locked view waits for the background to say whether a PIN is offered, before it shows the master password alone. */
-const PIN_OFFER_WAIT_MS = 1500;
-
 /** The feature mark on the controls of the PIN unlock that this page builds (the build's own checks look for it). */
 const UNLOCK_MARK = Object.freeze({ "data-feature": "unlock" });
 
@@ -238,43 +235,34 @@ async function main() {
   }
 
   /**
-   * The locked view. In a build with unlock on it first asks the background whether a PIN is set and allowed, and shows
-   * the PIN's field in place of the master password's when it is; the master password is always one click away. A build
-   * with unlock off asks nothing and shows the master password only.
+   * The locked view. The master password's form is shown at once. In a build with unlock on the background is also asked
+   * whether a PIN is set and allowed; when the answer comes, however late (it may wait for the server), the PIN's field is
+   * added. The master password is always one click away. A build with unlock off asks nothing.
    * @param {PopupView} view
    */
   function locked(view) {
-    if (!FEATURES.unlock) return mountLocked(view, null);
+    const mounted = mountLocked(view);
+    if (!FEATURES.unlock) return;
     const mine = shown;
-    // The last view is gone while the background answers; the answer takes a moment.
-    mount(root);
-    // Asked before anything is built, so a person does not start typing in a form that is taken away a moment later. A
-    // background that does not answer soon leaves the master password, which needs no answer.
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let giveUp = null;
-    const late = new Promise((resolve) => {
-      giveUp = setTimeout(() => resolve(null), PIN_OFFER_WAIT_MS);
-    });
-    void Promise.race([flow.pinPolicy(), late]).then((offer) => {
-      if (giveUp !== null) clearTimeout(giveUp);
-      // Another view was shown meanwhile (a sign-out, a sync that unlocked).
-      if (mine === shown) mountLocked(view, offer);
+    void flow.pinPolicy().then((offer) => {
+      // Another view was shown meanwhile (a sign-out, a sync that unlocked): the answer is for a view that is gone.
+      if (offer !== null && mine === shown) mounted.addPin(offer);
     });
   }
 
   /**
+   * Builds the locked view and shows it. `addPin` adds the PIN's part to it.
    * @param {PopupView} view
-   * @param {import("./popupFlow.mjs").PinOffer | null} offer what the background says of the PIN: null when none is offered
    */
-  function mountLocked(view, offer) {
+  function mountLocked(view) {
     const password = field({ id: "password", label: texts.t("session.password"), role: "password", type: "password", autocomplete: "current-password" });
     const secretKey = field({ id: "sk", label: texts.t("session.sk.code"), role: "sk-code", autocomplete: "off" });
     secretKey.row.hidden = true;
     const error = errorBox();
     const submit = el("button", { type: "submit", class: "ff-button ff-primary", "data-role": "unlock" }, texts.t("session.unlock.submit"));
-    // "Use PIN instead" is in the master password's form only while a PIN is offered (and not after it was refused for good).
-    const usePin = offer === null ? null : el("button", { type: "button", class: "ff-button", "data-role": "use-pin", ...UNLOCK_MARK }, texts.t("unlock.pin.use_pin"));
-    const form = el("form", { class: "ff-form", "data-role": "unlock-form" }, password.row, secretKey.row, ...(usePin === null ? [submit] : [el("div", { class: "ff-actions" }, submit, usePin)]), error);
+    // A build with unlock on keeps the button in a row that "Use PIN instead" joins when a PIN is offered; without it the form is as it was.
+    const actions = FEATURES.unlock ? el("div", { class: "ff-actions" }, submit) : null;
+    const form = el("form", { class: "ff-form", "data-role": "unlock-form" }, password.row, secretKey.row, actions ?? submit, error);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       showError(error, texts, null);
@@ -299,44 +287,8 @@ async function main() {
       }
       password.input.focus();
     });
-    // The PIN's part (a build with unlock on, and only when the background said a PIN is set and allowed). It takes the place
-    // of the master password's form; "Use master password instead" brings that form back, and "Use PIN instead" the PIN's.
-    /** @type {ReturnType<typeof createPinUnlockPart>} */
-    const pin =
-      offer === null
-        ? null
-        : createPinUnlockPart({
-            texts,
-            flow,
-            offer,
-            onDone: (next) => show(next),
-            onUseMaster: () => {
-              pin?.root.setAttribute("hidden", "");
-              form.hidden = false;
-              password.input.focus();
-            },
-            // The PIN cannot be tried again (it is gone, or this device cannot check it): the master password stays, with the
-            // reason in it, and nothing offers the PIN again in this view.
-            onEnded: (message) => {
-              pin?.wipe();
-              pin?.root.setAttribute("hidden", "");
-              usePin?.setAttribute("hidden", "");
-              form.hidden = false;
-              error.textContent = message;
-              error.hidden = false;
-              password.input.focus();
-            },
-          });
-    usePin?.addEventListener("click", () => {
-      password.input.value = "";
-      secretKey.input.value = "";
-      form.hidden = true;
-      pin?.root.removeAttribute("hidden");
-      pin?.focus();
-    });
-    if (pin !== null) form.hidden = true;
-    // What must not outlive the view: a PIN that was typed and not sent.
-    teardown = () => pin?.wipe();
+    // What must not outlive the view: a PIN that was typed and not sent (set when the PIN's part is added).
+    teardown = null;
     mount(
       root,
       el(
@@ -344,13 +296,65 @@ async function main() {
         { class: "ff-panel", "data-role": "locked-view" },
         el("h1", null, texts.t("session.popup.locked")),
         where(view),
-        ...(pin === null ? [] : [pin.root]),
         form,
         view.server !== "" ? forgetPart(view) : null,
       ),
     );
-    if (pin !== null) pin.focus();
-    else password.input.focus();
+    password.input.focus();
+
+    /**
+     * Adds the PIN's part (a build with unlock on, when the background says a PIN is set and allowed). It takes the place
+     * of the master password's form, unless the person has already started typing there: then the form stays and only
+     * "Use PIN instead" is added. "Use master password instead" brings the form back, "Use PIN instead" the PIN's part.
+     * @param {import("./popupFlow.mjs").PinOffer} offer
+     */
+    function addPin(offer) {
+      if (actions === null || teardown !== null) return;
+      const usePin = el("button", { type: "button", class: "ff-button", "data-role": "use-pin", ...UNLOCK_MARK }, texts.t("unlock.pin.use_pin"));
+      /** @type {ReturnType<typeof createPinUnlockPart>} */
+      const pin = createPinUnlockPart({
+        texts,
+        flow,
+        offer,
+        onDone: (next) => show(next),
+        onUseMaster: () => {
+          pin?.root.setAttribute("hidden", "");
+          form.hidden = false;
+          password.input.focus();
+        },
+        // The PIN cannot be tried again (it is gone, or this device cannot check it): the master password stays, with the
+        // reason in it, and nothing offers the PIN again in this view.
+        onEnded: (message) => {
+          pin?.wipe();
+          pin?.root.setAttribute("hidden", "");
+          usePin.setAttribute("hidden", "");
+          form.hidden = false;
+          error.textContent = message;
+          error.hidden = false;
+          password.input.focus();
+        },
+      });
+      if (pin === null) return;
+      usePin.addEventListener("click", () => {
+        password.input.value = "";
+        secretKey.input.value = "";
+        form.hidden = true;
+        pin.root.removeAttribute("hidden");
+        pin.focus();
+      });
+      actions.append(usePin);
+      form.before(pin.root);
+      teardown = () => pin.wipe();
+      if (password.input.value !== "" || secretKey.input.value !== "") {
+        // Typing has started in the master password's form: it is not taken away.
+        pin.root.setAttribute("hidden", "");
+        return;
+      }
+      form.hidden = true;
+      pin.focus();
+    }
+
+    return { addPin };
   }
 
   /**

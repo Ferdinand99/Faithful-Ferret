@@ -17,6 +17,7 @@
 import { el } from "../shared/dom.mjs";
 import { FEATURES } from "../shared/features.mjs";
 import { secretField } from "./unlockDialog.mjs";
+import { PIN_MAX_CHARS, checkPin } from "./unlockFlow.mjs";
 
 /** The feature mark on the part and on the controls the tests and the build check look for. */
 const FEATURE = Object.freeze({ "data-feature": "unlock" });
@@ -129,7 +130,9 @@ export function createPinUnlock({ texts, flow, offer, onDone, onEnded, onUseMast
     countdown.textContent = "";
     submit.removeAttribute("disabled");
     say(["unlock.pin.wait_over"], {}, "info");
-    input.focus();
+    // The focus comes back to the field only when it is still in this part or nowhere (not when the person moved on).
+    const active = document.activeElement;
+    if (active === null || active === document.body || active === input || form.contains?.(active) === true) input.focus();
   };
 
   const tick = () => {
@@ -179,6 +182,14 @@ export function createPinUnlock({ texts, flow, offer, onDone, onEnded, onUseMast
     if (busy || waiting()) return;
     if (input.value === "") {
       say(["unlock.pin.error.empty"]);
+      input.focus();
+      return;
+    }
+    // The rule is public (the administrator's minimum, and the core's fixed floor and ceiling): a PIN that cannot be right is
+    // not sent, so it is not a try, and the typed value stays so the person can finish it.
+    const rule = checkPin(input.value, offer.minLength);
+    if (!rule.ok) {
+      say([rule.reason === "too_short" ? "unlock.pin.error.too_short" : "unlock.pin.error.too_long"], { min: Math.max(offer.minLength, 4), max: PIN_MAX_CHARS });
       input.focus();
       return;
     }
@@ -236,7 +247,7 @@ export function createPinUnlock({ texts, flow, offer, onDone, onEnded, onUseMast
   });
 
   // The page goes away (the popup closed): nothing typed stays in the field.
-  if (typeof globalThis.addEventListener === "function") globalThis.addEventListener("pagehide", () => wipe());
+  if (typeof globalThis.addEventListener === "function") globalThis.addEventListener("pagehide", () => wipe(), { once: true });
 
   function wipe() {
     epoch += 1;
@@ -252,7 +263,7 @@ export function createPinUnlock({ texts, flow, offer, onDone, onEnded, onUseMast
   showAttempts(offer.failuresLeft);
   if (!offer.offlineOk) {
     offline.hidden = false;
-    offline.textContent = t("unlock.pin.error.pin_offline_expired");
+    offline.textContent = t("unlock.pin.offline_first");
   }
   if (offer.waitMs > 0) {
     say(["unlock.pin.error.pin_wait", "unlock.pin.wait_say"], { seconds: Math.ceil(offer.waitMs / 1000) }, "info");

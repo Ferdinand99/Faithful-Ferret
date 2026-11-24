@@ -221,8 +221,13 @@ test("the_pin_field_shows_only_when_a_pin_is_set_and_unlock_is_on", async () => 
 
   // The popup asks the background about a PIN only in a build with the feature on, and only after it asked the flag.
   const code = readFileSync(join(extensionRoot, "src", "pages", "popup.mjs"), "utf8");
-  assert.ok(code.indexOf("if (!FEATURES.unlock) return mountLocked(view, null);") !== -1);
-  assert.ok(code.indexOf("if (!FEATURES.unlock) return mountLocked(view, null);") < code.indexOf("flow.pinPolicy()"));
+  // The master password's form is built first and shown at once; the PIN is added when the answer comes, and no timer gives up on it.
+  const flag = code.indexOf("if (!FEATURES.unlock) return;");
+  assert.ok(flag !== -1);
+  assert.ok(code.indexOf("const mounted = mountLocked(view);") < flag);
+  assert.ok(flag < code.indexOf("flow.pinPolicy()"));
+  assert.doesNotMatch(code, /PIN_OFFER_WAIT|giveUp|Promise\.race/);
+  assert.match(code, /mounted\.addPin\(offer\)/);
   assert.equal(code.match(/pinPolicy\(/g)?.length, 1, "one place asks");
 });
 
@@ -288,7 +293,7 @@ test("five_wrong_pins_wipe_and_the_popup_asks_for_the_password_and_says_why", as
   // The fifth: the part ends, and the popup is told the text that says why (the master password stays, never the PIN).
   await enter(world, "wrong-4");
   assert.deepEqual(world.ended, [world.catalog["unlock.pin.error.pin_wiped"]]);
-  assert.match(world.ended[0], /deleted: after five wrong tries, or because the administrator turned PIN off\. Use your master password/);
+  assert.match(world.ended[0], /deleted: after five wrong tries, because the administrator changed or turned off the PIN rule, or because it no longer matched your account\. Use your master password/);
   assert.equal(world.done.length, 0);
   // Every try carried the PIN in one request and nothing else.
   assert.deepEqual(pinRequests(world.log).map(([, body]) => Object.keys(body)), [["pin"], ["pin"], ["pin"], ["pin"], ["pin"]]);
@@ -390,7 +395,9 @@ test("the_offline_window_text_is_shown_after_seven_days", async () => {
   const world = await partOf(on, { pin: { offline_ok: false } });
   const hint = /** @type {any} */ (one(root(world), "pin-offline"));
   assert.equal(hint.hidden, false);
-  assert.equal(hint.textContent, world.catalog["unlock.pin.error.pin_offline_expired"]);
+  // Before a try it says that the PIN reaches the server first: it is not a refusal yet.
+  assert.equal(hint.textContent, world.catalog["unlock.pin.offline_first"]);
+  assert.match(hint.textContent, /Unlock with PIN tries that now/);
   assert.match(hint.textContent, /more than 7 days since the last contact/);
   const fine = await partOf(on);
   assert.equal(/** @type {any} */ (one(root(fine), "pin-offline")).hidden, true);
@@ -527,6 +534,37 @@ test("the_unlock_refusal_after_an_accepted_restore_shows_the_attack_warning", as
 });
 
 // ------------------------------------------------------------------------------------------------------ the flow
+
+test("a_pin_shorter_than_the_rule_is_not_sent", async () => {
+  const world = await partOf(on, { pin: { min_length: 6, failures_left: 4 } });
+  // Too short: nothing is sent, so it is not a try; the page says the rule, not "wrong"; the typed value stays; the counter is as it was.
+  input(world).value = "abc12";
+  await submit(root(world));
+  assert.equal(pinRequests(world.log).length, 0);
+  assert.equal(live(world).textContent, "The PIN has at least 6 characters.");
+  assert.doesNotMatch(live(world).textContent, /not right/);
+  assert.equal(input(world).value, "abc12");
+  assert.equal(world.doc.activeElement, input(world));
+  assert.equal(unlockButton(world).hasAttribute("disabled"), false);
+  assert.equal(world.part.waiting(), false);
+  assert.equal(/** @type {any} */ (one(root(world), "pin-attempts")).textContent, "Tries left before the PIN is deleted: 4");
+  // The fixed floor of 4 holds even when the rule says less, and the ceiling of 64 characters too.
+  const low = await partOf(on, { pin: { min_length: 4 } });
+  await enter(low, "abc");
+  assert.equal(pinRequests(low.log).length, 0);
+  await enter(low, "x".repeat(65));
+  assert.equal(pinRequests(low.log).length, 0);
+  assert.equal(live(low).textContent, "The PIN has at most 64 characters.");
+  // A PIN of exactly the minimum goes out; so does a PIN of letters counted as characters, not bytes.
+  await enter(world, "abc123");
+  assert.deepEqual(pinRequests(world.log), [["pin_unlock", { pin: "abc123" }]]);
+  await enter(low, "åäöå");
+  assert.equal(pinRequests(low.log).length, 1);
+  const nb = await partOf(on, { lang: "nb", pin: { min_length: 8 } });
+  await enter(nb, "abc");
+  assert.equal(live(nb).textContent, "PIN-en har minst 8 tegn.");
+  assert.equal(pinRequests(nb.log).length, 0);
+});
 
 test("the_flow_sends_the_pin_in_one_request_and_reads_the_view_after_it", async () => {
   const world = await partOf(on);
