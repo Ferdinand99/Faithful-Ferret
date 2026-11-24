@@ -251,6 +251,8 @@ const EXPECTED_BYTE_PATHS = [
   "pin_unlock:pinned.pk_a",
   "pin_unlock:pinned.server_public_key",
   "pin_unlock:pinned.vault_id",
+  "prf_methods:[].credential_id",
+  "prf_methods:[].method_id",
   "prf_salt_new:",
   "reauth_grant:",
   "recover:manifest.envelope",
@@ -416,7 +418,8 @@ test("no_reply_holds_key_material", () => {
   call("sync_memory_new", () => wasm.sync_memory_new());
   call("sync_memory_prune", () => wasm.sync_memory_prune(wasm.sync_memory_new(), [fill(16, 1)]));
   call("accept_rows", () => vault.accept_rows([{ item_id: id, rev: edited.rev, state: "live", envelope: edited.envelope, tag: edited.tag }], 3, wasm.sync_memory_new()));
-  const addChange = call("manifest_add_method", () => vault.manifest_add_method(created.manifest, prfWrap));
+  const addChange = call("manifest_add_method", () => vault.manifest_add_method(created.manifest, prfWrap, fill(16, 0xaa), "Work key", true, false));
+  call("prf_methods", () => vault.prf_methods(addChange.sealed));
   call("manifest_remove_method", () => vault.manifest_remove_method(addChange.sealed, prfWrap.method_id));
   call("unlock_recovery", () => new wasm.UnlockJob().unlock_recovery(URL_, CTX, rkCode, created.wraps[1], firstUse(true), wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key)));
 

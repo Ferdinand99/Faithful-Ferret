@@ -237,6 +237,25 @@ test("an_internal_error_ends_the_vault_worker", async () => {
   assert.equal(made.length, 2);
 });
 
+test("the_flags_of_a_passkey_method_must_be_booleans_before_wasm_bindgen_coerces_them", async () => {
+  // `wasm-bindgen` turns any truthy value into `true`, so the string "false"
+  // would say "synced". The label and the AAGUID are typed too.
+  const { client } = setup();
+  const row = { rev: 1, envelope: new Uint8Array(1), tag: new Uint8Array(32) };
+  const wrap = {};
+  const aaguid = new Uint8Array(16);
+  for (const [be, bs] of [["false", false], [false, 1], [1, 0], [undefined, false], [false, null], ["", ""]]) {
+    const e = await rejection(client.vault.manifest_add_method(row, wrap, aaguid, "Key", be, bs));
+    assert.equal(e.code, "invalid_input", `${String(be)} ${String(bs)}`);
+  }
+  assert.equal((await rejection(client.vault.manifest_add_method(row, wrap, aaguid, 7, true, false))).code, "invalid_input");
+  assert.equal((await rejection(client.vault.manifest_add_method(row, wrap, aaguid, "lone \ud800", true, false))).code, "invalid_input");
+  assert.equal((await rejection(client.vault.manifest_add_method(row, wrap, [0], "Key", true, false))).code, "invalid_input");
+  // Booleans pass the check (and then there is no open vault).
+  assert.equal((await rejection(client.vault.manifest_add_method(row, wrap, aaguid, "Key", true, false))).code, "vault_locked");
+  assert.equal((await rejection(client.vault.manifest_add_method(row, wrap, aaguid, "Key", false, false))).code, "vault_locked");
+});
+
 test("u32_arguments_are_checked_before_wasm_bindgen_coerces_them", async () => {
   const { client } = setup();
   const bad = [4294967297, 1.9, -1, "3", NaN, Infinity, null, undefined, {}];

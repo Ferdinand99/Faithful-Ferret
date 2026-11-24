@@ -86,6 +86,9 @@ share the single code `decrypt`, with no cause.
 | `folder_duplicate` | Two folder names of one item that are equal when case is ignored. |
 | `generator_options` | Options of the password or passphrase generator out of range: a password length outside 4 to 128, no character class, `min_each` above 8, or more required characters than the length holds (`min_each` times the number of classes above the length); a passphrase with fewer than 3 or more than 20 words, or a separator other than `-`, `.`, `_` and the space. |
 | `pin_not_allowed` | The server's rule does not allow a PIN at all, so no PIN is accepted. |
+| `method_name_empty` | The name of a passkey method that is empty once its surrounding white space is trimmed. |
+| `method_name_too_long` | The name of a passkey method that is longer than 64 characters once in NFC and trimmed. |
+| `method_name_bad_character` | The name of a passkey method with a control character, a line or paragraph separator, a bidirectional mark, embedding, override or isolate, a zero width space or a byte order mark. |
 
 ## Server codes
 

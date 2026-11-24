@@ -1237,17 +1237,21 @@ test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
   // Add a passkey method: a new manifest row and the body that is signed.
   const salt = wasm.prf_salt_new();
   const wrap = vault.wrap_prf(fill(24, 0x44), salt, fill(32, 0x33), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
-  const add = vault.manifest_add_method(created.manifest, wrap);
+  const aaguid = fill(16, 0xaa);
+  const add = vault.manifest_add_method(created.manifest, wrap, aaguid, "Work key", false, false);
   assert.equal(add.op, "unlock-method.add");
   assert.equal(add.sealed.rev, created.manifest.rev + 1);
   assert.deepEqual(add.pk_a, created.pk_a);
   const body = Buffer.from(add.body).toString("utf8");
   assert.match(body, /"method_type":3/);
   assert.match(body, new RegExp(`"method_id":"${"76".repeat(16)}"`));
+  // The AAGUID is in the body after the salt; the name and the flags are not.
+  assert.match(body, new RegExp(`"prf_salt":"[0-9a-f]{64}","aaguid":"${"aa".repeat(16)}","manifest":\\{`));
+  assert.ok(!body.includes("Work key") && !body.includes("\"be\""));
   assert.equal(vault.auth_sign(add.op, fill(32, 1), add.body).length, 64);
   // The same passkey is not added twice, and a wrap that is not a passkey wrap is refused.
-  assert.ok(code(() => vault.manifest_add_method(add.sealed, wrap)).length > 0);
-  assert.ok(code(() => vault.manifest_add_method(created.manifest, created.wraps[1])).length > 0);
+  assert.ok(code(() => vault.manifest_add_method(add.sealed, wrap, aaguid, "Again", false, false)).length > 0);
+  assert.ok(code(() => vault.manifest_add_method(created.manifest, created.wraps[1], aaguid, "Recovery", false, false)).length > 0);
   // The server's list with the new method agrees with the new manifest.
   vault.check_server_methods(add.sealed, [...server, ...listOf([wrap])]);
   assert.equal(code(() => vault.check_server_methods(add.sealed, server)), "method_list_missing");
@@ -1261,6 +1265,58 @@ test("the_method_list_is_checked_and_changed_through_the_manifest", () => {
   vault.check_server_methods(remove.sealed, server);
   // The last-method rule still holds after the passkey is gone.
   assert.equal(code(() => vault.manifest_remove_method(remove.sealed, created.wraps[0].method_id)), "input_last_method");
+});
+
+test("a_passkey_method_has_a_name_a_synced_flag_and_an_aaguid", () => {
+  const { vault, created } = newAccount("prfmeta");
+  const wrapFor = (n) => vault.wrap_prf(fill(24, n), wasm.prf_salt_new(), fill(32, 0x33), fill(16, n), 1, fill(16, 0xaa), "no_stored_passkeys");
+  const add = (row, n, aaguid, label, be, bs) => vault.manifest_add_method(row, wrapFor(n), aaguid, label, be, bs);
+
+  // Ferret's own AAGUID is refused, an all-zero one is accepted and is in the body.
+  assert.equal(code(() => add(created.manifest, 0x51, wasm.ferret_aaguid(), "Own", false, false)), "invalid_state");
+  const zero = add(created.manifest, 0x52, new Uint8Array(16), "Anonymous key", false, false);
+  assert.match(Buffer.from(zero.body).toString("utf8"), new RegExp(`"aaguid":"${"00".repeat(16)}","manifest"`));
+  assert.equal(code(() => add(created.manifest, 0x53, fill(15, 1), "Short", false, false)), "invalid_input");
+
+  // The name follows the folder-name rule, with a typed error for each break.
+  assert.equal(code(() => add(created.manifest, 0x54, fill(16, 1), "", false, false)), "method_name_empty");
+  assert.equal(code(() => add(created.manifest, 0x54, fill(16, 1), " \t ", false, false)), "method_name_empty");
+  assert.equal(code(() => add(created.manifest, 0x54, fill(16, 1), "x".repeat(65), false, false)), "method_name_too_long");
+  assert.equal(code(() => add(created.manifest, 0x54, fill(16, 1), "a\nb", false, false)), "method_name_bad_character");
+  assert.equal(code(() => add(created.manifest, 0x54, fill(16, 1), "a\u202eb", false, false)), "method_name_bad_character");
+  add(created.manifest, 0x54, fill(16, 1), "x".repeat(64), false, false);
+
+  // The list: name in NFC and trimmed, "synced" from BE (never BS), BS as information.
+  let row = created.manifest;
+  const plain = add(row, 0x61, fill(16, 1), "  Cafe\u0301  ", false, false);
+  row = plain.sealed;
+  const phone = add(row, 0x62, fill(16, 2), "Phone", true, false);
+  row = phone.sealed;
+  const mac = add(row, 0x63, fill(16, 3), "Touch ID", true, true);
+  row = mac.sealed;
+  // BS without BE is refused.
+  assert.equal(code(() => add(row, 0x64, fill(16, 4), "Odd one", false, true)), "invalid_state");
+  const listed = vault.prf_methods(row);
+  assert.deepEqual(
+    listed.map((m) => [m.name, m.synced, m.bs]),
+    [["Caf\u00e9", false, false], ["Phone", true, false], ["Touch ID", true, true]],
+  );
+  assert.deepEqual(Array.from(listed[0].credential_id), Array.from(fill(24, 0x61)));
+  assert.equal(listed[0].method_id.length, 16);
+  assert.equal(listed[0].kek_generation, 1);
+  // No password or recovery method is a passkey method, and a row of another vault is not read.
+  assert.equal(vault.prf_methods(created.manifest).length, 0);
+  assert.equal(code(() => vault.prf_methods({ ...row, rev: row.rev + 1 })), "decrypt");
+  assert.equal(code(() => vault.prf_methods({ ...row, extra: 1 })), "invalid_input");
+
+  // Removing one keeps the names of the others.
+  const gone = vault.manifest_remove_method(row, fill(16, 0x62));
+  assert.deepEqual(vault.prf_methods(gone.sealed).map((m) => m.name), ["Caf\u00e9", "Touch ID"]);
+  // The name is not in anything the server reads.
+  for (const change of [plain, phone, mac, gone]) {
+    assert.ok(!Buffer.from(change.body).includes("Touch ID"));
+    assert.ok(!Buffer.from(change.sealed.envelope).includes("Touch ID"));
+  }
 });
 
 test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
