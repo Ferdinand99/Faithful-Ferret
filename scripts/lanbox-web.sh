@@ -110,7 +110,9 @@ if [ "$FERRET_WEB_MODE" = lock ]; then
   exit 0
 fi
 npm ci --no-audit --no-fund --ignore-scripts >&2
-node scripts/build.mjs >&2
+# The package of the tree goes to the build only, as flags: in the environment it would reach the unit tests too.
+# shellcheck disable=SC2086
+node scripts/build.mjs $FERRET_WEB_WASM_FLAGS >&2
 if [ "$FERRET_WEB_MODE" != e2e ]; then
   npx tsc -p jsconfig.json --noEmit >&2
   node --test "test/unit/*.test.mjs" >&2
@@ -119,7 +121,7 @@ if [ "$FERRET_WEB_MODE" != unit ]; then
   npx playwright test "$@" >&2
 fi'
 
-wasm_env=(-e FERRET_WASM_SOURCE=lock)
+wasm_env=(-e FERRET_WEB_WASM_FLAGS=)
 wasm_pack=()
 if [ "$wasm_source" = tree ] && [ "$mode" != lock ]; then
   scripts/lanbox-wasm.sh --tree >&2
@@ -129,7 +131,7 @@ if [ "$wasm_source" = tree ] && [ "$mode" != lock ]; then
     echo "lanbox-web.sh: wasm-package/ holds no web package or no commit (scripts/lanbox-wasm.sh --tree)" >&2
     exit 1
   fi
-  wasm_env=(-e FERRET_WASM_SOURCE=tree -e "FERRET_WASM_TAR=/work/$wasm_tar" -e "FERRET_WASM_COMMIT=$wasm_commit")
+  wasm_env=(-e "FERRET_WEB_WASM_FLAGS=--wasm tree --wasm-tar /work/$wasm_tar --wasm-commit $wasm_commit")
   wasm_pack=("$wasm_tar")
   echo "lanbox-web: the web vault is built against the WASM package of $wasm_commit" >&2
 fi
