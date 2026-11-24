@@ -349,15 +349,18 @@ export function followStep(shown, next, asking) {
  * is one of the master-password unlock's (a network failure, a sign-out, the attack warning) and has its text there.
  */
 export const PIN_REASONS = Object.freeze([
-  "wrong_pin", "pin_wait", "pin_wiped", "pin_stale", "pin_offline_expired", "out_of_memory", "pin_unavailable", "pin_too_slow", "pin_not_allowed",
+  "wrong_pin", "pin_wait", "pin_wiped", "pin_stale", "pin_offline_expired", "out_of_memory", "pin_unavailable",
 ]);
+
+/** The texts that the settings' PIN code owns and the popup reuses, by reason (the other reasons have `unlock.pin.error.<reason>`). */
+const SHARED_TEXTS = Object.freeze({ pin_stale: "pin.error.pin_stale" });
 
 /**
  * The refusals after which the PIN cannot be tried again in this popup (it is gone, or this device cannot check it): the
  * popup shows the master password and says why. `pin_offline_expired` is not one of them: the PIN is kept, and works again
  * once the server has been reached.
  */
-export const PIN_ENDED_REASONS = Object.freeze(["pin_wiped", "pin_stale", "pin_unavailable", "pin_too_slow", "pin_not_allowed", "attack_warning"]);
+export const PIN_ENDED_REASONS = Object.freeze(["pin_wiped", "pin_stale", "pin_unavailable", "attack_warning"]);
 
 /** The longest wait the popup believes (milliseconds). */
 const MAX_WAIT_MS = 3_600_000;
@@ -387,6 +390,7 @@ export function pinResultOf(reply) {
   let keys;
   if (reason === "wrong_pin") keys = [left === null || left < 1 ? "unlock.pin.error.wrong_pin_plain" : left === 1 ? "unlock.pin.error.wrong_pin_last" : "unlock.pin.error.wrong_pin"];
   else if (reason === "attack_warning") keys = ["session.error.attack_warning", "unlock.pin.error.removed_note"];
+  else if (reason === "pin_stale") keys = [SHARED_TEXTS.pin_stale];
   else if (PIN_REASONS.includes(reason)) keys = [`unlock.pin.error.${reason}`];
   else keys = [reasonKey(reason)];
   return { ok: false, reason, keys, left, waitMs, ended };

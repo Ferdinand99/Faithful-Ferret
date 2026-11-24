@@ -288,20 +288,19 @@ test("five_wrong_pins_wipe_and_the_popup_asks_for_the_password_and_says_why", as
   // The fifth: the part ends, and the popup is told the text that says why (the master password stays, never the PIN).
   await enter(world, "wrong-4");
   assert.deepEqual(world.ended, [world.catalog["unlock.pin.error.pin_wiped"]]);
-  assert.match(world.ended[0], /deleted after five wrong tries\. Use your master password/);
+  assert.match(world.ended[0], /deleted: after five wrong tries, or because the administrator turned PIN off\. Use your master password/);
   assert.equal(world.done.length, 0);
   // Every try carried the PIN in one request and nothing else.
   assert.deepEqual(pinRequests(world.log).map(([, body]) => Object.keys(body)), [["pin"], ["pin"], ["pin"], ["pin"], ["pin"]]);
-  // The other ways a PIN ends: stale, forbidden by the administrator, not usable on this device, too slow.
-  for (const reason of ["pin_stale", "pin_not_allowed", "pin_unavailable", "pin_too_slow"]) {
+  // The other ways a PIN ends: stale (its text is the one the PIN's background owns), and not usable on this device.
+  for (const reason of ["pin_stale", "pin_unavailable"]) {
     const other = await partOf(on);
     other.state.replies = [{ ok: false, reason }];
     await enter(other);
-    assert.deepEqual(other.ended, [other.catalog[`unlock.pin.error.${reason}`]], reason);
+    const key = reason === "pin_stale" ? "pin.error.pin_stale" : `unlock.pin.error.${reason}`;
+    assert.deepEqual(other.ended, [other.catalog[key]], reason);
   }
-  const stale = (await partOf(on)).catalog["unlock.pin.error.pin_stale"];
-  assert.match(stale, /out of date/);
-  assert.match(stale, /Use your master password/);
+  assert.match((await partOf(on)).catalog["pin.error.pin_stale"], /no longer fits the vault/);
   // "Use master password instead" is always there, also with tries left, and it empties the field.
   const again = await partOf(on);
   input(again).value = "half typed";
@@ -568,7 +567,11 @@ test("texts_exist_in_en_and_nb", async () => {
     const text = readFileSync(join(extensionRoot, "src", "pages", file), "utf8");
     for (const [, key] of text.matchAll(/["'`](unlock\.pin\.[a-z_.]+)["'`]/g)) wanted.add(key);
   }
-  for (const reason of PIN_REASONS) wanted.add(`unlock.pin.error.${reason}`);
+  // The text of a stale PIN is the PIN background's (pin.json), reused; every other reason has a text here.
+  for (const reason of PIN_REASONS) if (reason !== "pin_stale") wanted.add(`unlock.pin.error.${reason}`);
+  const shared = (/** @type {string} */ lang) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "pin.json"), "utf8"));
+  assert.ok(shared("en")["pin.error.pin_stale"] && shared("nb")["pin.error.pin_stale"]);
+  assert.equal(PIN_REASONS.length, 7);
   for (const key of wanted) {
     if (key.endsWith(".error.")) continue;
     assert.ok(en[key], `en: ${key}`);
