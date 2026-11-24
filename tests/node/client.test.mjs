@@ -273,6 +273,20 @@ test("include_passkeys_of_a_plain_export_must_be_a_boolean_before_wasm_bindgen_c
   }
 });
 
+test("the_secret_key_bit_of_a_setup_qr_must_be_a_boolean_before_wasm_bindgen_coerces_it", async () => {
+  // The string "false" would say that the account has a secret key.
+  const { client, made } = setup();
+  const received = () => made.vault.reduce((n, w) => n + w.received.length, 0);
+  for (const value of ["false", 0, undefined, null, 1, ""]) {
+    const e = await rejection(client.vault.setup_qr_build(URL_, fill(16, 7), 1, value, fill(32, 1)));
+    assert.equal(e.code, "invalid_input", String(value));
+  }
+  assert.equal(received(), 0, "nothing reached the worker");
+  for (const value of [true, false]) {
+    assert.match(await client.vault.setup_qr_build(URL_, fill(16, 7), 1, value, fill(32, 1)), /^ferret-setup:v1\?/);
+  }
+});
+
 test("u32_arguments_are_checked_before_wasm_bindgen_coerces_them", async () => {
   const { client } = setup();
   const bad = [4294967297, 1.9, -1, "3", NaN, Infinity, null, undefined, {}];
