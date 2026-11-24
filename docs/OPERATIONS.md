@@ -401,7 +401,8 @@ logged with the name of the administrator.
 Clients read the rule from `GET /api/vault/policy` (a full session or a device token, `Cache-Control: no-store`, the same
 answer for every account). A server without the route (404), or a build without `quick-unlock`, says "no PIN". The
 table behind it, `ferret_unlock_policy`, has one row and is in every backup set; a restore brings the rule back with the
-rest of the database, and a set from before the table gets the default rule when it is migrated.
+rest of the database, and a set from before the table gets the default rule when it is migrated. After a restore, open the
+Unlock tab and check the rule: an emergency "Allow PIN" switched off after the set was made is undone by the restore.
 
 ## Event streams behind a proxy
 

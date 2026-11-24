@@ -81,7 +81,7 @@ foot = "Old sets are removed after the time set in the server’s configuration,
 [unlock]
 tab = "Unlock"
 title = "Unlock"
-sub = "The server’s rule for unlocking with a PIN. The browser extension and the web vault read it from the server and keep to it."
+sub = "The server’s rule for unlocking with a PIN. The browser extension reads it from the server and keeps to it."
 pin_title = "PIN"
 pin_allowed = "Allow PIN"
 pin_allowed_help = "The emergency switch. Turn it off and every PIN is deleted on each device at its next contact with the server."

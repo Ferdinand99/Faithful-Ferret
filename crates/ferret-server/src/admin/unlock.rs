@@ -62,7 +62,7 @@ pub fn seconds_to_try_all(length: u8, per_second: f64) -> f64 {
 }
 
 /// `seconds` as the page says it ("under 3 hours"): the next whole unit up, in
-/// the largest unit that holds at least two of it. The text of each unit is a
+/// the largest unit that holds at least one of it. The text of each unit is a
 /// translation with `{n}`.
 pub fn duration_text(seconds: f64) -> String {
     const MINUTE: f64 = 60.0;
@@ -155,8 +155,10 @@ struct View {
     /// The sentences that announce what a stricter rule deletes; empty when the
     /// rule is not stricter or has been confirmed.
     announce: Vec<String>,
-    /// The form carries the confirmation: the next post saves.
-    confirm: bool,
+    /// What the hidden `confirm` field carries: the rule that was announced,
+    /// so that only a post of that very rule saves. Empty when nothing was
+    /// announced.
+    confirm: String,
     explain: Explanation,
 }
 
@@ -168,7 +170,7 @@ impl View {
             min_length: policy.pin_min_length.to_string(),
             min_error: String::new(),
             announce: Vec::new(),
-            confirm: false,
+            confirm: String::new(),
             explain: explanation(policy.pin_min_length),
         }
     }
@@ -193,7 +195,7 @@ pub struct UnlockForm {
     #[serde(default)]
     min_length: String,
     #[serde(default)]
-    confirm: bool,
+    confirm: String,
 }
 
 /// A failure of the store is an internal error of the page; it is logged and
@@ -243,6 +245,17 @@ async fn render(
         action: PATH,
     };
     Ok((status, jar, HtmlTemplate(page)).into_response())
+}
+
+/// What the confirmation of `rule` is: the three values, so that a post that
+/// changes anything after the announcement is announced again, not saved.
+pub fn confirmation(rule: &UnlockPolicy) -> String {
+    format!(
+        "{}:{}:{}",
+        u8::from(rule.pin_allowed),
+        u8::from(rule.pin_after_restart),
+        rule.pin_min_length
+    )
 }
 
 /// The sentences that say what `next` deletes, compared with `saved`.
@@ -297,12 +310,12 @@ async fn save(
         let jar = flash(jar, "success", i18n::t("unlock.unchanged"));
         return Ok((jar, Redirect::to(PATH)).into_response());
     }
-    if next.is_stricter_than(&saved) && !form.confirm {
+    if next.is_stricter_than(&saved) && form.confirm != confirmation(&next) {
         // Announce what saving does, save nothing, and give the form back with
         // what was typed and the confirmation in it.
         let mut view = View::of(&next);
         view.announce = announcement(&saved, &next);
-        view.confirm = true;
+        view.confirm = confirmation(&next);
         return render(&state, &user, jar, view, StatusCode::OK).await;
     }
     let now = i64::try_from(state.clock.now_unix()).unwrap_or(i64::MAX);
@@ -317,6 +330,7 @@ async fn save(
         pin_after_restart = next.pin_after_restart,
         pin_min_length = next.pin_min_length,
         stricter = next.is_stricter_than(&saved),
+        before = ?saved,
         "the unlock rule was changed on the admin pages"
     );
     let jar = flash(jar, "success", i18n::t("unlock.saved"));
@@ -365,6 +379,17 @@ mod tests {
         assert_eq!(combinations_text(15), "1,000,000,000,000,000");
         assert_eq!(combinations_text(16), "10^16");
         assert_eq!(combinations_text(64), "10^64");
+    }
+
+    #[test]
+    fn a_confirmation_names_the_whole_rule() {
+        let rule = UnlockPolicy {
+            pin_allowed: true,
+            pin_after_restart: false,
+            pin_min_length: 12,
+        };
+        assert_eq!(confirmation(&rule), "1:0:12");
+        assert_ne!(confirmation(&rule), confirmation(&UnlockPolicy::default()));
     }
 
     #[test]

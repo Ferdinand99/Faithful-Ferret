@@ -37,10 +37,9 @@ pub const MIN_LENGTH_CEILING: u8 = 64;
 /// The minimum length of a server that was never set up.
 pub const MIN_LENGTH_DEFAULT: u8 = 6;
 
-/// Whether this build offers quick unlock (the cargo feature `quick-unlock`).
-pub const fn quick_unlock_built() -> bool {
-    cfg!(feature = "quick-unlock")
-}
+/// Whether the server has routes for unlocking with a passkey. None yet: the
+/// switch is turned on in the change that mounts them.
+pub const PRF_ROUTES_MOUNTED: bool = false;
 
 /// The rule an administrator sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,7 +184,9 @@ impl PolicyRes {
                 after_restart: policy.pin_after_restart,
                 min_length: policy.pin_min_length,
             },
-            prf: PrfPolicyJson { enabled: built },
+            prf: PrfPolicyJson {
+                enabled: built && PRF_ROUTES_MOUNTED,
+            },
         }
     }
 }
@@ -207,7 +208,7 @@ async fn get_policy(
     State(db): State<VaultDb>,
 ) -> Result<Json<PolicyRes>, ApiError> {
     let policy = db.with_conn(|conn| read(conn)).await?;
-    Ok(Json(PolicyRes::of(&policy, quick_unlock_built())))
+    Ok(Json(PolicyRes::of(&policy, cfg!(feature = "quick-unlock"))))
 }
 
 #[cfg(test)]
@@ -254,7 +255,7 @@ mod tests {
         assert!(!off.prf.enabled);
         let on = PolicyRes::of(&rule, true);
         assert!(on.pin.allowed);
-        assert!(on.prf.enabled);
+        assert_eq!(on.prf.enabled, PRF_ROUTES_MOUNTED);
         assert_eq!(on.pin.min_length, 6);
         // A switched-off rule stays off in a build that offers the feature.
         let stopped = UnlockPolicy {

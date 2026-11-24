@@ -21,8 +21,8 @@
 {%- endif %}
 
 <form class="form" method="post" action="{{ action }}" novalidate>
-  {%- if view.confirm %}
-  <input type="hidden" name="confirm" value="true">
+  {%- if !view.confirm.is_empty() %}
+  <input type="hidden" name="confirm" value="{{ view.confirm }}">
   {%- endif %}
   <section class="form-section" aria-labelledby="sec-pin">
     <h2 class="form-section-title" id="sec-pin">{{ tr("unlock.pin_title") }}</h2>

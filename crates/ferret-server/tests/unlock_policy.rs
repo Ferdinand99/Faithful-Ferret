@@ -79,7 +79,7 @@ fn expected(rule: &UnlockPolicy) -> Value {
             "after_restart": rule.pin_after_restart,
             "min_length": rule.pin_min_length,
         },
-        "prf": { "enabled": built },
+        "prf": { "enabled": built && policy::PRF_ROUTES_MOUNTED },
     })
 }
 
@@ -376,7 +376,11 @@ async fn the_policy_follows_the_stored_rule_with_quick_unlock() {
         assert_eq!(res.json(), expected(&rule), "{rule:?}");
     }
     let body = get_by_session(&app, &session).await.json();
-    assert_eq!(body["prf"]["enabled"], json!(true));
+    assert_eq!(
+        body["prf"]["enabled"],
+        json!(policy::PRF_ROUTES_MOUNTED),
+        "the passkey switch follows the routes, not the feature"
+    );
 }
 
 // ------------------------------------------------------------------ the page
@@ -572,7 +576,7 @@ mod page {
                 ("pin_allowed", "true"),
                 ("pin_after_restart", "true"),
                 ("min_length", "64"),
-                ("confirm", "true"),
+                ("confirm", "1:1:64"),
             ],
         )
         .await;
@@ -650,7 +654,7 @@ mod page {
                     ("pin_allowed", "true"),
                     ("pin_after_restart", "true"),
                     ("min_length", length),
-                    ("confirm", "true"),
+                    ("confirm", &format!("1:1:{length}")),
                 ],
             )
             .await;
@@ -747,7 +751,7 @@ mod page {
 
         // Each harder change alone: the page says what it deletes, nothing is
         // saved, and the form that comes back carries the confirmation.
-        let cases: [(&[(&str, &str)], &str); 4] = [
+        let cases: [(&[(&str, &str)], &str, &str); 4] = [
             (
                 &[
                     ("pin_allowed", "true"),
@@ -755,21 +759,25 @@ mod page {
                     ("min_length", "8"),
                 ],
                 "Raising the shortest PIN to 8 characters deletes every PIN that is shorter.",
+                "1:1:8",
             ),
             (
                 &[("pin_after_restart", "true"), ("min_length", "6")],
                 "Turning off Allow PIN deletes every PIN.",
+                "0:1:6",
             ),
             (
                 &[("pin_allowed", "true"), ("min_length", "6")],
                 "Turning off Allow PIN after restart deletes every PIN that is kept on disk.",
+                "1:0:6",
             ),
             (
                 &[("min_length", "10")],
                 "Turning off Allow PIN deletes every PIN.",
+                "0:0:10",
             ),
         ];
-        for (fields, said) in cases {
+        for (fields, said, token) in cases {
             let res = post(&app, fields).await;
             assert_eq!(res.status, StatusCode::OK, "{fields:?}: {}", res.text());
             let text = visible(&res.text());
@@ -777,11 +785,57 @@ mod page {
             assert!(text.contains(said), "{fields:?}: {text}");
             assert!(text.contains("Select Save again to confirm."), "{text}");
             assert!(
-                res.text()
-                    .contains("<input type=\"hidden\" name=\"confirm\" value=\"true\">"),
+                res.text().contains(&format!(
+                    "<input type=\"hidden\" name=\"confirm\" value=\"{token}\">"
+                )),
                 "{fields:?}"
             );
             assert_eq!(stored(&app).await, before, "{fields:?} was saved too early");
+        }
+        // The confirmation belongs to the rule that was announced: the same
+        // token with another rule (a switch turned off too, a longer minimum,
+        // a confirmation of a plain "true") announces that rule and saves
+        // nothing.
+        for (fields, why) in [
+            (
+                [
+                    ("pin_allowed", ""),
+                    ("pin_after_restart", "true"),
+                    ("min_length", "8"),
+                    ("confirm", "1:1:8"),
+                ],
+                "a switch turned off after the announcement",
+            ),
+            (
+                [
+                    ("pin_allowed", "true"),
+                    ("pin_after_restart", "true"),
+                    ("min_length", "12"),
+                    ("confirm", "1:1:8"),
+                ],
+                "a longer minimum after the announcement",
+            ),
+            (
+                [
+                    ("pin_allowed", "true"),
+                    ("pin_after_restart", "true"),
+                    ("min_length", "8"),
+                    ("confirm", "true"),
+                ],
+                "a bare yes",
+            ),
+        ] {
+            let fields: Vec<(&str, &str)> = fields
+                .into_iter()
+                .filter(|(k, v)| !(*k == "pin_allowed" && v.is_empty()))
+                .collect();
+            let res = post(&app, &fields).await;
+            assert_eq!(res.status, StatusCode::OK, "{why}: {}", res.text());
+            assert!(
+                visible(&res.text()).contains("This rule is stricter"),
+                "{why}"
+            );
+            assert_eq!(stored(&app).await, before, "{why} was saved");
         }
         // The page as it is opened again does not announce anything.
         let text = visible(&get(&app, PAGE).await.text());
@@ -794,7 +848,7 @@ mod page {
                 ("pin_allowed", "true"),
                 ("pin_after_restart", "true"),
                 ("min_length", "8"),
-                ("confirm", "true"),
+                ("confirm", "1:1:8"),
             ],
         )
         .await;

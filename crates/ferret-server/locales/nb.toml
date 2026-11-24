@@ -81,7 +81,7 @@ foot = "Gamle sett fjernes etter tiden som er satt i tjenerens oppsett, men de t
 [unlock]
 tab = "Opplåsing"
 title = "Opplåsing"
-sub = "Tjenerens regel for opplåsing med PIN. Nettleserutvidelsen og netthvelvet henter den fra tjeneren og holder seg til den."
+sub = "Tjenerens regel for opplåsing med PIN. Nettleserutvidelsen henter den fra tjeneren og holder seg til den."
 pin_title = "PIN"
 pin_allowed = "Tillat PIN"
 pin_allowed_help = "Nødbryteren. Slår du den av, slettes alle PIN-er på hver enhet ved neste kontakt med tjeneren."
