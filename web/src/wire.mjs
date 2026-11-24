@@ -223,6 +223,8 @@ const wrap = [
   ["wrap", b],
   ["credential_id", b, true],
   ["prf_salt", b32, true],
+  // The AAGUID of a passkey method as 32 lower-case hex characters, for display only: the list gives it, a request never does.
+  ["aaguid", id, true],
 ];
 /** @type {Spec} */
 const sealedRow = [["rev", int()], ["envelope", b], ["tag", b32]];

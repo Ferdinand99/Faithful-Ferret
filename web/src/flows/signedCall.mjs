@@ -18,11 +18,11 @@ import { AccountError } from "../crypto/errors.mjs";
 
 /**
  * The name of the answer shape that goes with a request shape: `password_put_req` -> `password_put_res`.
- * @param {string} shape
+ * @param {string} [shape]
  * @returns {string | undefined}
  */
 export function replyShapeOf(shape) {
-  if (!shape.endsWith("_req")) return undefined;
+  if (typeof shape !== "string" || !shape.endsWith("_req")) return undefined;
   const reply = `${shape.slice(0, -"_req".length)}_res`;
   return reply in SHAPES ? reply : undefined;
 }
@@ -35,21 +35,28 @@ export function replyShapeOf(shape) {
  * for none). `sign` is `(nonce, bytes) => proof` and defaults to the open vault's
  * `auth_sign(op, nonce, bytes)`; it receives copies, so the array that is sent is
  * never changed by it.
+ *
+ * A change whose body the core has already written (the unlock methods of a passkey: `manifest_add_method` and
+ * `manifest_remove_method` return the bytes to sign) is given as `bytes` instead of `shape` and `body`: those exact
+ * bytes are signed and sent, and the answer is read with `reply` (none: it is read as plain JSON).
  * @param {Env} env
  * @param {{
  *   op: string,
- *   method: "PUT" | "POST",
+ *   method: "PUT" | "POST" | "DELETE",
  *   path: string,
- *   shape: string,
- *   body: Record<string, any>,
+ *   shape?: string,
+ *   body?: Record<string, any>,
+ *   bytes?: Uint8Array,
  *   reply?: string | null,
  *   sign?: (nonce: Uint8Array, body: Uint8Array) => Promise<Uint8Array>,
  * }} call
  * @returns {Promise<any>}
  */
-export async function signedCall(env, { op, method, path, shape, body, reply, sign }) {
+export async function signedCall(env, { op, method, path, shape, body, bytes: given, reply, sign }) {
   const { api, client } = env;
-  const bytes = encodeWireBytes(shape, body);
+  if ((given === undefined) === (shape === undefined)) throw new TypeError("a signed call has either its bytes or a shape and a body");
+  const bytes = given ?? encodeWireBytes(/** @type {string} */ (shape), /** @type {Record<string, any>} */ (body));
+  if (!(bytes instanceof Uint8Array)) throw new TypeError("a signed call sends bytes");
   if (bytes.length > MAX_SIGNED_BODY) throw new AccountError("body_too_large");
   const challenge = await api.post("/api/auth/challenge", undefined, { shape: "challenge_res" });
   const nonce = b64u.decode(challenge.nonce);
@@ -57,7 +64,7 @@ export async function signedCall(env, { op, method, path, shape, body, reply, si
   const signer = sign ?? ((/** @type {Uint8Array} */ n, /** @type {Uint8Array} */ b) => client.vault.auth_sign(op, n, b));
   const proof = await signer(nonce.slice(), bytes.slice());
   if (!(proof instanceof Uint8Array) || proof.length !== PROOF_LEN) throw new AccountError("bad_response");
-  const answerShape = reply === undefined ? replyShapeOf(shape) : (reply ?? undefined);
+  const answerShape = reply === undefined ? replyShapeOf(/** @type {string} */ (shape)) : (reply ?? undefined);
   try {
     return await api.sendSigned(method, path, bytes, { nonce, proof }, answerShape === undefined ? {} : { shape: answerShape });
   } catch (error) {

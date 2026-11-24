@@ -16,6 +16,18 @@ import { formatMoment } from "./common.mjs";
 export const ACCOUNT_MENU = "account";
 
 /**
+ * The routes of the page that this server offers: a page that says what it `requires` (the passkeys the server has
+ * to offer) is left out when the server does not have it.
+ * @template {{ requires?: string }} R
+ * @param {ReadonlyArray<R>} routes
+ * @param {{ prf: boolean }} offered what the server offers
+ * @returns {R[]}
+ */
+export function offeredRoutes(routes, { prf }) {
+  return routes.filter((route) => route.requires === undefined || (route.requires === "prf" && prf));
+}
+
+/**
  * The routes that belong in the account menu, in the order they say (`menuOrder`, then by path). A route
  * with a parameter or a catch-all has no address a link can name, so it is left out.
  * @param {ReadonlyArray<{ path: string, title: string, menu?: string, menuOrder?: number }>} routes

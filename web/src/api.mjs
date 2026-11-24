@@ -94,7 +94,7 @@ function secondsOf(value) {
  * @property {(path: string, body?: unknown, options?: CallOptions) => Promise<any>} put
  * @property {(path: string, options?: CallOptions) => Promise<any>} del a `DELETE` without a body (a write: `Ferret-Protocol: 1`)
  * @property {(path: string, options?: { signal?: AbortSignal }) => Promise<ReadableStreamDefaultReader<Uint8Array>>} stream
- * @property {(method: "PUT" | "POST", path: string, bodyBytes: Uint8Array, proof: { nonce: Uint8Array, proof: Uint8Array }, options?: CallOptions) => Promise<any>} sendSigned
+ * @property {(method: "PUT" | "POST" | "DELETE", path: string, bodyBytes: Uint8Array, proof: { nonce: Uint8Array, proof: Uint8Array }, options?: CallOptions) => Promise<any>} sendSigned
  *   a write that carries a proof (spec Fase 1 § 4.6): the exact bytes of `bodyBytes` are the body, the nonce and the proof go in
  *   `Ferret-Nonce` (32 bytes) and `Ferret-Proof` (64 bytes) as base64url without padding, and a redirect is never followed
  */
@@ -315,7 +315,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
    * is sent (the server answers 400 and burns no nonce for it, but a request that cannot be right is not worth a trip).
    * A device client makes no signed call (sensitive operations take the web vault's session only), so with `auth` it is
    * refused before anything is sent.
-   * @param {"PUT" | "POST"} method
+   * @param {"PUT" | "POST" | "DELETE"} method
    * @param {string} path
    * @param {Uint8Array} bodyBytes
    * @param {{ nonce: Uint8Array, proof: Uint8Array }} proof
@@ -323,7 +323,7 @@ export function createApi({ base = "", fetchImpl = fetch, timeoutMs = 60_000, au
    */
   async function sendSigned(method, path, bodyBytes, proof, options = {}) {
     if (auth !== null) throw new TypeError("a device client makes no signed call");
-    if (method !== "PUT" && method !== "POST") throw new TypeError("a signed call is a PUT or a POST");
+    if (method !== "PUT" && method !== "POST" && method !== "DELETE") throw new TypeError("a signed call is a PUT, a POST or a DELETE");
     if (!(bodyBytes instanceof Uint8Array)) throw new TypeError("a signed call sends bytes");
     if (proof === null || typeof proof !== "object") throw new TypeError("a signed call has a nonce and a proof");
     const { nonce, proof: signature } = proof;

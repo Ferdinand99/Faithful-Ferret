@@ -109,7 +109,7 @@ test("send_signed_refuses_what_cannot_be_a_signed_call_before_anything_is_sent",
   const good = { nonce: nonce(), proof: proof() };
   const refuse = (promise) => assert.rejects(promise, TypeError);
   await refuse(api.sendSigned("GET", "/api/x", body(), good));
-  await refuse(api.sendSigned("DELETE", "/api/x", body(), good));
+  await refuse(api.sendSigned("PATCH", "/api/x", body(), good));
   await refuse(api.sendSigned("put", "/api/x", body(), good));
   await refuse(api.sendSigned("PUT", "/api/x", '{"a":1}', good));
   await refuse(api.sendSigned("PUT", "/api/x", { a: 1 }, good));
@@ -125,4 +125,19 @@ test("send_signed_refuses_what_cannot_be_a_signed_call_before_anything_is_sent",
     await refuse(api.sendSigned("PUT", path, body(), good));
   }
   assert.equal(calls.length, 0, "nothing was sent");
+});
+
+test("send_signed_sends_a_delete_with_its_body_and_the_two_headers", async () => {
+  const { calls, fetchImpl } = fakeFetch(() => json({ seq: 4 }));
+  const api = createApi({ fetchImpl });
+  const bytes = body();
+  const answer = await api.sendSigned("DELETE", "/api/vault/unlock-methods/00112233445566778899aabbccddeeff", bytes, { nonce: nonce(), proof: proof() });
+  assert.deepEqual({ ...answer }, { seq: 4 });
+  const { init } = calls[0];
+  assert.equal(init.method, "DELETE");
+  assert.equal(init.body, bytes, "the bytes that were signed are the body of the delete");
+  assert.equal(init.headers["Ferret-Nonce"], b64u.encode(nonce()));
+  assert.equal(init.headers["Ferret-Proof"], b64u.encode(proof()));
+  assert.equal(init.headers["Ferret-Protocol"], "1");
+  assert.equal(init.redirect, "error");
 });
