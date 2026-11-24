@@ -195,6 +195,9 @@ export const BYTES_ARGS = {
   copy_item: [[1, false, false]],
   rekey: [[2, false, false]],
   sync_memory_prune: [[0, false, false]],
+  // The AAGUID of a new passkey method: display data, typed. All zero is a
+  // valid value (an authenticator that reports none), so it is not refused.
+  manifest_add_method: [[2, false, false]],
 };
 
 /** Arguments that are master or export password text: a string is encoded. */
@@ -266,7 +269,26 @@ export const STRING_ARGS = {
   // surrogate (see WELL_FORMED_ARGS).
   item_field_equals: [[1, false], [2, false]],
   items_with_field_value: [[1, false], [2, false]],
+  // The name of a new passkey method (see WELL_FORMED_ARGS).
+  manifest_add_method: [[3, false]],
 };
+
+/**
+ * The arguments that the Rust side takes as a `bool` and that decide what the
+ * user is told: the BE and BS flags of a new passkey method. `wasm-bindgen`
+ * turns any truthy value into `true` (the string `"false"` as well), so they
+ * must be booleans here.
+ */
+export const BOOL_ARGS = {
+  manifest_add_method: [4, 5],
+};
+
+/** Throws `invalid_input` unless the boolean arguments of a call are booleans. */
+export function assertBoolArgs(method, args) {
+  for (const index of argsOf(BOOL_ARGS, method)) {
+    if (typeof args[index] !== "boolean") throw new FerretError("invalid_input");
+  }
+}
 
 /** Throws `invalid_input` unless the text arguments of a call are strings (or left out where allowed). */
 export function assertStringArgs(method, args) {
@@ -286,6 +308,8 @@ export function assertStringArgs(method, args) {
 export const WELL_FORMED_ARGS = {
   item_field_equals: [2],
   items_with_field_value: [2],
+  // A lone surrogate in the name would become U+FFFD without a word.
+  manifest_add_method: [3],
 };
 
 /** Throws `invalid_input` for a lone surrogate in a text argument of `WELL_FORMED_ARGS`. */
@@ -407,6 +431,7 @@ export function assertArgTypes(method, args) {
   assertU32Args(method, args);
   assertF64Args(method, args);
   assertStringArgs(method, args);
+  assertBoolArgs(method, args);
   assertWellFormedArgs(method, args);
   assertU32ListArgs(method, args);
 }

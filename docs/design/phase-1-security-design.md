@@ -1267,7 +1267,7 @@ The server stores `Argon2id(LV, salt_s)` with vole-kit's parameters and compares
 
 **Manifest (`kind = 2`)**
 
-`{ "v": 1, "vk_epoch": u64, "methods": [ { "t": u8 method_type, "id": bytes(16), "g": u64 kek_generation, "c": bytes? credential_id (passkey only, t = 3), "n": text? name (passkey only, the folder-name rule above: NFC, trimmed, 1 to 64 characters, no control, separator, bidirectional or zero width character), "be": bool? (passkey only: the BE flag, "can be synced", fixed for the key's life; the list shows "Synced passkey" when true), "bs": bool? (passkey only: the BS flag at registration, for information only, since it can be 0 then and 1 later) } ] }`
+`{ "v": 1, "vk_epoch": u64, "methods": [ { "t": u8 method_type, "id": bytes(16), "g": u64 kek_generation, "c": bytes? credential_id (passkey only, t = 3), "n": text? name (passkey only, the folder-name rule above: NFC, trimmed, 1 to 64 characters, no control, separator, bidirectional or zero width character), "be": bool? (passkey only: the BE flag, "can be synced", fixed for the key's life; the list shows "Synced passkey" when true), "bs": bool? (passkey only: the BS flag at registration, for information only, since it can be 0 then and 1 later; a registration with BS set and BE not set is refused, because BS without BE is not a conformant combination) } ] }`
 
 The manifest is padded like items, with `item_id = 00…00` and the ordinary `rev` (U5). `n`, `be` and `bs` are optional keys of a passkey entry; an older reader keeps them as unknown keys (§ 5.2), and the server never sees them because the manifest is sealed.
 

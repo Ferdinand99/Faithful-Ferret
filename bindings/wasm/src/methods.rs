@@ -9,22 +9,26 @@
 //!
 //! ```text
 //! add:     wrap_prf(...)                       -> wrap
-//!          manifest_add_method(current, wrap)  -> { op, sealed, body, pk_a }
+//!          manifest_add_method(current, wrap, aaguid, label, be, bs)
+//!                                              -> { op, sealed, body, pk_a }
 //!          auth_sign(op, nonce, body)          -> signature
 //! remove:  manifest_remove_method(current, id) -> { op, sealed, body, pk_a }
 //!          auth_sign(op, nonce, body)          -> signature
 //! ```
 //!
 //! `current` is the manifest row the server holds, `{ rev, envelope, tag }`;
-//! the new row gets `rev + 1`.
+//! the new row gets `rev + 1`. The name (`label`) and the BE and BS flags of
+//! a new passkey go into the sealed manifest only; the request body carries
+//! the `aaguid` (display data, all zero allowed) and no name.
+//! `prf_methods(row)` lists the passkeys of the manifest for the method list.
 
 use crate::convert::{ANY, RowDto, SealedDto, Shape, Shaped, WrapDto, arr, b16, b32, bytes};
 use crate::convert::{from_js, from_js_list, to_js};
 use crate::error::{Res, run};
 use crate::vault::Vault;
 use ferret_core::{
-    CurrentManifest, MethodChange, MethodId, OsRng, ServerMethod, check_server_methods,
-    decrypt_manifest, manifest_add_method, manifest_remove_method,
+    CurrentManifest, MethodChange, MethodId, OsRng, PasskeyMeta, PrfMethod, ServerMethod,
+    check_server_methods, decrypt_manifest, manifest_add_method, manifest_remove_method,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -52,6 +56,37 @@ struct MethodChangeDto {
     /// `pk_a`, the public key the server verifies the signature with.
     #[serde(with = "b32")]
     pk_a: [u8; 32],
+}
+
+/// One passkey method of the manifest, for the method list.
+#[derive(Serialize)]
+struct PrfMethodDto {
+    #[serde(with = "b16")]
+    method_id: [u8; 16],
+    #[serde(with = "bytes")]
+    credential_id: Vec<u8>,
+    kek_generation: u64,
+    /// The name the user gave it, or `null` (none stored, or one that breaks
+    /// the rule of a name).
+    name: Option<String>,
+    /// `true` shows "synced passkey", `false` "this device only". It follows
+    /// the BE flag.
+    synced: bool,
+    /// The BS flag at registration, for information only.
+    bs: Option<bool>,
+}
+
+impl PrfMethodDto {
+    fn of(m: &PrfMethod) -> Self {
+        Self {
+            method_id: *m.method_id.as_bytes(),
+            credential_id: m.credential_id.clone(),
+            kek_generation: m.kek_generation,
+            name: m.name.clone(),
+            synced: m.synced,
+            bs: m.bs,
+        }
+    }
 }
 
 impl MethodChangeDto {
@@ -98,11 +133,37 @@ impl Vault {
     /// row the server holds; `wrap` is the record that `wrap_prf` returned.
     /// Returns `{ op, sealed, body, pk_a }`: send `sealed` and `body`, signed
     /// with `auth_sign(op, nonce, body)`.
-    pub fn manifest_add_method(&self, current: JsValue, wrap: JsValue) -> Result<JsValue, JsValue> {
+    ///
+    /// `aaguid` (16 bytes, the one `wrap_prf` got) goes in the request body
+    /// as display data: all zero is accepted (shown as "unknown") and
+    /// Ferret's own is `invalid_state`. `label` is the name the user gave the
+    /// passkey, and `be` and `bs` are the BE and BS flags of its
+    /// registration; all three go into the sealed manifest only, so the
+    /// server neither sees nor can change them. The name is put in NFC and
+    /// trimmed, and must then have 1 to 64 characters with no control
+    /// character, separator, bidirectional mark, zero width space or byte
+    /// order mark (`method_name_empty`, `method_name_too_long`,
+    /// `method_name_bad_character`). The list says "synced passkey" when `be`
+    /// is true, whatever `bs` is.
+    pub fn manifest_add_method(
+        &self,
+        current: JsValue,
+        wrap: JsValue,
+        aaguid: Vec<u8>,
+        label: String,
+        be: bool,
+        bs: bool,
+    ) -> Result<JsValue, JsValue> {
         run(|| {
             let vault = self.unlocked()?;
             let row: RowDto = from_js(current)?;
             let wrap = from_js::<WrapDto>(wrap)?.core()?;
+            let meta = PasskeyMeta {
+                aaguid: arr(&aaguid)?,
+                name: &label,
+                be,
+                bs,
+            };
             let change = manifest_add_method(
                 &mut OsRng,
                 vault,
@@ -112,8 +173,31 @@ impl Vault {
                     tag: &row.tag,
                 },
                 wrap,
+                &meta,
             )?;
             to_js(&MethodChangeDto::of(&change))
+        })
+    }
+
+    /// The passkey (PRF) methods of the manifest `manifest` (a row
+    /// `{ rev, envelope, tag }`, opened here with the vault key), in the
+    /// manifest's order, for the list of unlock methods:
+    /// `[{ method_id, credential_id, kek_generation, name, synced, bs }]`.
+    /// `synced` follows the BE flag (fixed for the key's life), never BS; an
+    /// entry without the flag is "this device only". `name` is `null` for an
+    /// entry without a (valid) name. The AAGUID is not here: the server keeps
+    /// it, as display data.
+    pub fn prf_methods(&self, manifest: JsValue) -> Result<JsValue, JsValue> {
+        run(|| {
+            let vault = self.unlocked()?;
+            let row: RowDto = from_js(manifest)?;
+            let manifest = decrypt_manifest(vault, row.rev, &row.envelope, &row.tag)?;
+            let list: Vec<PrfMethodDto> = manifest
+                .prf_methods()
+                .iter()
+                .map(PrfMethodDto::of)
+                .collect();
+            to_js(&list)
         })
     }
 

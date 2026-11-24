@@ -77,7 +77,7 @@ pub use envelope::{
 };
 pub use error::{
     CheckpointFailure, Error, FolderError, InputError, MalformedKind, MethodListFailure,
-    PinnedField,
+    MethodNameError, PinnedField,
 };
 pub use export::{
     EXPORT_KDF, ExportDraft, ExportHeader, ExportItem, PlainExportOptions, export_begin,
@@ -102,8 +102,8 @@ pub use item::{
 pub use keys::{UnlockedVault, VaultContext, pin_extension_key, recovery_public_key};
 pub use ksf_profile::KsfProfile;
 pub use methods::{
-    CurrentManifest, MethodChange, ServerMethod, check_server_methods, manifest_add_method,
-    manifest_remove_method,
+    CurrentManifest, MAX_METHOD_NAME_CHARS, MethodChange, PasskeyMeta, PrfMethod, ServerMethod,
+    check_server_methods, manifest_add_method, manifest_remove_method, normalize_method_name,
 };
 pub use opaque::{
     LoginFinished, LoginState, OPAQUE_CONTEXT, PinState, RegistrationFinished, RegistrationState,
