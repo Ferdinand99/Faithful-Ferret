@@ -617,6 +617,11 @@ impl UnlockJob {
                     },
                     None,
                 ) => Kek::from_pin_extension(&digits, device_salt, *profile)?,
+                // A device secret for a wrap that was not made with one (or the
+                // other way round) is another key: the one error, no Argon2id.
+                (Method::Pin { .. }, Some(_)) | (Method::PinMobile { .. }, None) => {
+                    return Err(Fail::Core(Error::Decrypt));
+                }
                 _ => return Err(Fail::Input),
             };
             let vault = record.unlock_local(&rec, &kek)?;

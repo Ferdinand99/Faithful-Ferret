@@ -640,6 +640,7 @@ impl Shaped for MethodDto {
     const SHAPE: Shape = Shape::Obj(&[
         ("type", &ANY),
         ("ksf_profile", &ANY),
+        ("pin_profile", &ANY),
         ("credential_id", &ANY),
         ("prf_salt", &ANY),
         ("device_salt", &ANY),
