@@ -48,6 +48,12 @@ export function newAccount(seed, { secretKey = true, password = PASSWORD } = {})
   return { server, job, created, vault: created.vault, registration, record: registration.record };
 }
 
+/** What the server demands of a PIN: allowed, kept across a restart, at least six characters. */
+export const PIN_RULE = { allowed: true, after_restart: true, min_length: 6 };
+
+/** A PIN wrap as `pin_unlock` reads it: what `wrap_pin` returned, without the time it took. */
+export const pinWrapOf = ({ ms, ...wrap }) => wrap;
+
 /** The pin states. */
 export const pinned = (record, extra = {}) => ({ kind: "pinned", record, ...extra });
 export const firstUse = (skBit, extra = {}) => ({ kind: "first_use", sk_bit: skBit, ...extra });

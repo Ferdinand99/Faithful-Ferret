@@ -453,6 +453,13 @@ async function leakRun() {
     must(reply.ok && reply.output.vk === vkHex, `${what} opens the wrap to the vault key`);
     return reply.output.pk_a;
   };
+  /** A PIN wrap as `wrap_pin` returns it, in the shape of the other wraps. */
+  const pinWrapAsWrap = (w) => ({
+    method_id: w.method_id,
+    kek_generation: 1,
+    method: { type: "pin", device_salt: w.device_salt, pin_profile: w.profile },
+    wrap: w.wrap,
+  });
   /** The OPAQUE export key of a registration, found by signing in on the page. */
   const exportKeyOf = (password, skCode, record, pin) => {
     const job = new wasm.UnlockJob();
@@ -529,10 +536,11 @@ async function leakRun() {
   await client.vault.item_view(ph);
 
   // ---- the wraps of a PIN and of a passkey method
-  const pinWrap = await client.vault.wrap_pin(enc.encode("123456"), fill(16, 0x75));
-  const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt), pin_profile: pinWrap.method.pin_profile }).kek;
+  const pinRule = { allowed: true, after_restart: true, min_length: 6 };
+  const { ms: _pinMs, ...pinWrap } = await client.vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), pinRule);
+  const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.device_salt), pin_profile: pinWrap.profile }).kek;
   add("KEK_pin", kekPin);
-  anchorWrap("KEK_pin", pinWrap, kekPin, vk1, 1);
+  anchorWrap("KEK_pin", pinWrapAsWrap(pinWrap), kekPin, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
   add("PRF output", hex(prfOutput));
   const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
@@ -546,7 +554,7 @@ async function leakRun() {
   await client.vault.login_finish(ke2, 1, pin1);
   await client.vault.unlock_password(URL_, CTX, created.wraps[0], pin1);
   if ((await probe({ op: "vk" })).vk !== vk1) throw new Error("password unlock gave another key");
-  await client.vault.pin_unlock(enc.encode("123456"), created.pinned, pinWrap);
+  await client.vault.pin_unlock(enc.encode("123456"), created.pinned, pinWrap, pinRule);
   await client.vault.unlock_prf(URL_, CTX, prfOutput.slice(), prfWrap, pinned(created.pinned, { server_public_key: created.pinned.server_public_key }));
   const qr = wasm.setup_qr_build(URL_, IDS.account_id, 1, true, created.server_public_key);
   await client.vault.unlock_recovery(URL_, CTX, rkCode, created.wraps[1], firstUse(true), qr);

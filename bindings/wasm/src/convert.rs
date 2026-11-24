@@ -8,8 +8,8 @@
 
 use crate::error::{Fail, Res};
 use ferret_core::{
-    AccountId, Error, KsfProfile, ManifestRow, Method, MethodId, MethodKey, PinProfile, Pinned,
-    SealedItem, VaultContext, VaultId, WrapRecord,
+    AccountId, Error, KsfProfile, ManifestRow, Method, MethodId, MethodKey, PinProfile, PinRule,
+    Pinned, SealedItem, VaultContext, VaultId, WrapRecord,
 };
 use serde::de::{self, DeserializeOwned, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -382,6 +382,81 @@ impl WrapDto {
     }
 }
 
+/// What the server demands of a PIN (`GET /api/vault/policy`, `pin`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PinRuleDto {
+    pub(crate) allowed: bool,
+    pub(crate) after_restart: bool,
+    pub(crate) min_length: u8,
+}
+
+impl PinRuleDto {
+    pub(crate) fn core(&self) -> PinRule {
+        PinRule {
+            allowed: self.allowed,
+            after_restart: self.after_restart,
+            min_length: self.min_length,
+        }
+    }
+}
+
+/// A PIN wrap as the extension stores it: the 104 bytes, the id of the
+/// method, the device salt, the PIN profile number and the vault key epoch it
+/// was made for. No kind and no length of the PIN.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PinWrapDto {
+    #[serde(with = "b16")]
+    pub(crate) method_id: [u8; 16],
+    #[serde(with = "bytes")]
+    pub(crate) wrap: Vec<u8>,
+    #[serde(with = "b16")]
+    pub(crate) device_salt: [u8; 16],
+    pub(crate) profile: u32,
+    pub(crate) vk_epoch: u64,
+}
+
+impl PinWrapDto {
+    /// The record, checked before any Argon2id runs: the length of the wrap
+    /// and the PIN profile (an unknown one is `kdf_profile_unknown`, one
+    /// below the minimum `kdf_profile_downgrade`).
+    pub(crate) fn core(&self) -> Res<(WrapRecord, PinProfile)> {
+        let profile = PinProfile::from_wire(self.profile)?;
+        let method = Method::Pin {
+            device_salt: self.device_salt,
+            profile,
+        };
+        if self.wrap.len() != method.wrap_len() {
+            return Err(Fail::Input);
+        }
+        Ok((
+            WrapRecord {
+                method_id: MethodId::from_bytes(self.method_id),
+                kek_generation: 1,
+                method,
+                wrap: self.wrap.clone(),
+            },
+            profile,
+        ))
+    }
+}
+
+/// A new PIN wrap, in the shape of [`PinWrapDto`] plus the time its own
+/// Argon2id took (`ms`, for the device's budget). Nothing about the PIN.
+#[derive(Serialize)]
+pub(crate) struct PinWrapOut {
+    #[serde(with = "b16")]
+    pub(crate) method_id: [u8; 16],
+    #[serde(with = "bytes")]
+    pub(crate) wrap: Vec<u8>,
+    #[serde(with = "b16")]
+    pub(crate) device_salt: [u8; 16],
+    pub(crate) profile: u32,
+    pub(crate) vk_epoch: u64,
+    pub(crate) ms: u32,
+}
+
 /// A row the server holds: revision, envelope and tag.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -653,6 +728,24 @@ impl Shaped for WrapDto {
         ("kek_generation", &ANY),
         ("method", &MethodDto::SHAPE),
         ("wrap", &ANY),
+    ]);
+}
+
+impl Shaped for PinRuleDto {
+    const SHAPE: Shape = Shape::Obj(&[
+        ("allowed", &ANY),
+        ("after_restart", &ANY),
+        ("min_length", &ANY),
+    ]);
+}
+
+impl Shaped for PinWrapDto {
+    const SHAPE: Shape = Shape::Obj(&[
+        ("method_id", &ANY),
+        ("wrap", &ANY),
+        ("device_salt", &ANY),
+        ("profile", &ANY),
+        ("vk_epoch", &ANY),
     ]);
 }
 

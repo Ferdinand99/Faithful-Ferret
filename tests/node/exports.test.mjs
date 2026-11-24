@@ -2,7 +2,7 @@
 // `test-support`): what they export, what returns bytes, how big they are.
 // Run: node --test tests/node/
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { root } from "./paths.mjs";
@@ -44,7 +44,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
   // fails this test until it is listed here on purpose (and, if it returns
   // bytes or starts with `reveal_`, in the lists of the tests below).
   const documented = [
-    "argon2_export_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "generate_passphrase",
+    "argon2_export_key", "argon2_pin_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "generate_passphrase",
     "generate_password", "import_header",
     "page_origin", "prf_salt_new", "same_site", "setup_qr_build", "setup_qr_parse", "sync_memory_new", "sync_memory_prune", "totp_parse",
     "UnlockJob.change_password", "UnlockJob.clear", "UnlockJob.create_account", "UnlockJob.login_finish",
@@ -63,7 +63,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.reveal_item_notes", "Vault.reveal_password_history", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
     "Vault.reveal_secret_key_code", "Vault.reveal_totp_secret", "Vault.seed_pinned", "Vault.totp_code",
     "Vault.verify_checkpoint", "Vault.verify_recovery_setup", "Vault.verify_secret_key_entry",
-    "Vault.verify_tombstone", "Vault.wrap_pin", "Vault.wrap_prf",
+    "Vault.verify_tombstone", "Vault.wrap_pin", "Vault.wrap_pin_key", "Vault.wrap_prf",
   ];
   assert.deepEqual([...exportsOf.keys()].sort(), [...documented].sort());
   // A new recovery key returns the public request values, never the key itself.
@@ -158,12 +158,45 @@ test("no_export_returns_key_bytes", () => {
   assert.ok(!/Handoff|adopt_handoff/.test(dts));
 });
 
+test("the_export_list_has_the_new_signatures", () => {
+  // The PIN: the rule is an argument of the wrap and of the unlock, the device
+  // secret is not, and the second half of setting a PIN takes the 32 bytes of
+  // KEK_pin that the job worker made. Unlock with a passkey takes the record
+  // of the device and nothing about a first use.
+  assert.ok(dts.includes("wrap_pin(pin: Uint8Array, method_id: Uint8Array, rule: any): any;"), "wrap_pin(pin: Uint8Array, method_id: Uint8Array, rule: any): any;");
+  assert.ok(dts.includes("wrap_pin_key(key: Uint8Array, device_salt: Uint8Array, method_id: Uint8Array): any;"), "wrap_pin_key(key: Uint8Array, device_salt: Uint8Array, method_id: Uint8Array): any;");
+  assert.ok(dts.includes("pin_unlock(pin: Uint8Array, pinned: any, pin_wrap: any, rule: any): any;"), "pin_unlock(pin: Uint8Array, pinned: any, pin_wrap: any, rule: any): any;");
+  assert.ok(dts.includes("unlock_prf(server_url: string, ctx: any, prf_output: Uint8Array, prf_wrap: any, pinned: any): any;"), "unlock_prf(server_url: string, ctx: any, prf_output: Uint8Array, prf_wrap: any, pinned: any): any;");
+  assert.ok(dts.includes("export function argon2_pin_key(pin: Uint8Array, rule: any): any;"), "export function argon2_pin_key(pin: Uint8Array, rule: any): any;");
+  assert.ok(!dts.includes("kek_dev_pin"), "no device secret in the binding");
+});
+
+// `argon2_pin_key` returns an object that holds `KEK_pin`, so the check for a
+// `Uint8Array` return type does not see it. It is listed here with its reason,
+// and the one place in the source that puts a key into a reply is this one.
+const KEYS_IN_OBJECTS = {
+  argon2_pin_key:
+    "KEK_pin (32 bytes): the PIN's Argon2id runs in the job worker and only this key crosses to the vault worker, which wraps the vault key with it; both copies are wiped; it is not a vault key",
+};
+
+test("only_the_pin_key_object_holds_a_key", () => {
+  const dir = join(root, "bindings", "wasm", "src");
+  const where = readdirSync(dir)
+    .filter((f) => f.endsWith(".rs") && f !== "vector_ops.rs")
+    .filter((f) => readFileSync(join(dir, f), "utf8").includes('set("key", '));
+  assert.deepEqual(where, ["pin.rs"]);
+  for (const [name, why] of Object.entries(KEYS_IN_OBJECTS)) {
+    assert.ok(exportsOf.has(name) && why.length > 10, name);
+    assert.ok(!/Uint8Array/.test(exportsOf.get(name)), `${name} returns an object`);
+  }
+});
+
 test("every_secret_taking_export_copies_into_a_wiped_buffer", () => {
   // The glue wipes the arguments it knows are secret; each secret argument of
   // the exports has to be in its table.
   const source = readFileSync(join(root, "bindings", "wasm", "js", "protocol.mjs"), "utf8");
   for (const method of [
-    "login_start", "register_start", "pin_unlock", "unlock_prf", "wrap_pin", "wrap_prf",
+    "login_start", "register_start", "pin_unlock", "unlock_prf", "wrap_pin", "wrap_pin_key", "argon2_pin_key", "wrap_prf",
     "export_finish", "import_open", "argon2_export_key", "check_master_password", "reveal_plain_export",
   ]) {
     assert.ok(new RegExp(`\\b${method}:`).test(source), method);
@@ -310,7 +343,7 @@ test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async 
     .sort();
   assert.deepEqual(zeroRefused, [
     "export_begin:3", "export_finish:0", "import_open:1", "reveal_plain_export:3", "unlock_prf:2",
-    "wrap_prf:2",
+    "wrap_pin_key:0", "wrap_prf:2",
   ]);
 });
 
@@ -404,6 +437,18 @@ test("reveal_allowlist_has_reveal_password_history_and_nothing_else_new", () => 
 // This is the budget of the generator only: a later feature that grows the
 // module sets a new baseline in its own pull request and states its growth there.
 const WASM_BYTES_BEFORE_GENERATOR = 1_330_115;
+
+// The size of the release module before the PIN functions of the binding
+// (`wrap_pin` with its rule and timing, `wrap_pin_key`, `argon2_pin_key`, the
+// new `pin_unlock`): the module of main at that point.
+const WASM_BYTES_BEFORE_PIN_BINDING = 1_411_033;
+
+test("wasm_size_grows_by_less_than_20_kib", () => {
+  const raw = statSync(pkg("pkg-web", "ferret_core_wasm_bg.wasm")).size;
+  const growth = raw - WASM_BYTES_BEFORE_PIN_BINDING;
+  console.log(`# wasm growth over the module before the PIN functions: ${growth} bytes (${(growth / 1024).toFixed(1)} KiB)`);
+  assert.ok(growth < 20 * 1024, `${growth} bytes`);
+});
 
 test("wasm_size_grows_by_less_than_100_kib", () => {
   const raw = statSync(pkg("pkg-web", "ferret_core_wasm_bg.wasm")).size;

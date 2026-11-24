@@ -204,6 +204,19 @@
 // another vault is opened, and with `lock()`. A port asked for while no vault
 // is open is closed at once.
 //
+// PIN: `pinWrap(pin, methodId, rule)` (on the client, not on `vault`) sets a
+// PIN. It checks the rule, draws a new device salt, runs the PIN's Argon2id in
+// a job worker and wraps the vault key in the vault worker, so that only
+// `KEK_pin` (32 bytes, wiped on both sides) crosses between the workers. It
+// resolves `{ method_id, wrap, device_salt, profile, vk_epoch, ms }`, which the
+// extension's PIN store keeps as `methodId`, `wrap`, `deviceSalt`, `pinProfile`
+// and `vkEpoch` (plus the rule's `minLength`); it says nothing about the kind or
+// the length of the PIN. A device that runs out of memory
+// (`kdf_out_of_memory`) or takes more than ten seconds (`pin_too_slow`) gets
+// that code and no wrap. `vault.pin_unlock(pin, pinned, pinWrap, rule)` opens
+// it again with the record of the device (never a first use); a wrap of an
+// older vault key epoch is `pin_stale` before any Argon2id runs.
+//
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
 // `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(
@@ -434,9 +447,41 @@ export function createClient(options = {}) {
     },
   );
 
+  // Sets a PIN with the Argon2id in a job worker: the PIN goes to the job worker
+  // only, and only the 32 bytes of KEK_pin go on to the vault worker, which
+  // wraps the vault key. Both copies of the key are wiped. A failure at either
+  // step is its code and nothing is returned.
+  const pinWrap = async (pin, methodId, rule) => {
+    const channel = new WorkerChannel("job", createJobWorker, (c) => c.fail("worker_failed"));
+    jobChannels.add(channel);
+    let made;
+    try {
+      made = await channel.call("argon2_pin_key", [pin, rule]);
+    } finally {
+      jobChannels.delete(channel);
+      channel.end();
+    }
+    try {
+      const wrapped = await vault.call("wrap_pin_key", [made.key, made.device_salt, methodId]);
+      return { ...wrapped, ms: made.ms };
+    } finally {
+      made.key.fill(0);
+    }
+  };
+
   return {
     /** Every method of the `Vault`, the `UnlockJob` and the stateless functions. */
     vault: vaultProxy,
+
+    /**
+     * Sets a PIN: `pinWrap(pin, methodId, rule)` resolves `{ method_id, wrap,
+     * device_salt, profile, vk_epoch, ms }`, as `vault.wrap_pin` does, but the
+     * 256 MiB Argon2id runs in a short-lived job worker (see "PIN" above), so
+     * the vault worker does not grow by it. `pin` is text or a `Uint8Array`
+     * (wiped), `rule` is the server's `{ allowed, after_restart, min_length }`.
+     * Use this, not `vault.wrap_pin`, in the product.
+     */
+    pinWrap,
 
     /** The job worker: one call per worker, ended afterwards. */
     job: new Proxy(

@@ -326,6 +326,7 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
   for (const [name, args] of [
     ["wrap_prf", [fill(24, 1), salt, zero(), fill(16, 2), 1, fill(16, 3), "no_stored_passkeys"]],
     ["unlock_prf", ["https://x", {}, zero(), {}, {}]],
+    ["wrap_pin_key", [zero(), fill(16, 1), fill(16, 2)]],
     ["import_open", [fill(100, 1), zero()]],
     ["reveal_plain_export", [[], "json", false, zero(), 1_700_000_000_000]],
   ]) {
@@ -333,7 +334,7 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
   }
   assert.equal(made[0].received.length, 1);
   // A PIN call has no key argument: it goes through.
-  await client.vault.wrap_pin(enc.encode("123456"), fill(16, 2));
+  await client.vault.wrap_pin(enc.encode("123456"), fill(16, 2), { allowed: true, after_restart: true, min_length: 6 });
   assert.equal(made[0].received.length, 2);
 });
 
@@ -909,4 +910,58 @@ test("import_port_closes_on_lock", async () => {
   assert.equal(call("lock", []).ok, true);
   const seen = await closed;
   assert.deepEqual(seen.at(-1), { closed: true }, "the last message says the port is closed");
+});
+
+// ------------------------------------------------------------------ PIN
+
+test("only_kek_pin_crosses_the_worker_boundary_and_is_zeroed", async () => {
+  const { client, made } = setup();
+  const server = new wasm.TestServer(enc.encode("pin-boundary"));
+  // An account in the vault worker, the way the page makes one.
+  const request = await client.vault.register_start(PASSWORD, { kind: "generate" });
+  await client.vault.register_finish(server.register_response(IDS.account_id, request), 1);
+  const created = await client.vault.create_account(URL_, IDS);
+  const rule = { allowed: true, after_restart: true, min_length: 6 };
+  const pin = enc.encode("739415");
+  const pinBytes = Array.from(pin);
+  const contains = (haystack, needle) =>
+    Array.from(haystack).some((_, i) => needle.every((b, j) => haystack[i + j] === b));
+  const sentBefore = made.vault[0].received.length;
+
+  const wrapped = await client.pinWrap(pin, fill(16, 0x75), rule);
+  assert.ok(pin.every((b) => b === 0), "the caller's PIN was wiped");
+
+  // The job worker got the PIN and the rule, and was ended after its one call.
+  assert.equal(made.job.length, 1);
+  assert.equal(made.job[0].received.length, 1);
+  assert.equal(made.job[0].received[0].method, "argon2_pin_key");
+  assert.ok(made.job[0].received[0].args[0].every((b) => b === 0), "the job worker wiped its copy of the PIN");
+  assert.equal(made.job[0].terminated, true);
+
+  // The vault worker got one call after that: the key (32 bytes), the salt and the id. Never the PIN.
+  const sent = made.vault[0].received.slice(sentBefore);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].method, "wrap_pin_key");
+  assert.equal(sent[0].args[0].length, 32);
+  assert.ok(sent[0].args[0].every((b) => b === 0), "the vault worker wiped the key after the call");
+  for (const message of made.vault[0].received.slice(sentBefore)) {
+    for (const arg of message.args) {
+      if (arg instanceof Uint8Array) assert.ok(!contains(arg, pinBytes), "the PIN is not in a vault worker message");
+    }
+  }
+
+  // What comes back says nothing about the PIN and holds no key, and it opens.
+  assert.deepEqual(Object.keys(wrapped).sort(), ["device_salt", "method_id", "ms", "profile", "vk_epoch", "wrap"]);
+  assert.equal(wrapped.wrap.length, 104);
+  const { ms, ...wrap } = wrapped;
+  assert.ok(Number.isInteger(ms));
+  const opened = await client.vault.pin_unlock(enc.encode("739415"), created.pinned, wrap, rule);
+  assert.deepEqual(opened.pinned, created.pinned);
+  assert.equal((await rejection(client.vault.pin_unlock(enc.encode("739416"), created.pinned, wrap, rule))).code, "decrypt");
+
+  // A refusal comes from the job worker, before any key exists: nothing reaches the vault worker.
+  const count = made.vault[0].received.length;
+  const e = await rejection(client.pinWrap(enc.encode("12"), fill(16, 0x75), rule));
+  assert.equal(e.code, "input_too_short");
+  assert.equal(made.vault[0].received.length, count);
 });

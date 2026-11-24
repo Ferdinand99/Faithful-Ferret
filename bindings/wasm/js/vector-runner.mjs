@@ -361,14 +361,13 @@ export const EXTERNAL_FILES = [
 export const INTERNAL_FILES = [
   "tlv", "unicode", "codes", "kdf", "wrap", "unlock", "item", "padding", "cbor-limits",
   "tomb-tag", "checkpoint", "proofs", "rekey", "export", "opaque", "account", "totp",
-  "passkey", "origin", "sheet", "methods", "sync", "url-match", "recovery_renew", "generator",
+  "passkey", "origin", "sheet", "methods", "sync", "url-match", "recovery_renew", "generator", "pin",
 ].map((n) => `${n}.json`);
 
 /**
  * The files of `vectors/internal/` that no WASM runner reads: the server half
- * of the login has no WebAssembly binding, and the PIN operations of `pin.json`
- * are not exported by the binding yet; every case in them is `native-only`.
+ * of the login has no WebAssembly binding; every case in them is `native-only`.
  * They are listed so that a new file cannot be forgotten, not run; the Rust
  * tests and `tools/xcheck` read them.
  */
-export const NATIVE_ONLY_FILES = ["server-opaque", "server-secrets", "pin"].map((n) => `${n}.json`);
+export const NATIVE_ONLY_FILES = ["server-opaque", "server-secrets"].map((n) => `${n}.json`);

@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
-  CTX, IDS, LOGIN_DRAFT, NOW, PASSWORD, PASSWORD_2, URL_, enc, fill, firstUse, pinned, row, wasm,
+  CTX, IDS, LOGIN_DRAFT, NOW, PASSWORD, PASSWORD_2, PIN_RULE, URL_, enc, fill, firstUse, pinWrapOf, pinned, row, wasm,
 } from "./helpers.mjs";
 
 const hex = (b) => Buffer.from(b).toString("hex");
@@ -319,9 +319,12 @@ const EXPECTED_BYTE_PATHS = [
   "unlock_recovery:pinned.pk_a",
   "unlock_recovery:pinned.server_public_key",
   "unlock_recovery:pinned.vault_id",
-  "wrap_pin:method.device_salt",
+  "wrap_pin:device_salt",
   "wrap_pin:method_id",
   "wrap_pin:wrap",
+  "wrap_pin_key:device_salt",
+  "wrap_pin_key:method_id",
+  "wrap_pin_key:wrap",
   "wrap_prf:method.credential_id",
   "wrap_prf:method.prf_salt",
   "wrap_prf:method_id",
@@ -392,9 +395,16 @@ test("no_reply_holds_key_material", () => {
   const unlocked = call("unlock_password", () => login.unlock_password(URL_, CTX, created.wraps[0], pinned(created.pinned)));
   assert.deepEqual(vaultKey(unlocked.vault), secrets.get("VK"));
 
-  const pinWrap = call("wrap_pin", () => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75)));
-  addSecret("KEK_pin", fromHex(op("kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt), pin_profile: pinWrap.method.pin_profile }).kek));
-  call("pin_unlock", () => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap));
+  const pinWrap = pinWrapOf(call("wrap_pin", () => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), PIN_RULE)));
+  addSecret("KEK_pin", fromHex(op("kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.device_salt), pin_profile: pinWrap.profile }).kek));
+  call("pin_unlock", () => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, PIN_RULE));
+  // The job-worker half of setting a PIN returns `KEK_pin` on purpose (it is
+  // the one value that crosses to the vault worker, see exports.test.mjs): it
+  // is not a reply that is walked. What the vault worker answers is.
+  const pinKey = wasm.argon2_pin_key(enc.encode("123456"), PIN_RULE);
+  assert.deepEqual(Object.keys(pinKey).sort(), ["device_salt", "key", "ms", "profile"]);
+  assert.deepEqual(pinKey.key, fromHex(op("kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinKey.device_salt), pin_profile: pinKey.profile }).kek));
+  call("wrap_pin_key", () => vault.wrap_pin_key(pinKey.key.slice(), pinKey.device_salt, fill(16, 0x77)));
 
   const prfOutput = fill(32, 0x33);
   addSecret("PRF output", prfOutput);

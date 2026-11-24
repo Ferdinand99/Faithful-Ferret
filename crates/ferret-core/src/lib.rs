@@ -99,7 +99,7 @@ pub use item::{
     PageOrigin, Passkey, PasswordHistoryEntry, Totp, UrlEntry, UrlMatch, UrlMatchResult,
     display_host, page_origin, same_site, url_match,
 };
-pub use keys::{UnlockedVault, VaultContext, recovery_public_key};
+pub use keys::{UnlockedVault, VaultContext, pin_extension_key, recovery_public_key};
 pub use ksf_profile::KsfProfile;
 pub use methods::{
     CurrentManifest, MethodChange, ServerMethod, check_server_methods, manifest_add_method,

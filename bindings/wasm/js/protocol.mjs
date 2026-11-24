@@ -8,7 +8,8 @@
 //
 // The vault worker is long-lived and holds the Vault and the UnlockJob. The job
 // worker is short-lived and answers one call: `argon2_export_key`, the slow
-// step of an export or an import file. A reply never carries anything but
+// step of an export or an import file, or `argon2_pin_key`, the Argon2id of a
+// new PIN (its 32-byte result goes on to `wrap_pin_key` in the vault worker). A reply never carries anything but
 // values and a code: no message text of an error ever leaves the worker.
 //
 // Import port: a `MessagePort` that the page hands the vault worker with the
@@ -128,8 +129,8 @@ export function importArgs(request) {
   return args;
 }
 
-/** The only function of the job worker. */
-export const JOB_WORKER_FUNCTIONS = new Set(["argon2_export_key"]);
+/** The functions of the job worker: the slow Argon2id steps, one call per worker. */
+export const JOB_WORKER_FUNCTIONS = new Set(["argon2_export_key", "argon2_pin_key"]);
 
 /**
  * Which arguments of a call are secrets: a `Uint8Array` there is wiped on the
@@ -142,6 +143,8 @@ export const SECRET_ARGS = {
   pin_unlock: [0],
   unlock_prf: [2],
   wrap_pin: [0],
+  wrap_pin_key: [0],
+  argon2_pin_key: [0],
   wrap_prf: [2],
   export_begin: [3],
   export_finish: [0],
@@ -172,6 +175,9 @@ export const BYTES_ARGS = {
   pin_unlock: [[0, false, false]],
   unlock_prf: [[2, false, true]],
   wrap_pin: [[0, false, false]],
+  // The 32 bytes of KEK_pin: never all zero (a key that was wiped).
+  wrap_pin_key: [[0, false, true]],
+  argon2_pin_key: [[0, false, false]],
   wrap_prf: [[2, false, true]],
   export_begin: [[3, true, true]],
   export_finish: [[0, false, true]],
@@ -198,6 +204,7 @@ export const TEXT_ARGS = {
   argon2_export_key: [0, 4],
   check_master_password: [0],
   wrap_pin: [0],
+  argon2_pin_key: [0],
 };
 
 /**

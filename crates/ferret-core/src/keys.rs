@@ -238,6 +238,23 @@ fn pin_stretch(
     Ok(out)
 }
 
+/// `KEK_pin` of the browser extension as 32 bytes (wiped on drop): the
+/// Argon2id of the PIN alone with `device_salt` and the parameters of the PIN
+/// profile. [`Kek::from_pin_extension`] is this and nothing more.
+///
+/// A profile below [`crate::PIN_PROFILE_MIN`] is refused before any Argon2id
+/// is run (`kdf_profile_downgrade`), and so is a PIN below the floor of
+/// [`crate::PIN_FLOOR`] characters (`input_too_short`).
+pub fn pin_extension_key(
+    pin: &Pin,
+    device_salt: &[u8; 16],
+    profile: PinProfile,
+) -> Result<Zeroizing<[u8; 32]>, Error> {
+    let params = profile.at_least_min()?.params();
+    check_pin_floor(pin)?;
+    pin_stretch(pin, device_salt, params)
+}
+
 impl Kek {
     /// `KEK_pw`, from the OPAQUE export key.
     ///
@@ -301,10 +318,19 @@ impl Kek {
         device_salt: &[u8; 16],
         profile: PinProfile,
     ) -> Result<Kek, Error> {
-        let params = profile.at_least_min()?.params();
-        check_pin_floor(pin)?;
-        let mut kek = pin_stretch(pin, device_salt, params)?;
-        Ok(Kek::from_array_wiping(&mut kek))
+        let mut kek = pin_extension_key(pin, device_salt, profile)?;
+        Ok(Kek::from_pin_extension_key(&mut kek))
+    }
+
+    /// The `KEK_pin` of the extension from its 32 bytes, as
+    /// [`pin_extension_key`] made them; the bytes are wiped.
+    ///
+    /// For a binding that runs the Argon2id in one worker and the wrap in
+    /// another: only these 32 bytes cross, never the PIN. It is the same key
+    /// [`Kek::from_pin_extension`] makes; the checks (profile, floor) were
+    /// done by [`pin_extension_key`] before the bytes existed.
+    pub fn from_pin_extension_key(key: &mut [u8; 32]) -> Kek {
+        Kek::from_array_wiping(key)
     }
 
     /// `KEK_pin` on mobile (step B): the stretched PIN mixed with the

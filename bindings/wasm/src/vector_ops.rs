@@ -256,6 +256,55 @@ fn kdf_ops(method: &str, i: &Value) -> Result<Value, Error> {
     })
 }
 
+/// The operations of `pin.json`: the PIN's normal form and length, the rule,
+/// the profile table, the AAD of a PIN wrap and the KEK of a text PIN.
+fn pin_ops(method: &str, i: &Value) -> Result<Value, Error> {
+    let utf8 = || hx(&i["utf8"]);
+    Ok(match method {
+        "pin_normalize" => {
+            let pin = Pin::new(&utf8())?;
+            json!({ "pin": he(pin.test_bytes()) })
+        }
+        "pin_rule" => {
+            let pin = Pin::new(&utf8())?;
+            let r = &i["rule"];
+            let rule = ferret_core::PinRule {
+                allowed: r["allowed"].as_bool().unwrap(),
+                after_restart: r["after_restart"].as_bool().unwrap(),
+                min_length: u8::try_from(r["min_length"].as_u64().unwrap().min(255)).unwrap(),
+            };
+            ferret_core::pin_meets_rule(&pin, &rule)?;
+            json!({})
+        }
+        "pin_profile" => {
+            let p =
+                PinProfile::from_wire(u32::try_from(i["pin_profile"].as_u64().unwrap()).unwrap())?
+                    .params();
+            json!({ "m_kib": p.m_kib, "t": p.t, "p": p.p })
+        }
+        "pin_aad" => {
+            let rec = WrapRecord {
+                method_id: MethodId::from_bytes(hn(&i["method_id"])),
+                kek_generation: 1,
+                method: method_of(&i["method"]),
+                wrap: vec![],
+            };
+            let aad = ferret_core::testing::keys::wrap_aad(&ctx_of(i), &rec)?;
+            let kdf = aad[aad.len() - 12..].to_vec();
+            json!({ "aad": he(&aad), "kdf": he(&kdf) })
+        }
+        "pin_kek" => {
+            // The profile and the PIN are checked before Argon2id runs.
+            let profile =
+                PinProfile::from_wire(u32::try_from(i["pin_profile"].as_u64().unwrap()).unwrap())?;
+            let pin = Pin::new(&utf8())?;
+            let kek = Kek::from_pin_extension(&pin, &hn(&i["device_salt"]), profile)?;
+            json!({ "kek": he(&kek_bytes(&kek)) })
+        }
+        _ => unreachable!(),
+    })
+}
+
 fn text_ops(method: &str, i: &Value) -> Result<Value, Error> {
     let bytes = text_bytes(i);
     Ok(match method {
@@ -1315,6 +1364,7 @@ fn dispatch(
         | "kek_from_prf"
         | "kek_from_pin_extension"
         | "kek_from_pin_mobile" => kdf_ops(method, i),
+        "pin_normalize" | "pin_rule" | "pin_profile" | "pin_aad" | "pin_kek" => pin_ops(method, i),
         "text_nfkd" | "master_password_check" | "opaque_input_build" | "export_password_check" => {
             text_ops(method, i)
         }
@@ -1748,4 +1798,57 @@ impl Vault {
             _ => None,
         }
     }
+}
+
+// ----------------------------------------------- PIN probes (test-support)
+
+std::thread_local! {
+    /// Memory a test holds back, so that the next large Argon2id runs out.
+    static HELD: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Sets the time budget of a PIN's Argon2id in milliseconds (a negative
+/// number makes every PIN too slow); `test_pin_limit_ms(10000)` restores it.
+#[wasm_bindgen]
+pub fn test_pin_limit_ms(ms: f64) {
+    crate::pin::LIMIT_MS.set(ms);
+}
+
+/// The number of Argon2id runs started so far: the test that a refusal
+/// computed nothing.
+#[wasm_bindgen]
+pub fn test_argon2_runs() -> f64 {
+    ferret_core::testing::prim::argon2_run_count() as f64
+}
+
+/// Holds `mib` MiB of memory (zero-filled, so it is really reserved) until
+/// `test_release_memory`. Returns `false` when the memory could not be had.
+#[wasm_bindgen]
+pub fn test_hold_memory(mib: u32) -> bool {
+    let mut block: Vec<u8> = Vec::new();
+    let Some(len) = (mib as usize).checked_mul(1024 * 1024) else {
+        return false;
+    };
+    if block.try_reserve_exact(len).is_err() {
+        return false;
+    }
+    block.resize(len, 0);
+    HELD.with(|h| h.borrow_mut().push(block));
+    true
+}
+
+/// Frees the most recent `count` blocks held by `test_hold_memory` (all of
+/// them when `count` is 0).
+#[wasm_bindgen]
+pub fn test_release_memory(count: u32) {
+    HELD.with(|h| {
+        let mut held = h.borrow_mut();
+        if count == 0 {
+            held.clear();
+        } else {
+            for _ in 0..count {
+                held.pop();
+            }
+        }
+    });
 }

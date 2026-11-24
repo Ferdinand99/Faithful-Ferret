@@ -127,12 +127,6 @@ max = 6
 reason = "Building the JS view of an item body: element-size divisions of the lists of fields and URLs that are mapped; the field values are copied."
 
 [[allow]]
-function = "^ferret_core_wasm::job::bind_to_qr$"
-instruction = "br_table"
-max = 1
-reason = "Binding a pin to the setup QR: a match on first use against a pinned record and on whether a QR was scanned; the server key and the secret-key bit are compared, not used as an address."
-
-[[allow]]
 function = "^ferret_core_wasm::methods::MethodChangeDto>::of$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
@@ -143,6 +137,12 @@ function = "^ferret_core_wasm::passkey::user_verification$"
 instruction = "br_table"
 max = 1
 reason = "A match on the user verification mode a caller names (required, preferred, discouraged): a public string turned into an enum."
+
+[[allow]]
+function = "^ferret_core_wasm::pin::checked_pin$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: Reading the rule of the server (allowed, after_restart, min_length) from the JavaScript object, inlined: serde-wasm-bindgen matches which of the three field names comes next. This is the structure of a call from JavaScript and public settings; the PIN is not read here, and the length check after it looks at the length of the typed PIN only."
 
 [[allow]]
 function = "^ferret_core_wasm::vault::Inner>::open$"
@@ -793,6 +793,18 @@ max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
+function = "^unlockjob_pin_unlock externref shim multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: Two things inlined into the shim of the PIN unlock. The jump is serde-wasm-bindgen matching which of the five field names of the stored wrap object comes next (public structure of the call). The table load is the length of a wrap by method kind, compiled to a lookup, indexed by the public method tag of the stored record so that a wrap of the wrong length is refused before Argon2id; no byte of the PIN or of a key is an address. It is the same lookup that the entry for unwrap_vk reasons about."
+
+[[allow]]
+function = "^unlockjob_pin_unlock externref shim multivalue shim$"
+instruction = "i32\\.load\\(static-table\\)"
+max = 1
+reason = "APPROVED: Two things inlined into the shim of the PIN unlock. The jump is serde-wasm-bindgen matching which of the five field names of the stored wrap object comes next (public structure of the call). The table load is the length of a wrap by method kind, compiled to a lookup, indexed by the public method tag of the stored record so that a wrap of the wrong length is refused before Argon2id; no byte of the PIN or of a key is an address. It is the same lookup that the entry for unwrap_vk reasons about."
+
+[[allow]]
 function = "^unlockjob_recover externref shim multivalue shim$"
 instruction = "br_table"
 max = 1
@@ -815,6 +827,12 @@ function = "^unlockjob_rekey externref shim multivalue shim$"
 instruction = "i32\\.div_u"
 max = 11
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+
+[[allow]]
+function = "^unlockjob_unlock_recovery externref shim multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: The match on the pin state (first use or a pinned record) and on whether the emergency sheet QR was scanned, inlined from bind_to_qr into this shim: the server key and the secret-key bit are compared, not used as an address or an index."
 
 [[allow]]
 function = "^unnamed$"
@@ -971,3 +989,9 @@ function = "^vault_totp_code multivalue shim$"
 instruction = "i64\\.rem_u"
 max = 1
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R2). The one-time code is the dynamic truncation of the HMAC output taken modulo 10^digits (RFC 4226 section 5.3). The dividend is the HMAC output of this one code, not the TOTP secret; the code is shown to the user and sent to a server. The offset of the truncation is the low nibble of that HMAC output, an index into this code's own digest. This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+
+[[allow]]
+function = "^vault_wrap_pin_key multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The loop over the 32 bytes of the key that refuses an all-zero array. The index is a public counter; every byte is read and ORed, with no branch on a byte, so the time does not depend on the key."

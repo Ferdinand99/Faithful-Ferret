@@ -46,19 +46,20 @@
 //! the rekey being made under the old password.
 
 use crate::convert::{
-    ANY, CheckpointDto, CtxDto, IdsDto, Pin, PinArg, PinnedDto, RowDto, SealedDto, Shape, Shaped,
-    WrapDto, b16, b32, bytes, core, from_js, to_js,
+    ANY, CheckpointDto, CtxDto, IdsDto, Pin, PinArg, PinWrapDto, PinnedDto, RowDto, SealedDto,
+    Shape, Shaped, WrapDto, b16, b32, bytes, core, from_js, to_js,
 };
 use crate::error::{Fail, Res, run};
+use crate::pin::checked_pin;
 use crate::vault::{PendingRekey, ReauthGrant, Setup, Vault};
 use ferret_core::{
     Error, ExportKey, Kek, KsfProfile, LoginState, MasterPassword, Method, MethodId, MpPolicy,
-    NewAccountIds, NewPassword, OpaqueInput, OsRng, Pin as PinDigits, Pinned, PinnedField,
-    PrfOutput, Recovered, RecoveryInput, RecoveryKey, RegistrationFinished, RegistrationState,
-    RekeyInput, RekeyItem, RekeyTombstone, SecretKey, ServerView, SetupQr, UnlockedVault,
-    VaultContext, change_password, create_account, decode_recovery_key, decode_secret_key,
-    encode_recovery_key, encode_secret_key, opaque_login_finish, opaque_login_start,
-    opaque_register_finish, opaque_register_start, parse_setup_qr, recover, unwrap_vk,
+    NewAccountIds, NewPassword, OpaqueInput, OsRng, Pinned, PinnedField, PrfOutput, Recovered,
+    RecoveryInput, RecoveryKey, RegistrationFinished, RegistrationState, RekeyInput, RekeyItem,
+    RekeyTombstone, SecretKey, ServerView, SetupQr, UnlockedVault, VaultContext, change_password,
+    create_account, decode_recovery_key, decode_secret_key, encode_recovery_key, encode_secret_key,
+    opaque_login_finish, opaque_login_start, opaque_register_finish, opaque_register_start,
+    parse_setup_qr, recover, unwrap_vk,
 };
 use js_sys::{Object, Reflect};
 use serde::{Deserialize, Serialize};
@@ -558,23 +559,28 @@ impl UnlockJob {
     }
 
     /// Unlocks with a passkey: `prf_output` is the 32 bytes the authenticator
-    /// returned for the salt in the wrap. `pin` and `qr` as for
-    /// `unlock_recovery`.
-    /// Returns `{ vault, pinned }`.
+    /// returned for the salt in the wrap. `pinned` is the pin state of this
+    /// device and must be `{ kind: "pinned", record, server_public_key? }`:
+    /// a passkey unlock needs the record of a device that has unlocked this
+    /// account before, and there is no first-use path (`{ kind: "first_use" }`
+    /// is `invalid_input`; the first unlock of a new device is the master
+    /// password or the recovery key). Every pin is checked as for the master
+    /// password. Returns `{ vault, pinned }`.
     pub fn unlock_prf(
         &mut self,
         server_url: &str,
         ctx: JsValue,
         prf_output: Vec<u8>,
         prf_wrap: JsValue,
-        pin: JsValue,
-        qr: Option<String>,
+        pinned: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let prf_output = Zeroizing::new(prf_output);
-            let pin = from_js::<PinArg>(pin)?.core()?;
+            let pin = from_js::<PinArg>(pinned)?.core()?;
+            if !matches!(pin, Pin::Pinned { .. }) {
+                return Err(Fail::Input);
+            }
             let ctx = from_js::<CtxDto>(ctx)?.core();
-            let pin = bind_to_qr(pin, qr, &ctx, server_url)?;
             let rec = from_js::<WrapDto>(prf_wrap)?.core()?;
             let Method::Prf { credential_id, .. } = &rec.method else {
                 return Err(Fail::Input);
@@ -585,32 +591,45 @@ impl UnlockJob {
         })
     }
 
-    /// Unlocks with the local PIN (`pin` is the PIN as typed, UTF-8). The
-    /// record of this device is always required; there is no first-use path
-    /// for a local method. Only a wrap of the extension's PIN profile is
-    /// opened (the profile is looked up before Argon2id runs; an unknown one
-    /// is refused); the mobile variant is refused as an input. Returns
-    /// `{ vault, pinned }` (the record as it was: a local unlock changes
-    /// nothing).
+    /// Unlocks with the local PIN (`pin` is the PIN as typed, UTF-8).
+    ///
+    /// * `pinned` is the record of this device and is always required; there
+    ///   is no first-use path for a local method.
+    /// * `pin_wrap` is `{ method_id, wrap, device_salt, profile, vk_epoch }`
+    ///   as `wrap_pin` returned it (the 104 bytes of the extension's PIN
+    ///   profile; the mobile variant is not read).
+    /// * `rule` is the server's `{ allowed, after_restart, min_length }`.
+    ///
+    /// Refused **before** Argon2id runs: a rule that forbids PINs
+    /// (`pin_not_allowed`), a PIN below the rule's minimum or the floor of
+    /// four (`input_too_short`), an unknown or too low PIN profile
+    /// (`kdf_profile_unknown`, `kdf_profile_downgrade`) and a wrap made for an
+    /// older vault key epoch than the record's (`pin_stale`; the caller
+    /// deletes it). After the unwrap the vault key must give the pinned
+    /// `pk_a` (`pinned_auth_key`), offline too. A wrong PIN and any change to
+    /// the wrap are the one `decrypt`. Returns `{ vault, pinned }` (the
+    /// record as it was: a local unlock changes nothing).
     pub fn pin_unlock(
         &mut self,
         pin: Vec<u8>,
         pinned: JsValue,
         pin_wrap: JsValue,
+        rule: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let pin = Zeroizing::new(pin);
             let record = from_js::<PinnedDto>(pinned)?.core()?;
-            let rec = from_js::<WrapDto>(pin_wrap)?.core()?;
-            let Method::Pin {
-                device_salt,
-                profile,
-            } = &rec.method
-            else {
-                return Err(Fail::Input);
-            };
-            let digits = PinDigits::new(&pin)?;
-            let kek = Kek::from_pin_extension(&digits, device_salt, *profile)?;
+            let wrap = from_js::<PinWrapDto>(pin_wrap)?;
+            let (rec, profile) = wrap.core()?;
+            if wrap.vk_epoch < record.vk_epoch_max {
+                return Err(Fail::PinStale);
+            }
+            if wrap.vk_epoch > record.vk_epoch_max {
+                // Not a wrap this record can open; nothing secret decides it.
+                return Err(Error::Decrypt.into());
+            }
+            let digits = checked_pin(&pin, rule)?;
+            let kek = Kek::from_pin_extension(&digits, &wrap.device_salt, profile)?;
             let vault = record.unlock_local(&rec, &kek)?;
             outcome(Vault::from_unlocked(vault, None), &record)
         })

@@ -701,3 +701,24 @@ fn the_vector_file_is_listed_and_the_version_was_raised() {
         assert!(ops.contains(&format!("| `{op}` |")), "{op}");
     }
 }
+
+#[test]
+fn the_pin_key_that_crosses_a_worker_is_the_kek_of_the_extension() {
+    // `pin_extension_key` makes the 32 bytes, `Kek::from_pin_extension_key`
+    // turns them back into the key: the same one `from_pin_extension` makes,
+    // with the same refusals before any Argon2id.
+    let salt = [0xc8u8; 16];
+    let pin = Pin::new(b"correct horse").unwrap();
+    let mut key = ferret_core::pin_extension_key(&pin, &salt, PinProfile::P1).unwrap();
+    let split = Kek::from_pin_extension_key(&mut key);
+    assert_eq!(*key, [0u8; 32], "the bytes are wiped once the key exists");
+    let direct = Kek::from_pin_extension(&pin, &salt, PinProfile::P1).unwrap();
+    assert_eq!(kek_bytes(&split), kek_bytes(&direct));
+    let before = argon2_run_count();
+    let short = Pin::new(b"123").unwrap();
+    assert_eq!(
+        ferret_core::pin_extension_key(&short, &salt, PinProfile::P1).err(),
+        Some(too_short())
+    );
+    assert_eq!(argon2_run_count(), before, "nothing was computed");
+}
