@@ -608,13 +608,16 @@ export function fakeSessions(behaviour = {}) {
  *   os?: string,
  *   gate?: (label: string) => Promise<void>,
  *   sync?: { createEngine?: (options: any) => any, createChannel?: (options: any) => any, locks?: any } | null,
- * }} [options] `gate` runs before every call to the local storage, the permissions and the platform (a test
+ *   fetchImpl?: typeof fetch,
+ *   pin?: { store: any, options?: Record<string, any> } | null,
+ * }} [options] `fetchImpl` is the `fetch` of the device's requests; `pin` wires the PIN host (and its handler) with that store;
+ *   `gate` runs before every call to the local storage, the permissions and the platform (a test
  *   that locks at each await point passes one). `sync` wires the sync host (and its handler) as main.mjs does,
  *   with the engine and the live channel it names (the shared ones when left out)
  */
-export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {}, sync = null } = {}) {
+export async function sessionWorld({ createSession, client = coreClient(), store, permitted = true, allowTestHosts = false, server = null, os = "win", gate = async () => {}, sync = null, fetchImpl, pin = null } = {}) {
   const { load } = await pkg();
-  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler, syncWriteHandler, lockHandler, settingsHandler] = await Promise.all([
+  const [{ createSessionHost }, { createCoreHost }, { createLock }, { createRouter }, handlerModule, ui, { createSyncHost }, syncHandler, syncWriteHandler, lockHandler, settingsHandler, pinModule, unlockHandler] = await Promise.all([
     load("background/session.mjs"),
     load("background/coreHost.mjs"),
     load("background/lock.mjs"),
@@ -626,6 +629,8 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     load("background/handlers/syncWrite.handler.mjs"),
     load("background/handlers/lock.handler.mjs"),
     load("background/handlers/settings.handler.mjs"),
+    load("background/pinHost.mjs"),
+    load("background/handlers/unlock.handler.mjs"),
   ]);
   const fake = createFakeBrowser();
   const clock = createClock();
@@ -664,6 +669,7 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     now: clock.now,
     ...(store ? { store } : {}),
     ...(createSession ? { createSession } : {}),
+    ...(fetchImpl ? { fetchImpl } : {}),
   });
   /** The host permissions the sync took back. @type {Array<{ origins: string[] }>} */
   const removed = [];
@@ -678,10 +684,12 @@ export async function sessionWorld({ createSession, client = coreClient(), store
         ...(sync.createChannel ? { createChannel: sync.createChannel } : {}),
       })
     : null;
-  const coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...sessionHost.ops, ...(syncHost?.ops ?? {}) } });
+  const events = createAlarmsAndIdle();
+  const pinHost = pin ? pinModule.createPinHost({ store: pin.store, sessionHost, alarms: events.alarms, now: clock.now, ...(pin.options ?? {}) }) : null;
+  const coreHost = createCoreHost({ createClient: () => client, now: clock.now, ops: { ...sessionHost.ops, ...(syncHost?.ops ?? {}), ...(pinHost?.ops ?? {}) } });
   sessionHost.attach(coreHost);
   syncHost?.attach(coreHost);
-  const events = createAlarmsAndIdle();
+  pinHost?.attach(coreHost);
   const timers = createFakeTimers(clock);
   const lock = createLock({ alarms: events.alarms, idle: events.idle, storageSession: sessionStorage, storageLocal: local, timers, now: clock.now, coreHost });
   // As in the background: the deadline is checked before every use of the vault, also by the modules beside the messages.
@@ -690,7 +698,7 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     runtime: fake.runtime,
     lock,
     coreHost,
-    handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default, syncWriteHandler.default] : [])],
+    handlers: [handlerModule.default, lockHandler.default, settingsHandler.default, ...(syncHost ? [syncHandler.default, syncWriteHandler.default] : []), ...(pinHost ? [unlockHandler.default] : [])],
     // As in the background: what a page got ends with its port.
     onSessionEnd: (/** @type {string} */ session) => syncHost?.endSession(session),
   });
@@ -719,6 +727,7 @@ export async function sessionWorld({ createSession, client = coreClient(), store
     lock,
     sessionHost,
     syncHost,
+    pinHost,
     removed,
     locks,
     handler: handlerModule,

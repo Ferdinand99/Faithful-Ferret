@@ -41,7 +41,8 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * `fill_generated`) refuse with `not_available` in a build without the `save`
  * feature. The capture ops (`capture_event`, `capture_settings`, and the popup's `offer_list`,
  * `offer_dismiss`, `offer_reveal`) are the capture
- * host's (captureHost.mjs); a build without the feature does not have them.
+ * host's (captureHost.mjs); a build without the feature does not have them. The PIN ops (`unlock_policy`, `pin_set`,
+ * `pin_unlock`, `pin_off`) are the PIN host's (pinHost.mjs); a build without the `unlock` feature does not have them.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -92,6 +93,10 @@ export const CORE_OPS = Object.freeze([
   "generate",
   "generate_copy",
   "fill_generated",
+  "unlock_policy",
+  "pin_set",
+  "pin_unlock",
+  "pin_off",
 ]);
 
 /**
@@ -123,7 +128,7 @@ export class CoreError extends Error {
  * @typedef {{
  *   vault: boolean,
  *   worker: "vault" | "job" | "none",
- *   run: (client: { vault: any, job: any }, args: any, context: OpContext) => Promise<unknown>,
+ *   run: (client: { vault: any, job: any, pinWrap: (...args: any[]) => Promise<any> }, args: any, context: OpContext) => Promise<unknown>,
  * }} CoreOp
  *   `vault` is true when the op needs an unlocked vault: it is refused while
  *   the host is locked, without touching the client. `worker` says which worker
@@ -402,6 +407,12 @@ export function createCoreHost({
           },
           get job() {
             return real.job;
+          },
+          // Sets a PIN: the Argon2id runs in a job worker, and only its 32-byte key goes on to the vault worker, which
+          // wraps the vault key. It uses the vault worker, so a failure of that worker locks the host like any other use.
+          pinWrap(/** @type {unknown[]} */ ...args) {
+            usedVault = true;
+            return real.pinWrap(...args);
           },
         };
         const value = await def.run(view, args, context);

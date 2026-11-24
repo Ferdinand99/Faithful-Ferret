@@ -630,6 +630,7 @@ function writesIn(text) {
 const ALLOWED_WRITES = Object.freeze({
   "background/clipboard.mjs": ["alarms.create"],
   "background/lock.mjs": ["alarms.create"],
+  "background/pinHost.mjs": ["alarms.create"],
   "background/menus.mjs": ["menus.create"],
   "background/fillFlow.mjs": ["tabs.create"],
   "pages/popup.mjs": ["browser.tabs.create", "browser.tabs.create", "browser.windows.create"],

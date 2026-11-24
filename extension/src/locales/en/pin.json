@@ -1,0 +1,4 @@
+{
+  "pin.error.pin_stale": "This PIN no longer fits the vault: the vault key has changed since it was set. It has been deleted. Unlock with your master password, then set a new PIN.",
+  "pin.error.pin_too_slow": "This device took longer than ten seconds to check the PIN, so no PIN was set. Try again when the computer is less busy."
+}
