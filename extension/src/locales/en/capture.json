@@ -17,6 +17,7 @@
   "capture.never.remove.label": "Remove {host} from the list",
   "capture.never.title": "Sites you never want to be asked about",
   "capture.off": "Off. Ferret does not look at the forms you submit.",
+  "capture.off_access_given": "Off. Ferret does not look at the forms you submit. It already has access to https pages, so turning it on does not ask again.",
   "capture.on": "On. Ferret offers to save a new password or update a changed one after you submit a form.",
   "capture.reload": "Tabs that are already open start to notice passwords after you reload them.",
   "capture.switch": "Offer to save and update passwords",

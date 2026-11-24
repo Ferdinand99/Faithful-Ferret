@@ -95,11 +95,11 @@ dev-no-web = []
 # the e2e image is built with it; a release build has neither the code nor the
 # variable name (tests/build_info.rs).
 e2e-clock = []
-# Quick unlock (a PIN, and later a passkey) is offered: the admin page "Unlock"
-# is mounted and `GET /api/vault/policy` says a PIN may be allowed and that the
-# passkey routes exist. Without it the page and the routes are not mounted (404)
-# and the policy route answers that nothing is allowed. The migration that makes
-# the table runs either way (the schema cannot be left out of a build).
+# PIN and passkey unlock on the server: the Unlock tab of the admin pages and the routes for adding and removing
+# passkey methods. A release image is built without it until the unlock work is released; CI and the end-to-end image
+# build it in. The table of the unlock rule is created by a migration that runs in every build, and
+# `GET /api/vault/policy` is mounted in every build (with the feature off it says that no PIN and no passkey unlock is
+# allowed). Without the feature the binary has no trace of its name (tests/build_info.rs).
 quick-unlock = []
 
 [target.'cfg(unix)'.dependencies]

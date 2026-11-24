@@ -43,7 +43,7 @@ async function world({ granted = false, stored = {} } = {}) {
 
   /** What the browser calls the capture host with, and the listeners it registered. */
   /** @type {Record<string, Array<(...args: any[]) => any>>} */
-  const listeners = { committed: [], completed: [], history: [], tabRemoved: [], permissionRemoved: [] };
+  const listeners = { committed: [], completed: [], history: [], tabRemoved: [], permissionRemoved: [], permissionAdded: [] };
   const frames = { [TAB]: [{ frameId: 0, parentFrameId: -1, url: PAGE, documentId: `doc-${TAB}-0` }] };
   const state = { granted, registered: false };
   /** @type {Record<string, unknown>} */
@@ -74,6 +74,7 @@ async function world({ granted = false, stored = {} } = {}) {
   const permissions = {
     contains: async () => state.granted,
     onRemoved: { addListener: (/** @type {any} */ fn) => listeners.permissionRemoved.push(fn) },
+    onAdded: { addListener: (/** @type {any} */ fn) => listeners.permissionAdded.push(fn) },
   };
   const scripting = {
     executeScript: async () => [],
@@ -258,6 +259,22 @@ test("the_browsers_events_reach_the_offers_and_a_removed_permission_ends_capture
   assert.equal(w.state.registered, false);
   assert.equal(w.local.offer_to_save, false);
   assert.equal(w.offers.size(), 0);
+});
+
+test("the_grant_of_https_access_turns_capture_on_by_the_browsers_news_with_no_page_open", async () => {
+  const w = await world();
+  assert.equal(w.listeners.permissionAdded.length, 1, "the host listens for a grant");
+  assert.equal(w.local.offer_to_save, undefined);
+  // Another origin is no news for capture.
+  w.state.granted = true;
+  w.listeners.permissionAdded[0]({ origins: ["https://vault.example.test/*"] });
+  await flush();
+  assert.equal(w.state.registered, false);
+  // The https grant, whose popup was closed by the prompt: the setting goes on and the script is registered.
+  w.listeners.permissionAdded[0]({ origins: ["https://*/*"] });
+  await flush();
+  assert.equal(w.state.registered, true);
+  assert.equal(w.local.offer_to_save, true);
 });
 
 test("the_capture_settings_work_on_a_locked_device_and_check_the_permission_themselves", async () => {

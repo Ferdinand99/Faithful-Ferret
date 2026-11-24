@@ -548,14 +548,14 @@ test("the_password_is_hidden_when_the_form_is_built_and_the_button_has_a_name_an
   }
 });
 
-test("the_button_shows_and_hides_the_typed_password_and_says_what_it_would_do", async () => {
+test("the_button_shows_and_hides_the_typed_password_and_keeps_one_name", async () => {
   await withDom(async () => {
     const { root } = await edit({ id: null });
     type(root, "password", PASSWORD);
     await click(toggleOf(root));
     assert.equal(typeOf(root), "text");
     assert.equal(toggleOf(root).getAttribute("aria-pressed"), "true");
-    assert.equal(toggleOf(root).getAttribute("aria-label"), "vault.edit.password_hide");
+    assert.equal(toggleOf(root).getAttribute("aria-label"), "vault.edit.password_show", "the name stays; only aria-pressed changes");
     assert.equal(find(root, "password").value, PASSWORD, "the typed text stays");
     await click(toggleOf(root));
     assert.equal(typeOf(root), "password");
@@ -674,7 +674,7 @@ test("a_press_after_the_lock_time_does_not_show_the_password", async () => {
 test("the_toggle_texts_exist_in_english_and_norwegian", async () => {
   const [en, nb] = await Promise.all(["en", "nb"].map(async (lang) => JSON.parse(await (await import("node:fs/promises")).readFile(new URL(`../../src/locales/${lang}/vault.json`, import.meta.url), "utf8"))));
   assert.equal(en["vault.edit.password_show"], "Show password");
-  assert.equal(en["vault.edit.password_hide"], "Hide password");
+  assert.equal(en["vault.edit.password_hide"], undefined, "one name for the button, so no second text");
   assert.equal(nb["vault.edit.password_show"], "Vis passord");
-  assert.equal(nb["vault.edit.password_hide"], "Skjul passord");
+  assert.equal(nb["vault.edit.password_hide"], undefined);
 });

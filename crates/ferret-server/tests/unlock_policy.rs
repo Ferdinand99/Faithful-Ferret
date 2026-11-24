@@ -305,6 +305,33 @@ async fn the_policy_route_has_no_store_and_no_account_in_the_path() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
+/// The route is part of every build: a build with the feature says a PIN is
+/// allowed, a build without it says nothing is, and neither answers 404.
+#[tokio::test]
+async fn the_policy_route_exists_in_both_server_builds() {
+    let app = device_app().await;
+    let client = client_account(&app, 1).await;
+    let session = client_session(&app, &client, SessionScope::Full, 1).await;
+    let res = get_by_session(&app, &session).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let body = res.json();
+    assert_eq!(
+        body["pin"]["allowed"],
+        json!(cfg!(feature = "quick-unlock")),
+        "the PIN switch follows the build"
+    );
+    assert_eq!(body["prf"]["enabled"], json!(false));
+    // The page of the rule is the part that the feature adds.
+    let page = app
+        .call(Which::Admin, Req::get("/settings/unlock").build())
+        .await;
+    if cfg!(feature = "quick-unlock") {
+        assert_ne!(page.status, StatusCode::NOT_FOUND, "the page is mounted");
+    } else {
+        assert_eq!(page.status, StatusCode::NOT_FOUND, "no page without it");
+    }
+}
+
 /// Without the feature the route is there and says that nothing is allowed,
 /// whatever the table holds; the page and its tab are not mounted.
 #[cfg(not(feature = "quick-unlock"))]

@@ -17,6 +17,7 @@
   "capture.never.remove.label": "Fjern {host} fra listen",
   "capture.never.title": "Nettsteder du aldri vil bli spurt om",
   "capture.off": "Av. Ferret ser ikke på skjemaene du sender inn.",
+  "capture.off_access_given": "Av. Ferret ser ikke på skjemaene du sender inn. Ferret har allerede tilgang til https-sider, så det spørres ikke igjen når du slår det på.",
   "capture.on": "På. Ferret tilbyr å lagre et nytt passord eller oppdatere et endret etter at du har sendt inn et skjema.",
   "capture.reload": "Faner som allerede er åpne, begynner å legge merke til passord når du laster dem på nytt.",
   "capture.switch": "Tilby å lagre og oppdatere passord",
