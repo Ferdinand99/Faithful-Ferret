@@ -63,6 +63,7 @@ export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/pages/offerCards.mjs": "export {};\n",
   "src/pages/olderState.mjs": "export {};\n",
   "src/pages/page.mjs": "export {};\n",
+  "src/pages/pinUnlockView.mjs": "export {};\n",
   "src/pages/popup.mjs": "export {};\n",
   "src/pages/popupList.mjs": "export {};\n",
   "src/pages/popupTabs.mjs": "export {};\n",

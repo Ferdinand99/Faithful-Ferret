@@ -145,3 +145,60 @@
     border-color: CanvasText;
   }
 }
+
+/* The PIN part of the popup's locked view (pinUnlockView.mjs): the form takes the place of the master password's form, and
+   either one is hidden with the attribute. */
+.ff-form[hidden] {
+  display: none;
+}
+
+.ff-pin-unlock {
+  min-width: 0;
+}
+
+.ff-pin-unlock p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ff-pin-unlock .ff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* The line the page speaks through is always in the page, so a change in it is read out; it takes no room while it is empty. */
+.ff-pin-live:empty {
+  display: block;
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.ff-pin-live:not(:empty) {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--bad-fill);
+  color: var(--bad-text);
+}
+
+.ff-pin-live[data-kind="info"]:not(:empty) {
+  background: var(--info-fill);
+  color: var(--info-text);
+}
+
+.ff-pin-countdown {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ff-pin-countdown[hidden] {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .ff-pin-live:not(:empty) {
+    border: 1px solid CanvasText;
+  }
+}
