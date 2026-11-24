@@ -48,6 +48,7 @@ RUN set -eu; \
         set -- /wasm-in/ferret-core-wasm-web-*.tar.gz; \
         if [ "$#" != 1 ] || [ ! -f "$1" ]; then echo "wasm-package/ must hold exactly one ferret-core-wasm-web-*.tar.gz" >&2; exit 1; fi; \
         if [ "$WASM_SOURCE" = release ]; then \
+          if [ -z "$REVISION" ]; then echo "WASM_SOURCE=release is for a release image: it needs a REVISION" >&2; exit 1; fi; \
           node scripts/build.mjs --wasm release --wasm-tar "$1" --wasm-sha256 "$WASM_SHA256"; \
         else \
           if [ -n "$REVISION" ]; then echo "a release image (REVISION is set) cannot carry a WebAssembly package built from the tree" >&2; exit 1; fi; \

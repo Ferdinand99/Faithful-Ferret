@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readZip } from "../../scripts/lib/archive.mjs";
@@ -314,12 +314,23 @@ test("a_release_build_refuses_a_tree_built_wasm", async () => {
     // The check of a finished release package reads the record beside it: a tree record is a problem;
     // the locked one is clean.
     const built = await build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "release", wasmTar: env.tarPath });
-    assert.deepEqual(wasmRecordProblems(built.xpi), []);
-    assert.deepEqual(wasmRecordProblems(built.dir), []);
-    writeFileSync(built.wasmRecord, `${JSON.stringify({ source: "tree", commit: TREE_COMMIT, sha256: sha256(readFileSync(treeTar)) })}\n`);
-    assert.match(wasmRecordProblems(built.xpi).join(), /from tree, a release package uses the locked one/);
-    // No record, nothing to check.
-    assert.deepEqual(wasmRecordProblems(join(env.dir, "nothing.xpi")), []);
+    assert.deepEqual(wasmRecordProblems(built.xpi, env.webRoot), []);
+    assert.deepEqual(wasmRecordProblems(built.dir, env.webRoot), []);
+    const lock = JSON.parse(readFileSync(join(env.webRoot, "wasm.lock.json"), "utf8"));
+    const record = (/** @type {Record<string, string>} */ fields) => writeFileSync(built.wasmRecord, JSON.stringify(fields));
+    // A record of a tree package, of a package that is not the lock's, or of another version is a problem.
+    record({ source: "tree", commit: TREE_COMMIT, sha256: sha256(readFileSync(treeTar)) });
+    assert.match(wasmRecordProblems(built.xpi, env.webRoot).join(), /from tree, a release package uses the locked one/);
+    record({ source: "lock", version: lock.version, sha256: "1".repeat(64) });
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /not the one in web\/wasm\.lock\.json \(digest\)/);
+    record({ source: "lock", version: "9.9.9", sha256: lock.sha256 });
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /\(version\)/);
+    writeFileSync(built.wasmRecord, "not json");
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /not readable/);
+    // No record at all is a problem too: every build writes one.
+    rmSync(built.wasmRecord);
+    assert.match(wasmRecordProblems(built.xpi, env.webRoot).join(), /no record of where the WASM package came from/);
+    assert.match(wasmRecordProblems(join(env.dir, "nothing.xpi"), env.webRoot).join(), /no record/);
   } finally {
     if (before === undefined) delete process.env.FERRET_WASM_SOURCE;
     else process.env.FERRET_WASM_SOURCE = before;

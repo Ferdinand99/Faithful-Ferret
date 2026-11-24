@@ -65,3 +65,35 @@ pub fn check_release(wasm: &WasmSource) -> Result<(), String> {
         )),
     }
 }
+
+/// What the build script puts into the binary: the source and the SHA-256 (`none` and an empty
+/// digest without a record).
+///
+/// * `record`: the text of `web/dist/wasm-source.json`, if the file is there;
+/// * `release_build`: the build is a release image (`FERRET_RELEASE_BUILD` is set);
+/// * `release_profile`: cargo's release profile;
+/// * `dev_no_web`: the feature that lets a release build go ahead without a web vault.
+///
+/// A record that cannot be read is an error, and so is a tree package in a release image, and a
+/// release-profile build with a vault but no record.
+pub fn decide(
+    record: Option<&str>,
+    release_build: bool,
+    release_profile: bool,
+    dev_no_web: bool,
+) -> Result<(String, String), String> {
+    match record {
+        Some(text) => {
+            let wasm = parse(text)?;
+            if release_build {
+                check_release(&wasm)?;
+            }
+            Ok((wasm.source, wasm.sha256))
+        }
+        None if release_profile && !dev_no_web => Err(
+            "web/dist/wasm-source.json is missing: build the web vault with web/scripts/build.mjs, which writes it"
+                .to_string(),
+        ),
+        None => Ok(("none".to_string(), String::new())),
+    }
+}

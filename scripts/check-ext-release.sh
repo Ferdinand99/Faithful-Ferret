@@ -6,7 +6,9 @@
 # permissions of manifest/permissions.allow.json (no content script, no
 # web-accessible resource, no externally_connectable). Takes .xpi files or
 # unpacked folders; without arguments it checks every
-# extension/dist/ferret-*-release.xpi.
+# extension/dist/ferret-*-release.xpi. It also reads the record that the build writes beside a
+# package (<name>.wasm.json): a package without one, from a source other than the lock, or with a
+# digest or version other than web/wasm.lock.json's, is refused.
 #
 #   scripts/check-ext-release.sh [package ...]
 set -euo pipefail

@@ -33,7 +33,8 @@ const PLANTED = {
 
 /** @param {string} target @returns {{ status: number | null, output: string }} */
 function runCheck(target) {
-  const result = spawnSync("bash", [CHECK, target], { encoding: "utf8" });
+  // The fixture builds sit in <dir>/out next to their web folder <dir>/web, the lock the packages are checked against.
+  const result = spawnSync("bash", [CHECK, "--web-root", join(dirname(target), "..", "web"), target], { encoding: "utf8" });
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 

@@ -122,14 +122,40 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
         assert!(wasm_source::parse(&bad).is_err(), "{bad}");
     }
 
-    // The wiring: the build script applies the check whenever the image is a release build, and the
-    // Dockerfile makes every build that gets a revision one.
+    // What the build script decides, in the four situations that matter (it calls this function).
+    let tree_record = format!(
+        "{{\"source\": \"tree\", \"commit\": \"0123456789abcdef0123456789abcdef01234567\", \"sha256\": \"{SHA}\"}}"
+    );
+    let lock_record = format!("{{\"source\": \"lock\", \"version\": \"0.8.0\", \"sha256\": \"{SHA}\"}}");
+    // a release image with a tree package: refused, in either profile
+    for profile in [true, false] {
+        let refused = wasm_source::decide(Some(&tree_record), true, profile, false).unwrap_err();
+        assert!(refused.contains("tree"), "{refused}");
+    }
+    // a test build may carry it, and says so
+    assert_eq!(
+        wasm_source::decide(Some(&tree_record), false, true, false).unwrap(),
+        ("tree".to_string(), SHA.to_string())
+    );
+    // a release image with the locked package, or this release's own
+    assert_eq!(
+        wasm_source::decide(Some(&lock_record), true, true, false).unwrap(),
+        ("lock".to_string(), SHA.to_string())
+    );
+    assert_eq!(wasm_source::decide(Some(&record("release")), true, true, false).unwrap().0, "release");
+    // no record: an error in a release-profile build with a vault, `none` otherwise
+    assert!(wasm_source::decide(None, true, true, false).is_err());
+    assert!(wasm_source::decide(None, false, true, false).is_err());
+    assert_eq!(wasm_source::decide(None, false, true, true).unwrap().0, "none");
+    assert_eq!(wasm_source::decide(None, false, false, false).unwrap().0, "none");
+    // a record that is not one is an error too
+    assert!(wasm_source::decide(Some("{}"), false, false, false).is_err());
+
+    // The wiring: the build script calls it with the release marker, and the Dockerfile sets the
+    // marker for every build that gets a revision.
     let manifest = env!("CARGO_MANIFEST_DIR");
     let build_rs = std::fs::read_to_string(format!("{manifest}/build.rs")).unwrap();
-    assert!(
-        build_rs.contains("FERRET_RELEASE_BUILD")
-            && build_rs.contains("wasm_source::check_release")
-    );
+    assert!(build_rs.contains("wasm_source::decide(") && build_rs.contains("\"FERRET_RELEASE_BUILD\""));
     let dockerfile =
         std::fs::read_to_string(format!("{manifest}/../../docker/server.Dockerfile")).unwrap();
     assert!(dockerfile.contains("FERRET_RELEASE_BUILD=${REVISION:+1}"));

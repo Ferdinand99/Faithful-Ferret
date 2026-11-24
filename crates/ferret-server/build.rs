@@ -60,19 +60,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=FERRET_RELEASE_BUILD");
     let record = dist.join("wasm-source.json");
     println!("cargo:rerun-if-changed=../../web/dist/wasm-source.json");
-    let (wasm_kind, wasm_sha) = match std::fs::read_to_string(&record) {
-        Ok(text) => {
-            let wasm = wasm_source::parse(&text).unwrap_or_else(|message| fail(&message));
-            if std::env::var_os("FERRET_RELEASE_BUILD").is_some_and(|v| !v.is_empty()) {
-                wasm_source::check_release(&wasm).unwrap_or_else(|message| fail(&message));
-            }
-            (wasm.source, wasm.sha256)
-        }
-        Err(_) if release && !allowed => fail(
-            "web/dist/wasm-source.json is missing: build the web vault with web/scripts/build.mjs, which writes it",
-        ),
-        Err(_) => ("none".to_string(), String::new()),
-    };
+    let release_build = std::env::var_os("FERRET_RELEASE_BUILD").is_some_and(|v| !v.is_empty());
+    let text = std::fs::read_to_string(&record).ok();
+    let (wasm_kind, wasm_sha) =
+        wasm_source::decide(text.as_deref(), release_build, release, allowed)
+            .unwrap_or_else(|message| fail(&message));
     println!("cargo:rustc-env=FERRET_WASM_SOURCE={wasm_kind}");
     println!("cargo:rustc-env=FERRET_WASM_SHA256={wasm_sha}");
 }

@@ -92,7 +92,9 @@ test("the_release_image_web_vault_uses_this_releases_wasm", () => {
   assert.match(dockerfile, /FERRET_RELEASE_BUILD=\$\{REVISION:\+1\}/);
   assert.match(dockerfile, /^ARG WASM_SOURCE=lock$/m, "the default is the lock");
   // The build script of the server checks the record and the release image refuses a tree package.
-  assert.match(read("crates/ferret-server/build.rs"), /wasm_source::check_release/);
+  assert.match(read("crates/ferret-server/build.rs"), /wasm_source::decide\(/);
+  assert.match(dockerfile, /WASM_SOURCE=release is for a release image: it needs a REVISION/);
+  assert.match(workflow("release.yml"), /image-publish:[\s\S]*?needs: \[image, publish\]/);
   assert.doesNotMatch(read("docker/compose.ferret-home.yml"), /WASM_SOURCE|FERRET_WASM/);
 });
 

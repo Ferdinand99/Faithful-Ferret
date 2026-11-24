@@ -323,9 +323,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The image is tagged and signed only after the packages were attached to the release: the package
+  # the image carries (wasm: release <sha256>) is then in the signed SHA256SUMS of that release.
   image-publish:
     name: Publish and sign the server image
-    needs: image
+    needs: [image, publish]
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     # The same protected environment as the packages above.
     environment: release

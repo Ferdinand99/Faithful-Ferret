@@ -249,7 +249,9 @@ case "$*" in
   *RepoDigests*) echo "ghcr.io/ferdinand99/faithful-ferret@sha256:${STUB_DIGEST:-1111111111111111111111111111111111111111111111111111111111111111}" ;;
   *"image inspect"*opencontainers.image.revision*) echo "${STUB_REVISION:-}" ;;
   *"image inspect"*opencontainers.image.version*) echo "${STUB_VERSION:-}" ;;
-  *"--build-info"*) printf 'ferret %s\nfeatures: %s\nwasm: %s\n' "${STUB_BUILD_VERSION:-}" "${STUB_FEATURES:-none}" "${STUB_WASM:-release 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c}" ;;
+  *"--build-info"*)
+    printf 'ferret %s\nfeatures: %s\n' "${STUB_BUILD_VERSION:-}" "${STUB_FEATURES:-none}"
+    [ "${STUB_WASM:-}" = - ] || printf 'wasm: %s\n' "${STUB_WASM:-release 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c}" ;;
   *"logs"*) ;;
 esac
 exit 0
@@ -312,6 +314,7 @@ the_image_has_no_test_features_and_its_revision_is_the_release_tag() {
   STUB_WASM='tree 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c' up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image with a tree-built web vault was started"
   grep -q 'not built with a locked or released WebAssembly package' "$d/err" || fail "up must say why: $(cat "$d/err")"
   STUB_WASM=none up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image without a recorded web vault package was started"
+  STUB_WASM=- up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image that says nothing about its web vault package was started"
   STUB_WASM='lock 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c' up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "an image with the locked package was refused: $(cat "$d/err")"
   STUB_REVISION=0123456789012345678901234567890123456789 up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image of another commit was started"
   grep -q 'not the commit of v9.9.9' "$d/err" || fail "up must say that the revision is not the tag's commit: $(cat "$d/err")"
