@@ -275,12 +275,17 @@ export const STRING_ARGS = {
 
 /**
  * The arguments that the Rust side takes as a `bool` and that decide what the
- * user is told: the BE and BS flags of a new passkey method. `wasm-bindgen`
- * turns any truthy value into `true` (the string `"false"` as well), so they
- * must be booleans here.
+ * user is told or what leaves the vault: the BE and BS flags of a new passkey
+ * method, `sk_bit` of the setup QR, and `include_passkeys` of the plain export
+ * (it puts the private keys of passkeys in the file). `wasm-bindgen` turns any
+ * truthy value into `true` (the string `"false"` as well), so they must be
+ * booleans here.
  */
 export const BOOL_ARGS = {
   manifest_add_method: [4, 5],
+  reveal_plain_export: [2],
+  // `sk_bit` says whether the account has a secret key: the setup QR of the emergency sheet carries it.
+  setup_qr_build: [3],
 };
 
 /** Throws `invalid_input` unless the boolean arguments of a call are booleans. */

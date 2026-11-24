@@ -404,6 +404,13 @@ table behind it, `ferret_unlock_policy`, has one row and is in every backup set;
 rest of the database, and a set from before the table gets the default rule when it is migrated. After a restore, open the
 Unlock tab and check the rule: an emergency "Allow PIN" switched off after the set was made is undone by the restore.
 
+The same build has the routes that add and remove a passkey method (`POST /api/vault/unlock-methods` and
+`DELETE /api/vault/unlock-methods/{id}`); a build without the feature does not mount them (`POST` on the path of the list is answered 405, a `DELETE` on a method 404), and `GET /api/vault/policy`
+then says `prf.enabled: false`. An account holds at most 10 passkey methods. The server keeps the wrap, the credential
+id, the PRF salt and the authenticator model (AAGUID) of each, in `ferret_unlock_methods`, which is in every backup set;
+the name and the synced flag are only in the encrypted manifest. Each change writes one log line (that a passkey method
+was added or removed, and how many the account has), and nothing that names it.
+
 ## Event streams behind a proxy
 
 The change hints are a Server-Sent Events stream (`GET /api/sync/events`). The proxy must not buffer or compress it

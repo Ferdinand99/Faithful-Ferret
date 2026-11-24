@@ -98,6 +98,12 @@ pub enum ChangeKind {
     Recovery,
     /// A recovery with the recovery key.
     Recover,
+    /// A new passkey (PRF) method.
+    #[cfg(feature = "quick-unlock")]
+    AddMethod,
+    /// A passkey (PRF) method removed.
+    #[cfg(feature = "quick-unlock")]
+    RemoveMethod,
 }
 
 /// What a change writes, besides the manifest.
@@ -139,6 +145,26 @@ pub enum UnlockChange {
         /// The new `pk_r`.
         pk_r: [u8; 32],
     },
+    /// A new passkey method: a new row under a new `method_id`, at generation 1.
+    #[cfg(feature = "quick-unlock")]
+    AddMethod {
+        /// Its id.
+        method_id: MethodId,
+        /// The wrap of the vault key under the passkey's key (72 bytes).
+        wrap: Vec<u8>,
+        /// The credential id.
+        credential_id: Vec<u8>,
+        /// The PRF salt of the registration.
+        prf_salt: [u8; 32],
+        /// The authenticator's AAGUID: display data, all zero allowed.
+        aaguid: Option<[u8; 16]>,
+    },
+    /// A passkey method removed.
+    #[cfg(feature = "quick-unlock")]
+    RemoveMethod {
+        /// Its id.
+        method_id: MethodId,
+    },
 }
 
 impl UnlockChange {
@@ -148,19 +174,25 @@ impl UnlockChange {
             UnlockChange::Password { .. } => ChangeKind::Password,
             UnlockChange::Recovery { .. } => ChangeKind::Recovery,
             UnlockChange::Recover { .. } => ChangeKind::Recover,
+            #[cfg(feature = "quick-unlock")]
+            UnlockChange::AddMethod { .. } => ChangeKind::AddMethod,
+            #[cfg(feature = "quick-unlock")]
+            UnlockChange::RemoveMethod { .. } => ChangeKind::RemoveMethod,
         }
     }
 
     /// Whether the change ends the user's other sessions: a new master
     /// password and a recovery do (with the user's pending sign-in codes); a
     /// new recovery key does not, since it changes nothing about how the user
-    /// signs in.
+    /// signs in. Nor does a passkey method added or removed.
     ///
     /// Spec: Fase 1 § 4.6 (after an MP change and a recovery).
     pub fn ends_other_sessions(&self) -> bool {
         match self {
             UnlockChange::Password { .. } | UnlockChange::Recover { .. } => true,
             UnlockChange::Recovery { .. } => false,
+            #[cfg(feature = "quick-unlock")]
+            UnlockChange::AddMethod { .. } | UnlockChange::RemoveMethod { .. } => false,
         }
     }
 }
@@ -171,6 +203,10 @@ impl fmt::Debug for UnlockChange {
             UnlockChange::Password { .. } => "UnlockChange::Password([redacted])",
             UnlockChange::Recovery { .. } => "UnlockChange::Recovery([redacted])",
             UnlockChange::Recover { .. } => "UnlockChange::Recover([redacted])",
+            #[cfg(feature = "quick-unlock")]
+            UnlockChange::AddMethod { .. } => "UnlockChange::AddMethod([redacted])",
+            #[cfg(feature = "quick-unlock")]
+            UnlockChange::RemoveMethod { .. } => "UnlockChange::RemoveMethod([redacted])",
         })
     }
 }
@@ -297,7 +333,7 @@ where
         return Err(write_conflict());
     }
 
-    write_change(&tx, writer, &account, &authorized.change)?;
+    write_change(&tx, writer, &account, &authorized.change, now)?;
     let seq = write_manifest(&tx, &account.vault, &manifest, &authorized.manifest, now)?;
 
     let keeps_asking = writer.keep_session && authorized.session_effect == ScopeEffect::Keep;
@@ -554,11 +590,13 @@ fn check_basis(basis: &WriteBasis, read: &SignedAccount) -> Result<(), ApiError>
 // ----------------------------------------------------------------- writes
 
 /// Writes the account and the wraps of `change`, each against what was read.
+#[cfg_attr(not(feature = "quick-unlock"), allow(unused_variables))]
 fn write_change(
     tx: &Transaction<'_>,
     writer: &Writer,
     account: &StoredAccount,
     change: &UnlockChange,
+    now: i64,
 ) -> Result<(), ApiError> {
     match change {
         UnlockChange::Password {
@@ -601,7 +639,140 @@ fn write_change(
             write_wrap(tx, &writer.account, &password, pw_wrap, *pw_generation)?;
             write_wrap(tx, &writer.account, &recovery, rk_wrap, *rk_generation)
         }
+        #[cfg(feature = "quick-unlock")]
+        UnlockChange::AddMethod {
+            method_id,
+            wrap,
+            credential_id,
+            prf_salt,
+            aaguid,
+        } => {
+            // As at registration, the id of the account or of its vault is
+            // not a method id.
+            if method_id.as_bytes() == writer.account.as_bytes()
+                || method_id.as_bytes() == account.vault.as_bytes()
+            {
+                return Err(ApiError::coded("bad_request"));
+            }
+            add_method(
+                tx,
+                &writer.account,
+                now,
+                &NewPrfMethod {
+                    method_id,
+                    wrap,
+                    credential_id,
+                    prf_salt,
+                    aaguid: aaguid.as_ref(),
+                },
+            )
+        }
+        #[cfg(feature = "quick-unlock")]
+        UnlockChange::RemoveMethod { method_id } => remove_method(tx, &writer.account, method_id),
     }
+}
+
+/// `method_type` of a passkey.
+#[cfg(feature = "quick-unlock")]
+const TYPE_PRF: i64 = 3;
+
+/// The most passkey methods an account holds.
+#[cfg(feature = "quick-unlock")]
+pub const MAX_PRF_METHODS: i64 = 10;
+
+/// A passkey method as a request brings it.
+#[cfg(feature = "quick-unlock")]
+struct NewPrfMethod<'a> {
+    method_id: &'a MethodId,
+    wrap: &'a [u8],
+    credential_id: &'a [u8],
+    prf_salt: &'a [u8; 32],
+    aaguid: Option<&'a [u8; 16]>,
+}
+
+/// Adds a passkey method at generation 1, on the conditions that the
+/// account holds fewer than [`MAX_PRF_METHODS`] passkeys (`413
+/// quota_exceeded`), that none of its methods has this credential id and
+/// that no method of any account has this id (`409 conflict`; one answer, so
+/// it does not tell whose id is taken).
+#[cfg(feature = "quick-unlock")]
+fn add_method(
+    tx: &Transaction<'_>,
+    account: &AccountId,
+    now: i64,
+    method: &NewPrfMethod<'_>,
+) -> Result<(), ApiError> {
+    let (passkeys, same_credential): (i64, i64) = tx
+        .query_row(
+            "SELECT COALESCE(SUM(method_type = ?2), 0), COALESCE(SUM(credential_id = ?3), 0)
+             FROM ferret_unlock_methods WHERE account_id = ?1",
+            params![account.as_bytes(), TYPE_PRF, method.credential_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql)?;
+    if same_credential > 0 {
+        return Err(ApiError::coded("conflict"));
+    }
+    if passkeys >= MAX_PRF_METHODS {
+        return Err(ApiError::coded("quota_exceeded"));
+    }
+    let inserted = tx
+        .execute(
+            "INSERT INTO ferret_unlock_methods
+               (method_id, account_id, method_type, wrap, kek_generation, credential_id,
+                prf_salt, aaguid, created_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8)
+             ON CONFLICT(method_id) DO NOTHING",
+            params![
+                method.method_id.as_bytes(),
+                account.as_bytes(),
+                TYPE_PRF,
+                method.wrap,
+                method.credential_id,
+                method.prf_salt.as_slice(),
+                method.aaguid.map(<[u8; 16]>::as_slice),
+                now,
+            ],
+        )
+        .map_err(sql)?;
+    if inserted == 1 {
+        Ok(())
+    } else {
+        Err(ApiError::coded("conflict"))
+    }
+}
+
+/// Removes a passkey method of the account: `404` for an id the account does
+/// not have, `400` for the password or the recovery wrap (they are replaced,
+/// never removed).
+#[cfg(feature = "quick-unlock")]
+fn remove_method(
+    tx: &Transaction<'_>,
+    account: &AccountId,
+    method_id: &MethodId,
+) -> Result<(), ApiError> {
+    let method_type: Option<i64> = tx
+        .query_row(
+            "SELECT method_type FROM ferret_unlock_methods
+             WHERE method_id = ?1 AND account_id = ?2",
+            params![method_id.as_bytes(), account.as_bytes()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql)?;
+    match method_type {
+        None => return Err(ApiError::not_found()),
+        Some(TYPE_PRF) => {}
+        Some(_) => return Err(ApiError::coded("bad_request")),
+    }
+    let removed = tx
+        .execute(
+            "DELETE FROM ferret_unlock_methods
+             WHERE method_id = ?1 AND account_id = ?2 AND method_type = ?3",
+            params![method_id.as_bytes(), account.as_bytes(), TYPE_PRF],
+        )
+        .map_err(sql)?;
+    one_row(removed)
 }
 
 /// Replaces the record (with its profile) and `pk_r` that are given, on the

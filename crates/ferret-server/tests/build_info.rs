@@ -28,7 +28,12 @@ const HOOK_MARKERS: [&str; 3] = ["FERRET_E2E_CLOCK_FILE", "e2e-clock", "e2e_cloc
 /// path of the Unlock tab of the admin pages. Each part of the feature that has a route or a page of its own adds its
 /// path here, in the change that adds it.
 #[cfg(not(feature = "quick-unlock"))]
-const UNLOCK_MARKERS: [&str; 3] = ["quick-unlock", "quick_unlock", "/settings/unlock"];
+const UNLOCK_MARKERS: [&str; 4] = [
+    "quick-unlock",
+    "quick_unlock",
+    "/settings/unlock",
+    "prf_routes",
+];
 
 /// The features line that this build must print, in the order of `active_features`.
 fn expected_features() -> String {

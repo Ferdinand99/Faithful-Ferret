@@ -523,6 +523,7 @@ fn method_row(wrap: &WrapJson, wrap_len: usize, pending: &Pending) -> Result<Met
         || wrap.method_id == pending.vault_id
         || wrap.credential_id.is_some()
         || wrap.prf_salt.is_some()
+        || wrap.aaguid.is_some()
     {
         return Err(ApiError::coded("bad_request"));
     }

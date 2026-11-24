@@ -353,11 +353,10 @@ test("bool_args_table_matches_the_rust_signatures", async () => {
     }
   }
   assert.deepEqual(Object.fromEntries(Object.entries(found).filter(([m]) => m in BOOL_ARGS)), BOOL_ARGS);
-  // The other exports that take a `bool` have no check yet: the plain export's
-  // `include_passkeys` and the `sk_bit` of a setup QR. Listed, so that a new
-  // one is a decision and not an oversight.
+  // Every export that takes a `bool` is checked, so a new one has to be listed
+  // in `BOOL_ARGS` (a decision, not an oversight).
   const unchecked = Object.keys(found).filter((m) => !(m in BOOL_ARGS)).sort();
-  assert.deepEqual(unchecked, ["reveal_plain_export", "setup_qr_build"]);
+  assert.deepEqual(unchecked, []);
 });
 
 test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async () => {
