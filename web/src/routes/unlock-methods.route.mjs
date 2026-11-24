@@ -26,11 +26,13 @@ export default {
         el("p", null, t("methods.unavailable"))));
     }
     const reauth = pageReauth({ t, session, scope: vault.scope });
+    // The passkey is tied to the exact host the page was delivered from, never to a parent domain.
+    const site = globalThis.location?.hostname ?? "";
     return vault.page(unlockMethodsView({
       t,
-      site: globalThis.location?.hostname ?? "",
+      site,
       load: () => session.listPasskeys(),
-      begin: () => session.beginAddPasskey({ reauth }),
+      begin: () => session.beginAddPasskey(site === "" ? { reauth } : { reauth, rpId: site }),
       remove: (id) => session.removePasskey({ id, reauth }),
       scope: vault.scope,
     }));

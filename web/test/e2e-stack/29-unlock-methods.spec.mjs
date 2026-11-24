@@ -135,7 +135,8 @@ test("add_lock_and_unlock_with_a_prf_method_then_remove_it", async ({ browser, b
     await page.locator('[data-role="dialog-confirm"]').click();
     const done = page.locator('[data-role="methods-done"]');
     const dialog = page.locator('[data-role="reauth-dialog"]');
-    await expect(done.or(dialog)).toBeVisible({ timeout: SLOW });
+    // Either the removal went through (the check was still fresh) or the page asks for the password again.
+    await expect(page.locator('[data-role="methods-done"]:not([hidden]), [data-role="reauth-dialog"]')).toBeVisible({ timeout: SLOW });
     if (await dialog.isVisible()) await answerReauth(page);
     await expect(done).toBeVisible({ timeout: SLOW });
     await expect(done).toContainText("was removed");
