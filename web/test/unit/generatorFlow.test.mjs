@@ -209,7 +209,7 @@ test("generate_fills_the_password_input_from_the_core_with_the_options_of_the_pa
     assert.equal(find(root, "password").value, "GEN-1");
     assert.equal(find(root, "password").getAttribute("type"), "text", "shown through the toggle of the form");
     assert.equal(find(root, "password-toggle").getAttribute("aria-pressed"), "true");
-    assert.equal(find(root, "password-toggle").getAttribute("aria-label"), "vault.edit.password_hide");
+    assert.equal(find(root, "password-toggle").getAttribute("aria-label"), "vault.edit.password_show", "one name; only aria-pressed changes");
     assert.ok(textOf(find(root, "status")).includes("vault.edit.generated"));
     assert.ok(!textOf(find(root, "status")).includes("GEN-1"), "the message does not repeat the value");
     // The toggle hides it again, and a new click makes a new one.
