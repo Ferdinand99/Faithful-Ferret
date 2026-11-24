@@ -50,10 +50,17 @@ test("shortcut_and_menu_each_fill_the_fixture_login", async () => {
       await session.switchTo(extensionTab);
       const signedIn = await extensionSignIn(session, account);
       assert.equal(signedIn.ok, true, `${channel}: ${signedIn.text}`);
-      await session.navigate(POPUP_URL);
-      await page.ready();
+      // Searched by name: the "All" list shows the first 40 items by name only, and an account shared with an earlier
+      // channel's run holds more than that.
       await session.waitFor(
-        () => session.content((/** @type {string} */ wanted) => [...document.querySelectorAll('[data-role="row-name"]')].some((n) => n.textContent?.includes(wanted)), name),
+        async () => {
+          await session.navigate(POPUP_URL);
+          await page.ready();
+          await page.waitVisible('[data-role="unlocked-view"]', SLOW);
+          await page.type('[data-role="search"]', name);
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          return session.content((/** @type {string} */ wanted) => [...document.querySelectorAll('[data-role="row-name"]')].some((n) => n.textContent?.includes(wanted)), name);
+        },
         SLOW,
         "the login in the extension's list",
       );

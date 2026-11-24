@@ -144,6 +144,7 @@ back and checks that the vault still syncs.
 
 `scripts/lanbox-ext.sh gate` runs the firefox step, the e2e step (these two specs included) and then the matrix of the corpus,
 of the hold-out set and of the parity set, one channel at a time, each on a stack of its own.
+`docs/TESTING-U2.md` says how to run the sets, what the gate asks, the explained misses and where the reports are saved.
 
 ### Timing bounds
 
