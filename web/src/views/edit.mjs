@@ -14,6 +14,11 @@
 // when the form is saved, cancelled, frozen, wiped by a lock or put back in a screen, and a form that is built anew starts
 // hidden. Whether it is shown is held in the `type` of the input and nowhere else: never in a URL, a store or a message.
 //
+// "Generate a password" fills the password input with a new value from the core (the options of the generator page; the value
+// is made in the vault worker, never in this file) and shows it, so the user sees what was filled in. A new item can also start
+// with the password that the generator page left for it (`initialPassword`, taken once by the route); it starts hidden.
+// Either way the value is in the password input and nowhere else, and the wipes above take it.
+//
 // Changes that are not saved live in the form and nowhere else: never in a store, a URL or a message. When
 // the vault moves to another tab (`tracker`), the form is kept on screen read-only (`freeze`) and goes on
 // when the vault comes back (`thaw`); a lock wipes it as it wipes every screen. The form tells whether it
@@ -22,6 +27,8 @@ import { el, mount } from "../dom.mjs";
 import { folderIndex } from "../folders.mjs";
 import { canChange, codeOf, describeError, listenWhileShown, markBadges } from "./common.mjs";
 import { FOLDER_ERRORS, folderPicker } from "./folderPicker.mjs";
+import { createOptionsStore } from "../generatorPrefs.mjs";
+import { ERROR_CODES as GENERATOR_ERRORS, makeValue } from "./generatorModel.mjs";
 import { typeLabel } from "./item.mjs";
 
 const TYPES = Object.freeze(["login", "note"]);
@@ -65,10 +72,15 @@ function scrub(draft) {
  *   scope?: { add(fn: () => void): () => void },
  *   tracker?: { trackUnsaved(form: UnsavedForm): () => void },
  *   locale?: string,
- * }} options `id` is null for a new item; `tracker` is told about the form's unsaved edits (the sync service)
+ *   initialPassword?: string | null,
+ *   generatorStore?: ReturnType<typeof createOptionsStore>,
+ * }} options `id` is null for a new item; `tracker` is told about the form's unsaved edits (the sync service);
+ *   `initialPassword` is a password the generator page left for a new item; `generatorStore` holds the generator's options
  * @returns {Promise<HTMLElement>}
  */
-export async function editView({ engine, client, id, t, go = () => {}, touch = () => true, scope, tracker, locale }) {
+export async function editView({
+  engine, client, id, t, go = () => {}, touch = () => true, scope, tracker, locale, initialPassword = null, generatorStore = createOptionsStore(),
+}) {
   const root = el("section", { class: "edit-view", "data-role": "edit" });
 
   /** @type {any} */
@@ -143,6 +155,10 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     id: "edit-password", label: t("vault.edit.password"), type: "password", autocomplete: "new-password", role: "password", toggle: reveal,
     help: oldPassword ? `${t("vault.edit.password_keep")} ${t("vault.edit.password_history")}` : undefined,
   });
+  /** Whether the vault's client can make a password (a stand-in without the generator shows no button). */
+  const canGenerate = typeof client?.vault?.generate_password === "function" && typeof client?.vault?.generate_passphrase === "function";
+  const generate = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "password-generate" }, t("vault.edit.generate")));
+  if (canGenerate) password.row.appendChild(el("div", { class: "actions gen-fill" }, generate));
   const url = field({ id: "edit-url", label: t("vault.edit.url"), role: "url" });
   const notes = field({ id: "edit-notes", label: t("vault.edit.notes"), role: "notes", rows: 6 });
   const favorite = /** @type {HTMLInputElement} */ (el("input", { id: "edit-favorite", type: "checkbox", "data-role": "favorite" }));
@@ -179,6 +195,11 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
   errorBox.hidden = true;
+  if (id === null && typeof initialPassword === "string" && initialPassword !== "") {
+    password.input.value = initialPassword;
+    mount(status, document.createTextNode(t("vault.edit.generated_prefill")));
+  }
+  initialPassword = null;
   const loadNotes = el("button", { type: "button", class: "btn btn-secondary", "data-role": "load-notes" }, t("vault.edit.notes_load"));
   if (notesLoaded) {
     mount(notesSlot, notes.row);
@@ -232,6 +253,25 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     showPassword(!shown);
   });
 
+  /** Counts the calls to the generator: a reply that is not the newest, or comes after the form was saved or wiped, is dropped. */
+  let generating = 0;
+  generate.addEventListener("click", async () => {
+    if (frozen || settled || !touch()) return;
+    generating += 1;
+    const mine = generating;
+    errorBox.hidden = true;
+    try {
+      const made = await makeValue(client, generatorStore.read());
+      if (mine !== generating || frozen || settled) return;
+      password.input.value = made.value;
+      showPassword(true);
+      mount(status, document.createTextNode(t("vault.edit.generated")));
+    } catch (error) {
+      if (mine !== generating || settled) return;
+      showError(GENERATOR_ERRORS.includes(codeOf(error)) ? t("generator.error.options") : describeError(t, error));
+    }
+  });
+
   /** The form was saved or wiped: it holds nothing to lose any more. */
   let settled = false;
   /** The form is read-only: the vault is in another tab. */
@@ -247,6 +287,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
     picker.wipe();
     notesLoaded = false;
     settled = true;
+    generating += 1;
     for (const forget of leave.splice(0)) forget();
   }
 
@@ -269,7 +310,7 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
       else input.removeAttribute?.("readonly");
     }
     if (on) showPassword(false);
-    for (const control of [favorite, typeSelect, save, loadNotes, reveal]) {
+    for (const control of [favorite, typeSelect, save, loadNotes, reveal, generate]) {
       /** @type {any} */ (control).disabled = on;
     }
     picker.setReadOnly(on);

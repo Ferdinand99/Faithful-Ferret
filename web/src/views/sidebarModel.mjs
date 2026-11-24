@@ -1,9 +1,8 @@
 // What the side menu holds, as plain data: no DOM, no secrets. The entries come
 // from the routes (a route that says `sidebar: { section, order, ... }` is listed),
-// so there is no second list of pages here. Two things are not routes yet and
-// are listed as "coming soon" entries without a link (the generator and the
-// health check), and the folders the user pinned are entries of their own.
-// sidebar.mjs draws this.
+// so there is no second list of pages here. One thing is not a route yet and
+// is listed as a "coming soon" entry without a link (the health check), and the
+// folders the user pinned are entries of their own. sidebar.mjs draws this.
 
 /** The sections of the menu, in order. `primary` and `main` have no heading. */
 export const SECTIONS = Object.freeze(["primary", "main", "pinned", "tools", "manage"]);
@@ -47,9 +46,8 @@ export const ICONS = Object.freeze([
  * @property {SidebarEntry[]} entries
  */
 
-/** What is listed before any route says so: the pages that are planned and have no page yet. */
+/** What is listed before any route says so: the page that is planned and has no page yet. */
 const SOON = Object.freeze([
-  { id: "generator", section: "tools", order: 10, icon: "generator", label: "shell.nav.generator", role: "nav-generator" },
   { id: "health", section: "tools", order: 20, icon: "health", label: "shell.nav.health", role: "nav-health" },
 ]);
 
