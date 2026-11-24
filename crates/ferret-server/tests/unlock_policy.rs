@@ -778,7 +778,8 @@ mod page {
 
         // Each harder change alone: the page says what it deletes, nothing is
         // saved, and the form that comes back carries the confirmation.
-        let cases: [(&[(&str, &str)], &str, &str); 4] = [
+        type Case<'a> = (&'a [(&'a str, &'a str)], &'a str, &'a str);
+        let cases: [Case; 4] = [
             (
                 &[
                     ("pin_allowed", "true"),
