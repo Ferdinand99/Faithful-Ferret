@@ -1,5 +1,5 @@
-//! The vault modules: the unlock methods, the changes feed and the item writes,
-//! and the store behind them.
+//! The vault modules: the unlock methods and the server's rule for quick unlock,
+//! the changes feed and the item writes, and the store behind them.
 //!
 //! **Narrow state.** Nothing under `vault/` names the application state, the
 //! kit's core state, its cookie key or its crypto: the routes are generic over
@@ -23,6 +23,7 @@ pub mod items;
 pub mod methods;
 pub mod notify;
 pub mod password;
+pub mod policy;
 pub mod quota;
 pub mod rate;
 pub mod reconcile;
@@ -89,6 +90,7 @@ where
     Router::new()
         .merge(methods::routes())
         .merge(password::routes())
+        .merge(policy::routes())
         .merge(recovery::routes())
         .merge(recover::routes())
         .merge(import::routes())

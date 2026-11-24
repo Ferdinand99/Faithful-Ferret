@@ -52,7 +52,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0005_sync.sql",
             "0006_restore_seq.sql",
             "0007_reauth.sql",
-            "0008_devices.sql"
+            "0008_devices.sql",
+            "0009_unlock.sql"
         ]
     );
     let mut sorted = names.clone();
@@ -208,6 +209,7 @@ fn schema_matches_section_7() {
             "ferret_restore_rows",
             "ferret_sessions",
             "ferret_unlock_methods",
+            "ferret_unlock_policy",
             "ferret_vaults",
         ]
     );
@@ -644,6 +646,10 @@ fn up_to_0007() -> Vec<(String, String)> {
     files_up_to("0007_reauth.sql")
 }
 
+fn up_to_0008() -> Vec<(String, String)> {
+    files_up_to("0008_devices.sql")
+}
+
 fn no_fixups(_: &mut Connection) -> Result<(), MigrationError> {
     Ok(())
 }
@@ -675,6 +681,18 @@ static BUILD_AT_M3: MigrationSet = MigrationSet {
     core: &CORE_MIGRATIONS,
     adopt_core: None,
     migrations: up_to_0007,
+    fk_off_marker: "-- ff:foreign_keys=off",
+    baseline: None,
+    after: no_fixups,
+};
+
+/// What the release before the unlock rule ran: the kit's core set with the
+/// sign-in codes, and our migrations up to 0008. `tests/fixtures/schema/m5a.sql`
+/// is its schema.
+static BUILD_AT_0008: MigrationSet = MigrationSet {
+    core: &CORE_MIGRATIONS,
+    adopt_core: None,
+    migrations: up_to_0008,
     fk_off_marker: "-- ff:foreign_keys=off",
     baseline: None,
     after: no_fixups,
@@ -1423,7 +1441,7 @@ fn migration_0008_keeps_every_m3_row() {
     assert_eq!(rows_of("sign_in_codes"), 1);
     let schema_before = dump_schema(&conn);
 
-    let applied = apply_migrations(&mut conn).expect("0008 applies over data");
+    let applied = apply_migrations_with(&mut conn, &BUILD_AT_0008).expect("0008 applies over data");
     assert_eq!(applied, ["0008_devices.sql"], "only 0008 was missing");
 
     // Every row of every table that was there is as it was, and so is the
@@ -1439,9 +1457,9 @@ fn migration_0008_keeps_every_m3_row() {
             .expect("count");
         assert_eq!(rows, 0, "{table}");
     }
-    // The same schema as a fresh database of this build.
+    // The same schema as a fresh database of that build.
     let mut fresh = empty_database();
-    apply_migrations(&mut fresh).expect("a fresh database");
+    apply_migrations_with(&mut fresh, &BUILD_AT_0008).expect("a fresh database");
     assert_eq!(schema_after, dump_schema(&fresh));
 }
 
@@ -1463,7 +1481,7 @@ fn golden_entries(text: &str) -> Vec<String> {
 #[test]
 fn schema_after_m5a_matches_the_frozen_schema() {
     let mut conn = empty_database();
-    apply_migrations(&mut conn).expect("migrations apply");
+    apply_migrations_with(&mut conn, &BUILD_AT_0008).expect("migrations apply");
     let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema");
     let path = dir.join("m5a.sql");
@@ -1562,7 +1580,7 @@ fn an_m3_build_refuses_a_database_with_0008() {
     );
     assert_eq!(
         apply_migrations(&mut old).expect("this build"),
-        ["0008_devices.sql"]
+        ["0008_devices.sql", "0009_unlock.sql"]
     );
 }
 
@@ -1615,4 +1633,159 @@ fn deleting_a_user_removes_its_devices_and_tokens() {
         assert_eq!(count(&conn, "ferret_access", "device_id", &[device; 16]), 1);
     }
     assert_eq!(count_user(&conn, "ferret_devices", admin), 2);
+}
+
+// ---------------------------------------------------------------- the unlock rule
+
+#[test]
+fn the_migration_runs_from_0008_in_every_build() {
+    // The schema is not behind a cargo feature: the file is in the list of
+    // every build, and a database of the release before it gets exactly it.
+    let names: Vec<&str> = MIGRATION_FILES.iter().map(|(name, _)| *name).collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).expect(name);
+    assert_eq!(at("0009_unlock.sql"), at("0008_devices.sql") + 1);
+
+    // Additive: one table and the one seeded row, nothing else.
+    let made = statements("0009_unlock.sql");
+    assert_eq!(made.len(), 2, "{made:?}");
+    assert!(made[0].starts_with("CREATE TABLE ferret_unlock_policy ("));
+    assert!(made[1].starts_with("INSERT INTO ferret_unlock_policy"));
+
+    let mut conn = empty_database();
+    apply_migrations_with(&mut conn, &BUILD_AT_0008).expect("the release before");
+    let kept_tables = tables(&conn);
+    assert!(
+        !kept_tables.iter().any(|t| t == "ferret_unlock_policy"),
+        "not there before"
+    );
+    let before = dump_rows(&conn, &kept_tables);
+    let schema_before = dump_schema(&conn);
+
+    let applied = apply_migrations(&mut conn).expect("0009 applies over data");
+    assert_eq!(applied, ["0009_unlock.sql"], "only 0009 was missing");
+    assert_eq!(before, dump_rows(&conn, &kept_tables), "every row kept");
+    let schema_after = dump_schema(&conn);
+    for entry in schema_before.split("\n\n") {
+        assert!(schema_after.contains(entry), "changed: {entry}");
+    }
+    let mut fresh = empty_database();
+    apply_migrations(&mut fresh).expect("a fresh database");
+    assert_eq!(schema_after, dump_schema(&fresh));
+
+    // The seeded row is the default rule.
+    let row: (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT pin_allowed, pin_after_restart, pin_min_length, updated_at \
+             FROM ferret_unlock_policy WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("the seeded row");
+    assert_eq!(row, (1, 1, 6, 0));
+
+    // The release before it refuses a database that has 0009.
+    let refused = apply_migrations_with(&mut conn, &BUILD_AT_0008).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+}
+
+#[test]
+fn the_unlock_policy_table_is_one_strict_row_with_checked_values() {
+    let conn = migrated();
+    let strict: i64 = conn
+        .query_row(
+            "SELECT strict FROM pragma_table_list WHERE name = 'ferret_unlock_policy'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the table");
+    assert_eq!(strict, 1, "STRICT");
+    let write = |sql: &str| conn.execute(sql, []);
+    // The one row is there, and no second row can be made.
+    assert!(
+        write("INSERT INTO ferret_unlock_policy VALUES (2, 1, 1, 6, 0)").is_err(),
+        "a second row"
+    );
+    assert!(
+        write("INSERT INTO ferret_unlock_policy VALUES (1, 1, 1, 6, 0)").is_err(),
+        "the same row twice"
+    );
+    for (what, set) in [
+        ("a length of 3", "pin_min_length = 3"),
+        ("a length of 65", "pin_min_length = 65"),
+        ("a length of 0", "pin_min_length = 0"),
+        ("a flag of 2", "pin_allowed = 2"),
+        ("a flag of -1", "pin_after_restart = -1"),
+        ("a negative time", "updated_at = -1"),
+        ("text for a length", "pin_min_length = 'six'"),
+        ("no length", "pin_min_length = NULL"),
+    ] {
+        assert!(
+            write(&format!("UPDATE ferret_unlock_policy SET {set}")).is_err(),
+            "{what}"
+        );
+    }
+    for length in [4, 64] {
+        assert!(
+            write(&format!(
+                "UPDATE ferret_unlock_policy SET pin_min_length = {length}"
+            ))
+            .is_ok(),
+            "{length}"
+        );
+    }
+}
+
+#[test]
+fn schema_after_0009_matches_the_frozen_schema() {
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema");
+    let path = dir.join("u3.sql");
+    if std::env::var("FERRET_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(&path, &actual).expect("write the frozen schema");
+        return;
+    }
+    let frozen = std::fs::read_to_string(&path)
+        .expect("tests/fixtures/schema/u3.sql")
+        .replace('\r', "");
+    let first_difference = frozen
+        .lines()
+        .zip(actual.lines())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| frozen.lines().count().min(actual.lines().count()))
+        + 1;
+    assert!(
+        frozen == actual,
+        "the schema is not the frozen one. A change of the schema needs a migration and a new \
+         frozen file (FERRET_UPDATE_GOLDEN=1); the first difference is at line {first_difference}"
+    );
+
+    // Against the schema before it: every entry is still there, the same, and
+    // the one table is new.
+    let before = std::fs::read_to_string(dir.join("m5a.sql"))
+        .expect("tests/fixtures/schema/m5a.sql")
+        .replace('\r', "");
+    let old = golden_entries(&before);
+    let new = golden_entries(&frozen);
+    assert!(old.len() > 20, "the entries of m5a.sql were found");
+    for entry in &old {
+        assert!(new.contains(entry), "changed or gone: {entry}");
+    }
+    let added: Vec<String> = new
+        .iter()
+        .filter(|entry| !old.contains(entry))
+        .map(|entry| entry.lines().next().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(added, ["table ferret_unlock_policy"]);
+    for needle in [
+        "id INTEGER PRIMARY KEY CHECK(id = 1)",
+        "pin_min_length INTEGER NOT NULL CHECK(pin_min_length BETWEEN 4 AND 64)",
+    ] {
+        assert!(frozen.contains(needle), "{needle}");
+    }
 }

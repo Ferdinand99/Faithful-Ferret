@@ -386,6 +386,23 @@ vault address is cleared in the browser, and clearing it removes the local cache
 the remembered state of the server. So roll the server back only together with a restore, ask users to send their
 changes first where you can, and tell them to clear the site data of the vault address afterwards.
 
+## The rule for unlocking with a PIN
+
+A build with the cargo feature `quick-unlock` has an **Unlock** tab in the admin settings (`/settings/unlock`,
+administrators only) and tells clients a PIN may be used. The rule has three settings: **Allow PIN** (the emergency
+switch; off, every PIN is deleted on each device at its next contact with the server), **Allow PIN after restart** (on by
+default; off, a PIN may be kept in memory only, and PINs already on disk are deleted at the next contact) and the
+**shortest PIN**, 4 to 64 characters, 6 by default. The page says in words what the rule means: by default the extension
+keeps a PIN encrypted on the user's own computer, and anyone with a copy of the browser profile can try every PIN of the
+shortest length offline, so how long that takes on one powerful computer and on 100 is printed next to the form. A
+stricter rule (a switch turned off, a longer minimum) is announced first and saved only when you confirm. Every change is
+logged with the name of the administrator.
+
+Clients read the rule from `GET /api/vault/policy` (a full session or a device token, `Cache-Control: no-store`, the same
+answer for every account). A server without the route (404), or a build without `quick-unlock`, says "no PIN". The
+table behind it, `ferret_unlock_policy`, has one row and is in every backup set; a restore brings the rule back with the
+rest of the database, and a set from before the table gets the default rule when it is migrated.
+
 ## Event streams behind a proxy
 
 The change hints are a Server-Sent Events stream (`GET /api/sync/events`). The proxy must not buffer or compress it

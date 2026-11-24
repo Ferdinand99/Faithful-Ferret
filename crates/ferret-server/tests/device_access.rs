@@ -1003,11 +1003,12 @@ fn only_the_sync_routes_take_a_token() {
             "vault/events.rs::get_events",
             "vault/items.rs::put_item",
             "vault/methods.rs::get_methods",
+            "vault/policy.rs::get_policy",
             "vault/reconcile.rs::get_items",
             "vault/reconcile.rs::get_restore_rows",
         ]
     );
-    // The files whose code names `VaultCaller`: the extractor and the nine
+    // The files whose code names `VaultCaller`: the extractor and the ten
     // handlers. A handler that takes it through an alias, a wrapper extractor
     // or a macro is not found above, but it is found here, in a file that is
     // not in this list, and the list is then edited on purpose.
@@ -1021,6 +1022,7 @@ fn only_the_sync_routes_take_a_token() {
             "vault/events.rs",
             "vault/items.rs",
             "vault/methods.rs",
+            "vault/policy.rs",
             "vault/reconcile.rs",
         ]
     );

@@ -95,6 +95,12 @@ dev-no-web = []
 # the e2e image is built with it; a release build has neither the code nor the
 # variable name (tests/build_info.rs).
 e2e-clock = []
+# Quick unlock (a PIN, and later a passkey) is offered: the admin page "Unlock"
+# is mounted and `GET /api/vault/policy` says a PIN may be allowed and that the
+# passkey routes exist. Without it the page and the routes are not mounted (404)
+# and the policy route answers that nothing is allowed. The migration that makes
+# the table runs either way (the schema cannot be left out of a build).
+quick-unlock = []
 
 [target.'cfg(unix)'.dependencies]
 # RLIMIT_CORE = 0 at start-up: a safe setrlimit; free disk space (statvfs) before a backup.

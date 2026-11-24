@@ -71,6 +71,8 @@ jobs:
       - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets -- -D warnings
       # The test clock of the end-to-end image.
       - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets --features e2e-clock -- -D warnings
+      # Quick unlock: the Unlock page and the passkey switch are on.
+      - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets --features quick-unlock -- -D warnings
 
   test:
     name: Tests
@@ -84,6 +86,8 @@ jobs:
       - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked
       # The same tests with the test clock of the end-to-end image built in.
       - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked --features e2e-clock
+      # The same tests with quick unlock built in.
+      - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked --features quick-unlock
 
   deny:
     name: cargo-deny

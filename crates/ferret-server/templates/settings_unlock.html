@@ -1,0 +1,60 @@
+{% extends "kit/settings_layout.html" %}
+{% import "kit/macros.html" as m %}
+
+{% block settings_content %}
+{% call m::page_header(tr("unlock.title"), tr("unlock.sub")) %}{% endcall %}
+
+{%- if !view.announce.is_empty() %}
+<div class="callout status-warning" role="alert">
+  <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#alert"></use></svg>
+  <div class="callout-body">
+    <strong class="callout-title">{{ tr("unlock.confirm_title") }}</strong>
+    <p>{{ tr("unlock.confirm_intro") }}</p>
+    <ul>
+      {%- for line in view.announce %}
+      <li>{{ line }}</li>
+      {%- endfor %}
+    </ul>
+    <p>{{ tr("unlock.confirm_outro") }}</p>
+  </div>
+</div>
+{%- endif %}
+
+<form class="form" method="post" action="{{ action }}" novalidate>
+  {%- if view.confirm %}
+  <input type="hidden" name="confirm" value="true">
+  {%- endif %}
+  <section class="form-section" aria-labelledby="sec-pin">
+    <h2 class="form-section-title" id="sec-pin">{{ tr("unlock.pin_title") }}</h2>
+    <div class="card">
+      {{ m::switch("pin_allowed", tr("unlock.pin_allowed"), view.pin_allowed, help=tr("unlock.pin_allowed_help")) }}
+      {{ m::switch("pin_after_restart", tr("unlock.pin_after_restart"), view.pin_after_restart, help=tr("unlock.pin_after_restart_help")) }}
+      <div class="field{% if !view.min_error.is_empty() %} is-invalid{% endif %}">
+        <label class="label" for="f-min_length">{{ tr("unlock.min_length") }}</label>
+        <div class="input-group">
+          <input id="f-min_length" name="min_length" type="number" inputmode="numeric" autocomplete="off" value="{{ view.min_length }}" min="4" max="64" step="1" aria-describedby="f-min_length-help{% if !view.min_error.is_empty() %} f-min_length-error{% endif %}"{% if !view.min_error.is_empty() %} aria-invalid="true"{% endif %}>
+          <span class="input-addon" aria-hidden="true">{{ tr("unlock.min_length_unit") }}</span>
+        </div>
+        <p class="help" id="f-min_length-help">{{ tr("unlock.min_length_help") }}</p>
+        {%- if !view.min_error.is_empty() %}
+        <p class="field-error" id="f-min_length-error">{{ m::icon("alert-circle") }}{{ view.min_error }}</p>
+        {%- endif %}
+      </div>
+    </div>
+  </section>
+
+  <div class="cluster cluster-between">
+    <span></span>
+    <button type="submit" class="btn btn-primary"><span>{{ tr("unlock.save") }}</span></button>
+  </div>
+</form>
+
+<section class="section" aria-labelledby="unlock-explain-title">
+  {% call m::section_head(tr("unlock.explain_title"), "", "unlock-explain-title") %}{% endcall %}
+  <div class="card stack-sm">
+    <p>{{ view.explain.disk }}</p>
+    <p>{{ view.explain.cost }}</p>
+    <p>{{ view.explain.off }}</p>
+  </div>
+</section>
+{% endblock %}

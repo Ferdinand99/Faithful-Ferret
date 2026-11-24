@@ -178,6 +178,33 @@ impl Req {
         self
     }
 
+    /// A form body, as a browser posts a form of the admin pages: the pairs
+    /// percent-encoded as `application/x-www-form-urlencoded`.
+    pub fn form(mut self, pairs: &[(&str, &str)]) -> Self {
+        fn encode(text: &str) -> String {
+            let mut out = String::new();
+            for byte in text.bytes() {
+                match byte {
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        out.push(char::from(byte));
+                    }
+                    other => out.push_str(&format!("%{other:02X}")),
+                }
+            }
+            out
+        }
+        let body = pairs
+            .iter()
+            .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        self.builder = self
+            .builder
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        self.body = Body::from(body);
+        self
+    }
+
     /// What a page of listener `which` sends with a `fetch`: its `Origin` and
     /// the protocol header.
     pub fn page_fetch(self, which: Which) -> Self {

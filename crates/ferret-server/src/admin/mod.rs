@@ -1,6 +1,7 @@
 //! The admin listener's own routes: the redirects that stand in for the kit's
 //! password pages, the hand-over page, the signed-out page, the Backup page
-//! ([`panel`]) and the guard that wraps the kit's pages.
+//! ([`panel`]), the Unlock page (`unlock`, with the cargo feature
+//! `quick-unlock`) and the guard that wraps the kit's pages.
 //! The kit's pages themselves are mounted in `server::admin_router`.
 //!
 //! The admin listener never has a password field, never loads WASM and serves
@@ -13,6 +14,8 @@ pub mod panel;
 pub mod redirects;
 pub mod settings;
 pub mod signed_out_page;
+#[cfg(feature = "quick-unlock")]
+pub mod unlock;
 
 use axum::Router;
 use axum::extract::FromRef;
@@ -21,10 +24,13 @@ use crate::config::Origins;
 use crate::state::FerretState;
 
 /// Ferret's own pages that need a full admin session: the Backup page and its
-/// action. `server::admin_router` puts them behind the same guard as the kit's
-/// pages.
+/// action, and (with the cargo feature `quick-unlock`) the Unlock page.
+/// `server::admin_router` puts them behind the same guard as the kit's pages.
 pub fn protected_routes() -> Router<FerretState> {
-    panel::routes()
+    let routes = panel::routes();
+    #[cfg(feature = "quick-unlock")]
+    let routes = routes.merge(unlock::routes());
+    routes
 }
 
 /// The routes of the admin listener that are not the kit's and need no session.
