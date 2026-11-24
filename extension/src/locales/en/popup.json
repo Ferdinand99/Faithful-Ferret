@@ -67,5 +67,9 @@
   "popup.error.sync_not_running": "The sync has not started, so the vault's items are not here yet. Lock and unlock to try again.",
   "popup.grant.title": "Frames waiting for your permission",
   "popup.grant.hint": "A frame of this site has a sign-in form that one of your items matches. Ferret may fill it once you allow its host.",
-  "popup.grant.open": "Allow"
+  "popup.grant.open": "Allow",
+  "popup.bar.label": "Navigation",
+  "popup.bar.vault": "Vault",
+  "popup.bar.health": "Health",
+  "popup.bar.soon": "Coming soon"
 }

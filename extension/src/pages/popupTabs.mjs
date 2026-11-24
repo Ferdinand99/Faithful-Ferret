@@ -48,15 +48,16 @@ export function createPopupTabs({ texts, vault, makeGenerator, onSettings }) {
     );
 
   /** @type {Partial<Record<Part, HTMLElement>>} */
-  const buttons = { vault: item({ role: "tab-vault", icon: "vault", label: texts.t("generator.tab.vault") }) };
+  const buttons = { vault: item({ role: "tab-vault", icon: "vault", label: texts.t("popup.bar.vault") }) };
   if (withGenerator) buttons.generator = item({ role: "tab-generator", icon: "generator", label: texts.t("generator.tab.generator"), feature: true });
-  // Not available yet: no listener, so a click does nothing; `aria-disabled` and the visible tag say so, and the item is out of
-  // the tab order (it is no dead link and no focus trap).
-  const health = item({ role: "tab-health", icon: "health", label: texts.t("generator.tab.health") });
+  // Not available yet: no listener, so a click, Enter or Space does nothing. It stays in the tab order with `aria-disabled`
+  // (the WAI-ARIA authoring practices keep a disabled item of a bar or menu focusable, so that a keyboard or screen reader user
+  // finds it and hears why it does nothing, instead of the bar silently missing an item). Its name is "Health" and the visible
+  // tag "Coming soon" is read with it; the space between them keeps the two words apart in the name.
+  const health = item({ role: "tab-health", icon: "health", label: texts.t("popup.bar.health") });
   health.setAttribute("aria-disabled", "true");
-  health.setAttribute("tabindex", "-1");
-  health.setAttribute("title", texts.t("generator.tab.soon"));
-  health.append(el("span", { class: "ff-tab-soon", "data-role": "tab-soon" }, texts.t("generator.tab.soon")));
+  health.setAttribute("title", texts.t("popup.bar.soon"));
+  health.append(" ", el("span", { class: "ff-tab-soon", "data-role": "tab-soon" }, texts.t("popup.bar.soon")));
   const settings = item({ role: "tab-settings", icon: "settings", label: texts.t("session.settings") });
 
   /** @param {Part} id */
@@ -83,7 +84,7 @@ export function createPopupTabs({ texts, vault, makeGenerator, onSettings }) {
   /** @type {HTMLElement[]} */
   const items = [];
   for (const button of [buttons.vault, buttons.generator, health, settings]) if (button !== undefined) items.push(button);
-  const bar = el("nav", { class: "ff-tabbar", "aria-label": texts.t("generator.tabs.label"), "data-role": "tabs" }, ...items);
+  const bar = el("nav", { class: "ff-tabbar", "aria-label": texts.t("popup.bar.label"), "data-role": "tabs" }, ...items);
   const root = el("div", { class: "ff-tabs", "data-role": "popup-tabs" }, vaultPanel, ...(withGenerator ? [generatorPanel] : []), bar);
   select("vault");
   return { root, select, selected: () => current };

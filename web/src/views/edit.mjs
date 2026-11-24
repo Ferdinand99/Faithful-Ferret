@@ -219,12 +219,14 @@ export async function editView({ engine, client, id, t, go = () => {}, touch = (
 
   /** Whether the password is on the screen as text. */
   let shown = false;
-  /** @param {boolean} on The password input shows its text (`true`) or dots (`false`); the button says which, and what it would do. */
+  /**
+   * @param {boolean} on The password input shows its text (`true`) or dots (`false`). The button has one name ("Show password")
+   * and `aria-pressed` says whether it is on: a label that also flipped would tell a screen reader the state twice.
+   */
   function showPassword(on) {
     shown = on;
     password.input.setAttribute("type", on ? "text" : "password");
     reveal.setAttribute("aria-pressed", on ? "true" : "false");
-    reveal.setAttribute("aria-label", t(on ? "vault.edit.password_hide" : "vault.edit.password_show"));
     revealIcon.setAttribute("data-icon", on ? "eye-off" : "eye");
   }
   reveal.addEventListener("click", () => {

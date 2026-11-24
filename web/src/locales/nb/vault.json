@@ -20,7 +20,6 @@
   "vault.edit.notes_load": "Rediger notatene",
   "vault.edit.password": "Passord",
   "vault.edit.password_history": "Et nytt passord flytter det gamle til Tidligere passord på elementsiden.",
-  "vault.edit.password_hide": "Skjul passord",
   "vault.edit.password_keep": "La feltet stå tomt for å beholde passordet som er lagret.",
   "vault.edit.password_show": "Vis passord",
   "vault.edit.save": "Lagre",
