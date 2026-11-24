@@ -126,7 +126,8 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
     let tree_record = format!(
         "{{\"source\": \"tree\", \"commit\": \"0123456789abcdef0123456789abcdef01234567\", \"sha256\": \"{SHA}\"}}"
     );
-    let lock_record = format!("{{\"source\": \"lock\", \"version\": \"0.8.0\", \"sha256\": \"{SHA}\"}}");
+    let lock_record =
+        format!("{{\"source\": \"lock\", \"version\": \"0.8.0\", \"sha256\": \"{SHA}\"}}");
     // a release image with a tree package: refused, in either profile
     for profile in [true, false] {
         let refused = wasm_source::decide(Some(&tree_record), true, profile, false).unwrap_err();
@@ -142,12 +143,23 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
         wasm_source::decide(Some(&lock_record), true, true, false).unwrap(),
         ("lock".to_string(), SHA.to_string())
     );
-    assert_eq!(wasm_source::decide(Some(&record("release")), true, true, false).unwrap().0, "release");
+    assert_eq!(
+        wasm_source::decide(Some(&record("release")), true, true, false)
+            .unwrap()
+            .0,
+        "release"
+    );
     // no record: an error in a release-profile build with a vault, `none` otherwise
     assert!(wasm_source::decide(None, true, true, false).is_err());
     assert!(wasm_source::decide(None, false, true, false).is_err());
-    assert_eq!(wasm_source::decide(None, false, true, true).unwrap().0, "none");
-    assert_eq!(wasm_source::decide(None, false, false, false).unwrap().0, "none");
+    assert_eq!(
+        wasm_source::decide(None, false, true, true).unwrap().0,
+        "none"
+    );
+    assert_eq!(
+        wasm_source::decide(None, false, false, false).unwrap().0,
+        "none"
+    );
     // a record that is not one is an error too
     assert!(wasm_source::decide(Some("{}"), false, false, false).is_err());
 
@@ -155,7 +167,9 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
     // marker for every build that gets a revision.
     let manifest = env!("CARGO_MANIFEST_DIR");
     let build_rs = std::fs::read_to_string(format!("{manifest}/build.rs")).unwrap();
-    assert!(build_rs.contains("wasm_source::decide(") && build_rs.contains("\"FERRET_RELEASE_BUILD\""));
+    assert!(
+        build_rs.contains("wasm_source::decide(") && build_rs.contains("\"FERRET_RELEASE_BUILD\"")
+    );
     let dockerfile =
         std::fs::read_to_string(format!("{manifest}/../../docker/server.Dockerfile")).unwrap();
     assert!(dockerfile.contains("FERRET_RELEASE_BUILD=${REVISION:+1}"));
