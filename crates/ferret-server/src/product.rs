@@ -117,6 +117,35 @@ const BACKUP_TAB: SettingsTab = SettingsTab {
     access: TabAccess::Admins,
 };
 
+/// The Unlock tab of the settings (`admin::unlock`), for administrators. Only in
+/// a build with the cargo feature `quick-unlock`.
+#[cfg(feature = "quick-unlock")]
+const UNLOCK_TAB: SettingsTab = SettingsTab {
+    id: "unlock",
+    href: crate::admin::unlock::PATH,
+    label: "unlock.tab",
+    icon: "key",
+    access: TabAccess::Admins,
+};
+
+/// The tabs of the settings: the kit's, the Backup tab and, with the cargo
+/// feature `quick-unlock`, the Unlock tab.
+#[cfg(feature = "quick-unlock")]
+const SETTINGS_TABS: &[SettingsTab] = &[
+    SettingsTab::GENERAL,
+    SettingsTab::USERS,
+    BACKUP_TAB,
+    UNLOCK_TAB,
+    SettingsTab::SECURITY,
+];
+#[cfg(not(feature = "quick-unlock"))]
+const SETTINGS_TABS: &[SettingsTab] = &[
+    SettingsTab::GENERAL,
+    SettingsTab::USERS,
+    BACKUP_TAB,
+    SettingsTab::SECURITY,
+];
+
 /// The General page's own part. The kit shows its mail settings on the page
 /// whenever sign-in codes are on and has no switch to hide them, so the page
 /// says what they are for here: nothing. The one field has one value; it holds
@@ -180,12 +209,7 @@ pub static KIT: KitConfig = KitConfig {
             short_label: "nav.settings",
             icon: "gear",
         }],
-        settings_tabs: &[
-            SettingsTab::GENERAL,
-            SettingsTab::USERS,
-            BACKUP_TAB,
-            SettingsTab::SECURITY,
-        ],
+        settings_tabs: SETTINGS_TABS,
         home_url: "https://hedgerow.tools/Faithful-Ferret/",
     },
     // Set on the General page.

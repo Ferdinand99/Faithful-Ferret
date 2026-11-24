@@ -786,6 +786,7 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
         ("POST", "/api/auth/opaque/login/finish"),
         ("POST", "/api/auth/handoff"),
         ("GET", "/api/vault/unlock-methods"),
+        ("GET", "/api/vault/policy"),
         ("GET", "/api/sync/changes"),
         ("GET", "/pkg-web/ferret_core_wasm_bg.wasm"),
         ("GET", "/js/vault.worker.mjs"),

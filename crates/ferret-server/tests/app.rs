@@ -147,6 +147,7 @@ async fn admin_router_does_not_serve_sync_or_opaque_routes() {
         ("GET", "/api/sync/changes"),
         ("PUT", "/api/sync/items/00000000000000000000000000000001"),
         ("GET", "/api/vault/unlock-methods"),
+        ("GET", "/api/vault/policy"),
         ("POST", "/api/auth/opaque/register/start"),
         ("POST", "/api/auth/opaque/register/finish"),
         ("POST", "/api/auth/opaque/login/start"),

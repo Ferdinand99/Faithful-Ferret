@@ -668,6 +668,79 @@ async fn restore_migrates_an_older_set_before_the_bump() {
     drop(state);
 }
 
+/// The unlock rule as a database holds it: the PIN switch, the after-restart
+/// switch and the shortest PIN.
+fn unlock_rule(db: &Path) -> (i64, i64, i64) {
+    peek(db)
+        .query_row(
+            "SELECT pin_allowed, pin_after_restart, pin_min_length \
+             FROM ferret_unlock_policy WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("the unlock rule")
+}
+
+#[tokio::test]
+async fn the_policy_is_in_the_backup_set_and_survives_a_restore() {
+    let scene = new_scene().await;
+    // The set of the scene holds the rule a server starts with.
+    assert_eq!(unlock_rule(&scene.backup.join(DB_FILE)), (1, 1, 6));
+
+    // A rule an administrator set is in the next set, which is a good set.
+    scene
+        .app
+        .state
+        .vault_db
+        .with_conn(|conn| {
+            ferret_server::vault::policy::write(
+                conn,
+                &ferret_server::vault::policy::UnlockPolicy {
+                    pin_allowed: false,
+                    pin_after_restart: false,
+                    pin_min_length: 12,
+                },
+                T2 + 1,
+            )
+        })
+        .await
+        .expect("a rule");
+    let cfg = cfg(&scene.app);
+    let later = make(&scene.app, &cfg, T2 + 60)
+        .await
+        .expect("a set with the rule");
+    let with_rule = cfg.dir.join(&later.name);
+    assert_eq!(unlock_rule(&with_rule.join(DB_FILE)), (0, 0, 12));
+    set::verify(&with_rule, &set::build_migrations()).expect("a good set");
+
+    // The restore puts the rule back with the rest of the database, over the
+    // rule that was in the data directory.
+    assert_eq!(unlock_rule(&scene.data().join(DB_FILE)), (1, 1, 6));
+    restore_scene(&scene, &with_rule).expect("a restore");
+    assert_eq!(unlock_rule(&scene.data().join(DB_FILE)), (0, 0, 12));
+    let state = start_on(scene.data()).await.expect("the server starts");
+    let rule = state
+        .vault_db
+        .with_conn(|conn| ferret_server::vault::policy::read(conn))
+        .await
+        .expect("the rule");
+    assert!(!rule.pin_allowed && !rule.pin_after_restart && rule.pin_min_length == 12);
+    drop(state);
+
+    // A set from before the rule has no table: the restore migrates it and the
+    // default rule is there.
+    let scene = new_scene().await;
+    let (_older, older) = copy_of_backup(&scene, "older-policy");
+    change_set(
+        &older,
+        "DROP TABLE ferret_unlock_policy; \
+         DELETE FROM schema_migrations WHERE name = '0009_unlock.sql';",
+    );
+    set::verify(&older, &set::build_migrations()).expect("an older set is a good set");
+    restore_scene(&scene, &older).expect("a restore");
+    assert_eq!(unlock_rule(&scene.data().join(DB_FILE)), (1, 1, 6));
+}
+
 // ---------------------------------------------------------------- a kill at every step
 
 /// The live files of the data directory are the old ones, the restored ones or
