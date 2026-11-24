@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createDispatcher } from "../../bindings/wasm/js/protocol.mjs";
 import {
-  CTX, PIN_RULE, URL_, codeOf, enc, fill, firstUse, newAccount, pinWrapOf, pinned, root, wasm,
+  CTX, IDS, PIN_RULE, PASSWORD, URL_, codeOf, enc, fill, firstUse, newAccount, pinWrapOf, pinned, root, wasm,
 } from "./helpers.mjs";
 
 const MIB = 1024 * 1024;
@@ -281,4 +281,29 @@ test("wrap_pin_refuses_out_of_memory_and_too_slow", () => {
     wasm.test_pin_limit_ms(10_000);
     wasm.test_release_memory(0);
   }
+});
+
+test("confirm_password_proves_the_password_and_the_account_key_without_making_a_vault", () => {
+  const { server, created, record } = newAccount("confirm-password");
+  const sk = created.vault.reveal_secret_key_code();
+  const login = (password = PASSWORD) => {
+    const job = new wasm.UnlockJob();
+    const ke1 = job.login_start(enc.encode(password), sk);
+    const ke2 = server.login_start(record, IDS.account_id, ke1);
+    job.login_finish(ke2, 1, pinned(created.pinned));
+    return job;
+  };
+  // The right password, against the wrap and the pinned record: nothing comes back, and the job holds nothing after.
+  const job = login();
+  assert.equal(job.confirm_password(URL_, CTX, created.wraps[0], pinned(created.pinned)), undefined);
+  assert.equal(code(() => job.confirm_password(URL_, CTX, created.wraps[0], pinned(created.pinned))), "invalid_input", "the sign-in state is used up");
+  // The wrap opens to a vault key whose account key is not the pinned one: refused (a server that planted a record).
+  const other = newAccount("confirm-password-other");
+  const forged = { ...created.pinned, pk_a: other.created.pinned.pk_a };
+  assert.equal(code(() => login().confirm_password(URL_, CTX, created.wraps[0], pinned(forged))), "pinned_auth_key");
+  // A device confirms against what it has pinned: there is no first use, and a recovery wrap is not a password wrap.
+  assert.equal(code(() => login().confirm_password(URL_, CTX, created.wraps[0], firstUse(true))), "invalid_input");
+  assert.equal(code(() => login().confirm_password(URL_, CTX, created.wraps[1], pinned(created.pinned))), "invalid_input");
+  // A wrap for another epoch than the pinned one is refused too.
+  assert.equal(typeof code(() => login().confirm_password(URL_, { ...CTX, vk_epoch: 2 }, created.wraps[0], pinned(created.pinned))), "string");
 });

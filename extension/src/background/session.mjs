@@ -635,6 +635,9 @@ export function createSessionHost({
      * caller has locked, revoked the device and removed the local records first.
      */
     async forget() {
+      // The PIN of the server goes first and is awaited, whatever else fails (the wipe at the lock for a sign-out is not).
+      const server = await storedServer().catch(() => null);
+      if (server !== null) await tell("deviceEnded", server, "signed_out");
       active = null;
       lastAccount = null;
       hosts.clear();

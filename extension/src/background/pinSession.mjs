@@ -3,9 +3,11 @@
 // are the steps around it that only the extension needs, over the same environment (`inner.env`: the crypto client, the
 // device's tokens, the local stores):
 //
-//   verifyPassword   the master password asked again while the vault is open: the OPAQUE steps of an unlock, up to the
-//                    client's check of the server's answer. Nothing is opened (the vault that is open is not touched)
-//                    and nothing is posted: a device's unlock sends `login/start` only.
+//   verifyPassword   the master password asked again while the vault is open: the OPAQUE steps of an unlock, and then the
+//                    core's `confirm_password`: the password wrap the server lists must open to a vault key whose
+//                    account key is the pinned one. A server that planted an OPAQUE record for a password of its own
+//                    cannot pass that. No second vault is made (the vault that is open is not touched) and nothing is
+//                    posted: a device's unlock sends `login/start` only.
 //   pinUnlock        the core's `pin_unlock` with the PIN's blob and the record this device has pinned for its account.
 //                    There is no first use: a device with no pinned record has no PIN to open. It leaves the vault open
 //                    in the vault worker and the session closed: the session is not opened until `finishLocalUnlock`.
@@ -22,7 +24,7 @@
 import { ApiError } from "../shared/api.mjs";
 import { loadDeviceKey } from "../shared/auth/deviceKey.mjs";
 import { b64u, hex16 } from "../shared/b64.mjs";
-import { num, rowToCore, serverMethods, withPassword } from "../shared/crypto/convert.mjs";
+import { num, rowToCore, serverMethods, withPassword, wrapToCore } from "../shared/crypto/convert.mjs";
 import { AccountError, withSkHint } from "../shared/crypto/errors.mjs";
 import { decideSecretKey } from "../shared/flows/signin.mjs";
 import { encodeWire } from "../shared/wire.mjs";
@@ -69,8 +71,9 @@ export function pinSessionMethods(inner) {
   return {
     /**
      * Confirms the master password (and the secret key, when this device does not keep it) for the open vault: the
-     * client's side of the OPAQUE finish succeeds only for the right password, secret key and server. The sign-in
-     * state the core held for it is dropped at the end, and the vault that is open stays open.
+     * client's side of the OPAQUE finish, then the password wrap opened against the pinned record (the generation
+     * floor, the epoch and `pk_a`), without making a vault. The sign-in state the core held for it is dropped at the
+     * end, and the vault that is open stays open. Rejects with the core's code (`decrypt`, `pinned_auth_key`, ...).
      * @param {{ password: string, skCode?: string }} args
      * @returns {Promise<{ accountId: string }>}
      */
@@ -93,6 +96,12 @@ export function pinSessionMethods(inner) {
         } catch (error) {
           throw withSkHint(error, start.sk_hint);
         }
+        // The wrap the server lists must open to the vault key of the pinned account (as at an unlock).
+        const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+        const wraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
+        if (wraps.length !== 1) throw new AccountError("methods_invalid");
+        const ctx = { account_id: hex16.decode(accountId), vault_id: record.vault_id, vk_epoch: methods.vk_epoch };
+        await env.client.vault.confirm_password(env.server, ctx, wrapToCore(wraps[0], start.ksf_profile), { kind: "pinned", record });
       } finally {
         await Promise.resolve(env.client.vault.clear()).catch(() => undefined);
       }
@@ -126,8 +135,11 @@ export function pinSessionMethods(inner) {
 
     /**
      * The checks that follow an unlock, then the session is opened (see the top of this file). Rejects with the code of
-     * a refusal: a `pinned_*` or `method_list_*` code of the core, `epoch_mismatch` (the server's vault key epoch is not
-     * the one the PIN's key has), or the `ApiError` of a request the server refused (the device was revoked).
+     * a refusal: a `pinned_*` or `method_list_*` code of the core, `epoch_mismatch` (the server's vault key epoch is
+     * above the one the PIN's key has: the vault was rekeyed), `pinned_epoch_downgrade` (below it), or the `ApiError` of
+     * a request the server refused (the device was revoked). The generation floors of the unlock methods are those of
+     * `seed_pinned` (from the manifest) and `check_server_methods` (the server's list against the manifest), the same
+     * calls as after a master password; the password wrap itself is not opened here, which is what the PIN replaces.
      * @param {{ accountId: string, vaultId: string, vkEpoch: number, email: string, pinned: Record<string, any> }} ready
      * @returns {Promise<{ checked: boolean }>}
      */
@@ -142,7 +154,9 @@ export function pinSessionMethods(inner) {
         if (!(error instanceof ApiError) || !(error.status === 0 || error.status >= 500)) throw error;
       }
       if (methods !== null) {
-        if (num(methods.vk_epoch) !== num(ready.vkEpoch)) throw new AccountError("epoch_mismatch");
+        // Below the epoch this device has pinned is a downgrade (an attack); above it, the vault was rekeyed since.
+        if (num(methods.vk_epoch) < num(ready.vkEpoch)) throw new AccountError("pinned_epoch_downgrade");
+        if (num(methods.vk_epoch) > num(ready.vkEpoch)) throw new AccountError("epoch_mismatch");
         const manifest = rowToCore(methods.manifest);
         const seeded = await env.client.vault.seed_pinned(ready.pinned, manifest);
         await env.client.vault.check_server_methods(manifest, serverMethods(methods.methods));

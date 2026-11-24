@@ -58,7 +58,13 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
     wraps: 0,
     unlockBehaviour: /** @type {null | ((n: number) => Promise<unknown> | unknown)} */ (null),
     methodsCheck: /** @type {null | (() => unknown)} */ (null),
+    confirmCheck: /** @type {null | (() => unknown)} */ (null),
+    confirmCalls: /** @type {any[]} */ ([]),
     vkEpoch: 1,
+    /** The status of the list of unlock methods: 200, or an answer of the server that is no revocation. */
+    methodsStatus: 200,
+    /** The server never answers. */
+    hang: false,
   };
 
   const server = deviceServer({
@@ -76,10 +82,11 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
       if (state.refresh !== "ok") return answer(401, { error: state.refresh });
       return answer(200, { access_token: token(100 + state.refreshes), refresh_token: token(150 + state.refreshes), token_type: "DPoP", expires_in: 900 });
     },
-    "/api/vault/unlock-methods": () => answer(200, { ...methodsRes(), vk_epoch: state.vkEpoch }),
+    "/api/vault/unlock-methods": () => (state.methodsStatus === 200 ? answer(200, { ...methodsRes(), vk_epoch: state.vkEpoch }) : answer(state.methodsStatus, { error: "throttled" })),
   });
   /** @type {typeof fetch} */
   const fetchImpl = async (input, init) => {
+    if (state.hang) return new Promise(() => {});
     if (!state.online) throw new TypeError("fetch failed");
     return server.fetchImpl(input, init);
   };
@@ -93,16 +100,23 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
       if (state.passwordsSeen.at(-1) !== state.correctPassword) throw coded("decrypt");
       return { ke3: filled(64, 2), server_public_key: filled(32, 9) };
     },
-    pin_unlock: async (/** @type {Uint8Array} */ pin, /** @type {any} */ record, /** @type {any} */ wrap) => {
+    pin_unlock: async (/** @type {Uint8Array} */ pin, /** @type {any} */ record, /** @type {any} */ wrap, /** @type {any} */ rule) => {
       state.unlockCalls += 1;
       state.pinsSeen.push(Buffer.from(pin).toString("utf8"));
       pin.fill(0); // the real client wipes what it was given
       if (state.unlockBehaviour) await state.unlockBehaviour(state.unlockCalls);
       if (wrap.vk_epoch < record.vk_epoch_max) throw coded("pin_stale");
+      // Before any key stretching, as the core does.
+      if (!rule.allowed) throw coded("pin_not_allowed");
+      if ([...state.pinsSeen.at(-1)].length < rule.min_length) throw coded("input_too_short");
       if (state.pinsSeen.at(-1) !== state.correctPin) throw coded("decrypt");
       return { pinned: record };
     },
     check_server_methods: () => state.methodsCheck?.(),
+    confirm_password: (/** @type {string} */ _url, /** @type {any} */ ctx, /** @type {any} */ _wrap, /** @type {any} */ pin) => {
+      state.confirmCalls.push({ ctx, kind: pin?.kind });
+      return state.confirmCheck?.();
+    },
   });
   /** @type {any} */ (client).pinWrap = async (/** @type {Uint8Array} */ pin, /** @type {Uint8Array} */ methodId, /** @type {any} */ rule) => {
     const text = Buffer.from(pin).toString("utf8");
@@ -704,6 +718,137 @@ test("the_pin_is_never_stored_logged_or_echoed", async () => {
   assert.deepEqual(Object.keys(/** @type {object} */ (record)).sort(), [
     "createdAt", "deviceSalt", "failures", "highestSeenAt", "lastContactAt", "lastFailureAt", "lastOnlineAt", "methodId", "pinProfile", "rule", "vkEpoch", "wrap",
   ]);
+});
+
+// ------------------------------------------------------------------------------------------------ the review's rounds
+
+test("pin_set_confirms_the_account_key_of_the_password_wrap_without_making_a_vault", async () => {
+  const w = await pinWorld();
+  await w.signIn();
+  const unlocks = w.client.calls.filter((c) => c.method === "unlock_password").length;
+  // The server planted a record for a password of its own: the wrap it lists opens to another vault key.
+  w.state.confirmCheck = () => {
+    throw coded("pinned_auth_key");
+  };
+  assert.deepEqual(await w.setPin(), { ok: false, reason: "wrong_credentials" });
+  assert.equal(w.state.wraps, 0, "no Argon2id and no wrap");
+  assert.equal((await w.status()).set, false);
+  assert.equal(w.coreHost.state(), "unlocked", "the vault that is open stays open");
+  // The check is the core's own, against the pinned record and the wrap the server lists, with the epoch of the list.
+  w.state.confirmCheck = null;
+  assert.deepEqual(await w.setPin(), { ok: true });
+  const call = w.state.confirmCalls.at(-1);
+  assert.equal(call.kind, "pinned");
+  assert.deepEqual(Object.keys(call.ctx).sort(), ["account_id", "vault_id", "vk_epoch"]);
+  assert.equal(call.ctx.vk_epoch, 1);
+  assert.equal(w.client.calls.filter((c) => c.method === "unlock_password").length, unlocks, "no second vault was made");
+});
+
+test("every_refusal_after_a_pin_unlock_that_is_not_an_answer_of_the_server_locks_and_wipes", async () => {
+  // A code that no list knows.
+  let w = await withPin();
+  await w.lockNow();
+  w.state.methodsCheck = () => {
+    throw coded("some_new_refusal");
+  };
+  assert.equal((await w.unlockWithPin()).ok, false);
+  assert.equal(w.coreHost.state(), "locked");
+  assert.equal((await w.status()).set, false);
+  // The server's epoch below the pinned one: a downgrade, the attack warning.
+  w = await withPin();
+  await w.lockNow();
+  w.state.vkEpoch = 0;
+  assert.deepEqual(await w.unlockWithPin(), { ok: false, reason: "attack_warning" });
+  assert.equal((await w.status()).set, false);
+  // An answer of the server that is no revocation (too many requests) locks and keeps the PIN.
+  w = await withPin();
+  await w.lockNow();
+  w.state.methodsStatus = 429;
+  const throttled = await w.unlockWithPin();
+  assert.deepEqual(throttled, { ok: false, reason: "throttled" });
+  assert.equal(w.coreHost.state(), "locked");
+  assert.equal((await w.status()).set, true);
+});
+
+test("a_pin_set_that_is_overtaken_by_a_sign_out_leaves_no_pin_and_a_dead_device_opens_nothing", async () => {
+  const w = await pinWorld();
+  await w.signIn();
+  // The vault locks for a sign-out in the middle of `pin_set`: the wipe of that came before the save.
+  /** @type {any} */ (w.client).pinWrap = async (/** @type {Uint8Array} */ pin, /** @type {Uint8Array} */ methodId) => {
+    await w.coreHost.lock("sign_out");
+    await settle();
+    return { method_id: methodId, wrap: filled(104, 9), device_salt: filled(16, 8), profile: 1, vk_epoch: 1, ms: 5 };
+  };
+  const reply = await w.setPin();
+  assert.deepEqual(reply, { ok: false, reason: "vault_locked" });
+  assert.equal((await w.status()).set, false, "no record is left behind");
+
+  // A device whose tokens have ended opens nothing, even if an earlier wipe never went through.
+  const v = await withPin();
+  await v.lockNow();
+  v.state.refresh = "device_revoked";
+  await v.sessionHost.sessionFor(SERVER).then((session) => session.renewTokens().catch(() => {}));
+  assert.equal((await v.status()).set, true, "the wipe did not run");
+  assert.deepEqual(await v.unlockWithPin(), { ok: false, reason: "pin_wiped" });
+  assert.equal(v.state.unlockCalls, 0, "the core was not asked");
+  assert.equal((await v.status()).set, false);
+});
+
+test("a_failed_attempt_ends_the_worker_that_ran_the_argon2id", async () => {
+  const w = await withPin();
+  await w.lockNow();
+  let locks = w.client.locks;
+  assert.equal((await w.unlockWithPin(WRONG)).reason, "wrong_pin");
+  assert.ok(w.client.locks > locks, "a wrong PIN: the worker that grew is ended");
+  w.advance(40_000);
+  locks = w.client.locks;
+  w.state.unlockBehaviour = async () => {
+    throw coded("kdf_out_of_memory");
+  };
+  assert.equal((await w.unlockWithPin()).reason, "out_of_memory");
+  assert.ok(w.client.locks > locks, "out of memory: the same");
+});
+
+test("unlock_policy_answers_at_once_from_the_cached_rule_when_the_server_is_slow", async () => {
+  const w = await withPin();
+  await w.lockNow();
+  // The server never answers: the popup still gets the rule and the state of the PIN, and does not wait.
+  w.state.hang = true;
+  const started = Date.now();
+  const reply = await w.page.request("unlock_policy", {});
+  assert.ok(Date.now() - started < 1500, "no wait for the server");
+  assert.equal(reply.pin.set, true);
+  assert.equal(reply.pin.min_length, 6);
+  assert.equal(reply.pin.offline_ok, true);
+});
+
+test("a_lost_rule_is_no_permission_a_forget_wipes_awaited_a_short_pin_costs_nothing_and_pin_off_works_locked", async () => {
+  // The cached rule is gone (and the server cannot be reached): the PIN does not open, it goes.
+  let w = await withPin();
+  await w.lockNow();
+  w.idb.databases.get("ferret-unlock")?.stores.get("policy")?.clear();
+  w.state.online = false;
+  assert.deepEqual(await w.unlockWithPin(), { ok: false, reason: "pin_wiped" });
+  assert.equal((await w.status()).set, false);
+
+  // Forgetting the server wipes the PIN in the call itself, whether or not the vault lock did.
+  w = await withPin();
+  await w.sessionHost.forget();
+  assert.equal((await w.status()).set, false);
+
+  // A PIN shorter than the rule, or longer than a PIN can be, is a typo: it has a reason of its own, and costs nothing.
+  w = await withPin();
+  await w.lockNow();
+  const runs = w.state.unlockCalls;
+  assert.deepEqual(await w.unlockWithPin("12345"), { ok: false, reason: "pin_rule", left: 5, wait_ms: 0 });
+  assert.deepEqual(await w.unlockWithPin("x".repeat(65)), { ok: false, reason: "pin_rule", left: 5, wait_ms: 0 });
+  assert.equal(w.state.unlockCalls, runs);
+  assert.equal((await w.status()).failuresLeft, 5);
+
+  // Turning the PIN off needs no key: it works from the locked popup.
+  assert.equal(w.coreHost.state(), "locked");
+  assert.deepEqual(await w.page.request("pin_off", {}), { ok: true });
+  assert.equal((await w.status()).set, false);
 });
 
 test("the_real_protocol_accepts_the_exact_bodies_the_settings_view_sends", async () => {

@@ -47,7 +47,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "argon2_export_key", "argon2_pin_key", "check_code", "check_master_password", "display_host", "ferret_aaguid", "generate_passphrase",
     "generate_password", "import_header",
     "page_origin", "prf_salt_new", "same_site", "setup_qr_build", "setup_qr_parse", "sync_memory_new", "sync_memory_prune", "totp_parse",
-    "UnlockJob.change_password", "UnlockJob.clear", "UnlockJob.create_account", "UnlockJob.login_finish",
+    "UnlockJob.change_password", "UnlockJob.clear", "UnlockJob.confirm_password", "UnlockJob.create_account", "UnlockJob.login_finish",
     "UnlockJob.login_start", "UnlockJob.pin_unlock", "UnlockJob.reauth_grant", "UnlockJob.recover",
     "UnlockJob.recover_done", "UnlockJob.recover_sign", "UnlockJob.register_finish",
     "UnlockJob.register_start", "UnlockJob.rekey", "UnlockJob.unlock_password", "UnlockJob.unlock_prf",

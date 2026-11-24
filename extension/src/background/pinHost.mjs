@@ -24,6 +24,9 @@
 // be the thing that makes a device renew its tokens (the server could tell which devices have a PIN), and a device that
 // has not renewed for the window has a PIN that asks for the server first.
 //
+// `tick` of the store is called from `pin_unlock` too, and a message can therefore make it run: it only raises the highest
+// time seen, which tightens the clock guard, so that is no way to extend the window.
+//
 // The PIN and the master password come in as text in a request, go to the core as bytes that the client wipes, and are
 // never stored, logged or put in a reply or an error. The strings of a request cannot be wiped (L6).
 
@@ -48,13 +51,8 @@ export const POLICY_TIMEOUT_MS = 5000;
 /** What the rule is taken to be for a server that has no PIN route (`GET /api/vault/policy` is a 404): no PIN. */
 const NO_PIN_POLICY = Object.freeze({ pin: Object.freeze({ allowed: false, after_restart: false, min_length: 6 }), prf: Object.freeze({ enabled: false }) });
 
-/** The codes of a refusal that mean "the vault key this blob opens is not the one the server has" or a pinned mismatch. */
-const ATTACK_CODES = new Set([
-  "pinned_account_id", "pinned_account_mismatch", "pinned_auth_key", "pinned_epoch_downgrade", "pinned_floor_downgrade",
-  "pinned_floor_missing", "pinned_identity_changed", "pinned_kek_generation", "pinned_profile_downgrade", "pinned_server_key",
-  "pinned_server_key_changed", "pinned_server_url", "pinned_vault_id", "pinned_vk_epoch", "pinned_missing", "method_list_changed",
-  "method_list_missing", "method_list_unknown", "kdf_profile_downgrade",
-]);
+/** Codes of a worker that was ended or a lock that came: not a refusal of anything, so no reason to delete a PIN. */
+const NOT_A_REFUSAL = new Set(["locked", "vault_locked", "worker_failed", "internal"]);
 
 /** @param {unknown} error @returns {string} */
 const codeOf = (error) => {
@@ -297,8 +295,9 @@ export function createPinHost({
       const server = await sessionHost.storedServer();
       if (server === null) return policyReply(null, null);
       const account = await accountOf(server);
-      // The rule is read from the server when it answers soon; the cached one stands otherwise.
-      await within(fetchPolicy(server), policyTimeoutMs, null).catch(() => null);
+      // The rule as this device last saw it, at once: a slow or absent server must not keep the popup from offering the
+      // PIN. The rule is read again in the background (it deletes a PIN a stricter rule forbids; the next call sees that).
+      void fetchPolicy(server).catch(() => {});
       const policy = await store.cachedPolicy(server).catch(() => null);
       const status = account === null ? null : await store.status(server, account).catch(() => null);
       return policyReply(policy, status);
@@ -315,6 +314,7 @@ export function createPinHost({
     switch (code) {
       case "decrypt":
       case "denied":
+      case "pinned_auth_key":
       case "sk_required":
       case "sk_answer_required":
       case "password_required":
@@ -349,7 +349,8 @@ export function createPinHost({
       if (server === null) return refused({ ok: false, reason: "signed_out" });
       const session = await sessionOf(server);
       const account = await session.deviceAccount?.();
-      if (typeof account !== "string" || session.current()?.accountId !== account) return refused({ ok: false, reason: "vault_locked" });
+      const opened = session.current();
+      if (typeof account !== "string" || opened?.accountId !== account) return refused({ ok: false, reason: "vault_locked" });
 
       // The rule, fresh from the server: a PIN is only set with the network (and a server that has a rule).
       const fetched = await fetchPolicy(server);
@@ -395,6 +396,12 @@ export function createPinHost({
       };
       try {
         await store.save(server, account, blob, { location, acknowledged: acknowledged === true });
+        // A lock, a sign-out or a revocation while this ran (the wipe of that came before the save): the new record has no
+        // device behind it. It goes, and the vault is said to be locked.
+        if (session.current() !== opened || (await session.deviceState()) !== "ok") {
+          await store.wipe(server, account, "signed_out");
+          return refused({ ok: false, reason: "vault_locked" });
+        }
       } catch (error) {
         if (/** @type {any} */ (error)?.name === "PinStoreError") {
           if (codeOf(error) === "acknowledgement_required") return refused({ ok: false, reason: "not_acknowledged" });
@@ -440,6 +447,13 @@ export function createPinHost({
     const server = await sessionHost.storedServer();
     if (server === null) return refused({ ok: false, reason: "pin_unavailable" });
     const session = await sessionOf(server);
+    // A device whose tokens have ended has no PIN that is any use, whether or not an earlier wipe went through.
+    const deviceState = await session.deviceState().catch(() => null);
+    if (deviceState === "revoked" || deviceState === "signed_out") {
+      await wipeServer(server, deviceState === "revoked" ? "device_revoked" : "signed_out");
+      return refused({ ok: false, reason: "pin_wiped" });
+    }
+    if (deviceState !== "ok") return refused({ ok: false, reason: "pin_unavailable" });
     const account = await session.deviceAccount?.();
     if (typeof account !== "string") return refused({ ok: false, reason: "pin_unavailable" });
     await store.tick().catch(() => {});
@@ -462,6 +476,13 @@ export function createPinHost({
 
     const cached = await store.cachedPolicy(server);
     const pin = typeof args.pin === "string" ? args.pin : "";
+    // A PIN shorter than the rule, or longer than a PIN can be, can never be the right one: it is a typo, it costs no
+    // attempt and has a reason of its own for the popup. (The length is what the person just typed, compared with
+    // public numbers.)
+    const length = [...pin.normalize("NFKD")].length;
+    if (length < Math.max(4, cached?.pin.min_length ?? 0) || length > 64 || new TextEncoder().encode(pin.normalize("NFKD")).length > 256) {
+      return refused({ ok: false, reason: "pin_rule", left: status.failuresLeft, wait_ms: status.waitMs });
+    }
     const pinBytes = new TextEncoder().encode(pin);
     /** The refusal to act on once the attempt is counted. @type {WipeReason | null} */
     let wipeAfter = null;
@@ -471,7 +492,8 @@ export function createPinHost({
     let outcome;
     try {
       outcome = await store.attempt(server, account, { online: true }, async (/** @type {PinBlob} */ blob) => {
-        const rule = { allowed: cached?.pin.allowed ?? true, after_restart: cached?.pin.after_restart ?? true, min_length: cached?.pin.min_length ?? blob.rule.minLength };
+        // A rule that is not here is no permission: the core refuses it (`pin_not_allowed`) and the PIN goes.
+        const rule = { allowed: cached?.pin.allowed ?? false, after_restart: cached?.pin.after_restart ?? false, min_length: cached?.pin.min_length ?? blob.rule.minLength };
         try {
           const timedOut = Symbol("timeout");
           const opened = await within(session.pinUnlock({ pin: pinBytes, blob, rule }), unlockTimeoutMs, timedOut);
@@ -494,7 +516,9 @@ export function createPinHost({
 
     // The core opened the vault in the worker but the store does not stand behind it (the record was wiped while the
     // unlock ran: a sign-out, a revocation): the unlock is not to be trusted, and the worker is ended.
-    if (ready !== null && outcome.result !== "ok") await lockHost().catch(() => {});
+    // The Argon2id of a PIN grows the vault worker by 256 MiB and the browser does not take that back: after an attempt
+    // that did not open the vault, the worker is ended and the next call starts a small one.
+    if ((ready !== null && outcome.result !== "ok") || ["wrong", "out_of_memory", "stale"].includes(outcome.result)) await lockHost().catch(() => {});
     if (wipeAfter !== null) {
       await store.wipe(server, account, wipeAfter).catch(() => {});
       if (outcome.result !== "ok") return refused({ ok: false, reason: "pin_wiped" });
@@ -538,9 +562,11 @@ export function createPinHost({
         await store.wipe(server, account, "device_revoked").catch(() => {});
         return refused({ ok: false, reason: "pin_wiped" });
       }
-      // A refusal of what the server says against what this device has pinned: the PIN goes too. The core's code is what
-      // the page shows (the attack warning), as after a master password.
-      if (ATTACK_CODES.has(code)) await store.wipe(server, account, "pinned_rejected").catch(() => {});
+      // Any refusal that is not an answer of the server (a core refusal of what the server says against what this device
+      // has pinned, a list or a row that cannot be read) deletes the PIN, whatever its code: no list of codes decides it.
+      // An answer of the server that is not a revocation (too many requests, a server error) leaves it. The core's code
+      // is what the page shows (the attack warning), as after a master password.
+      if (statusOf(error) === null && !NOT_A_REFUSAL.has(code)) await store.wipe(server, account, "pinned_rejected").catch(() => {});
       throw error;
     }
     // The session opens the vault for the rest of the background (the sync starts); a lock in the meantime refuses it.

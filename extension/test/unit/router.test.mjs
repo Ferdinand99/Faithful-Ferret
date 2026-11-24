@@ -64,6 +64,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("search", { handles: [], total: 0 }),
     record("capture_settings", { ok: true, on: false, permission: false, never: [] }),
     record("pin_unlock", { ok: false, reason: "pin_unavailable" }),
+    record("pin_off", { ok: true }),
     record("unlock_policy", { pin: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false, count: 0 } }),
     record("form_capture", undefined),
     record("form_gone", undefined),
@@ -97,6 +98,7 @@ const requests = {
   capture_settings: () => encode("capture_settings", {}),
   pin_unlock: () => encode("pin_unlock", { pin: "123456" }),
   unlock_policy: () => encode("unlock_policy", {}),
+  pin_off: () => encode("pin_off", {}),
 };
 
 /** The refusal as the page decodes it: a typed reply of the UI channel. @param {string} text */

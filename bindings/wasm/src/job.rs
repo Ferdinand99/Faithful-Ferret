@@ -520,6 +520,54 @@ impl UnlockJob {
         })
     }
 
+    /// Confirms the master password for a device that is already unlocked:
+    /// the same steps as `unlock_password` (the pins, the password wrap
+    /// against the generation floor and the epoch, and the account key
+    /// `pk_a` against the pinned one), but no vault is made and nothing is
+    /// returned. The vault that is open in the worker is not touched, and the
+    /// sign-in state of this job is dropped (the export key included). A
+    /// refusal is the core's code: `pinned_auth_key` when the wrap opens to
+    /// another vault key, `decrypt` for a wrong password. A pin state of
+    /// `first_use` is refused: a device confirms against what it has pinned.
+    pub fn confirm_password(
+        &mut self,
+        server_url: &str,
+        ctx: JsValue,
+        pw_wrap: JsValue,
+        pin: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        run(|| {
+            let pin = from_js::<PinArg>(pin)?.core()?;
+            if !matches!(pin, Pin::Pinned { .. }) {
+                return Err(Fail::Input);
+            }
+            let ctx = from_js::<CtxDto>(ctx)?.core();
+            let rec = from_js::<WrapDto>(pw_wrap)?.core()?;
+            if !matches!(rec.method, Method::Password { .. }) {
+                return Err(Fail::Input);
+            }
+            let done = self.login_done.as_ref().ok_or(Fail::Input)?;
+            let sk_bit = self
+                .input
+                .as_ref()
+                .ok_or(Fail::Input)?
+                .includes_secret_key();
+            let kek = Kek::from_export_key(&ctx.account_id, &done.export_key)?;
+            // The vault this makes is dropped (and wiped) at once.
+            let _ = unlock_server(
+                pin,
+                server_url,
+                Some(sk_bit),
+                Some(done.server_public_key),
+                &ctx,
+                &rec,
+                &kek,
+            )?;
+            self.reset();
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
     // ---------------------------------------- unlock without the password
 
     /// Unlocks with the recovery key as typed (`FFR1-...`) and the recovery

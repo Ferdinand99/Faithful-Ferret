@@ -98,7 +98,7 @@ test("unlock_is_allowed_while_locked_and_sets_lock_at", async () => {
   for (const type of LOCK_EXEMPT) {
     assert.equal(await lock.checkOrLock(type), true, type);
   }
-  assert.deepEqual([...LOCK_EXEMPT], ["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_preview", "forget_server", "form_capture", "form_gone", "page_ready", "capture_settings", "pin_unlock", "unlock_policy"]);
+  assert.deepEqual([...LOCK_EXEMPT], ["sign_in", "unlock", "state", "settings", "lock", "server_check", "sync_state", "forget_preview", "forget_server", "form_capture", "form_gone", "page_ready", "capture_settings", "pin_unlock", "unlock_policy", "pin_off"]);
   // The handler of an unlock touches the lock once the vault is open.
   await coreHost.call("unlock_probe");
   lock.touch();
