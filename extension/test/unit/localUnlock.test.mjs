@@ -194,10 +194,16 @@ test("wipe_never_counts_and_never_runs_the_unlock", async () => {
     // Wiping nothing is fine and writes nothing back.
     await world.store.wipe(SERVER, ACCOUNT, "signed_out");
     assert.equal(diskRecords(world).length, 0);
-    // A wipe has a reason from the list; a typo is refused and nothing is wiped.
+    // A wipe has a reason from the list; one that is not on it still wipes (the safe direction) and is then refused.
     await world.store.save(SERVER, ACCOUNT, makeBlob(), { location, acknowledged: true });
     await assert.rejects(world.store.wipe(SERVER, ACCOUNT, /** @type {any} */ ("whatever")), { code: "bad_reason" });
-    assert.equal((await world.store.status(SERVER, ACCOUNT)).set, true);
+    assert.equal((await world.store.status(SERVER, ACCOUNT)).set, false);
+    await world.store.save(SERVER, ACCOUNT, makeBlob(), { location, acknowledged: true });
+    await assert.rejects(world.store.wipeServer(SERVER, /** @type {any} */ ("whatever")), { code: "bad_reason" });
+    assert.equal((await world.store.status(SERVER, ACCOUNT)).set, false);
+    await world.store.save(SERVER, ACCOUNT, makeBlob(), { location, acknowledged: true });
+    await assert.rejects(world.store.wipeAll(/** @type {any} */ ("whatever")), { code: "bad_reason" });
+    assert.equal((await world.store.status(SERVER, ACCOUNT)).set, false);
   }
   assert.ok(WIPE_REASONS.includes("device_revoked") && WIPE_REASONS.includes("failures") && WIPE_REASONS.includes("forgot_server"));
 });

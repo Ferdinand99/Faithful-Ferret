@@ -55,9 +55,33 @@
 //    so a crash between the two steps still ends in a wipe) and then deletes
 //    it; do not read that as proof that the bytes are gone from the disk.
 //  * The clock is the machine's. Someone who controls it before the extension
-//    has seen a later time can pick the time; the window and the rollback
-//    guard are a limit on a revoked device that is kept offline, not a defence
-//    against whoever controls the machine.
+//    has seen a later time can pick the time, and whoever can set the system
+//    clock can keep an offline PIN usable for as long as they hold the clock
+//    still inside the window's logic. The window and the rollback guard are a
+//    limit on a revoked device that is kept offline, not a defence against
+//    whoever controls the machine. A contact lowers `highestSeenAt` to the
+//    device's own time on purpose: it is how a device that once saw a wrong
+//    clock gets its PIN back after a successful renewal. The time is the
+//    device's, never the server's (a slow clock would lose the offline PIN
+//    altogether, and a frozen clock is not helped by server time anyway).
+//
+// What the caller (the background code that unlocks) must do
+//
+//  * The window always applies. When `status().offlineOk` is false, renew the
+//    token first: success then `markContact`, a revoked, reused or expired
+//    answer then `wipe` with that reason; only then call `attempt`.
+//  * Put a timeout on the unlock it passes to `attempt`. A `tryUnlock` that
+//    never answers holds the one-at-a-time lock of this store until the page
+//    is gone (wipes still go through). The counter is already raised, so a
+//    timeout counts as a failed attempt: answer `{ ok: false, reason: "wrong" }`.
+//  * `save`, `markContact`, `markOnline`, `resetFailures` and `tick` are for
+//    internal background paths only: after a real token renewal, after a
+//    master-password unlock, or inside the PIN-setting flow. Never register
+//    them (or a wrapper) as a `runtime.onMessage` handler or a port message,
+//    and never let a message name a record or a wipe reason it did not earn:
+//    a reachable `markContact` would extend the window and a reachable
+//    `resetFailures` would reset the counter. `save` counts as a contact
+//    (it needs the network and the master password again).
 //
 // The module imports nothing: it takes the IndexedDB factory, the session
 // storage area and the clock from its caller, and it neither logs nor puts a
@@ -595,9 +619,24 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
    * Overwrites a record with zeros (marked as used up) and deletes it. Not a secure delete (see the top of this file).
    * @param {Location} location @param {string} server @param {string} account
    * @param {PinRecord | null} known
+   * @param {Uint8Array} [expect] if given, a record with another `methodId` (a PIN saved meanwhile) is left alone
    */
-  function remove(location, server, account, known) {
+  function remove(location, server, account, known, expect) {
     return writing(async () => {
+      if (expect) {
+        /** @type {PinRecord | null} */
+        let present = null;
+        if (location === "disk") {
+          const db = await database();
+          present = checkRecord(await inTransaction(db, [PIN_STORE], "readonly", (tx) => req(tx.objectStore(PIN_STORE).get([server, account]))));
+        } else {
+          const key = sessionKey(server, account);
+          present = checkRecord(decodeRecord((await session.get(key))[key]));
+        }
+        const other = present !== null && !sameBytes(present.methodId, expect);
+        zeroBlob(present);
+        if (other) return;
+      }
       if (location === "disk") {
         const db = await database();
         try {
@@ -627,8 +666,8 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
 
   /** @param {Location} location @param {string} server @param {string} account @param {WipeReason} reason */
   async function wipeAt(location, server, account, reason) {
-    if (!WIPE_REASONS.includes(reason)) throw new PinStoreError("bad_reason");
     await remove(location, server, account, null);
+    if (!WIPE_REASONS.includes(reason)) throw new PinStoreError("bad_reason");
   }
 
   /** The account ids with a record under a server (or under any server when `server` is null), in both places. @param {string | null} server */
@@ -659,11 +698,13 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
 
   /** @param {Array<[string, string]>} list @param {WipeReason} reason */
   async function wipeList(list, reason) {
-    if (!WIPE_REASONS.includes(reason)) throw new PinStoreError("bad_reason");
+    // A wipe is the safe direction, so it happens first: a reason the list does not know (a typo, an error code of a
+    // later server) still wipes, and is then refused loudly.
     for (const [server, account] of list) {
       await remove("disk", server, account, null);
       await remove("session", server, account, null);
     }
+    if (!WIPE_REASONS.includes(reason)) throw new PinStoreError("bad_reason");
   }
 
   // ------------------------------------------------------------- the policy
@@ -739,14 +780,16 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
     /**
      * One attempt to open the vault with the PIN. `tryUnlock(blob)` is the caller's unlock (the core's `pin_unlock`);
      * it gets a copy of the blob whose buffers are zeroed afterwards, and runs only after the raised counter is
-     * written. `online`: the server can be reached now, so the offline window does not apply (the caller then runs
-     * the checks that follow every unlock).
+     * written. The offline window and the clock guard always apply: `state.online` is kept for the signature and
+     * does not relax them. When `status().offlineOk` is false the caller renews the token first (success: `markContact`;
+     * a revoked answer: `wipe`) and only then calls `attempt`; until then the answer is `offline_expired`.
      * @param {string} serverUrl @param {string} accountId
      * @param {{ online: boolean }} state
      * @param {TryUnlock} tryUnlock
      * @returns {Promise<{ result: AttemptResult, failuresLeft: number, waitMs: number }>}
      */
-    attempt(serverUrl, accountId, { online }, tryUnlock) {
+    attempt(serverUrl, accountId, state, tryUnlock) {
+      void state;
       const server = serverOrigin(serverUrl);
       const account = accountKey(accountId);
       /** @param {AttemptResult} result @param {number} failuresLeft @param {number} [waitMs] */
@@ -763,16 +806,16 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
           const policy = await readPolicy(server);
           const why = policy ? ruleForbids(policy, record, location) : null;
           if (why) {
-            await remove(location, server, account, record);
+            await remove(location, server, account, record, record.methodId);
             return answer("wiped", 0);
           }
           // A record that already stands at the limit (an interrupted fifth attempt): wipe it, no unlock.
           if (record.failures >= MAX_PIN_FAILURES) {
-            await remove(location, server, account, record);
+            await remove(location, server, account, record, record.methodId);
             return answer("wiped", 0);
           }
           const t = now();
-          if (!online && !offlineOk(record, t)) return answer("offline_expired", MAX_PIN_FAILURES - record.failures);
+          if (!offlineOk(record, t)) return answer("offline_expired", MAX_PIN_FAILURES - record.failures);
           const wait = waitLeft(record, t);
           if (wait > 0) return answer("wait", MAX_PIN_FAILURES - record.failures, wait);
 
@@ -787,7 +830,7 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
           });
           if (raised === "gone") return answer("none", 0);
           if (raised === "full") {
-            await remove(location, server, account, record);
+            await remove(location, server, account, record, record.methodId);
             return answer("wiped", 0);
           }
 
@@ -808,7 +851,7 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
 
           if (outcome === "stale") {
             // The blob is no good: deleted, and the raised counter dies with it. Not counted.
-            await remove(location, server, account, record);
+            await remove(location, server, account, record, record.methodId);
             return answer("stale", 0);
           }
 
@@ -843,7 +886,7 @@ export function createLocalUnlock({ idb, session, now = Date.now }) {
           });
           if (left === "gone") return answer("none", 0);
           if (left === 0) {
-            await remove(location, server, account, record);
+            await remove(location, server, account, record, record.methodId);
             return answer("wiped", 0);
           }
           const failures = MAX_PIN_FAILURES - left;

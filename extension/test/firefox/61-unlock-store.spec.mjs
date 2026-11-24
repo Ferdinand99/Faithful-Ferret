@@ -112,8 +112,8 @@ test("unlock_store_disk_record_counts_before_the_unlock_and_survives_a_new_store
     assert.deepEqual(r.localKeys, [], "nothing in the local storage");
     assert.equal(r.seen.refused, 0, "the engine accepts a transaction with durability strict");
     assert.ok(r.seen.options.length >= 3);
-    // The default durability of a write in this engine, shown, since the option is accepted: strict, or the default.
-    for (const entry of r.seen.options) assert.ok(entry.durability === "strict" || entry.durability === "default", JSON.stringify(entry));
+    // The engine did not ignore the option: every write reports the durability that was asked for.
+    for (const entry of r.seen.options) assert.equal(entry.durability, "strict", JSON.stringify(entry));
   });
 });
 

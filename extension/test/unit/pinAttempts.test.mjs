@@ -321,11 +321,15 @@ test("offline_pin_needs_the_server_after_seven_days_and_works_again_after_contac
   assert.deepEqual(expired, { result: "offline_expired", failuresLeft: 5, waitMs: 0 });
   assert.equal(unlock.calls.count, 0);
   assert.equal(record(world).failures, 0, "an expired window does not count");
-  // The PIN is not deleted: it works online ...
-  assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: true }, unlock.run)).result, "ok");
-  // ... and offline again after a contact.
-  assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: false }, unlock.run)).result, "offline_expired");
+  // Being online does not relax the window: a renewal has to succeed first (and the PIN is not deleted meanwhile).
+  const stillExpired = await world.store.attempt(SERVER, ACCOUNT, { online: true }, unlock.run);
+  assert.equal(stillExpired.result, "offline_expired");
+  assert.equal(unlock.calls.count, 0);
+  assert.equal(record(world).failures, 0);
+  assert.equal((await world.store.status(SERVER, ACCOUNT)).set, true);
+  // After the renewal (the caller calls markContact) the PIN works, online or not.
   await world.store.markContact(SERVER, ACCOUNT);
+  assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: true }, unlock.run)).result, "ok");
   assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: false }, unlock.run)).result, "ok");
 });
 
@@ -421,4 +425,31 @@ test("tick_writes_only_when_the_time_has_moved_on_and_never_down", async () => {
   world.clock.advance(-DAY);
   await world.store.tick();
   assert.equal(record(world).highestSeenAt, high);
+});
+
+test("a_clock_set_back_needs_a_renewal_also_when_the_caller_says_online", async () => {
+  const world = await withPin();
+  const start = world.clock.now();
+  world.clock.advance(3 * DAY);
+  await world.store.tick();
+  world.clock.set(start + 2 * DAY);
+  const unlock = fakeUnlock(["ok"]);
+  assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: true }, unlock.run)).result, "offline_expired");
+  assert.equal(unlock.calls.count, 0);
+  await world.store.markContact(SERVER, ACCOUNT);
+  assert.equal((await world.store.attempt(SERVER, ACCOUNT, { online: true }, unlock.run)).result, "ok");
+});
+
+test("a_pin_saved_while_an_old_attempt_runs_is_not_wiped_by_that_attempt", async () => {
+  const world = await withPin();
+  // The old blob turns out stale while a new PIN is being saved: only the old blob may go.
+  const answer = await world.store.attempt(SERVER, ACCOUNT, { online: true }, async () => {
+    await world.store.save(SERVER, ACCOUNT, makeBlob({ fill: 50 }), { location: "disk", acknowledged: true });
+    return { ok: false, reason: "stale" };
+  });
+  assert.equal(answer.result, "stale");
+  const status = await world.store.status(SERVER, ACCOUNT);
+  assert.equal(status.set, true);
+  assert.equal(status.failuresLeft, 5);
+  assert.equal(record(world).methodId[0], 50);
 });
