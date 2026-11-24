@@ -7,7 +7,8 @@
 // dialog closes, when the background answers, when Ferret locks and when the page goes away. Nothing is written to storage
 // or to a log, and the PIN is never put in an attribute or a message to anything but the one request.
 //
-// This module is only reached from the section of unlockSettings.mjs, which asks the build flag; it asks none itself.
+// This module is only reached from the section of unlockSettings.mjs and from the PIN part of the locked popup
+// (pinUnlockView.mjs, which uses the field for a secret), and both ask the build flag; it asks none itself.
 
 import { el } from "../shared/dom.mjs";
 import { PIN_MAX_CHARS, checkPin, unlockErrorKey } from "./unlockFlow.mjs";
@@ -20,7 +21,7 @@ export const LOCK_POLL_MS = 4000;
  * state (the name does not flip).
  * @param {{ id: string, name: string, label: string, role: string, toggleLabel: string, toggleRole: string, hint?: string }} o
  */
-function secretField({ id, name, label, role, toggleLabel, toggleRole, hint }) {
+export function secretField({ id, name, label, role, toggleLabel, toggleRole, hint }) {
   const input = /** @type {HTMLInputElement} */ (el("input", { id, name, type: "password", class: "ff-input", autocomplete: "off", "data-role": role }));
   const eye = el("span", { class: "ff-eye", "aria-hidden": "true", "data-icon": "eye" });
   const toggle = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "ff-reveal-toggle", "aria-pressed": "false", "aria-label": toggleLabel, "data-role": toggleRole }, eye));

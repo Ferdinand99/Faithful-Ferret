@@ -3,7 +3,9 @@
 //
 //   signed_out   no device is signed in: a button opens the sign-in tab
 //   locked       the server and the account, and the unlock with the master
-//                password (and the secret key when this device does not keep it)
+//                password (and the secret key when this device does not keep it);
+//                in a build with unlock on, with a PIN too when one is set
+//                and allowed (`pinPolicy`, `pinUnlock`, `pinResultOf`)
 //   unlocked     the lock button in the header, what the sync shows (its
 //                state, a stop and the warnings), and the list of the vault:
 //                the candidates of the page ("Suggestions for this page", with
@@ -37,8 +39,9 @@
 // its site opened, never filled.
 
 import { FRAME_UNCHECKED } from "../shared/protocol.mjs";
-import { shownHost } from "./ui.mjs";
+import { reasonKey, shownHost } from "./ui.mjs";
 import { unlockWith } from "./signinFlow.mjs";
+import { readUnlockState } from "./unlockFlow.mjs";
 
 /** The ways on from a stop of the sync, in the order the popup shows them. */
 export const STOP_ACTIONS = Object.freeze(["try_again", "forget"]);
@@ -339,6 +342,60 @@ export function followStep(shown, next, asking) {
   return "sync";
 }
 
+// ---------------------------------------------------------------- unlocking with a PIN
+
+/**
+ * The refusals of `pin_unlock` that the popup has a text of its own for (`unlock.pin.error.<reason>`). Any other reason
+ * is one of the master-password unlock's (a network failure, a sign-out, the attack warning) and has its text there.
+ */
+export const PIN_REASONS = Object.freeze([
+  "wrong_pin", "pin_wait", "pin_wiped", "pin_stale", "pin_offline_expired", "out_of_memory", "pin_unavailable", "pin_rule",
+]);
+
+/** The texts that the settings' PIN code owns and the popup reuses, by reason (the other reasons have `unlock.pin.error.<reason>`). */
+const SHARED_TEXTS = Object.freeze({ pin_stale: "pin.error.pin_stale" });
+
+/**
+ * The refusals after which the PIN cannot be tried again in this popup (it is gone, or this device cannot check it): the
+ * popup shows the master password and says why. `pin_offline_expired` is not one of them: the PIN is kept, and works again
+ * once the server has been reached.
+ */
+export const PIN_ENDED_REASONS = Object.freeze(["pin_wiped", "pin_stale", "pin_unavailable", "attack_warning"]);
+
+/** The longest wait the popup believes (milliseconds). */
+const MAX_WAIT_MS = 3_600_000;
+
+/**
+ * @typedef {{ allowed: boolean, afterRestart: boolean, minLength: number, set: boolean, location: "disk" | "session" | null,
+ *   failuresLeft: number, waitMs: number, offlineOk: boolean, lastContactAt: number | null }} PinOffer
+ *   what the background says of the PIN while the vault is locked
+ * @typedef {{ ok: true } | { ok: false, reason: string, keys: string[], left: number | null, waitMs: number, ended: boolean }} PinResult
+ *   `keys`: the i18n keys of the text to show, in order; `left`: the tries left (when the background said); `waitMs`: how
+ *   long until the next try; `ended`: the popup shows the master password now
+ */
+
+/**
+ * The answer of `pin_unlock`, as the popup shows it. Nothing the background sent is shown as it is: a reason that is not
+ * in a fixed list gets the text of the master-password unlock for it, and an odd one the general text.
+ * @param {any} reply
+ * @returns {PinResult}
+ */
+export function pinResultOf(reply) {
+  if (reply?.ok === true) return { ok: true };
+  const reason = isCode(reply?.reason) ? reply.reason : "unknown";
+  const left = Number.isInteger(reply?.left) && reply.left >= 0 && reply.left <= 5 ? reply.left : null;
+  const waitMs = Number.isInteger(reply?.wait_ms) && reply.wait_ms > 0 && reply.wait_ms <= MAX_WAIT_MS ? reply.wait_ms : 0;
+  const ended = PIN_ENDED_REASONS.includes(reason);
+  /** @type {string[]} */
+  let keys;
+  if (reason === "wrong_pin") keys = [left === null || left < 1 ? "unlock.pin.error.wrong_pin_plain" : left === 1 ? "unlock.pin.error.wrong_pin_last" : "unlock.pin.error.wrong_pin"];
+  else if (reason === "attack_warning") keys = ["session.error.attack_warning", "unlock.pin.error.removed_note"];
+  else if (reason === "pin_stale") keys = [SHARED_TEXTS.pin_stale];
+  else if (PIN_REASONS.includes(reason)) keys = [`unlock.pin.error.${reason}`];
+  else keys = [reasonKey(reason)];
+  return { ok: false, reason, keys, left, waitMs, ended };
+}
+
 /** @param {import("./ui.mjs").Request} request */
 export function createPopupFlow(request) {
   const load = async () => {
@@ -364,6 +421,37 @@ export function createPopupFlow(request) {
     async unlock(fields) {
       const result = await unlockWith(request, fields);
       return { result, view: await load() };
+    },
+
+    /**
+     * Whether the locked popup offers a PIN, and what is true of it. Null when it does not: no PIN, the administrator does
+     * not allow one, or the background has no answer (also a server or a build without the feature).
+     * @returns {Promise<PinOffer | null>}
+     */
+    async pinPolicy() {
+      try {
+        const state = readUnlockState(await request("unlock_policy", {}));
+        return state !== null && state.pin.set && state.pin.allowed ? state.pin : null;
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * Opens the vault with the PIN. The PIN goes into this one request and is kept nowhere; the answer is read as
+     * `pinResultOf` does, and the view is the one the background reports after it.
+     * @param {string} pin
+     * @returns {Promise<{ result: PinResult, view: PopupView }>}
+     */
+    async pinUnlock(pin) {
+      /** @type {any} */
+      let reply;
+      try {
+        reply = await request("pin_unlock", { pin });
+      } catch (error) {
+        reply = { ok: false, reason: /** @type {{ code?: unknown }} */ (error)?.code };
+      }
+      return { result: pinResultOf(reply), view: await load() };
     },
 
     /**
