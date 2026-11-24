@@ -6,7 +6,8 @@
 # As root: add the fixture host names to /etc/hosts and hand /work to the test
 # user, then run everything else as that user (Firefox does not run as root).
 # As the test user: build the test variant (both manifest versions) from the WASM
-# package that the caller fetched and checked (/work/wasm.tar.gz), then run the
+# package that the caller fetched and checked (/work/wasm.tar.gz; FERRET_WASM_SOURCE=tree and
+# FERRET_WASM_COMMIT when the caller built it from the tree, see scripts/wasm-tree.sh), then run the
 # specs once per channel. FERRET_CHANNELS, FERRET_MANIFEST, FERRET_GREP and
 # FERRET_HEADLESS come from the caller. The specs find the build and the profile
 # settings in FERRET_EXT_XPI, FERRET_EXT_UUID and FERRET_EXT_CHANNEL, set here.
@@ -36,7 +37,7 @@ fi
 
 cd /work/extension
 for mv in mv3 mv2; do
-  node scripts/build.mjs --browser firefox --manifest "$mv" --variant test --wasm-tar /work/wasm.tar.gz >&2
+  node scripts/build.mjs --browser firefox --manifest "$mv" --variant test --wasm "${FERRET_WASM_SOURCE:-lock}" --wasm-tar /work/wasm.tar.gz >&2
 done
 
 case "$mode" in

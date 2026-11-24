@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -33,7 +33,8 @@ const PLANTED = {
 
 /** @param {string} target @returns {{ status: number | null, output: string }} */
 function runCheck(target) {
-  const result = spawnSync("bash", [CHECK, target], { encoding: "utf8" });
+  // The fixture builds sit in <dir>/out next to their web folder <dir>/web, the lock the packages are checked against.
+  const result = spawnSync("bash", [CHECK, "--web-root", join(dirname(target), "..", "web"), target], { encoding: "utf8" });
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
@@ -237,7 +238,7 @@ test("release_check_fails_closed_without_the_host_list", async () => {
 /**
  * Plants a change into the manifest.json of a built release and runs the release
  * check on a folder and on a .xpi packed from it.
- * @param {{ dir: string, files: Map<string, Buffer> }} release
+ * @param {{ dir: string, files: Map<string, Buffer>, wasmRecord: string }} release
  * @param {(manifest: Record<string, any>) => void} change
  * @param {string} label a file name part, one per case
  * @returns {{ folder: CheckResult, xpi: CheckResult }}
@@ -255,6 +256,8 @@ function checkChanged(release, change, label) {
   }
   const xpi = join(release.dir, "..", `planted-${label}.xpi`);
   packXpi(folder, xpi);
+  // The record of the WASM package that the build wrote beside the release stays beside the planted copies.
+  copyFileSync(release.wasmRecord, `${folder}.wasm.json`);
   return { folder: runCheck(folder), xpi: runCheck(xpi) };
 }
 

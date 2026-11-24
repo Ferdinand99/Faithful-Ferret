@@ -1,0 +1,123 @@
+# The WebAssembly package of the commit under test, for the web vault's and the extension's test
+# builds. Called by web.yml, extension.yml and extension-firefox.yml.
+#
+# While the package that web/wasm.lock.json names is older than the core in the tree, the client
+# code under test calls bindings that only the tree has, so these workflows build against a package
+# built from the tree (scripts/wasm-source.mjs decides). The recipe is the release's
+# (scripts/build-wasm.sh and scripts/package-release.sh, the same pins as release.yml), so a tree
+# package differs from a published one only in the commit it was built from. Release builds never
+# use this: they take the locked package, or the package of their own release run.
+#
+# The packages are cached under a key that is the hash of everything the build reads, so a pull
+# request that does not touch the core, the binding or the recipe builds nothing: it takes the
+# packages of the last build with the same inputs and writes the record (wasm-tree.json) for its
+# own commit.
+#
+# Outputs: `source` (tree or lock). With `tree`, the artifact `wasm-tree` holds
+# ferret-core-wasm-web-<version>.tar.gz, ferret-core-wasm-node-<version>.tar.gz, SHA256SUMS and
+# wasm-tree.json ({source, commit, sha256}).
+# Third-party actions are pinned by commit SHA; tools are pinned by version and checksum.
+name: WASM from the tree
+
+on:
+  workflow_call:
+    outputs:
+      source:
+        description: "tree when CI builds against the package of this commit, lock when it takes the locked one"
+        value: ${{ jobs.decide.outputs.source }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The same versions as release.yml, wasm.yml and docker/builder.Dockerfile.
+  WASM_PACK_VERSION: 0.15.0
+  WASM_BINDGEN_CLI_VERSION: 0.2.129
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+  NODE_VERSION: 22.23.4
+  NODE_SHA256: 1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+
+jobs:
+  decide:
+    name: Which WASM package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      source: ${{ steps.source.outputs.source }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: The locked package, or one built from the tree
+        id: source
+        run: echo "source=$(node scripts/wasm-source.mjs)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build the package of this commit
+    needs: decide
+    if: needs.decide.outputs.source == 'tree'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: The packages of the same inputs, if an earlier run built them
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            wasm-package/ferret-core-wasm-*.tar.gz
+            wasm-package/SHA256SUMS
+          key: wasm-tree-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'THIRD-PARTY-NOTICES', 'crates/ferret-core/**', 'bindings/wasm/**', 'ct/harness/**', 'scripts/build-wasm.sh', 'scripts/package-release.sh', 'scripts/check-no-test-support.sh', 'scripts/wasm-tree.sh', '.github/workflows/wasm-tree.yml') }}
+      - name: Write the record for this commit (the packages are the cached ones)
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: scripts/wasm-tree.sh --record wasm-package
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Install wasm-pack and wasm-bindgen-cli
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked "wasm-pack@${WASM_PACK_VERSION}" "wasm-bindgen-cli@${WASM_BINDGEN_CLI_VERSION}"
+      - name: Install binaryen (wasm-opt)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/binaryen.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/binaryen"
+          tar -xz -C "$RUNNER_TEMP/binaryen" --strip-components=1 -f "$RUNNER_TEMP/binaryen.tar.gz"
+          echo "$RUNNER_TEMP/binaryen/bin" >> "$GITHUB_PATH"
+      - name: Install Node
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/node"
+          tar -xJ -C "$RUNNER_TEMP/node" --strip-components=1 -f "$RUNNER_TEMP/node.tar.xz"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Build and package the release build of this tree
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: scripts/wasm-tree.sh wasm-package
+      - name: Keep the packages for the next run with the same inputs
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            wasm-package/ferret-core-wasm-*.tar.gz
+            wasm-package/SHA256SUMS
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: What was built
+        run: |
+          cat wasm-package/wasm-tree.json
+          (cd wasm-package && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wasm-tree
+          path: wasm-package/
+          if-no-files-found: error
+          retention-days: 3

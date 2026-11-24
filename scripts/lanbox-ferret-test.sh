@@ -596,8 +596,34 @@ e2e_clock() {
   echo "e2e-clock: the server's clock is now $1 seconds ahead"
 }
 
+# Which WebAssembly package the web vault of a running stack was built with, as its server says it
+# (`lock <sha256>`, `release <sha256>`, `tree <sha256>` or `none`): the server's own --build-info,
+# so the stack never has to be trusted to say it some other way.
+wasm_of() {
+  dk exec "$1" /usr/local/bin/ferret --build-info 2>/dev/null | sed -n 's/^wasm: //p'
+}
+
+# FERRET_WASM_SOURCE=tree: the e2e stack's web vault is built with the WebAssembly package of this
+# commit (scripts/lanbox-wasm.sh --tree builds it on the build host; one built from this commit is
+# reused) instead of the published one, and the commit goes into the image build as WASM_COMMIT.
+# The default (lock) is the published package of web/wasm.lock.json. Only the e2e stack can do this:
+# the ferret-test stack and the stack with real data never take a tree package.
+e2e_wasm_prepare() {
+  case "${FERRET_WASM_SOURCE:-lock}" in
+    lock) export FERRET_WASM_SOURCE=lock FERRET_WASM_COMMIT="" ;;
+    tree)
+      bash scripts/lanbox-wasm.sh --tree >&2
+      FERRET_WASM_COMMIT="$(sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' wasm-package/wasm-tree.json)"
+      [ -n "$FERRET_WASM_COMMIT" ] || { echo "lanbox-ferret-test: wasm-package/wasm-tree.json names no commit" >&2; exit 1; }
+      export FERRET_WASM_SOURCE=tree FERRET_WASM_COMMIT
+      ;;
+    *) echo "lanbox-ferret-test: FERRET_WASM_SOURCE is lock or tree" >&2; exit 2 ;;
+  esac
+}
+
 e2e_up() {
   local token push
+  e2e_wasm_prepare
   # A fresh stack every time: the stack and its data volume are removed first, so the
   # database starts empty.
   e2e_remove
@@ -607,6 +633,7 @@ e2e_up() {
   echo
   echo "End-to-end stack is up (project $e2e_project, no published ports):"
   echo "  vault  $e2e_vault_url  admin  $e2e_admin_url   (only on the network $e2e_network)"
+  echo "  wasm   $(wasm_of "$e2e_app")   (what the web vault of the server was built with: lock = published, tree = this commit)"
   echo "  run the tests:  scripts/lanbox-ferret-test.sh e2e-run    setup token:  scripts/lanbox-ferret-test.sh e2e-token"
 }
 
@@ -1061,10 +1088,26 @@ exit $status'
   deps="$(mktemp)"
   # shellcheck disable=SC2064
   trap "rm -f '$deps'" RETURN
-  tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web \
+  # A stack built against the package of this commit (FERRET_WASM_SOURCE=tree) has its device client run the
+  # Node build of the same package; the stack must be the one that was asked for.
+  local node_env=() node_pack=() want have node_tar
+  want="${FERRET_WASM_SOURCE:-lock}"
+  have="$(wasm_of "$e2e_app")"
+  case "$have" in
+    "" | "$want "*) ;;
+    *) echo "lanbox-ferret-test: the web vault of the stack was built with the WebAssembly package '$have', but FERRET_WASM_SOURCE says $want; run e2e-up again" >&2; exit 1 ;;
+  esac
+  if [ "$want" = tree ]; then
+    node_tar="$(find wasm-package -maxdepth 1 -name 'ferret-core-wasm-node-*.tar.gz' -print -quit)"
+    [ -n "$node_tar" ] || { echo "lanbox-ferret-test: wasm-package/ has no Node package (scripts/lanbox-wasm.sh --tree)" >&2; exit 1; }
+    node_env=(-e "FERRET_E2E_WASM_NODE_TAR=/work/$node_tar")
+    node_pack=("$node_tar")
+  fi
+  tar -c --exclude='web/node_modules' --exclude='web/test-results' --exclude='web/dist' web ${node_pack[@]+"${node_pack[@]}"} \
     | dk run --rm -i --init \
         --name "$PW_NAME-install" \
         --label "$PW_LABEL" "${e2e_dev_labels[@]}" \
+        ${node_env[@]+"${node_env[@]}"} \
         --network bridge \
         --cpus 2 --memory 2g \
         --tmpfs /work:exec,size=1g \
@@ -1250,6 +1293,7 @@ case "${1:-}" in
     dk inspect "$container" --format 'health: {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}; restarts: {{.RestartCount}}' 2>/dev/null || true
     dk top "$container" -o user,pid,comm 2>/dev/null || true
     dk volume ls --filter "label=$label"
+    echo "wasm: $(wasm_of "$container")"
     check_tunnel
     ;;
   smoke)

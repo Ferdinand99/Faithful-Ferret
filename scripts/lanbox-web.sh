@@ -6,12 +6,18 @@
 #   scripts/lanbox-web.sh unit                build, type check and unit tests only
 #   scripts/lanbox-web.sh e2e [--project=x]   build, then Playwright (any Playwright option)
 #   scripts/lanbox-web.sh --lock              refresh web/package-lock.json (npm install --package-lock-only)
+#   scripts/lanbox-web.sh --wasm tree [mode]  the same, built against the WASM package of this commit
+#                                             instead of the published one
 #
 # The web/ tree, the licence notices that the web tests read (THIRD-PARTY-NOTICES,
 # notices-extra.json) and, when they exist, the server's wire and DPoP fixtures are streamed
 # into the container as a tar archive (no bind mounts from the PC), the locked
 # packages are installed with `npm ci --ignore-scripts`, and the build fetches
 # the published WASM package named in web/wasm.lock.json and checks its SHA-256.
+# With --wasm tree (or FERRET_WASM_SOURCE=tree) the package is built from the tree first
+# (scripts/lanbox-wasm.sh --tree, into wasm-package/; one that was built from this very commit is
+# reused) and goes into the container with the tree; the build then takes it instead of the lock
+# and writes where it came from to dist/wasm-source.json. A test build only.
 # Everything created is labelled owner=ferret-core and removed on exit (--rm);
 # the work directory, npm's cache and /tmp are tmpfs.
 #
@@ -73,6 +79,19 @@ if [ ! -f crates/ferret-server/tests/fixtures/wire/headers.json ]; then
   exit 2
 fi
 
+# Where the WebAssembly package comes from: the published one named in web/wasm.lock.json (the
+# default) or, for a test build, one built from this tree.
+wasm_source="${FERRET_WASM_SOURCE:-lock}"
+if [ "${1:-}" = "--wasm" ]; then
+  if [ "$#" -lt 2 ]; then echo "lanbox-web.sh: --wasm lock|tree" >&2; exit 2; fi
+  wasm_source="$2"
+  shift 2
+fi
+case "$wasm_source" in
+  lock | tree) ;;
+  *) echo "lanbox-web.sh: --wasm is lock or tree, not $wasm_source" >&2; exit 2 ;;
+esac
+
 mode=all
 case "${1:-}" in
   --lock) mode=lock; shift ;;
@@ -91,7 +110,9 @@ if [ "$FERRET_WEB_MODE" = lock ]; then
   exit 0
 fi
 npm ci --no-audit --no-fund --ignore-scripts >&2
-node scripts/build.mjs >&2
+# The package of the tree goes to the build only, as flags: in the environment it would reach the unit tests too.
+# shellcheck disable=SC2086
+node scripts/build.mjs $FERRET_WEB_WASM_FLAGS >&2
 if [ "$FERRET_WEB_MODE" != e2e ]; then
   npx tsc -p jsconfig.json --noEmit >&2
   node --test "test/unit/*.test.mjs" >&2
@@ -99,6 +120,21 @@ fi
 if [ "$FERRET_WEB_MODE" != unit ]; then
   npx playwright test "$@" >&2
 fi'
+
+wasm_env=(-e FERRET_WEB_WASM_FLAGS=)
+wasm_pack=()
+if [ "$wasm_source" = tree ] && [ "$mode" != lock ]; then
+  scripts/lanbox-wasm.sh --tree >&2
+  wasm_tar="$(find wasm-package -maxdepth 1 -name 'ferret-core-wasm-web-*.tar.gz' -print -quit)"
+  wasm_commit="$(sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' wasm-package/wasm-tree.json)"
+  if [ -z "$wasm_tar" ] || [ -z "$wasm_commit" ]; then
+    echo "lanbox-web.sh: wasm-package/ holds no web package or no commit (scripts/lanbox-wasm.sh --tree)" >&2
+    exit 1
+  fi
+  wasm_env=(-e "FERRET_WEB_WASM_FLAGS=--wasm tree --wasm-tar /work/$wasm_tar --wasm-commit $wasm_commit")
+  wasm_pack=("$wasm_tar")
+  echo "lanbox-web: the web vault is built against the WASM package of $wasm_commit" >&2
+fi
 
 run=(docker "${docker_args[@]}" run --rm -i --init
   --label owner=ferret-core
@@ -108,6 +144,7 @@ run=(docker "${docker_args[@]}" run --rm -i --init
   --shm-size 2g
   -e CI=1
   -e FERRET_WEB_MODE="$mode"
+  "${wasm_env[@]}"
   "${pass_env[@]}"
   --tmpfs /work:exec,size=2g
   --tmpfs /root/.npm:size=512m
@@ -127,7 +164,7 @@ pack() {
     --exclude='web/dist' \
     --exclude='web/test-results' \
     --exclude='web/src/*.gen.mjs' \
-    web "${extra[@]}"
+    web "${extra[@]}" ${wasm_pack[@]+"${wasm_pack[@]}"}
 }
 
 if [ "$mode" = lock ]; then

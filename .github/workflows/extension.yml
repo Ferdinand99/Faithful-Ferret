@@ -20,8 +20,13 @@ permissions:
   contents: read
 
 jobs:
+  wasm:
+    name: WASM package
+    uses: ./.github/workflows/wasm-tree.yml
+
   unit:
     name: Build, types and unit tests
+    needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
@@ -40,12 +45,27 @@ jobs:
           persist-credentials: false
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
-      - name: Build both manifest versions in both variants (fetches the published WASM package and checks its SHA-256)
+      - name: The WASM package of this commit
+        if: needs.wasm.outputs.source == 'tree'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wasm-tree
+          path: wasm-package
+      # The release variant always takes the published package (checked against its SHA-256); the
+      # test variant takes the package of this commit while the lock is behind the core in the tree.
+      - name: Build both manifest versions in both variants
+        env:
+          WASM_SOURCE: ${{ needs.wasm.outputs.source }}
         run: |
           for mv in mv3 mv2; do
-            for variant in release test; do
-              node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant"
-            done
+            node scripts/build.mjs --browser firefox --manifest "$mv" --variant release --wasm lock
+            if [ "$WASM_SOURCE" = tree ]; then
+              node scripts/build.mjs --browser firefox --manifest "$mv" --variant test --wasm tree \
+                --wasm-tar ../wasm-package/ferret-core-wasm-web-*.tar.gz \
+                --wasm-commit "$(node -p "JSON.parse(require('fs').readFileSync('../wasm-package/wasm-tree.json', 'utf8')).commit")"
+            else
+              node scripts/build.mjs --browser firefox --manifest "$mv" --variant test --wasm lock
+            fi
           done
       - name: Type check
         run: npm exec --no -- tsc -p jsconfig.json --noEmit

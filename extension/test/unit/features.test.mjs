@@ -477,7 +477,7 @@ test("the_release_check_refuses_a_release_build_with_unlock_on", async () => {
     const ran = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", bad], { encoding: "utf8" });
     assert.equal(ran.status, 1, ran.stdout + ran.stderr);
     assert.match(ran.stderr, /the feature unlock is on, which a release may not have/);
-    const good = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", release.dir], { encoding: "utf8" });
+    const good = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", "--web-root", env.webRoot, release.dir], { encoding: "utf8" });
     assert.equal(good.status, 0, good.stdout + good.stderr);
   } finally {
     env.cleanup();

@@ -79,6 +79,15 @@
 # the only step with a network; the Firefox step gets it as --wasm-tar and needs
 # no npm package (the harness has no dependencies).
 #
+# --wasm tree (or FERRET_WASM_SOURCE=tree), for unit, firefox, e2e, gate, matrix and measure:
+# the test variant is built against the WASM package of this commit instead of the published
+# one. The package is built on the build host first (scripts/lanbox-wasm.sh --tree, into
+# wasm-package/; one built from this very commit is reused), the fetch step is not run, and
+# the build writes <name>.wasm.json beside each package with {source, commit, sha256}. The e2e
+# stack of the run is built from the same package (scripts/lanbox-ferret-test.sh). The release
+# variant (lint, and the release builds of unit) always uses the locked package: lint takes no
+# --wasm option.
+#
 # Everything created is labelled owner=ferret-core and removed on exit (--rm); the
 # work directory, npm's cache and /tmp are tmpfs.
 #
@@ -131,10 +140,11 @@ dev_args() {
 
 usage() {
   echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | measure [options]" >&2
-  echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  (e2e only: --no-up)" >&2
-  echo "  options of gate: --channel release|esr  --manifest mv3|mv2" >&2
-  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up" >&2
-  echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N" >&2
+  echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  --wasm lock|tree  (e2e only: --no-up)" >&2
+  echo "  options of gate: --channel release|esr  --manifest mv3|mv2  --wasm lock|tree" >&2
+  echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up  --wasm lock|tree" >&2
+  echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N  --wasm lock|tree" >&2
+  echo "  option of unit: --wasm lock|tree (the test variant only; lint is a release check and takes none)" >&2
   exit 2
 }
 
@@ -154,8 +164,11 @@ headed=0
 no_up=0
 scenario_list=""
 window_minutes=""
+# Where the test variant's WASM package comes from: the published one (the default) or one built from this tree.
+wasm_source="${FERRET_WASM_SOURCE:-lock}"
 while [ "$#" -gt 0 ]; do
   case "$mode:$1" in
+    unit:--wasm | firefox:--wasm | e2e:--wasm | gate:--wasm | matrix:--wasm | measure:--wasm) [ "$#" -ge 2 ] || usage; wasm_source="$2"; shift 2 ;;
     firefox:--channel | e2e:--channel | gate:--channel | matrix:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
     firefox:--manifest | e2e:--manifest | gate:--manifest | matrix:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
     firefox:--grep | e2e:--grep | matrix:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
@@ -169,6 +182,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$channel" in "" | release | esr) ;; *) usage ;; esac
+case "$wasm_source" in lock | tree) ;; *) usage ;; esac
+# A release check never takes a package from the tree, not even from the environment.
+if [ "$mode" = lint ]; then wasm_source=lock; fi
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
 case "$matrix_part" in fill | capture | all) ;; *) usage ;; esac
 case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
@@ -187,6 +203,28 @@ window_re='^[0-9]{1,4}$'
 if [ -n "$window_minutes" ] && ! (LC_ALL=C; [[ $window_minutes =~ $window_re ]]); then usage; fi
 if [ -n "$window_minutes" ] && [ "$window_minutes" -lt 2 ]; then usage; fi
 
+# ------------------------------------------------- the package of this tree
+
+# --wasm tree: build the package of this commit on the build host (one built from this very commit
+# is reused) and find it. wasm_dir is where scripts/lanbox-wasm.sh --tree leaves it.
+wasm_tar=""
+wasm_commit=""
+if [ "$wasm_source" = tree ]; then
+  wasm_dir="${FERRET_WASM_DIR:-wasm-package}"
+  bash "${FERRET_WASM_TREE_SCRIPT:-scripts/lanbox-wasm.sh}" --tree >&2
+  wasm_tar="$(find "$wasm_dir" -maxdepth 1 -name 'ferret-core-wasm-web-*.tar.gz' -print -quit)"
+  wasm_commit="$(sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' "$wasm_dir/wasm-tree.json")"
+  if [ -z "$wasm_tar" ] || [ -z "$wasm_commit" ]; then
+    echo "lanbox-ext.sh: $wasm_dir holds no web package or no commit (scripts/lanbox-wasm.sh --tree)" >&2
+    exit 1
+  fi
+  echo "lanbox-ext.sh: the test variant is built against the WASM package of $wasm_commit" >&2
+  # The e2e stack of a run is built from the same package (scripts/lanbox-ferret-test.sh reads this).
+  export FERRET_WASM_SOURCE=tree
+else
+  export FERRET_WASM_SOURCE=lock
+fi
+
 # ------------------------------------------------------------ unit and lint
 
 if [ "$mode" = unit ] || [ "$mode" = lint ]; then
@@ -198,7 +236,11 @@ npm ci --no-audit --no-fund --ignore-scripts >&2
 if [ "$FERRET_EXT_MODE" = unit ]; then
   for mv in mv3 mv2; do
     for variant in release test; do
-      node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant" >&2
+      # The release variant takes the locked package whatever the test variant does.
+      flags="--wasm lock"
+      if [ "$variant" = test ] && [ -n "$FERRET_EXT_TEST_WASM" ]; then flags="$FERRET_EXT_TEST_WASM"; fi
+      # shellcheck disable=SC2086
+      node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant" $flags >&2
     done
   done
   npm exec --no -- tsc -p jsconfig.json --noEmit >&2
@@ -212,6 +254,11 @@ else
   bash scripts/check-ext-release.sh >&2
 fi'
 
+  # What the test variant's build takes in the unit step (the release variant always takes the lock).
+  unit_test_wasm=""
+  if [ -n "$wasm_tar" ]; then
+    unit_test_wasm="--wasm tree --wasm-tar /work/$(basename "$wasm_tar") --wasm-commit $wasm_commit"
+  fi
   dev_args ""
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
@@ -220,6 +267,7 @@ fi'
     --memory "$memory"
     -e CI=1
     -e FERRET_EXT_MODE="$mode"
+    -e FERRET_EXT_TEST_WASM="$unit_test_wasm"
     --tmpfs /work:exec,size=2g
     --tmpfs /root/.npm:size=512m
     --tmpfs /tmp:exec,size=1g
@@ -234,7 +282,8 @@ fi'
       extension web/wasm.lock.json web/src crates/ferret-server/static/favicon.svg scripts/check-ext-release.sh scripts/lanbox-ext.sh notices-extra.json \
       scripts/check-lanbox-labels.sh docker/ext-runner.Dockerfile \
       .github/workflows \
-      docs/design/phase-1-security-design.md
+      docs/design/phase-1-security-design.md \
+      ${wasm_tar:+-C "$(dirname "$wasm_tar")" "$(basename "$wasm_tar")"}
   }
 
   pack | "${run[@]}"
@@ -294,18 +343,23 @@ fetch(lock.url, { signal: AbortSignal.timeout(120000) }).then((r) => {
   if (sum !== lock.sha256) throw new Error("wasm package: checksum mismatch (expected " + lock.sha256 + ", got " + sum + ")");
   process.stdout.write(buf);
 }).catch((e) => { console.error("lanbox-ext.sh: " + e.message); process.exit(1); });'
-dev_args fetch
-docker "${docker_args[@]}" run --rm -i --init \
-  --label owner=ferret-core \
-  "${dev_args_out[@]}" \
-  --cpus 1 --memory 1g \
-  --user 10001:10001 \
-  --cap-drop ALL \
-  --security-opt no-new-privileges:true \
-  --read-only \
-  -e FERRET_EXT_STEP=fetch \
-  --tmpfs /tmp:size=64m \
-  "$runner_image" node -e "$fetch" < web/wasm.lock.json > "$work/wasm.tar.gz"
+if [ -n "$wasm_tar" ]; then
+  # --wasm tree: the package of this commit is the one that was built above; nothing is fetched.
+  cp "$wasm_tar" "$work/wasm.tar.gz"
+else
+  dev_args fetch
+  docker "${docker_args[@]}" run --rm -i --init \
+    --label owner=ferret-core \
+    "${dev_args_out[@]}" \
+    --cpus 1 --memory 1g \
+    --user 10001:10001 \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --read-only \
+    -e FERRET_EXT_STEP=fetch \
+    --tmpfs /tmp:size=64m \
+    "$runner_image" node -e "$fetch" < web/wasm.lock.json > "$work/wasm.tar.gz"
+fi
 [ -s "$work/wasm.tar.gz" ] || { echo "lanbox-ext.sh: the WASM package came back empty" >&2; exit 1; }
 
 # Step 2: the tests. No network, or only the end-to-end stack's.
@@ -442,6 +496,8 @@ make_run() {
     --security-opt no-new-privileges:true
     -e CI=1
     -e FERRET_EXT_STEP="$step"
+    -e FERRET_WASM_SOURCE="$wasm_source"
+    -e FERRET_WASM_COMMIT="$wasm_commit"
     -e FERRET_CHANNELS="$1"
     -e FERRET_MANIFEST="$manifest"
     -e FERRET_GREP="$test_grep"

@@ -45,10 +45,18 @@ const sha256 = (/** @type {Uint8Array} */ bytes) => createHash("sha256").update(
  * SHA-256. The release's checksum list must give the web package that same digest (so the list is the one the pin was
  * taken from), and the Node package is then checked against the list. Needs the network: run it where `npm ci` runs,
  * not in the container that has no way out.
+ *
+ * A test stack that was built against the WebAssembly package of the commit (scripts/lanbox-wasm.sh --tree) names
+ * the Node package of that build in `FERRET_E2E_WASM_NODE_TAR` instead: nothing is fetched then, and there is no
+ * pin to check it against; the web vault of the same stack was built from the same run of the recipe.
  * @param {string} [dir]
- * @param {{ fetchImpl?: typeof fetch }} [options]
+ * @param {{ fetchImpl?: typeof fetch, nodeTar?: string }} [options]
  */
-export async function prepareWasmNode(dir = WASM_NODE_DIR, { fetchImpl = fetch } = {}) {
+export async function prepareWasmNode(dir = WASM_NODE_DIR, { fetchImpl = fetch, nodeTar = process.env.FERRET_E2E_WASM_NODE_TAR } = {}) {
+  if (nodeTar) {
+    unpackNode(readFileSync(nodeTar), dir);
+    return;
+  }
   const lock = JSON.parse(readFileSync(join(WEB, "wasm.lock.json"), "utf8"));
   const base = lock.url.slice(0, lock.url.lastIndexOf("/") + 1);
   const webName = `ferret-core-wasm-web-${lock.version}.tar.gz`;
@@ -72,6 +80,11 @@ export async function prepareWasmNode(dir = WASM_NODE_DIR, { fetchImpl = fetch }
   if (nodeSum === undefined) throw new Error("the release's checksum list has no Node package");
   const tar = await get(nodeName);
   if (sha256(tar) !== nodeSum) throw new Error("the Node package does not match its checksum");
+  unpackNode(tar, dir);
+}
+
+/** Writes the `pkg-node/` folder of a Node package archive to `dir`. @param {Uint8Array} tar @param {string} dir */
+function unpackNode(tar, dir) {
   const files = readTarGz(tar);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readZip } from "../../scripts/lib/archive.mjs";
-import { build, MAX_FILE_BYTES, sha256, WASM_FILES } from "../../scripts/build.mjs";
+import { build, MAX_FILE_BYTES, sha256, wasmRecordProblems, WASM_FILES } from "../../scripts/build.mjs";
 import { makeRoot, makeTar, repoRoot, wasmFiles, WITHOUT_SHARED_IMPORTS } from "./buildHelpers.mjs";
 
 /** @param {Record<string, string | null>} [extra] @param {Record<string, unknown>} [options] */
@@ -252,3 +252,88 @@ test("shared_files_are_copied_from_web_with_their_hashes_and_never_over_a_source
   }
 });
 
+
+// ---------------------------------------------------- the WASM package's source
+
+const TREE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+test("a_test_build_can_use_wasm_built_from_the_tree_and_records_it", async () => {
+  const env = makeRoot();
+  try {
+    // A package that is not the one in the lock: the lock is not consulted for a tree build.
+    const treeTar = join(env.dir, "tree.tar.gz");
+    writeFileSync(treeTar, makeTar({ ...wasmFiles(), "js/client.mjs": "// built from the tree\n" }));
+    const result = await build({
+      root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmTar: treeTar, wasmSource: "tree", wasmCommit: TREE_COMMIT,
+    });
+    assert.equal(result.files.get("js/client.mjs")?.toString(), "// built from the tree\n");
+    const expected = { source: "tree", commit: TREE_COMMIT, sha256: sha256(readFileSync(treeTar)) };
+    assert.deepEqual(result.wasm, expected);
+    // Beside the package, in a file of its own; the package itself says nothing about it.
+    assert.equal(result.wasmRecord, join(env.out, "ferret-firefox-mv3-test.wasm.json"));
+    assert.deepEqual(JSON.parse(readFileSync(result.wasmRecord, "utf8")), expected);
+
+    // The default source is the lock, and its record says so.
+    const locked = await build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmTar: env.tarPath });
+    assert.deepEqual(JSON.parse(readFileSync(locked.wasmRecord, "utf8")), { source: "lock", version: "0.0.0", sha256: sha256(readFileSync(env.tarPath)) });
+
+    // A tree build needs the archive and a commit it can name.
+    await assert.rejects(build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmSource: "tree", wasmCommit: TREE_COMMIT }), /--wasm-tar is needed/);
+    for (const commit of [undefined, "", "main", TREE_COMMIT.slice(1), `${TREE_COMMIT}-clean`]) {
+      await assert.rejects(
+        build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmTar: treeTar, wasmSource: "tree", ...(commit === undefined ? {} : { wasmCommit: commit }) }),
+        /--wasm-commit/,
+        String(commit),
+      );
+    }
+    const dirty = await build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmTar: treeTar, wasmSource: "tree", wasmCommit: `${TREE_COMMIT}-dirty` });
+    assert.equal(dirty.wasm.commit, `${TREE_COMMIT}-dirty`);
+    await assert.rejects(build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "test", wasmTar: treeTar, wasmSource: "elsewhere" }), /not one of lock, tree/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a_release_build_refuses_a_tree_built_wasm", async () => {
+  const env = makeRoot();
+  const before = process.env.FERRET_WASM_SOURCE;
+  try {
+    const treeTar = join(env.dir, "tree.tar.gz");
+    writeFileSync(treeTar, makeTar({ ...wasmFiles(), "js/client.mjs": "// built from the tree\n" }));
+    const args = { root: env.root, webRoot: env.webRoot, out: env.out, variant: "release", wasmTar: treeTar, wasmCommit: TREE_COMMIT };
+    await assert.rejects(build({ ...args, wasmSource: "tree" }), /release build uses the locked WASM package only/);
+    // Not by the environment either.
+    process.env.FERRET_WASM_SOURCE = "tree";
+    await assert.rejects(build(args), /release build uses the locked WASM package only/);
+    delete process.env.FERRET_WASM_SOURCE;
+    assert.equal(existsSync(env.out), false, "nothing is written");
+
+    // The same package without the tree flag is just a package that is not the locked one.
+    await assert.rejects(build(args), /checksum mismatch/);
+
+    // The check of a finished release package reads the record beside it: a tree record is a problem;
+    // the locked one is clean.
+    const built = await build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "release", wasmTar: env.tarPath });
+    assert.deepEqual(wasmRecordProblems(built.xpi, env.webRoot), []);
+    assert.deepEqual(wasmRecordProblems(built.dir, env.webRoot), []);
+    const lock = JSON.parse(readFileSync(join(env.webRoot, "wasm.lock.json"), "utf8"));
+    const record = (/** @type {Record<string, string>} */ fields) => writeFileSync(built.wasmRecord, JSON.stringify(fields));
+    // A record of a tree package, of a package that is not the lock's, or of another version is a problem.
+    record({ source: "tree", commit: TREE_COMMIT, sha256: sha256(readFileSync(treeTar)) });
+    assert.match(wasmRecordProblems(built.xpi, env.webRoot).join(), /from tree, a release package uses the locked one/);
+    record({ source: "lock", version: lock.version, sha256: "1".repeat(64) });
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /not the one in web\/wasm\.lock\.json \(digest\)/);
+    record({ source: "lock", version: "9.9.9", sha256: lock.sha256 });
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /\(version\)/);
+    writeFileSync(built.wasmRecord, "not json");
+    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /not readable/);
+    // No record at all is a problem too: every build writes one.
+    rmSync(built.wasmRecord);
+    assert.match(wasmRecordProblems(built.xpi, env.webRoot).join(), /no record of where the WASM package came from/);
+    assert.match(wasmRecordProblems(join(env.dir, "nothing.xpi"), env.webRoot).join(), /no record/);
+  } finally {
+    if (before === undefined) delete process.env.FERRET_WASM_SOURCE;
+    else process.env.FERRET_WASM_SOURCE = before;
+    env.cleanup();
+  }
+});

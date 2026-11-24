@@ -17,15 +17,45 @@ ARG NODE_IMAGE=node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c
 ARG ALPINE_IMAGE=alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 
 # --- Web vault ---------------------------------------------------------------
-# Builds web/dist, the static files the server embeds. The build fetches the
-# pinned WebAssembly package of the crypto core and checks its SHA-256
-# (web/wasm.lock.json).
+# Builds web/dist, the static files the server embeds. WASM_SOURCE says where the
+# WebAssembly package of the crypto core comes from (web/scripts/build.mjs has the rules):
+#
+#   lock     (the default) the published package named in web/wasm.lock.json; the build
+#            fetches it and checks its SHA-256.
+#   release  the package that the release run of this commit built: wasm-package/ holds
+#            its ferret-core-wasm-web-*.tar.gz and WASM_SHA256 is its entry in that run's
+#            SHA256SUMS. The release workflow does this.
+#   tree     a test build: wasm-package/ holds a package built from the commit
+#            (scripts/wasm-tree.sh) and WASM_COMMIT names that commit. Never together with a
+#            REVISION: a release image is not built from a package that no release signed.
+#
+# The image says which one it carries in `ferret --build-info` (the line `wasm:`).
 FROM ${NODE_IMAGE} AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY web ./
-RUN node scripts/build.mjs
+# The package of the second and third source, when there is one: the glob matches nothing otherwise.
+COPY web/wasm.lock.json wasm-package* /wasm-in/
+ARG WASM_SOURCE=lock
+ARG WASM_SHA256=""
+ARG WASM_COMMIT=""
+ARG REVISION=""
+RUN set -eu; \
+    case "$WASM_SOURCE" in \
+      lock) node scripts/build.mjs ;; \
+      release | tree) \
+        set -- /wasm-in/ferret-core-wasm-web-*.tar.gz; \
+        if [ "$#" != 1 ] || [ ! -f "$1" ]; then echo "wasm-package/ must hold exactly one ferret-core-wasm-web-*.tar.gz" >&2; exit 1; fi; \
+        if [ "$WASM_SOURCE" = release ]; then \
+          if [ -z "$REVISION" ]; then echo "WASM_SOURCE=release is for a release image: it needs a REVISION" >&2; exit 1; fi; \
+          node scripts/build.mjs --wasm release --wasm-tar "$1" --wasm-sha256 "$WASM_SHA256"; \
+        else \
+          if [ -n "$REVISION" ]; then echo "a release image (REVISION is set) cannot carry a WebAssembly package built from the tree" >&2; exit 1; fi; \
+          node scripts/build.mjs --wasm tree --wasm-tar "$1" --wasm-commit "$WASM_COMMIT"; \
+        fi ;; \
+      *) echo "WASM_SOURCE is lock, release or tree, not $WASM_SOURCE" >&2; exit 1 ;; \
+    esac
 
 # --- Server ------------------------------------------------------------------
 FROM ${RUST_IMAGE} AS build
@@ -41,9 +71,14 @@ ARG FEATURES=""
 # At most this many parallel jobs in the server build (empty: cargo's default, one
 # per CPU). A test stack on a shared build host sets it.
 ARG CARGO_JOBS=""
+# A build that gets a revision is a release build (the release workflow and the deploy drill set
+# it): the server's build script then refuses a web vault built with a WebAssembly package from
+# the tree. Empty in every other build.
+ARG REVISION=""
 
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
-    CARGO_TERM_COLOR=never
+    CARGO_TERM_COLOR=never \
+    FERRET_RELEASE_BUILD=${REVISION:+1}
 
 WORKDIR /src
 # What the server build reads: the workspace manifest and lock (the crypto core

@@ -363,6 +363,10 @@ up() {
   info="$(dk run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint /usr/local/bin/ferret "$digest_ref" --build-info)"
   printf '%s\n' "$info" | grep -qx "ferret $version" || refuse "the image says it is not version $version"
   printf '%s\n' "$info" | grep -qx 'features: none' || refuse "the image has cargo features ($(printf '%s' "$info" | sed -n 's/^features: //p')); a stack with real data runs a release build"
+  # The web vault of the image was built with the locked WebAssembly package or with the package of its own
+  # release run, never with one built from the tree (a test build). The line is required: this script
+  # only runs for a tag whose server prints it.
+  printf '%s\n' "$info" | grep -Eqx 'wasm: (lock|release) [0-9a-f]{64}' || refuse "the web vault of the image was not built with a locked or released WebAssembly package ($(printf '%s' "$info" | sed -n 's/^wasm: //p')); a stack with real data runs a release build"
 
   say "writing the digest down"
   FERRET_IMAGE="$digest_ref" verify_config home digest
