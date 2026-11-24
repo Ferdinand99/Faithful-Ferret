@@ -31,6 +31,12 @@ function browserWorld({ granted = false, stored = {}, registered = false, failRe
   };
   const permissions = {
     contains: async (/** @type {{ origins: string[] }} */ wanted) => state.granted && wanted.origins.every((o) => CAPTURE_ORIGINS.includes(o)),
+    remove: async (/** @type {{ origins: string[] }} */ gone) => {
+      state.calls.push("permission remove");
+      const had = state.granted;
+      if (gone.origins.every((o) => CAPTURE_ORIGINS.includes(o))) state.granted = false;
+      return had;
+    },
   };
   const storageLocal = {
     get: async (/** @type {string} */ key) => (key in data ? { [key]: data[key] } : {}),
@@ -186,4 +192,66 @@ test("the_never_list_keeps_a_label_at_most_500_hosts_and_reads_only_hosts", asyn
   const failing = createNeverList({ storageLocal: { get: async () => Promise.reject(new Error("x")), set: async () => Promise.reject(new Error("x")) } });
   await failing.add("x.example.net");
   assert.equal(await failing.has("x.example.net"), true);
+});
+
+test("a_grant_that_lands_after_the_popup_closed_turns_capture_on_and_a_second_enable_registers_nothing_twice", async () => {
+  const w = browserWorld();
+  // Firefox closed the popup that asked; the user said yes in the prompt: the browser tells the background, which finishes it.
+  w.state.granted = true;
+  assert.equal(await w.registry.onAdded({ origins: ["https://*/*"] }), true);
+  assert.equal(w.state.registered, true);
+  assert.equal(w.data[SETTING_KEY], true);
+  assert.deepEqual(await w.registry.status(), { on: true, permission: true, registered: true });
+  // The popup that is still open (no prompt, or a browser that does not close it) sends its own enable: the script is not registered again.
+  w.state.calls.length = 0;
+  assert.deepEqual(await w.registry.enable(), { ok: true });
+  assert.equal(w.state.calls.includes("register"), false, "a script that is registered with the current definition is left alone");
+  assert.equal(w.state.calls.includes("unregister"), false);
+  assert.equal(w.state.definitions.length, 1);
+  // The same two in the other order.
+  const other = browserWorld({ granted: true });
+  assert.deepEqual(await other.registry.enable(), { ok: true });
+  other.state.calls.length = 0;
+  assert.equal(await other.registry.onAdded({ origins: ["https://*/*"] }), true);
+  assert.deepEqual(other.state.calls, []);
+  assert.equal(other.state.definitions.length, 1);
+  // Another grant (the origin of a server or a frame), none at all, or a grant the browser does not hold now: nothing is switched on.
+  for (const added of [{ origins: ["https://vault.example.test/*"] }, { origins: [] }, {}, undefined]) {
+    const none = browserWorld({ granted: true });
+    assert.equal(await none.registry.onAdded(/** @type {any} */ (added)), false);
+    assert.equal(none.state.registered, false);
+    assert.equal(SETTING_KEY in none.data, false);
+  }
+  const gone = browserWorld({ granted: false });
+  assert.equal(await gone.registry.onAdded({ origins: ["https://*/*"] }), false, "the permission is checked, not believed");
+  assert.equal(gone.state.registered, false);
+});
+
+test("turning_it_off_takes_the_permission_back_in_the_background_and_a_start_never_does", async () => {
+  const w = browserWorld({ granted: true });
+  assert.deepEqual(await w.registry.enable(), { ok: true });
+  w.state.calls.length = 0;
+  // No page is involved: the background switches capture off and removes the access itself.
+  assert.deepEqual(await w.registry.disable(), { ok: true });
+  assert.equal(w.state.registered, false);
+  assert.equal(w.data[SETTING_KEY], false);
+  assert.equal(w.state.granted, false);
+  assert.deepEqual(w.state.calls.filter((c) => c !== "unregister"), ["permission remove"]);
+  assert.deepEqual(w.off, ["capture_off"]);
+  // The browser's own news of the removal finds nothing left to switch off.
+  assert.equal(await w.registry.onRemoved({ origins: ["https://*/*"] }), true);
+  assert.deepEqual(w.off, ["capture_off"]);
+  // A permission that cannot be removed does not make "off" fail.
+  const stuck = browserWorld({ granted: true });
+  await stuck.registry.enable();
+  stuck.permissions.remove = async () => {
+    throw new Error("no");
+  };
+  assert.deepEqual(await stuck.registry.disable(), { ok: true });
+  assert.equal(stuck.data[SETTING_KEY], false);
+  // A start (reconcile) with the permission there and the setting off leaves the grant alone, and registers nothing.
+  const start = browserWorld({ granted: true });
+  assert.deepEqual(await start.registry.reconcile(), { on: false, permission: true, registered: false });
+  assert.equal(start.state.granted, true);
+  assert.equal(start.state.calls.includes("permission remove"), false);
 });

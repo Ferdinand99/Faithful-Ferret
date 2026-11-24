@@ -13,7 +13,7 @@ import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
 import { importsOf } from "./importGraph.mjs";
-import { byRole, one, textsOf, useDocument } from "./pageDom.mjs";
+import { byRole, click, fire, one, settle, textsOf, useDocument } from "./pageDom.mjs";
 
 /** A `request` that records what the page asks and answers from `answer`. */
 function recorder(/** @type {(body: any) => any} */ answer = (body) => ({ lock_seconds: body.lock_seconds ?? 900 })) {
@@ -46,7 +46,7 @@ test("settings_open_in_a_tab", async () => {
         assert.doesNotMatch(html, /\son[a-z]+\s*=|\sstyle\s*=|<style|javascript:/i, where);
         // Like the other pages it is never reachable from a web page, and it reaches nothing of the background.
         assert.equal("web_accessible_resources" in json, false, where);
-        for (const file of ["pages/settings.mjs", "pages/settingsFlow.mjs"]) {
+        for (const file of ["pages/settings.mjs", "pages/settingsFlow.mjs", "pages/settingsView.mjs"]) {
           const module = result.files.get(file)?.toString("utf8") ?? "";
           assert.ok(module.length > 0, `${where}: ${file}`);
           for (const specifier of importsOf(module).specifiers) assert.doesNotMatch(specifier, /background\//, `${where}: ${file} imports ${specifier}`);
@@ -204,9 +204,10 @@ test("the_eff_word_list_credit_is_on_the_settings_page_with_saving_on_and_off", 
   try {
     for (const [name, variant, features] of /** @type {[string, "release" | "test", string[] | undefined][]} */ ([["release", "release", undefined], ["test", "test", undefined], ["off", "test", []]])) {
       const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, name), manifest: "mv2", variant, ...(features ? { features } : {}) });
-      const settings = result.files.get("pages/settings.mjs")?.toString("utf8") ?? "";
-      assert.ok(settings.includes("createCredits(texts)"), "the page shows the credits");
-      assert.equal(settings.includes("features.mjs"), false, "the settings page asks no flag");
+      const settings = result.files.get("pages/settingsView.mjs")?.toString("utf8") ?? "";
+      assert.ok(settings.includes("createCredits(texts)"), "the settings view shows the credits");
+      assert.ok((result.files.get("pages/settings.mjs")?.toString("utf8") ?? "").includes("createSettingsView("), "the page shows the view");
+      assert.equal(settings.includes("features.mjs"), false, "the settings view asks no flag");
       assert.equal((result.files.get("pages/credits.mjs")?.toString("utf8") ?? "").includes("features.mjs"), false, "nor does the credits module");
       useDocument();
       const mod = await import(pathToFileURL(joinPath(result.dir, "pages", "credits.mjs")).href);
@@ -263,4 +264,126 @@ test("turning_offer_to_save_off_takes_the_access_to_https_pages_back", async () 
   order.length = 0;
   assert.equal((await make({ withRemove: false }).capture.turnOff()).ok, true);
   assert.deepEqual(order, ['request {"enable":false}']);
+});
+
+/** The settings view of a built package, with a flow over a fake background that keeps what it is told. */
+async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boolean, grant?: boolean, lock?: number, on?: boolean }} */ { permission = false, grant = true, lock = 900, on = false } = {}) {
+  const doc = useDocument();
+  const flowModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsFlow.mjs")).href);
+  const viewModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsView.mjs")).href);
+  const catalog = JSON.parse(readFileSync(joinPath(dir, "locales.en.json"), "utf8"));
+  const state = { lock, on, permission, never: ["shop.example.net"], autoOpen: true };
+  /** @type {string[]} */
+  const log = [];
+  const flow = flowModule.createSettingsFlow(
+    async (/** @type {string} */ type, /** @type {any} */ body) => {
+      log.push(`${type} ${JSON.stringify(body)}`);
+      if (type === "settings") {
+        if (typeof body.lock_seconds === "number") state.lock = body.lock_seconds;
+        return { lock_seconds: state.lock };
+      }
+      if (body.enable === true) state.on = state.permission;
+      if (body.enable === false) state.on = false;
+      if (typeof body.auto_open === "boolean") state.autoOpen = body.auto_open;
+      if (typeof body.never_remove === "string") state.never = state.never.filter((h) => h !== body.never_remove);
+      return { ok: true, on: state.on, permission: state.permission, never: state.never, auto_open: state.autoOpen, auto_open_state: "unknown" };
+    },
+    {
+      requestPermission: async () => {
+        log.push("permission request");
+        if (grant) state.permission = true;
+        return grant;
+      },
+      removePermission: async () => {
+        log.push("permission remove");
+        state.permission = false;
+        return true;
+      },
+    },
+  );
+  const view = viewModule.createSettingsView({ texts: textsOf(catalog, "en"), flow });
+  const root = doc.createElement("div");
+  root.append(...view.nodes);
+  await view.ready;
+  return { root, log, state, view };
+}
+
+test("the_settings_view_is_one_module_for_the_page_and_the_popup_and_works_in_every_build", async () => {
+  const env = makeRoot();
+  try {
+    for (const [name, variant, features] of /** @type {[string, "release" | "test", string[] | undefined][]} */ ([["release", "release", undefined], ["test", "test", undefined], ["off", "test", []]])) {
+      const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, `view-${name}`), manifest: "mv2", variant, ...(features ? { features } : {}) });
+      const withSaving = name !== "off";
+      const { root, log } = await viewOf(result.dir, { lock: 1800 });
+      // The title, the lock choice with its saved value, the credits; the saving section only where the feature is on.
+      assert.equal(one(root, "settings-title")?.textContent, "Settings", name);
+      const select = /** @type {any} */ (one(root, "lock-after"));
+      assert.equal(select.childNodes.length, LOCK_CHOICES.length, name);
+      assert.equal(select.value, "1800", `${name}: the saved choice is shown`);
+      assert.equal(byRole(root, "credits").length, 1, name);
+      assert.equal(byRole(root, "capture-section").length, withSaving ? 1 : 0, name);
+      assert.equal(log.filter((line) => line.startsWith("capture_settings")).length, withSaving ? 1 : 0, `${name}: the saving state is read only where there is a section`);
+      // A change sends exactly the chosen value and says "Saved.".
+      select.value = "60";
+      fire(select, "change");
+      await settle();
+      assert.ok(log.includes('settings {"lock_seconds":60}'), name);
+      assert.equal(one(root, "saved")?.textContent, "Saved.", name);
+      // The popup opens no page for the settings: the page is a view of the popup now, and the options page shows the same view.
+      const popup = result.files.get("pages/popup.mjs")?.toString("utf8") ?? "";
+      assert.equal(popup.includes("openOptionsPage"), false, `${name}: the popup opens no page for the settings`);
+      assert.equal(/tabs\.create\([^)]*settings/.test(popup), false, name);
+      assert.ok(popup.includes("createSettingsView("), name);
+      assert.equal(result.files.has("pages/popupSettings.mjs"), false, name);
+      assert.ok(result.files.has("pages/settings.html"), name);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_settings_view_turns_offer_to_save_on_and_off_with_the_permission_asked_in_the_click", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "view-save"), manifest: "mv2", variant: "test" });
+    // Turning it on: the access is asked for first, in the click itself (before anything is awaited), then the background is told.
+    const on = await viewOf(result.dir);
+    const toggle = /** @type {any} */ (one(on.root, "capture-switch"));
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    assert.equal(one(on.root, "capture-state")?.textContent, "Off. Ferret does not look at the forms you submit.");
+    on.log.length = 0;
+    fire(toggle, "click");
+    assert.deepEqual(on.log, ["permission request"], "the request is made before the click handler returns");
+    await settle();
+    assert.deepEqual(on.log, ["permission request", 'capture_settings {"enable":true}']);
+    assert.equal(toggle.getAttribute("aria-checked"), "true");
+    assert.equal(one(on.root, "never-host")?.textContent.includes("shop.example.net"), true, "the never list is shown");
+    // Turning it off: the background first, then the access goes.
+    on.log.length = 0;
+    await click(toggle);
+    assert.deepEqual(on.log.slice(0, 2), ['capture_settings {"enable":false}', "permission remove"]);
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    // The user says no in the prompt: nothing is switched on.
+    const refused = await viewOf(result.dir, { grant: false });
+    await click(/** @type {any} */ (one(refused.root, "capture-switch")));
+    assert.equal(refused.state.on, false);
+    assert.equal(refused.log.some((line) => line.includes('"enable":true')), false);
+    // The prompt closed the popup that asked and the user said yes: the next time the view is built it says the access is there, and
+    // the next press turns it on (a request for an access that is held is answered at once, with no prompt).
+    const closed = await viewOf(result.dir, { permission: true });
+    assert.match(one(closed.root, "capture-state")?.textContent ?? "", /already has access to https pages/);
+    await click(/** @type {any} */ (one(closed.root, "capture-switch")));
+    assert.equal(closed.state.on, true);
+    assert.equal(one(closed.root, "capture-switch")?.getAttribute("aria-checked"), "true");
+    assert.match(one(closed.root, "capture-state")?.textContent ?? "", /^On\./);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_access_given_text_exists_in_both_languages", () => {
+  for (const lang of ["en", "nb"]) {
+    const catalog = JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "capture.json"), "utf8"));
+    assert.ok(typeof catalog["capture.off_access_given"] === "string" && catalog["capture.off_access_given"].length > 0, lang);
+  }
 });
