@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.9.0...v0.10.0) (2026-11-24)
+
+
+### Features
+
+* **ext:** capture script for submitted sign-in, sign-up and change forms ([#262](https://github.com/Ferdinand99/Faithful-Ferret/issues/262)) ([fbae345](https://github.com/Ferdinand99/Faithful-Ferret/commit/fbae345d0b2127024d5fce3d3fd5376590813abc))
+* **ext:** generator tab in the popup and fill of a generated password ([#260](https://github.com/Ferdinand99/Faithful-Ferret/issues/260)) ([be01baf](https://github.com/Ferdinand99/Faithful-Ferret/commit/be01baf9668bfa361afe146e3068707263a2938c))
+* **ext:** hold submitted forms as offers and register the capture script ([#261](https://github.com/Ferdinand99/Faithful-Ferret/issues/261)) ([7955fc3](https://github.com/Ferdinand99/Faithful-Ferret/commit/7955fc394f7aef3a4116258c029ee9fa608d1856))
+* **ext:** refuse a fill under a cover that hit testing cannot see ([#270](https://github.com/Ferdinand99/Faithful-Ferret/issues/270)) ([93ab37d](https://github.com/Ferdinand99/Faithful-Ferret/commit/93ab37d4aadfc31fb98c9da3d396ac3273c44bf2))
+* **ext:** the offer to save or update a password in the popup ([#269](https://github.com/Ferdinand99/Faithful-Ferret/issues/269)) ([6fe6279](https://github.com/Ferdinand99/Faithful-Ferret/commit/6fe627927b35c534503be5c11f76bcc04a76ca07))
+* **ext:** turn on saving and the generator in release builds ([#272](https://github.com/Ferdinand99/Faithful-Ferret/issues/272)) ([54ee3cd](https://github.com/Ferdinand99/Faithful-Ferret/commit/54ee3cdf2a572396093386f656437eb792463a01))
+* **web:** show or hide the password while editing an item ([#266](https://github.com/Ferdinand99/Faithful-Ferret/issues/266)) ([dd17ed0](https://github.com/Ferdinand99/Faithful-Ferret/commit/dd17ed0f6ef33911f2a12f08d812819fe83084be))
+
+
+### Bug Fixes
+
+* **deps:** update cookie to 0.18.3 for RUSTSEC-2026-0594 ([#265](https://github.com/Ferdinand99/Faithful-Ferret/issues/265)) ([85ce191](https://github.com/Ferdinand99/Faithful-Ferret/commit/85ce191f2452364281c08a7ce04b967be0176f35))
+* **ext:** autofill-parity fixes and the parity set in the gate ([#274](https://github.com/Ferdinand99/Faithful-Ferret/issues/274)) ([af865f3](https://github.com/Ferdinand99/Faithful-Ferret/commit/af865f334ff3f39df789b2db0005f4e86aa563ea))
+* **ext:** capture forms the page hides or replaces in its own submit or click handler ([#267](https://github.com/Ferdinand99/Faithful-Ferret/issues/267)) ([37649ba](https://github.com/Ferdinand99/Faithful-Ferret/commit/37649ba822791b460d969c74a0beafb210a29928))
+* **ext:** credit the EFF word list on the settings page ([#263](https://github.com/Ferdinand99/Faithful-Ferret/issues/263)) ([2953c58](https://github.com/Ferdinand99/Faithful-Ferret/commit/2953c58b3088fc43fd86cc0f1ee50d7e8f354dac))
+
 ## [0.9.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.8.0...v0.9.0) (2026-11-23)
 
 
