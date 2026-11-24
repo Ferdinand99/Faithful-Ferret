@@ -7,9 +7,13 @@
 //
 //   - the setting is on;
 //   - the vault is open (a popup that opens by itself to ask for the master password would be a prompt nobody asked for);
-//   - the browser has not refused an earlier attempt in this run of the background page (the first refusal is the
-//     probe: from then on the badge alone is used, and the settings page says so);
-//   - the tab of the offer is the active tab of its window, and that window has the focus.
+//   - the browser has not shown that it never lets the popup open by itself: if the first attempts of this run of the
+//     background page are refused PROBE_FAILURES times in a row with none that worked, the badge alone is used from
+//     then on, and the settings page says so. Once an attempt has worked, a later refusal is only a refusal of that
+//     offer (the popup was still closing, the window lost the focus for a moment) and the next offer tries again;
+//   - the tab of the offer is the active tab of its window, and that window has the focus;
+//   - no popup is open already: the browser refuses to open a popup while one is showing, so the open popup shows the
+//     new offer itself (it reads the offers again while it is open) and nothing is asked of the browser.
 //
 // Opening is not saving: the popup it opens shows the offer with no default button, no initial focus on a button that
 // writes, nothing that Enter can answer and clicks that are ignored for the first 400 milliseconds (offerCards.mjs), so
@@ -18,9 +22,12 @@
 /** The key of the setting in `storage.local`; a stored value that is not `false` means on. */
 export const AUTO_OPEN_KEY = "auto_open_popup";
 
+/** How many refused attempts in a row, with none that worked before, make the browser count as one that never allows it. */
+export const PROBE_FAILURES = 3;
+
 /**
  * @typedef {"unknown" | "works" | "fails"} Probe what the browser has shown about opening the popup without a gesture
- * @typedef {"off" | "locked" | "unsupported" | "no_tab" | "not_active" | "not_focused" | "opened" | "refused"} Outcome
+ * @typedef {"off" | "locked" | "unsupported" | "no_tab" | "not_active" | "not_focused" | "already_open" | "opened" | "refused"} Outcome
  */
 
 /**
@@ -30,11 +37,14 @@ export const AUTO_OPEN_KEY = "auto_open_popup";
  *   tabs: { get(tabId: number): Promise<{ active?: boolean, windowId?: number } | undefined> },
  *   windows: { get(windowId: number): Promise<{ focused?: boolean } | undefined> },
  *   unlocked: () => boolean,
- * }} deps
+ *   popupOpen?: () => boolean,
+ * }} deps `popupOpen`: a popup of the extension is showing now
  */
-export function createAutoOpen({ storageLocal, action, tabs, windows, unlocked }) {
+export function createAutoOpen({ storageLocal, action, tabs, windows, unlocked, popupOpen = () => false }) {
   /** @type {Probe} */
   let probe = "unknown";
+  /** Refused attempts in a row since the last one that worked (or since the start). */
+  let failures = 0;
   let attempting = false;
 
   /** @returns {Promise<boolean>} */
@@ -88,12 +98,24 @@ export function createAutoOpen({ storageLocal, action, tabs, windows, unlocked }
         if (win?.focused !== true) return "not_focused";
         // The setting or the lock may have changed while the tab and the window were looked at.
         if (!(await isOn()) || !unlocked()) return "off";
+        let showing = false;
+        try {
+          showing = popupOpen() === true;
+        } catch {
+          showing = false;
+        }
+        if (showing) return "already_open";
         try {
           await action.openPopup();
           probe = "works";
+          failures = 0;
           return "opened";
         } catch {
-          probe = "fails";
+          // A refusal after one that worked is of this offer only; "fails" needs several in a row and no success.
+          if (probe !== "works") {
+            failures += 1;
+            if (failures >= PROBE_FAILURES) probe = "fails";
+          }
           return "refused";
         }
       } finally {

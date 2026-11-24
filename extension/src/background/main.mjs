@@ -95,6 +95,7 @@ const autoOpen = FEATURES.save
       tabs: browser.tabs,
       windows: browser.windows,
       unlocked: () => coreHostForOpen?.state() === "unlocked",
+      popupOpen: () => (browser.extension.getViews({ type: "popup" })?.length ?? 0) > 0,
     })
   : null;
 const badge = FEATURES.save ? createBadge({ action, now, onAppear: (tabId) => void autoOpen?.maybeOpen(tabId) }) : null;

@@ -328,6 +328,41 @@ test("the_section_shows_the_refusal_reason_and_the_cards_of_the_tab", async () =
   assert.equal(one(section.root, "refusal-notice")?.getAttribute("data-reason"), "frame_hidden");
 });
 
+test("an_open_popup_shows_an_offer_that_arrives_later_and_leaves_the_cards_it_has_alone", async () => {
+  const { mod, texts, now } = await setup();
+  const fake = fakeFlow();
+  const first = offerOf();
+  const second = offerOf({ offerId: "b2".repeat(16), kind: "change", username: null });
+  /** @type {any[]} */
+  let listed = [first];
+  /** @type {boolean[]} */
+  const automatic = [];
+  fake.flow.list = async (/** @type {number} */ _tab, /** @type {boolean | undefined} */ auto) => {
+    automatic.push(auto === true);
+    return { ok: true, offers: listed, notice: null };
+  };
+  const section = mod.createOfferSection({ texts, flow: fake.flow, tabId: 7, now });
+  assert.equal(await section.loaded, 1);
+  const card = byRole(section.root, "offer-card")[0];
+  // Nothing new: no rebuild, so the card the user may be typing in stays.
+  assert.equal(await section.refresh(), null);
+  assert.equal(byRole(section.root, "offer-card")[0], card);
+  // The answered offer going away is not a reason to rebuild either (its card shows the answer).
+  listed = [];
+  assert.equal(await section.refresh(), null);
+  assert.equal(byRole(section.root, "offer-card")[0], card);
+  // A second offer that arrived while the popup was open: the cards are built again and show it.
+  listed = [first, second];
+  assert.equal(await section.refresh(), 2);
+  assert.equal(byRole(section.root, "offer-card").length, 2);
+  // The looks of the refresh are the popup's own (automatic): they do not move the auto-lock's deadline.
+  assert.deepEqual(automatic.slice(1, 4), [true, true, true]);
+  assert.equal(automatic[4], true, "the rebuild after a refresh is automatic too");
+  // A popup about no page looks at nothing.
+  const none = mod.createOfferSection({ texts, flow: fake.flow, tabId: null, now });
+  assert.equal(await none.refresh(), null);
+});
+
 test("the_flow_sends_only_ids_and_choices_and_every_text_exists_in_both_languages", async () => {
   const { pack, mod } = await setup();
   /** @type {Array<{ type: string, body: any }>} */
@@ -458,6 +493,6 @@ test("the_popup_empties_what_a_card_shows_before_it_builds_its_view_again_and_wh
   const source = readFileSync(join((await pkg()).dir, "pages", "popup.mjs"), "utf8");
   // `show` empties first (a lock rebuilds the view through it), the offers section hides on the way, and a closing page does too.
   assert.match(source, /function show\(view, note = null\) \{[\s\S]{0,400}teardown\?\.\(\);\s*teardown = null;/);
-  assert.match(source, /teardown = \(\) => offers\?\.hide\(\);/);
+  assert.match(source, /teardown = \(\) => \{[\s\S]{0,160}offers\?\.hide\(\);/);
   assert.match(source, /addEventListener\("pagehide", \(\) => teardown\?\.\(\)\)/);
 });

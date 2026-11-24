@@ -42,6 +42,9 @@ import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 /** How often an open popup asks for the sync's state again (a poll of it does not move the lock's deadline). */
 const SYNC_REFRESH_MS = 1500;
 
+/** How often an open popup looks for an offer that arrived after it opened. */
+const OFFER_REFRESH_MS = 1000;
+
 /** @param {string} id @returns {HTMLElement} */
 function byId(id) {
   const node = document.getElementById(id);
@@ -378,7 +381,30 @@ async function main() {
       offerFlow === null
         ? null
         : createOfferSection({ texts, flow: offerFlow, tabId, onChange: () => void vault.reload({ automatic: true }).catch(() => {}) });
-    teardown = () => offers?.hide();
+    // An offer that arrives while the popup is open (the browser opens no second popup) is shown here within a moment; the
+    // look is not the user's doing, so it does not move the auto-lock's deadline.
+    let looking = false;
+    const watching =
+      offers === null
+        ? null
+        : setInterval(() => {
+            // One look at a time: a slow background does not make them pile up.
+            if (looking) return;
+            looking = true;
+            void offers
+              .refresh()
+              .then((count) => {
+                if (count !== null && count > 0) offers.focus();
+              })
+              .catch(() => {})
+              .finally(() => {
+                looking = false;
+              });
+          }, OFFER_REFRESH_MS);
+    teardown = () => {
+      if (watching !== null) clearInterval(watching);
+      offers?.hide();
+    };
     // The bottom bar: the vault, in a build with saving on the generator, and the settings.
     const tabs = createPopupTabs({
       texts,

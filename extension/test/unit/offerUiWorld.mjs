@@ -41,7 +41,7 @@ export async function uiWorld(items = [], { incognito = false, stored = {} } = {
   /** @type {Array<{ text: string, tabId: number }>} */
   const badgeCalls = [];
   /** The popup's opening: how many attempts, and whether the browser refuses them. */
-  const popup = { attempts: 0, refuse: false };
+  const popup = { attempts: 0, refuse: false, open: false };
   const action = {
     setBadgeText: async (/** @type {{ text: string, tabId: number }} */ { text, tabId }) => {
       badgeCalls.push({ text, tabId });
@@ -82,7 +82,7 @@ export async function uiWorld(items = [], { incognito = false, stored = {} } = {
   let world = null;
   /** @type {any} */
   let lock = null;
-  const autoOpen = createAutoOpen({ storageLocal, action, tabs, windows, unlocked: () => world?.coreHost.state() === "unlocked" });
+  const autoOpen = createAutoOpen({ storageLocal, action, tabs, windows, unlocked: () => world?.coreHost.state() === "unlocked", popupOpen: () => popup.open });
   const badge = createBadge({ action, now: clock.now, timers, onAppear: (tabId) => void autoOpen.maybeOpen(tabId) });
   let counter = 0;
   const captureHost = createCaptureHost({
