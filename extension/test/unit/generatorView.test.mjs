@@ -138,10 +138,10 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
   for (const role of ["tab-vault", "tab-generator", "tab-settings"]) assert.equal(one(tabs.root, role)?.tagName, "BUTTON", role);
   assert.deepEqual(withAttribute(tabs.root, "data-feature").map((n) => n.getAttribute("data-role")), ["tab-generator"]);
 
-  // The release variant: the bar is Vault and Settings; no generator.
+  // A build with the feature off (a test build with --features none): the bar is Vault, Health and Settings; no generator.
   const env = makeRoot();
   try {
-    const release = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: env.out, manifest: "mv2", variant: "release" });
+    const release = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: env.out, manifest: "mv2", variant: "test", features: [] });
     const off = packageOf(release.dir);
     const tabsOff = await off.load("pages/popupTabs.mjs");
     const offVault = el("div", { "data-role": "vault-list" }, "the vault");
@@ -170,7 +170,7 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
     // The view is not made either.
     const viewOff = await off.load("pages/generatorView.mjs");
     assert.equal(viewOff.createGeneratorView({ texts: off.texts("en"), flow: {}, store: {}, tabId: 1 }), null);
-    // And the popup page asks FEATURES before it builds either (the check of the release build lists a page that does not).
+    // And the popup page asks FEATURES before it builds either (the check of a build with the feature off lists a page that does not).
     assert.match(release.files.get("pages/popup.mjs")?.toString("utf8") ?? "", /FEATURES\.save/);
     assert.match(release.files.get("pages/popupTabs.mjs")?.toString("utf8") ?? "", /FEATURES\.save/);
     assert.match(release.files.get("pages/generatorView.mjs")?.toString("utf8") ?? "", /FEATURES\.save/);

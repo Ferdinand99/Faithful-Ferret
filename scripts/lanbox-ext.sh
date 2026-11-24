@@ -53,7 +53,8 @@
 #                                 autofill-parity suite, reported on its own in u2-matrix-parity/): the fill phase tries every case, the
 #                                 capture phase types what a person types and reads the offers. The default
 #                                 manifest is mv2, the Firefox build. --grep keeps the cases whose id
-#                                 contains the text. The reports (<channel>-<manifest>.json and matrix.md)
+#                                 contains the text. Without --channel each channel runs on a stack of its own, one after the other.
+#                                 The reports (<channel>-<manifest>.json and matrix.md)
 #                                 are unpacked into test-results/out/u2-matrix/ (or $FERRET_EXT_OUT_DIR/u2-matrix/),
 #                                 also after a failure. Stack handling and limits are those of e2e.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
@@ -477,13 +478,22 @@ if [ "$mode" = matrix ]; then
   # writes (FERRET_MATRIX_OUT) comes out as a tar archive on stdout and is unpacked, also after a failure.
   out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
   mkdir -p "$out_dir"
-  e2e_setup
-  make_run "${channel:-release,esr}" "matrix" matrix 0
+  # Each channel runs on a stack of its own (two channels on one account would show each other's entries, and the
+  # extension would answer "choose" where a single channel does not). A stack named by the caller is used as it is.
   rc=0
-  "${run[@]}" < "$work/in.tar" > "$work/matrix.tar" || rc=$?
-  if [ -s "$work/matrix.tar" ]; then
-    tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || rc=$?
-  fi
+  first_channel=1
+  for ch in ${channel:-release esr}; do
+    if [ "$first_channel" -eq 0 ] && [ -n "$own_stack" ]; then e2e_reset; fi
+    if [ "$first_channel" -eq 1 ] || [ -z "${FERRET_E2E_SUFFIX:-}" ]; then e2e_setup; fi
+    first_channel=0
+    make_run "$ch" "matrix" matrix 0
+    one=0
+    "${run[@]}" < "$work/in.tar" > "$work/matrix.tar" || one=$?
+    if [ -s "$work/matrix.tar" ]; then
+      tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || one=$?
+    fi
+    [ "$one" -eq 0 ] || rc=$one
+  done
   report_dir=u2-matrix
   if [ "$matrix_set" = parity ]; then report_dir=u2-matrix-parity; fi
   echo "lanbox-ext.sh: matrix: the reports are in $out_dir/$report_dir/ (exit status $rc)" >&2

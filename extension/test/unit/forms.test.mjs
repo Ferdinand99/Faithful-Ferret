@@ -344,11 +344,20 @@ test("a_search_box_the_page_marks_as_a_user_name_is_one_and_only_then", () => {
 });
 
 test("a_lone_player_or_member_id_box_under_a_sign_in_button_is_a_user_name_step", () => {
-  for (const label of ["Player ID", "Member ID", "Customer ID", "Client ID"]) {
+  for (const label of ["Player ID", "Member ID", "Customer ID"]) {
     const p = page([["label", label, { for: "u" }], ["input", { id: "u", type: "text", name: "ident", required: "" }], ["button", "Sign in", { id: "go", type: "submit" }]], { title: "Sign in" });
     assert.equal(classifyField(p.byId.u).kind, "username", label);
     assert.deepEqual(groupsOf(p), [{ kind: "identifier", username: "u" }], label);
   }
+  // The same boxes under a button that looks something up are no sign-in step: they classify as a user name but need a
+  // sign-in or next cue on the page. "Client ID" is no user name word at all (an OAuth or API client field).
+  for (const [label, button] of [["Member ID", "Find my plan"], ["Customer ID", "Check status"], ["Player ID", "Look up"]]) {
+    const p = page([["label", label, { for: "u" }], ["input", { id: "u", type: "text", name: "ident" }], ["button", button, { id: "go", type: "submit" }]], { title: "Account tools" });
+    assert.equal(classifyField(p.byId.u).kind, "username", label);
+    assert.deepEqual(groupsOf(p).map((g) => g.kind), ["none"], `${label} / ${button}`);
+  }
+  const client = page([["label", "Client ID", { for: "u" }], ["input", { id: "u", type: "text", name: "ident" }], ["button", "Sign in", { id: "go", type: "submit" }]], { title: "Sign in" });
+  assert.notEqual(classifyField(client.byId.u).kind, "username");
   // Other ids are no user name: an order, a coupon, a gift card.
   for (const label of ["Order ID", "Gift card ID", "Tracking ID"]) {
     const p = page([["label", label, { for: "u" }], ["input", { id: "u", type: "text", name: "ident" }], ["button", "Continue", { id: "go", type: "submit" }]], { title: "Track" });

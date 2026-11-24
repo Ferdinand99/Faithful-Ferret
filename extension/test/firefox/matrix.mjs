@@ -380,7 +380,7 @@ async function openCase(w, c, count = { n: 0 }, beforePrepare = async () => {}) 
       }
     }
   };
-  let tabId = await pressed(() => w.visit(caseUrl(c, w.server)));
+  let tabId = await pressed(() => w.visit(caseUrl(c, w.server), { retry: false }));
   // A frame may load after the page does.
   if (c.frame) await sleep(1200);
   await beforePrepare(tabId);
@@ -505,8 +505,13 @@ export async function captureCase(w, c) {
     // result, such as the user name typed in a first step, belongs to the case).
     /** @type {{ available: boolean, offers: Array<Record<string, any>> }} */
     let first = { available: false, offers: [] };
+    // The vault before and after the case: the runner never clicks a save control here, so any change is a write
+    // nobody asked for, whatever the extension reports about itself. It is read before the case's own prepare steps,
+    // so a write that one of those steps causes is seen too.
+    let vaultBefore = "";
     const tabId = await openCase(w, c, count, async (id) => {
       first = await offersPeek(w, id, true);
+      vaultBefore = JSON.stringify(await w.vaultState());
     });
     if (!first.available) {
       result.error = NO_OFFERS;
@@ -514,9 +519,6 @@ export async function captureCase(w, c) {
     }
     /** @type {Record<string, string>} */
     const typed = {};
-    // The vault before and after the case: the runner never clicks a save control here, so any change is a write
-    // nobody asked for, whatever the extension reports about itself.
-    const vaultBefore = JSON.stringify(await w.vaultState());
     const generated = c.expect.generated;
     await runSteps(w.session, c.steps, {
       passwords: w.passwords,

@@ -95,9 +95,17 @@ export const SEARCH_TERMS = Object.freeze([
 /** A user name (an account name, a login id). Checked before NAME_TERMS: `benutzername` holds `name`. */
 export const USERNAME_TERMS = Object.freeze([
   "user", "login", "log in", "sign in", "signin", "identifier", "account", "acct", "uid",
-  "player id", "playerid", "member id", "memberid", "customer id", "customerid", "client id", "clientid",
   "benutzer", "kennung", "anmeldename", "brukernavn", "bruker", "brukerid", "gebruiker", "gebruikersnaam",
   "identifiant", "utilisateur", "pseudo",
+]);
+
+/**
+ * Id words that name a user name only with a sign-in or next cue on the page: a lone "Member ID" box under a button
+ * such as "Find my plan" is a look-up, not a sign-in. They classify a field as a user name, but are not a cue of a user
+ * name step on their own (forms.mjs).
+ */
+export const USERNAME_WEAK_TERMS = Object.freeze([
+  "player id", "playerid", "member id", "memberid", "customer id", "customerid",
 ]);
 
 /** An e-mail address. */
@@ -241,6 +249,7 @@ export const OTP = termsRegex(OTP_TERMS);
 export const OTP_WEAK = termsRegex(OTP_WEAK_TERMS);
 export const SEARCH = termsRegex(SEARCH_TERMS);
 export const USERNAME = termsRegex(USERNAME_TERMS);
+export const USERNAME_WEAK = termsRegex(USERNAME_WEAK_TERMS);
 export const EMAIL = termsRegex(EMAIL_TERMS);
 export const PHONE = termsRegex(PHONE_TERMS);
 export const NAME = termsRegex(NAME_TERMS);

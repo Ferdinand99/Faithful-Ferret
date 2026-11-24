@@ -115,7 +115,7 @@
               stores ciphertext. It will fill in logins, keep your passkeys and one-time codes, and work in your browser, on
               iOS and on Android.
             </p>
-            <p class="hero-fine">In development (v0.9.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import, automatic backups, devices with tokens bound to a device key, folders in a new web vault layout, and a first Firefox extension that fills logins from its popup. The extension is a signed build outside the Firefox add-ons store, and it cannot save new passwords yet. Ferret is a single-author project. Not ready for real passwords yet, and there has been no external security audit.</p>
+            <p class="hero-fine">In development (v0.9.0): the server and web vault work end to end in testing, with safe sync between devices and browser tabs, recovery with a printed emergency sheet, encrypted export, import, automatic backups, devices with tokens bound to a device key, folders in a new web vault layout, and a Firefox extension that fills logins from its popup, offers to save and update passwords, and has a password generator. The extension is a signed build outside the Firefox add-ons store. Ferret is a single-author project. Not ready for real passwords yet, and there has been no external security audit.</p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="https://github.com/Ferdinand99/Faithful-Ferret">
                 <svg class="gh-mark" aria-hidden="true"><use href="#gh"></use></svg>
@@ -196,7 +196,7 @@
             <li class="card feature problem reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
               <h3>Autofill that notices</h3>
-              <p>Reliable detection of <strong>new and changed passwords</strong>, so a password you just created or changed on a site isn’t left behind. It will be tested against a matrix of real sites before release.</p>
+              <p>Detection of <strong>new and changed passwords</strong>, so a password you just created or changed on a site isn’t left behind. The Firefox extension does this with rules that are tested against a collection of test forms we wrote ourselves, not against every site. The measured rates are listed under the extension above.</p>
             </li>
             <li class="card feature problem reveal d1">
               <span class="list-icon status-info"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
@@ -287,18 +287,29 @@
             </li>
             <li class="card feature reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#plug"></use></svg></span>
-              <h3>Firefox extension, first version</h3>
-              <p>Sign in once, then unlock with the master password alone. It syncs live as a device and suggests the logins that match the page. Fill from the popup, with the shortcut Alt+Shift+L or from the context menu. Copy a user name or password and Ferret clears the clipboard after 30 seconds. Auto-lock is 15 seconds to 24 hours. It refuses to fill a frame that its page hides or covers, and on a page that only looks like a saved site it suggests and fills nothing. It can forget a server, and it warns when a server shows something other than what it pinned. A signed release build from version 0.7.1 on updates itself. It needs Firefox 153 or newer, cannot save new passwords yet, and is a signed build outside the add-ons store.</p>
+              <h3>Firefox extension</h3>
+              <p>Sign in once, then unlock with the master password alone. It syncs live as a device and suggests the logins that match the page. Fill from the popup, with the shortcut Alt+Shift+L or from the context menu. Copy a user name or password and Ferret clears the clipboard after 30 seconds. Auto-lock is 15 seconds to 24 hours. It refuses to fill a frame that its page hides or covers, and on a page that only looks like a saved site it suggests and fills nothing. It can forget a server, and it warns when a server shows something other than what it pinned. A signed release build from version 0.7.1 on updates itself. It needs Firefox 153 or newer and is a signed build outside the add-ons store. It cannot handle passkeys yet.</p>
             </li>
             <li class="card feature reveal d1">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
               <h3>Form detection in the extension</h3>
               <p>Before it fills, the extension works out what the form is for, from the fields&rsquo; <span class="mono">autocomplete</span> hints and from their names, labels and placeholders in English, Norwegian, German, French and Dutch. A sign-in form gets the user name, the password and the one-time code if the item has one. A form for changing a password gets the user name and the password in use, never the new one. A sign-up or reset form, a card form and a PIN field get nothing: a stored password never goes into a field that sets a new password, a card&rsquo;s security code, a PIN or a one-time code.</p>
             </li>
+            <li class="card feature reveal">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
+              <h3>Offers to save and update passwords</h3>
+              <p>Off until you turn on &ldquo;Offer to save and update passwords&rdquo; on the extension&rsquo;s settings page, which asks Firefox for access to <span class="mono">https</span> pages (turning it off gives it back). A small script notices a submitted form, reads only what you typed yourself, in fields you can see, and never runs on <span class="mono">http</span> pages. The offer shows only in Ferret&rsquo;s popup and as a number on its button, never in the page; a setting decides whether the popup opens by itself. Ferret&rsquo;s core decides between save and update without revealing your saved passwords. An update changes only the password and keeps the old one under &ldquo;Previous passwords&rdquo;. Nothing is saved without your click on the card, and &ldquo;Never for this site&rdquo; is a list you can edit. What you typed is kept only in memory, for at most five minutes, and is dropped whenever the vault locks.</p>
+              <p>Measured on test forms we wrote ourselves, in Firefox Release and ESR on a test server of their own: of 130 forms in the main collection, filling 53 of 55, noticing a submitted form 75 of 75 and filling a generated password 25 of 26. On 68 forms modelled on a public autofill test site: 32 of 32, 41 of 41 and 12 of 12. On 39 forms written by someone who had not seen the code, 14 of 14 filled and 15 of 20 noticed, and the five that are missed send a request and leave the form on screen (a failed sign-in looks the same, so Ferret offers nothing). No unsafe fill and no unsafe offer in the final runs. It says nothing about a site that does something new.</p>
+            </li>
+            <li class="card feature reveal d1">
+              <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
+              <h3>Password generator in the extension</h3>
+              <p>A &ldquo;Generator&rdquo; part in the popup makes a password (4 to 128 characters from the classes you choose; 20 characters with all four by default) or a passphrase from the EFF large word list (3 to 20 words; 5 by default). It shows an estimate of the strength in bits. &ldquo;Copy&rdquo; clears the clipboard after 30 seconds. &ldquo;Fill in the page&rdquo; puts the value into the new-password fields of a sign-up, change or reset form and nowhere else, and then the card to save the login appears at once. A value you did not save stays in memory only until the vault locks or 15 minutes pass. The web vault has no generator screen yet.</p>
+            </li>
           </ul>
 
           <p class="later reveal">
-            <strong>In progress:</strong> saving new and changed passwords and a password generator in the Firefox extension, then a health check. Since v0.8.0 the core has a password generator, a way to compare a stored field with a given value and password history. The web vault shows the password history since v0.9.0; no screen uses the generator or the comparison yet. The extension is not on the Firefox add-ons store; <a href="https://github.com/Ferdinand99/Faithful-Ferret/blob/main/docs/EXTENSION-FIREFOX.md">how the signed build is made</a> is in the repository.
+            <strong>In progress:</strong> a health check, and a generator screen in the web vault. Since v0.8.0 the core has a password generator, a way to compare a stored field with a given value and password history. The web vault shows the password history since v0.9.0; the Firefox extension uses all three. The extension is not on the Firefox add-ons store; <a href="https://github.com/Ferdinand99/Faithful-Ferret/blob/main/docs/EXTENSION-FIREFOX.md">how the signed build is made</a> is in the repository.
             Running a server is described in
             <a href="https://github.com/Ferdinand99/Faithful-Ferret/blob/main/docs/OPERATIONS.md">the operations guide</a>.
           </p>
@@ -550,15 +561,15 @@
               <div class="ms-body">
                 <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Done in v0.7.0, additions in v0.8.0 and v0.9.0</span></p>
                 <h3>Safe sync, recovery and daily use</h3>
-                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, and recovery from an older server state with checks. Recovery is done (v0.5.0): an emergency sheet with a QR code, recovery on a new browser with the recovery key, a new recovery key, a master password change through one write path, a one-time sign-in code, encrypted export, import from Ferret, Bitwarden and AliasVault files, tab hand-over that keeps unsaved edits, and automatic backups with an encrypted off-machine copy and a safe restore. Devices are done (v0.6.0): sign-in with tokens bound to a device key, and a device list with revoke in the web vault. The new web vault layout with folders, and unlock with the master password after the session has ended, are done (v0.7.0). The core has a password generator, a field comparison and password history (v0.8.0); the web vault lists the previous passwords of an item and keeps them when a password is changed (v0.9.0), and does not use the generator or the field comparison yet.</p>
+                <p>Safe sync is done (v0.3.0): sync between devices and browser tabs, with both versions of a conflict kept side by side and never a silent overwrite, a local trash, and recovery from an older server state with checks. Recovery is done (v0.5.0): an emergency sheet with a QR code, recovery on a new browser with the recovery key, a new recovery key, a master password change through one write path, a one-time sign-in code, encrypted export, import from Ferret, Bitwarden and AliasVault files, tab hand-over that keeps unsaved edits, and automatic backups with an encrypted off-machine copy and a safe restore. Devices are done (v0.6.0): sign-in with tokens bound to a device key, and a device list with revoke in the web vault. The new web vault layout with folders, and unlock with the master password after the session has ended, are done (v0.7.0). The core has a password generator, a field comparison and password history (v0.8.0); the web vault lists the previous passwords of an item and keeps them when a password is changed (v0.9.0), and does not use the generator or the field comparison yet; the Firefox extension does.</p>
               </div>
             </li>
             <li class="milestone is-now reveal">
               <span class="ms-marker" aria-hidden="true"><span class="dot is-live"></span></span>
               <div class="ms-body">
-                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Firefox extension first version done, apps later</span></p>
+                <p class="ms-status"><span class="pill status-accent"><span class="dot"></span>Firefox extension with saving and generator done, apps later</span></p>
                 <h3>Browser extension, iOS and Android</h3>
-                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The first Firefox extension is done (v0.7.0): sign-in, sync, suggestions and fill from the popup, copy, and auto-lock. Since v0.9.0 it also checks what a form is for before it fills. It is not on the Firefox add-ons store. Saving new and changed passwords and the password generator in the extension are in progress. The iOS and Android apps come later.</p>
+                <p>Autofill and detection of new and changed passwords, passkeys, biometric and PIN unlock, on every planned platform. The first Firefox extension is done (v0.7.0): sign-in, sync, suggestions and fill from the popup, copy, and auto-lock. Since v0.9.0 it also checks what a form is for before it fills. It also offers to save new and changed passwords and has a password generator in its popup. It is not on the Firefox add-ons store. A health check is next. The iOS and Android apps come later.</p>
               </div>
             </li>
             <li class="milestone reveal">

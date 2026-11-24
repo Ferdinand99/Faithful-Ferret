@@ -1,5 +1,6 @@
-// The build flag `save` (saving and updating passwords from the extension): off
-// in a release, on in the test variant, and "off" means that no path of the
+// The build flag `save` (saving and updating passwords from the extension, and the
+// generator): on in a release and in the test variant. A test build can turn it
+// off (`--features none`), and "off" means that no path of the
 // feature is there. A package built with `save` off holds no capture script,
 // serves none of the feature's messages (a handler for one only refuses), and
 // shows none of its controls.
@@ -22,7 +23,7 @@ import { test } from "node:test";
 import { CONTENT_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
 import { readGraph } from "./importGraph.mjs";
 import {
-  build, DEFAULT_FEATURES, FEATURES, FEATURES_FILE, featuresModule, parseFeatures, RELEASE_FEATURES, SAVE_FILES, WASM_FILES,
+  build, DEFAULT_FEATURES, FEATURES, FEATURES_FILE, featuresModule, isTestOnlyPath, parseFeatures, RELEASE_FEATURES, SAVE_FILES, WASM_FILES,
 } from "../../scripts/build.mjs";
 import { makeRoot } from "./buildHelpers.mjs";
 
@@ -159,7 +160,8 @@ async function savePathsIn(dir, files) {
   /** @param {string} path */
   const asksFeatures = (/** @type {string} */ path) => /shared\/features\.mjs["']/.test(files.get(path)?.toString("utf8") ?? "");
   for (const [path, bytes] of files) {
-    if (!path.endsWith(".mjs") || path === "shared/captureConfig.mjs" || path === FEATURES_FILE) continue;
+    // Test-only code (a probe that registers a script for a test) is not in a release, so it is not a path of the feature.
+    if (!path.endsWith(".mjs") || path === "shared/captureConfig.mjs" || path === FEATURES_FILE || isTestOnlyPath(path)) continue;
     if (!SAVE_PATHS.registers.test(bytes.toString("utf8"))) continue;
     const importers = [...graph.edges].filter(([, edges]) => edges.some((e) => e.target === path)).map(([importer]) => importer);
     if (!asksFeatures(path) && (importers.length === 0 || !importers.every(asksFeatures))) found.push(`registration in ${path} without a gated importer`);
@@ -177,11 +179,11 @@ async function savePathsIn(dir, files) {
 /** @param {string} dir @returns {Promise<{ save: boolean }>} */
 const featuresOf = async (dir) => (await import(pathToFileURL(join(dir, ...FEATURES_FILE.split("/"))).href)).FEATURES;
 
-test("the_save_feature_is_off_in_release_and_on_in_test", async () => {
+test("the_save_feature_is_on_in_release_and_in_test", async () => {
   assert.deepEqual([...FEATURES], ["save"]);
-  assert.deepEqual([...DEFAULT_FEATURES.release], []);
+  assert.deepEqual([...DEFAULT_FEATURES.release], ["save"]);
   assert.deepEqual([...DEFAULT_FEATURES.test], ["save"]);
-  assert.deepEqual([...RELEASE_FEATURES], [], "a release may not have save on yet");
+  assert.deepEqual([...RELEASE_FEATURES], ["save"], "a release has save on");
   assert.deepEqual([...SAVE_FILES], [...SAVE_PATHS.files]);
 
   const env = makeRoot();
@@ -190,22 +192,25 @@ test("the_save_feature_is_off_in_release_and_on_in_test", async () => {
     for (const manifest of ["mv2", "mv3"]) {
       const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
       const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
-      assert.deepEqual(release.features, []);
+      assert.deepEqual(release.features, ["save"]);
       assert.deepEqual(testBuild.features, ["save"]);
       // The generated module says so, in each package, and cannot be changed at run time.
-      const off = await featuresOf(release.dir);
-      const on = await featuresOf(testBuild.dir);
-      assert.deepEqual({ ...off }, { save: false }, manifest);
-      assert.deepEqual({ ...on }, { save: true }, manifest);
-      assert.equal(Object.isFrozen(off), true);
-      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule([], new Map()));
+      const releaseOn = await featuresOf(release.dir);
+      const testOn = await featuresOf(testBuild.dir);
+      assert.deepEqual({ ...releaseOn }, { save: true }, manifest);
+      assert.deepEqual({ ...testOn }, { save: true }, manifest);
+      assert.equal(Object.isFrozen(releaseOn), true);
+      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save"], new Map()));
+      // The capture script and its sources are in the release, and no test-only code is.
+      for (const path of SAVE_FILES) assert.ok(release.files.has(path), `${manifest}: ${path} is in a release`);
+      assert.deepEqual([...release.files.keys()].filter((path) => isTestOnlyPath(path) || path.startsWith("test/")), [], manifest);
     }
 
     // --features overrides the variant's default: a test build with the feature off.
     const testOff = await build({ ...options, out: join(env.out, "t-off"), manifest: "mv2", variant: "test", features: [] });
     assert.deepEqual({ ...(await featuresOf(testOff.dir)) }, { save: false });
-    // A release with it on is refused by the build's own release check.
-    await assert.rejects(build({ ...options, out: join(env.out, "r-on"), manifest: "mv2", variant: "release", features: ["save"] }), /the feature save is on/);
+    // A release with it off is refused by the build's own release check.
+    await assert.rejects(build({ ...options, out: join(env.out, "r-off"), manifest: "mv2", variant: "release", features: [] }), /the feature save is off, which a release must have on/);
     await assert.rejects(build({ ...options, out: join(env.out, "x"), variant: "test", features: ["autosave"] }), /unknown feature "autosave"/);
   } finally {
     env.cleanup();
@@ -229,15 +234,15 @@ test("the_save_feature_is_off_in_release_and_on_in_test", async () => {
   }
 });
 
-test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", async () => {
-  // The repository's own sources: nothing of the feature in a release, in either manifest version.
+test("a_package_with_save_off_has_no_capture_offer_or_generator_path", async () => {
+  // The repository's own sources: nothing of the feature in a package built with it off, in either manifest version.
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
     for (const manifest of ["mv2", "mv3"]) {
-      const release = await build({ ...options, out: join(env.out, manifest), manifest, variant: "release" });
-      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: false });
-      assert.deepEqual(await savePathsIn(release.dir, release.files), [], manifest);
+      const off = await build({ ...options, out: join(env.out, manifest), manifest, variant: "test", features: [] });
+      assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: false });
+      assert.deepEqual(await savePathsIn(off.dir, off.files), [], manifest);
     }
   } finally {
     env.cleanup();
@@ -278,7 +283,7 @@ test("a_release_package_with_save_off_has_no_capture_offer_or_generator_path", a
   });
   try {
     const options = { root: probe.root, webRoot: probe.webRoot, wasmTar: probe.tarPath, manifest: "mv2" };
-    const release = await build({ ...options, out: join(probe.out, "r"), variant: "release" });
+    const release = await build({ ...options, out: join(probe.out, "r"), variant: "test", features: [] });
     release.files.set("content/capture.inject.js", Buffer.from("void 0;\n"));
     assert.deepEqual((await savePathsIn(release.dir, release.files)).sort(), [
       "control in pages/probe.html",

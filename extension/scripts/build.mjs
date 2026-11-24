@@ -7,10 +7,11 @@
 //
 // --features names the features that are on, separated by commas ("none" for
 // none); without it a variant has its own default (DEFAULT_FEATURES). The one
-// feature is `save` (saving and updating passwords from the extension): off in
-// a release, on in the test variant. The build writes shared/features.mjs with
-// the result, and the release check refuses a release package with `save` on,
-// or without that file.
+// feature is `save` (saving and updating passwords from the extension and the
+// password generator): on in a release and in the test variant. The build
+// writes shared/features.mjs with the result, and the release check refuses a
+// release package with `save` off, without that file, or without the capture
+// script. A package for a test can still be built with `--features none`.
 //
 // 1. Reads ../web/wasm.lock.json ({version, url, sha256}), fetches the published
 //    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar), checks its
@@ -78,21 +79,22 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
 /**
  * The features a build turns on or off. `save`: saving and updating passwords from
  * the extension (the capture script, the offer in Ferret's UI, the generator).
- * While that work is not done, a release has it off and the test variant has it on.
+ * A release has it on, and so has the test variant; a test build can turn it off (`--features none`) to prove that
+ * "off" leaves no path of the feature in the package.
  */
 export const FEATURES = Object.freeze(["save"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
-  release: Object.freeze(/** @type {string[]} */ ([])),
+  release: Object.freeze(["save"]),
   test: Object.freeze(["save"]),
 });
-/** The features a release package may have on. `save` is not one of them yet: the release check refuses it. */
-export const RELEASE_FEATURES = Object.freeze(/** @type {string[]} */ ([]));
+/** The features a release package has on, no more and no fewer: the release check refuses any other set. */
+export const RELEASE_FEATURES = Object.freeze(["save"]);
 /** The generated module that tells the code of a package which features are on. */
 export const FEATURES_FILE = "shared/features.mjs";
 /**
  * The package files of the `save` feature (the capture script, joined, and the sources it is joined from). A package
- * with `save` off never holds one (the build leaves them out), and a release never does (the release check).
+ * with `save` off never holds one (the build leaves them out), and a release always does (the release check).
  */
 export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", CAPTURE_ENTRY]);
 
@@ -815,9 +817,8 @@ export function featuresModule(on, dist) {
 }
 
 /**
- * What a release package must not hold of the features: a features module other
- * than the one the build writes for a release (a feature on that a release may not
- * have, or no module at all), and a file of the `save` feature.
+ * What a release package must hold of the features: the features module that the build writes for a release (every
+ * feature of RELEASE_FEATURES on, no other feature on), and every file of the `save` feature.
  * @param {Map<string, Buffer>} files path -> bytes
  * @returns {string[]}
  */
@@ -831,16 +832,24 @@ export function featureProblems(files) {
     const text = raw.toString("utf8");
     if (text !== featuresModule(RELEASE_FEATURES, new Map())) {
       for (const name of FEATURES) {
-        if (!RELEASE_FEATURES.includes(name) && new RegExp(String.raw`["']?\b${name}\b["']?\s*:\s*(?!false\b)`).test(text)) {
-          problems.push(`${FEATURES_FILE}: the feature ${name} is on, which a release may not have yet`);
+        const flag = new RegExp(String.raw`["']?\b${name}\b["']?\s*:\s*(?!false\b)`).test(text);
+        if (!RELEASE_FEATURES.includes(name) && flag) {
+          problems.push(`${FEATURES_FILE}: the feature ${name} is on, which a release may not have`);
+        }
+        if (RELEASE_FEATURES.includes(name) && !new RegExp(String.raw`["']?\b${name}\b["']?\s*:\s*true\b`).test(text)) {
+          problems.push(`${FEATURES_FILE}: the feature ${name} is off, which a release must have on`);
         }
       }
       if (problems.length === 0) problems.push(`${FEATURES_FILE}: not the module the build writes for a release`);
     }
   }
-  if (!RELEASE_FEATURES.includes("save")) {
+  if (RELEASE_FEATURES.includes("save")) {
     for (const path of SAVE_FILES) {
-      if (files.has(path)) problems.push(`${path}: belongs to the save feature, which a release may not have yet`);
+      if (!files.has(path)) problems.push(`${path}: belongs to the save feature, which a release has on, and is missing`);
+    }
+  } else {
+    for (const path of SAVE_FILES) {
+      if (files.has(path)) problems.push(`${path}: belongs to the save feature, which a release may not have`);
     }
   }
   return problems;

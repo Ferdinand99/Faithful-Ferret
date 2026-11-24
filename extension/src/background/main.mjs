@@ -57,7 +57,7 @@ const sessionHost = createSessionHost({
 });
 
 // What Ferret filled where, for a change form submitted afterwards (memory only, cleared at every lock); only with
-// saving passwords, which is off in a release until it is finished.
+// saving passwords, a build feature (the flag `save`, on in a release).
 const fillContext = FEATURES.save ? createFillContext({ now }) : null;
 
 // The capture host (the store of offers, the registration of the capture script, the setting); only with saving passwords.
@@ -127,7 +127,7 @@ const clipboard = createClipboard({
 const matchHost = createMatchHost({ engine: () => /** @type {any} */ (syncHost.items()) });
 
 // The generated password the popup shows and fills (memory only, until the next lock or 15 minutes); only with saving
-// passwords, which is off in a release until it is finished. Nothing in it makes a password: the core does.
+// passwords, a build feature (the flag `save`, on in a release). Nothing in it makes a password: the core does.
 const generatorHost = FEATURES.save
   ? createGeneratorHost({
       now,

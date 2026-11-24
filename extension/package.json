@@ -2,7 +2,7 @@
   "name": "ferret-extension",
   "private": true,
   "type": "module",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "The Faithful Ferret browser extension: no runtime dependencies, tools only",
   "engines": {
     "node": ">=22"

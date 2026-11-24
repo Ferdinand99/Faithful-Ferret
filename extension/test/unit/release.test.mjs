@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import {
-  build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems, UPDATE_URL,
+  build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems, SAVE_FILES, UPDATE_URL,
 } from "../../scripts/build.mjs";
 import { extensionRoot, makeRoot, repoRoot } from "./buildHelpers.mjs";
 
@@ -12,8 +12,14 @@ const CHECK = join(repoRoot, "scripts", "check-ext-release.sh");
 /** The internal host names of the repository's own test/fixtures/hosts.json. */
 const HOSTS = readInternalHosts();
 
-/** The features module of a release (every feature off), for a package made by hand. @type {[string, Buffer]} */
-const FEATURES_OFF = [FEATURES_FILE, Buffer.from(featuresModule([], new Map()))];
+/**
+ * The features module of a release (save on) and the files of that feature, for a package made by hand.
+ * @type {[string, Buffer][]}
+ */
+const RELEASE_BASE = [
+  [FEATURES_FILE, Buffer.from(featuresModule(["save"], new Map()))],
+  ...SAVE_FILES.map((path) => /** @type {[string, Buffer]} */ ([path, Buffer.from("void 0;\n")])),
+];
 
 const MEASURE_HTML = '<!doctype html><html><head><script type="module" src="measure.mjs"></script></head></html>\n';
 
@@ -86,12 +92,12 @@ test("release_variant_refuses_a_fixed_extension_uuid_and_the_test_profile_prefer
       env.cleanup();
     }
   }
-  assert.deepEqual(releaseProblems(new Map([FEATURES_OFF]), HOSTS), ["manifest.json is missing"]);
+  assert.deepEqual(releaseProblems(new Map(RELEASE_BASE), HOSTS), ["manifest.json is missing"]);
 });
 
 test("release_package_must_carry_exactly_the_release_add_on_id", () => {
   /** @param {unknown} id */
-  const manifestWith = (id) => new Map([FEATURES_OFF, [
+  const manifestWith = (id) => new Map([...RELEASE_BASE, [
     "manifest.json",
     Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id, update_url: UPDATE_URL } } })),
   ]]);
@@ -102,13 +108,13 @@ test("release_package_must_carry_exactly_the_release_add_on_id", () => {
     assert.match(problems[0], /the add-on id is/);
   }
   // No gecko section at all.
-  assert.match(releaseProblems(new Map([FEATURES_OFF, ["manifest.json", Buffer.from('{ "name": "x" }')]]), HOSTS)[0], /the add-on id is undefined/);
+  assert.match(releaseProblems(new Map([...RELEASE_BASE, ["manifest.json", Buffer.from('{ "name": "x" }')]]), HOSTS)[0], /the add-on id is undefined/);
 });
 
 test("release_package_must_carry_exactly_the_update_url", () => {
   assert.equal(UPDATE_URL, "https://github.com/Ferdinand99/Faithful-Ferret/releases/download/extension-updates/updates.json");
   /** @param {unknown} url @param {boolean} [present] */
-  const manifestWith = (url, present = true) => new Map([FEATURES_OFF, [
+  const manifestWith = (url, present = true) => new Map([...RELEASE_BASE, [
     "manifest.json",
     Buffer.from(JSON.stringify({
       name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP },
@@ -406,37 +412,37 @@ test("release_check_fails_closed_without_the_permission_allow_list", async () =>
   }
 });
 
-test("the_release_check_refuses_a_release_build_with_save_on", async () => {
+test("the_release_check_requires_a_release_build_with_save_on", async () => {
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv2" };
-    // The build refuses a release with the feature on.
-    await assert.rejects(build({ ...options, variant: "release", features: ["save"] }), /release: .*shared\/features\.mjs: the feature save is on/);
+    // The build refuses a release with the feature off.
+    await assert.rejects(build({ ...options, variant: "release", features: [] }), /release: .*shared\/features\.mjs: the feature save is off, which a release must have on/);
     const release = await build({ ...options, variant: "release" });
     assert.equal(runCheck(release.dir).status, 0);
     const file = join(release.dir, ...FEATURES_FILE.split("/"));
     const xpi = join(env.out, "edited.xpi");
 
-    // The module of a build with the feature on, put into a release (the folder and its .xpi): refused.
-    writeFileSync(file, featuresModule(["save"], new Map()));
+    // The module of a build with the feature off, put into a release (the folder and its .xpi): refused.
+    writeFileSync(file, featuresModule([], new Map()));
     packXpi(release.dir, xpi);
     for (const target of [release.dir, xpi]) {
       const result = runCheck(target);
       assert.notEqual(result.status, 0, target);
-      assert.match(result.output, /shared\/features\.mjs: the feature save is on, which a release may not have yet/, target);
+      assert.match(result.output, /shared\/features\.mjs: the feature save is off, which a release must have on/, target);
     }
-    // Any other spelling of it on, or a module the build did not write, is refused too.
+    // Any other spelling of it off, or a module the build did not write, is refused too.
     for (const text of [
-      "export const FEATURES = Object.freeze({ save: true });\n",
-      "export const FEATURES = Object.freeze({ 'save': 1 });\n",
-      "export const FEATURES = Object.freeze({ save: !0 });\n",
+      "export const FEATURES = Object.freeze({ save: false });\n",
+      "export const FEATURES = Object.freeze({ 'save': 0 });\n",
+      "export const FEATURES = Object.freeze({ save: !1 });\n",
       "export const FEATURES = globalThis.features;\n",
       "",
     ]) {
       writeFileSync(file, text);
       const result = runCheck(release.dir);
       assert.notEqual(result.status, 0, JSON.stringify(text));
-      assert.match(result.output, /shared\/features\.mjs: (?:the feature save is on|not the module the build writes for a release)/, JSON.stringify(text));
+      assert.match(result.output, /shared\/features\.mjs: (?:the feature save is off|not the module the build writes for a release)/, JSON.stringify(text));
     }
     // No module at all: refused (a release names the features that are on).
     rmSync(file);
@@ -444,16 +450,36 @@ test("the_release_check_refuses_a_release_build_with_save_on", async () => {
     assert.notEqual(missing.status, 0);
     assert.match(missing.output, /shared\/features\.mjs is missing/);
     // The module put back as the build writes it: clean again.
-    writeFileSync(file, featuresModule([], new Map()));
+    writeFileSync(file, featuresModule(["save"], new Map()));
     assert.equal(runCheck(release.dir).status, 0);
 
-    // The capture script in a release: refused, whatever the module says.
-    const capture = join(release.dir, "content", "capture.inject.js");
-    mkdirSync(dirname(capture), { recursive: true });
-    writeFileSync(capture, "void 0;\n");
-    const withCapture = runCheck(release.dir);
-    assert.notEqual(withCapture.status, 0);
-    assert.match(withCapture.output, /content\/capture\.inject\.js: belongs to the save feature/);
+    // The capture script (or one of its sources) missing from a release: refused, whatever the module says.
+    for (const path of SAVE_FILES) {
+      const target = join(release.dir, ...path.split("/"));
+      const bytes = readFileSync(target);
+      rmSync(target);
+      const without = runCheck(release.dir);
+      assert.notEqual(without.status, 0, path);
+      assert.match(without.output, new RegExp(`${path.replaceAll(".", "\\.")}: belongs to the save feature, which a release has on, and is missing`), path);
+      writeFileSync(target, bytes);
+      assert.equal(runCheck(release.dir).status, 0, path);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a_release_with_save_on_holds_no_test_only_path_of_the_feature", async () => {
+  // The test-only offer probes (plant, bench, peek), the write probe and the bridge stay out of a release with the
+  // feature on, and no package file imports one (the build's own import check).
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath };
+    for (const manifest of ["mv2", "mv3"]) {
+      const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
+      const paths = [...release.files.keys()];
+      assert.deepEqual(paths.filter((path) => /(?:^|\/)test-only\/|^test\//.test(path)), [], manifest);
+    }
   } finally {
     env.cleanup();
   }

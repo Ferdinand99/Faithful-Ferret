@@ -38,7 +38,7 @@
 
 import {
   CARD, CARD_FIELD, COUPON, CONFIRM, CURRENT, CVC, EMAIL, LOGIN, NAME, NEW, NEXT, NOT_LOGIN, OTP, OTP_WEAK,
-  ONE_TIME_PASSWORD, PASSWORD, PHONE, PIN, RESET, SEARCH, SHOW, SIGNUP, SUBMIT, SUBMIT_WORDS, USERNAME, normalize,
+  ONE_TIME_PASSWORD, PASSWORD, PHONE, PIN, RESET, SEARCH, SHOW, SIGNUP, SUBMIT, SUBMIT_WORDS, USERNAME, USERNAME_WEAK, normalize,
 } from "./patterns.mjs";
 
 export { SUBMIT, SUBMIT_WORDS };
@@ -266,7 +266,7 @@ export function classifyField(element, ctx = {}) {
   const max = maxLengthOf(element);
   const codeSized = password && max !== null && max <= 8;
   if (OTP.test(hints) && (!passwordWord || ONE_TIME_PASSWORD.test(hints) || codeSized)) return { kind: codeKind(element), reasons: ["word"] };
-  if (OTP_WEAK.test(hints) && isShortNumeric(element) && !passwordWord && !USERNAME.test(hints) && !NAME.test(hints) && !PHONE.test(hints)) {
+  if (OTP_WEAK.test(hints) && isShortNumeric(element) && !passwordWord && !USERNAME.test(hints) && !USERNAME_WEAK.test(hints) && !NAME.test(hints) && !PHONE.test(hints)) {
     return { kind: codeKind(element), reasons: ["word", "numeric"] };
   }
 
@@ -280,6 +280,7 @@ export function classifyField(element, ctx = {}) {
   }
 
   if (USERNAME.test(hints)) return { kind: "username", reasons: ["word"] };
+  if (USERNAME_WEAK.test(hints)) return { kind: "username", reasons: ["weak_word"] };
   if (EMAIL.test(hints) || type === "email") return { kind: "email", reasons: [EMAIL.test(hints) ? "word" : "type"] };
   if (PHONE.test(hints) || type === "tel") return { kind: "other", reasons: ["phone"] };
   if (NAME.test(hints)) return { kind: "other", reasons: ["name"] };

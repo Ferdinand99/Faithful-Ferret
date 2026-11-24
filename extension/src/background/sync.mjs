@@ -35,7 +35,7 @@
 //   folder_names   the folders the save card offers
 //
 // The four offer ops belong to saving passwords from the extension, which is
-// off in a release until it is finished (the build flag `save`): with it off,
+// a build feature (the flag `save`, on in a release): with it off,
 // each of them only refuses (`not_available`). An offer is named by its id and
 // the popup session it was given to; the captured form itself comes from the
 // background's store of offers (`captures`), never from a message. It is used

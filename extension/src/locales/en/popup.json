@@ -48,7 +48,7 @@
   "popup.error.not_offered": "This item is not offered for this page any more. Open the popup again.",
   "popup.error.origin_changed": "The page changed, so nothing was filled in. Open the popup again on the page.",
   "popup.error.busy": "Ferret is busy with another fill. Try again in a moment.",
-  "popup.error.frame_gone": "Ferret could not reach the page. Reload it and try again.",
+  "popup.error.frame_gone": "Ferret could not reach the page. Open Ferret again on this page, or press the fill shortcut there, with the form in view.",
   "popup.error.no_report": "The page did not answer. Reload it and try again.",
   "popup.error.no_fields": "Ferret found no sign-in field it may fill on this page.",
   "popup.error.no_value": "This item has nothing to put there.",
