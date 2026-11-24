@@ -1,15 +1,26 @@
 #!/usr/bin/env node
 // Builds web/dist: the static files the server embeds.
 //
-//   node scripts/build.mjs [--wasm-tar <path>] [--root <web dir>] [--out <dir>]
+//   node scripts/build.mjs [--wasm lock|tree|release] [--wasm-tar <path>] [--wasm-sha256 <hex>]
+//                          [--wasm-commit <commit>] [--root <web dir>] [--out <dir>]
 //
-// 1. Reads wasm.lock.json ({version, url, sha256}), fetches the published
-//    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar or
-//    FERRET_WASM_TAR), checks its SHA-256 and unpacks pkg-web/ and js/. Only
-//    the files in WASM_FILES are used. To move the pin, take the SHA-256 of the
-//    new release file from the release's signed SHA256SUMS (verify its cosign
-//    bundle first), never from the download alone, and change version, url and
-//    sha256 in wasm.lock.json together.
+// 1. The WebAssembly package of the crypto core, from one of three sources (--wasm, or
+//    FERRET_WASM_SOURCE; the default is lock):
+//      lock     reads wasm.lock.json ({version, url, sha256}), fetches the published
+//               ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar or
+//               FERRET_WASM_TAR) and checks its SHA-256 against the lock. To move the pin,
+//               take the SHA-256 of the new release file from the release's signed SHA256SUMS
+//               (verify its cosign bundle first), never from the download alone, and change
+//               version, url and sha256 in wasm.lock.json together.
+//      release  the package that the release run of this very commit built: --wasm-tar and
+//               --wasm-sha256 (the entry of that run's SHA256SUMS) are both needed, and the
+//               archive must have exactly that SHA-256. Only the release workflow uses it.
+//      tree     for test builds only: a package built from the commit that is being tested
+//               (scripts/wasm-tree.sh). --wasm-tar and --wasm-commit are needed; the lock is
+//               not consulted. The server's build refuses a release image with it.
+//    The archive is unpacked to pkg-web/ and js/; only the files in WASM_FILES are used.
+//    dist/wasm-source.json says which source was used: {source, version, sha256} for lock,
+//    {source, sha256} for release and {source, commit, sha256} for tree.
 // 2. Scans the feature files and writes the generated files:
 //      src/routes/*.route.mjs       -> src/routes.gen.mjs
 //      src/services/*.service.mjs   -> src/services.gen.mjs
@@ -424,31 +435,69 @@ const WASM_FILES = [
   "pkg-web/ferret_core_wasm.js", "pkg-web/ferret_core_wasm_bg.wasm",
 ];
 
+export const WASM_SOURCES = Object.freeze(["lock", "tree", "release"]);
+export const WASM_SOURCE_FILE = "wasm-source.json";
+
 /**
- * @param {{ root?: string, out?: string, wasmTar?: string, fetchImpl?: typeof fetch }} [options]
+ * The record of where the WebAssembly package came from, as the text of dist/wasm-source.json.
+ * @param {{ source: string, sha256: string, version?: string, commit?: string }} record
+ */
+export function wasmSourceText(record) {
+  return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+/**
+ * @param {{ root?: string, out?: string, wasmTar?: string, wasmSource?: string, wasmSha256?: string, wasmCommit?: string, fetchImpl?: typeof fetch }} [options]
  * @returns {Promise<{ out: string, manifest: Record<string, { sha256: string, type: string }> }>}
  */
-export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImpl = fetch } = {}) {
+export async function build({
+  root = resolve(here, ".."), out, wasmTar, wasmSource, wasmSha256, wasmCommit, fetchImpl = fetch,
+} = {}) {
   root = resolve(root);
   out = resolve(out ?? join(root, "dist"));
 
-  // 1. The published WASM package, checked against the lock.
-  const lock = JSON.parse(readFileSync(join(root, "wasm.lock.json"), "utf8"));
-  if (!/^[0-9a-f]{64}$/.test(lock.sha256) || typeof lock.version !== "string" || typeof lock.url !== "string") {
-    throw new Error("wasm.lock.json: expected { version, url, sha256 }");
-  }
+  // 1. The WASM package: the published one named in the lock, the one of this commit's own
+  // release run, or (test builds) one built from the tree. See the top of this file.
+  const source = wasmSource ?? process.env.FERRET_WASM_SOURCE ?? "lock";
+  if (!WASM_SOURCES.includes(source)) throw new Error(`wasm source: ${source} is not one of ${WASM_SOURCES.join(", ")}`);
   const tarPath = wasmTar ?? process.env.FERRET_WASM_TAR;
   /** @type {Uint8Array} */
   let archive;
-  if (tarPath) {
+  /** @type {{ source: string, sha256: string, version?: string, commit?: string }} */
+  let record;
+  if (source === "lock") {
+    const lock = JSON.parse(readFileSync(join(root, "wasm.lock.json"), "utf8"));
+    if (!/^[0-9a-f]{64}$/.test(lock.sha256) || typeof lock.version !== "string" || typeof lock.url !== "string") {
+      throw new Error("wasm.lock.json: expected { version, url, sha256 }");
+    }
+    if (tarPath) {
+      archive = readFileSync(tarPath);
+    } else {
+      const response = await fetchImpl(lock.url);
+      if (!response.ok) throw new Error(`wasm package: ${lock.url} answered ${response.status}`);
+      archive = new Uint8Array(await response.arrayBuffer());
+    }
+    if (sha256(archive) !== lock.sha256) {
+      throw new Error(`wasm package: checksum mismatch (expected ${lock.sha256}, got ${sha256(archive)})`);
+    }
+    record = { source, version: lock.version, sha256: lock.sha256 };
+  } else if (source === "release") {
+    if (!tarPath) throw new Error("wasm source release: --wasm-tar is needed (the package of this release run)");
+    if (!/^[0-9a-f]{64}$/.test(wasmSha256 ?? "")) throw new Error("wasm source release: --wasm-sha256 is needed (the entry of the run's SHA256SUMS)");
     archive = readFileSync(tarPath);
+    if (sha256(archive) !== wasmSha256) {
+      throw new Error(`wasm package: checksum mismatch (expected ${wasmSha256}, got ${sha256(archive)})`);
+    }
+    record = { source, sha256: wasmSha256 };
   } else {
-    const response = await fetchImpl(lock.url);
-    if (!response.ok) throw new Error(`wasm package: ${lock.url} answered ${response.status}`);
-    archive = new Uint8Array(await response.arrayBuffer());
-  }
-  if (sha256(archive) !== lock.sha256) {
-    throw new Error(`wasm package: checksum mismatch (expected ${lock.sha256}, got ${sha256(archive)})`);
+    // tree: a test build. The package was built from the commit named here; there is nothing to check it against but itself.
+    if (!tarPath) throw new Error("wasm source tree: --wasm-tar is needed (scripts/wasm-tree.sh builds it)");
+    const commit = wasmCommit ?? process.env.FERRET_WASM_COMMIT ?? "";
+    if (!/^[0-9a-f]{40}(?:-dirty)?$/.test(commit)) {
+      throw new Error("wasm source tree: --wasm-commit is the 40-digit commit the package was built from (with -dirty after it when the tree had changes)");
+    }
+    archive = readFileSync(tarPath);
+    record = { source, commit, sha256: sha256(archive) };
   }
   const tar = readTarGz(archive);
   for (const name of WASM_FILES) {
@@ -490,6 +539,7 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
   if (!dist.has("index.html")) throw new Error("src/index.html is missing");
   for (const [lang, text] of locales) dist.set(`app/locales.${lang}.json`, Buffer.from(text));
   dist.set("assets/app.css", Buffer.from(css));
+  dist.set(WASM_SOURCE_FILE, Buffer.from(wasmSourceText(record)));
   for (const [path, bytes] of font) dist.set(path, bytes);
   for (const path of walk(join(root, "admin"))) dist.set(`admin/${path}`, readFileSync(join(root, "admin", path)));
   // A worker entry or a vendored file never replaces a file of the WASM package (or of each other).
@@ -549,12 +599,15 @@ export async function build({ root = resolve(here, ".."), out, wasmTar, fetchImp
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  /** @type {{ wasmTar?: string, root?: string, out?: string }} */
+  /** @type {{ wasmTar?: string, wasmSource?: string, wasmSha256?: string, wasmCommit?: string, root?: string, out?: string }} */
   const options = {};
   for (let i = 0; i < args.length; i += 2) {
     const value = args[i + 1];
     if (value === undefined) { console.error(`build: ${args[i]} needs a value`); process.exit(2); }
     if (args[i] === "--wasm-tar") options.wasmTar = value;
+    else if (args[i] === "--wasm") options.wasmSource = value;
+    else if (args[i] === "--wasm-sha256") options.wasmSha256 = value;
+    else if (args[i] === "--wasm-commit") options.wasmCommit = value;
     else if (args[i] === "--root") options.root = value;
     else if (args[i] === "--out") options.out = value;
     else { console.error(`build: unknown option ${args[i]}`); process.exit(2); }

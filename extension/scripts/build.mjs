@@ -2,7 +2,8 @@
 // Builds the Firefox extension: an unpacked folder and a deterministic .xpi.
 //
 //   node scripts/build.mjs --browser firefox --manifest mv3|mv2 --variant release|test
-//                          [--features <list>] [--wasm-tar <path>] [--out <dir>]
+//                          [--features <list>] [--wasm lock|tree] [--wasm-tar <path>]
+//                          [--wasm-commit <commit>] [--out <dir>]
 //   node scripts/build.mjs --check-release <.xpi or folder>...
 //
 // --features names the features that are on, separated by commas ("none" for
@@ -13,10 +14,16 @@
 // release package with `save` off, without that file, or without the capture
 // script. A package for a test can still be built with `--features none`.
 //
-// 1. Reads ../web/wasm.lock.json ({version, url, sha256}), fetches the published
-//    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar), checks its
-//    SHA-256 against the lock and unpacks pkg-web/ and js/ (only the files in
-//    WASM_FILES). To move the pin, change web/wasm.lock.json.
+// 1. The WebAssembly package (only the files in WASM_FILES are used), from one of two sources
+//    (--wasm, or FERRET_WASM_SOURCE; the default is lock):
+//      lock  reads ../web/wasm.lock.json ({version, url, sha256}), fetches the published
+//            ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar) and checks its
+//            SHA-256 against the lock. To move the pin, change web/wasm.lock.json.
+//      tree  a test build only: a package built from the commit under test
+//            (scripts/wasm-tree.sh). --wasm-tar and --wasm-commit are needed. The release
+//            variant refuses it: a release package is built from the locked package only.
+//    Next to the .xpi the build writes <name>.wasm.json, the record of the source:
+//    {source, version, sha256} for lock and {source, commit, sha256} for tree.
 // 2. Copies the files listed in shared.json from ../web/src to dist/shared/ and
 //    writes dist/shared/MANIFEST.json (path -> SHA-256). An empty list writes
 //    nothing, and not even the folder. The list is closed under import: a listed
@@ -113,6 +120,11 @@ export const WASM_FILES = [
   "js/client.mjs", "js/protocol.mjs", "js/vault.worker.mjs", "js/job.worker.mjs",
   "pkg-web/ferret_core_wasm.js", "pkg-web/ferret_core_wasm_bg.wasm",
 ];
+
+/** Where the WASM package can come from (see the top of this file). */
+export const WASM_SOURCES = Object.freeze(["lock", "tree"]);
+
+/** @typedef {{ source: string, sha256: string, version?: string, commit?: string }} WasmRecord */
 
 /** Single sources that only the test variant ships, by path below src/. Prefer a folder named test-only (below). */
 export const TEST_ONLY_SRC = /** @type {string[]} */ ([]);
@@ -611,6 +623,30 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
 }
 
 /**
+ * What the record beside a built package (<name>.wasm.json, written by the build) says about its
+ * WASM package: a release package comes from the locked package and nothing else. A package
+ * without a record is not checked here (the release build always writes one).
+ * @param {string} target a .xpi or a folder
+ * @param {string} webRoot the web folder that holds wasm.lock.json
+ * @returns {string[]}
+ */
+export function wasmRecordProblems(target, webRoot) {
+  const file = target.replace(/[\\/]+$/, "").replace(/\.xpi$/, "") + ".wasm.json";
+  if (!existsSync(file)) return [];
+  /** @type {WasmRecord} */
+  let record;
+  try {
+    record = readJson(file);
+  } catch {
+    return [`${file}: not readable`];
+  }
+  if (record.source !== "lock") return [`${file}: the WASM package is from ${String(record.source)}, a release package uses the locked one`];
+  const lock = readJson(join(webRoot, "wasm.lock.json"));
+  if (record.sha256 !== lock.sha256) return [`${file}: the WASM package is not the one in web/wasm.lock.json`];
+  return [];
+}
+
+/**
  * Reads a built folder or .xpi into path -> bytes.
  * @param {string} target
  * @returns {Map<string, Buffer>}
@@ -907,13 +943,13 @@ function generateCss(root) {
 /**
  * @param {{
  *   browser?: string, manifest?: string, variant?: string, features?: readonly string[], root?: string,
- *   webRoot?: string, out?: string, wasmTar?: string, fetchImpl?: typeof fetch,
+ *   webRoot?: string, out?: string, wasmTar?: string, wasmSource?: string, wasmCommit?: string, fetchImpl?: typeof fetch,
  * }} [options] `features`: the features that are on (the variant's DEFAULT_FEATURES when left out)
- * @returns {Promise<{ dir: string, xpi: string, sha256: string, bytes: number, files: Map<string, Buffer>, features: string[] }>}
+ * @returns {Promise<{ dir: string, xpi: string, sha256: string, bytes: number, files: Map<string, Buffer>, features: string[], wasm: WasmRecord, wasmRecord: string }>}
  */
 export async function build({
   browser = "firefox", manifest = "mv3", variant = "release", features,
-  root = defaultRoot, webRoot, out, wasmTar, fetchImpl = fetch,
+  root = defaultRoot, webRoot, out, wasmTar, wasmSource, wasmCommit, fetchImpl = fetch,
 } = {}) {
   root = resolve(root);
   webRoot = resolve(webRoot ?? join(root, "..", "web"));
@@ -923,22 +959,42 @@ export async function build({
   const manifestJson = buildManifest({ browser, manifest, variant, root });
   const on = checkFeatures(features ?? DEFAULT_FEATURES[/** @type {"release" | "test"} */ (variant)]);
 
-  // 1. The published WASM package, checked against the lock.
-  const lock = readJson(join(webRoot, "wasm.lock.json"));
-  if (!/^[0-9a-f]{64}$/.test(lock.sha256) || typeof lock.version !== "string" || typeof lock.url !== "string") {
-    throw new Error("wasm.lock.json: expected { version, url, sha256 }");
+  // 1. The WASM package: the published one named in the lock, or (test variant only) one built
+  // from the tree. See the top of this file.
+  const source = wasmSource ?? process.env.FERRET_WASM_SOURCE ?? "lock";
+  if (!WASM_SOURCES.includes(source)) throw new Error(`wasm source: ${source} is not one of ${WASM_SOURCES.join(", ")}`);
+  if (variant === "release" && source !== "lock") {
+    throw new Error(`a release build uses the locked WASM package only (web/wasm.lock.json), not ${source}`);
   }
   /** @type {Uint8Array} */
   let archive;
-  if (wasmTar) {
-    archive = readFileSync(wasmTar);
+  /** @type {WasmRecord} */
+  let record;
+  if (source === "lock") {
+    const lock = readJson(join(webRoot, "wasm.lock.json"));
+    if (!/^[0-9a-f]{64}$/.test(lock.sha256) || typeof lock.version !== "string" || typeof lock.url !== "string") {
+      throw new Error("wasm.lock.json: expected { version, url, sha256 }");
+    }
+    if (wasmTar) {
+      archive = readFileSync(wasmTar);
+    } else {
+      const response = await fetchImpl(lock.url);
+      if (!response.ok) throw new Error(`wasm package: ${lock.url} answered ${response.status}`);
+      archive = new Uint8Array(await response.arrayBuffer());
+    }
+    if (sha256(archive) !== lock.sha256) {
+      throw new Error(`wasm package: checksum mismatch (expected ${lock.sha256}, got ${sha256(archive)})`);
+    }
+    record = { source, version: lock.version, sha256: lock.sha256 };
   } else {
-    const response = await fetchImpl(lock.url);
-    if (!response.ok) throw new Error(`wasm package: ${lock.url} answered ${response.status}`);
-    archive = new Uint8Array(await response.arrayBuffer());
-  }
-  if (sha256(archive) !== lock.sha256) {
-    throw new Error(`wasm package: checksum mismatch (expected ${lock.sha256}, got ${sha256(archive)})`);
+    // tree: the package was built from the commit named here; there is nothing to check it against but itself.
+    if (!wasmTar) throw new Error("wasm source tree: --wasm-tar is needed (scripts/wasm-tree.sh builds it)");
+    const commit = wasmCommit ?? process.env.FERRET_WASM_COMMIT ?? "";
+    if (!/^[0-9a-f]{40}(?:-dirty)?$/.test(commit)) {
+      throw new Error("wasm source tree: --wasm-commit is the 40-digit commit the package was built from (with -dirty after it when the tree had changes)");
+    }
+    archive = readFileSync(wasmTar);
+    record = { source, commit, sha256: sha256(archive) };
   }
   const tar = readTarGz(archive);
   for (const file of WASM_FILES) {
@@ -1027,7 +1083,10 @@ export async function build({
     writeFileSync(target, bytes);
   }
   const packed = packXpi(dir, xpi);
-  return { dir, xpi, sha256: packed.sha256, bytes: packed.bytes, files: dist, features: on };
+  // Beside the package, not inside it: the package is the same bytes whatever the record says.
+  const wasmRecord = join(out, `${name}.wasm.json`);
+  writeFileSync(wasmRecord, `${JSON.stringify(record, null, 2)}\n`);
+  return { dir, xpi, sha256: packed.sha256, bytes: packed.bytes, files: dist, features: on, wasm: record, wasmRecord };
 }
 
 /**
@@ -1056,7 +1115,11 @@ async function main(args) {
     const permissionAllow = readPermissionAllow();
     let failed = false;
     for (const target of targets) {
-      const problems = releaseProblems(readPackage(target), internalHosts, permissionAllow, resolve(defaultRoot, "..", "web"));
+      const webRoot = resolve(defaultRoot, "..", "web");
+      const problems = [
+        ...releaseProblems(readPackage(target), internalHosts, permissionAllow, webRoot),
+        ...wasmRecordProblems(target, webRoot),
+      ];
       for (const problem of problems) console.error(`check-release: ${target}: ${problem}`);
       if (problems.length > 0) failed = true;
       else console.log(`check-release: ${target}: clean`);
@@ -1069,7 +1132,7 @@ async function main(args) {
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
     const value = args[i + 1];
-    if (!["--browser", "--manifest", "--variant", "--features", "--wasm-tar", "--out"].includes(flag)) throw new Error(`unknown option ${flag}`);
+    if (!["--browser", "--manifest", "--variant", "--features", "--wasm", "--wasm-tar", "--wasm-commit", "--out"].includes(flag)) throw new Error(`unknown option ${flag}`);
     if (value === undefined) throw new Error(`${flag} needs a value`);
     values[flag.slice(2)] = value;
   }
@@ -1082,9 +1145,11 @@ async function main(args) {
     variant: values.variant,
     ...(values.features !== undefined ? { features: parseFeatures(values.features) } : {}),
     wasmTar: values["wasm-tar"],
+    wasmSource: values.wasm,
+    wasmCommit: values["wasm-commit"],
     out: values.out,
   });
-  console.log(`build: ${result.files.size} files, features: ${result.features.join(", ") || "none"}, ${result.xpi} (${result.bytes} bytes, sha256 ${result.sha256})`);
+  console.log(`build: ${result.files.size} files, features: ${result.features.join(", ") || "none"}, ${result.xpi} (${result.bytes} bytes, sha256 ${result.sha256}, wasm ${result.wasm.source} ${result.wasm.sha256})`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

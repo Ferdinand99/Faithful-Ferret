@@ -32,3 +32,6 @@ node_modules/
 /docker/secrets/
 /docker/home-image
 /docker/home-releases.log
+
+# The WebAssembly package built from the tree for test builds (scripts/lanbox-wasm.sh --tree)
+/wasm-package/

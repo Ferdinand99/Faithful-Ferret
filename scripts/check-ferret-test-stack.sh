@@ -31,6 +31,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The checks read what compose makes of the files with the defaults, whatever the caller has set.
+unset FERRET_WASM_SOURCE FERRET_WASM_COMMIT
+
 file=docker/compose.ferret-test.yml
 # The public addresses are not in the compose file: they come from the environment or from
 # docker/.env, and compose refuses to start without them. Neutral example values for the checks.
@@ -138,7 +141,9 @@ const evil = e2e.services["ferret-e2e-evil"];
 const monitor = e2e.services["ferret-e2e-monitor"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
-if (Object.keys(app.build?.args || {}).sort().join() !== "CARGO_JOBS,FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and CARGO_JOBS, nothing else");
+if (Object.keys(app.build?.args || {}).sort().join() !== "CARGO_JOBS,FEATURES,WASM_COMMIT,WASM_SOURCE" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock, CARGO_JOBS and the source of the WebAssembly package, nothing else");
+// The web vault of the stack is built against the published package unless the script says tree (FERRET_WASM_SOURCE).
+if (app.build.args.WASM_SOURCE !== "lock" || app.build.args.WASM_COMMIT !== "") fail("the e2e app takes the published WebAssembly package by default, got " + app.build.args.WASM_SOURCE + " " + app.build.args.WASM_COMMIT);
 // The build host is shared: the server build runs at most 4 jobs at a time.
 if (!/^[1-4]$/.test(String(app.build.args.CARGO_JOBS))) fail("CARGO_JOBS of the app build must be 1 to 4, got " + app.build.args.CARGO_JOBS);
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("app cap_add");
@@ -847,11 +852,23 @@ if grep -E '^(FROM|ARG [A-Z_]*IMAGE=)' "$dockerfile" | grep -v '@sha256:[0-9a-f]
   fail "a base image in $dockerfile is not pinned by digest"
 fi
 grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to empty"
-# The web vault is always built against the published WebAssembly package of web/wasm.lock.json:
-# the Dockerfile has no switch for another one, and no workflow or compose file may add one.
+# The web vault is built against the published WebAssembly package of web/wasm.lock.json unless the
+# build says otherwise (WASM_SOURCE): the one other source a stack can name is tree, and a build that
+# gets a revision (a release) refuses that. The ferret-test stack and the stack with real
+# data never set it (their compose files have FEATURES as the only build argument, checked above).
 if grep -qiE 'WASM_LOCAL|wasm[.]local' "$dockerfile"; then fail "$dockerfile must not offer another WebAssembly package"; fi
+grep -qx 'ARG WASM_SOURCE=lock' "$dockerfile" || fail "ARG WASM_SOURCE must default to lock"
+grep -qF 'FERRET_RELEASE_BUILD=${REVISION:+1}' "$dockerfile" || fail "a build with a revision must be a release build (FERRET_RELEASE_BUILD)"
+grep -qF 'a release image (REVISION is set) cannot carry a WebAssembly package built from the tree' "$dockerfile" || fail "the web stage must refuse the tree package when there is a revision"
+if grep -rqE 'WASM_SOURCE|FERRET_WASM' docker/compose.ferret-test.yml docker/compose.ferret-home.yml docker/compose.ferret-drill.yml; then
+  fail "the ferret-test stack and the stacks with real data never name a WebAssembly source"
+fi
+# The test stack says which WebAssembly package its web vault was built with (the server's own --build-info).
+grep -qF 'wasm_of() {' scripts/lanbox-ferret-test.sh || fail "lanbox-ferret-test.sh must be able to say which WebAssembly package a stack runs"
+grep -qF 'echo "  wasm   $(wasm_of "$e2e_app")' scripts/lanbox-ferret-test.sh || fail "e2e-up must print which WebAssembly package the stack runs"
+grep -qF 'echo "wasm: $(wasm_of "$container")"' scripts/lanbox-ferret-test.sh || fail "status must print which WebAssembly package the stack runs"
 grep -qx 'COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/' "$dockerfile" || fail "the image must carry LICENSE and THIRD-PARTY-NOTICES in /usr/share/doc/ferret/"
-grep -qx 'RUN node scripts/build.mjs' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock"
+grep -qx '      lock) node scripts/build.mjs ;; \' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock, for the lock source"
 if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github docker; then fail "no workflow or compose file may use a local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
 if grep -E 'type=cache' "$dockerfile" | grep -v 'id=ferret-'; then fail "every cache mount needs an id starting with ferret-"; fi

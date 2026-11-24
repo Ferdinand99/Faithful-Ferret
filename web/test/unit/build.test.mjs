@@ -212,3 +212,72 @@ test("the_font_becomes_a_module_with_its_licence_and_a_bad_font_fails_the_build"
   const closer = makeRoot({ "fonts/InterVariable-Latin.woff2": "wOF2 x", "fonts/Inter-LICENSE.txt": "end */ here" });
   await assert.rejects(build({ root: closer.root, out: closer.out, wasmTar: closer.tarPath }), /no comment end/);
 });
+
+// ---------------------------------------------------- the WASM package's source
+
+const TREE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+/** The record the build wrote to dist. @param {string} out */
+const recordOf = (out) => JSON.parse(readFileSync(join(out, "wasm-source.json"), "utf8"));
+
+test("a_test_build_can_use_wasm_built_from_the_tree_and_records_it", async () => {
+  const { root, out, tarPath } = makeRoot();
+  // A package that is not the one in the lock: the lock is not consulted for a tree build.
+  const treeTar = join(root, "tree.tar.gz");
+  const tree = makeTar({ ...wasmFiles(), "js/client.mjs": "export const client = 'tree';\n" });
+  writeFileSync(treeTar, tree);
+  const { manifest } = await build({ root, out, wasmTar: treeTar, wasmSource: "tree", wasmCommit: TREE_COMMIT });
+  assert.equal(readFileSync(join(out, "js", "client.mjs"), "utf8"), "export const client = 'tree';\n");
+  assert.deepEqual(recordOf(out), { source: "tree", commit: TREE_COMMIT, sha256: sha256(tree) });
+  // The record is a file of the build like any other: in the manifest, with its hash.
+  assert.equal(manifest["wasm-source.json"].sha256, sha256(readFileSync(join(out, "wasm-source.json"))));
+
+  // The default source is the lock, and its record names the pinned version.
+  await build({ root, out, wasmTar: tarPath });
+  assert.deepEqual(recordOf(out), { source: "lock", version: "9.9.9", sha256: sha256(readFileSync(tarPath)) });
+
+  // The environment can choose the source too, and a tree build needs the archive and a commit it can name.
+  const before = process.env.FERRET_WASM_SOURCE;
+  process.env.FERRET_WASM_SOURCE = "tree";
+  try {
+    await assert.rejects(build({ root, out, wasmCommit: TREE_COMMIT }), /--wasm-tar is needed/);
+    for (const wasmCommit of [undefined, "", "main", TREE_COMMIT.slice(1), `${TREE_COMMIT}-clean`]) {
+      await assert.rejects(build({ root, out, wasmTar: treeTar, wasmCommit }), /--wasm-commit/, String(wasmCommit));
+    }
+    await build({ root, out, wasmTar: treeTar, wasmCommit: `${TREE_COMMIT}-dirty` });
+    assert.equal(recordOf(out).commit, `${TREE_COMMIT}-dirty`);
+  } finally {
+    if (before === undefined) delete process.env.FERRET_WASM_SOURCE;
+    else process.env.FERRET_WASM_SOURCE = before;
+  }
+  await assert.rejects(build({ root, out, wasmTar: treeTar, wasmSource: "elsewhere" }), /not one of lock, tree, release/);
+});
+
+test("a_lock_build_refuses_a_package_that_is_not_the_locked_one", async () => {
+  const { root, out } = makeRoot();
+  const other = join(root, "other.tar.gz");
+  writeFileSync(other, makeTar({ ...wasmFiles(), "js/client.mjs": "export const client = 'other';\n" }));
+  // The same archive that a tree build takes is refused when the source is the lock (the default).
+  await assert.rejects(build({ root, out, wasmTar: other }), /checksum mismatch/);
+  await assert.rejects(build({ root, out, wasmTar: other, wasmSource: "lock", wasmCommit: TREE_COMMIT }), /checksum mismatch/);
+  assert.ok(!existsSync(out), "nothing is written");
+});
+
+test("a_release_source_build_takes_the_package_of_its_own_run", async () => {
+  const { root, out } = makeRoot();
+  // The package of this release run, which is not the one in the lock (the lock names the previous release).
+  const runTar = join(root, "run.tar.gz");
+  const run = makeTar({ ...wasmFiles(), "js/client.mjs": "export const client = 'this release';\n" }, { top: "ferret-core-wasm-web-9.9.10" });
+  writeFileSync(runTar, run);
+  await build({ root, out, wasmTar: runTar, wasmSource: "release", wasmSha256: sha256(run) });
+  assert.equal(readFileSync(join(out, "js", "client.mjs"), "utf8"), "export const client = 'this release';\n");
+  assert.deepEqual(recordOf(out), { source: "release", sha256: sha256(run) });
+
+  // It takes the digest from the run's SHA256SUMS and nothing else: a missing or a wrong one stops the build.
+  await assert.rejects(build({ root, out, wasmTar: runTar, wasmSource: "release" }), /--wasm-sha256 is needed/);
+  await assert.rejects(build({ root, out, wasmTar: runTar, wasmSource: "release", wasmSha256: "0".repeat(64) }), /checksum mismatch/);
+  await assert.rejects(build({ root, out, wasmSource: "release", wasmSha256: sha256(run) }), /--wasm-tar is needed/);
+  // The lock's own package is not "this release's" unless the run built it: its digest must be the one given.
+  const { tarPath } = makeRoot();
+  await assert.rejects(build({ root, out, wasmTar: tarPath, wasmSource: "release", wasmSha256: sha256(run) }), /checksum mismatch/);
+});

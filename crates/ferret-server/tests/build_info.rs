@@ -3,10 +3,17 @@
 //! ignores `FERRET_E2E_CLOCK_FILE`. The same tests run against the real binary
 //! (`CARGO_BIN_EXE_ferret`); the image tests of the test stack
 //! (scripts/lanbox-ferret-e2e-check.sh) run them again on the built images.
+//!
+//! The binary also says where its web vault's WebAssembly package came from (the `wasm:` line),
+//! and a release image refuses one that was built from the tree.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::process::Command;
+
+// The code of the build script that reads and checks the record of the WebAssembly package.
+#[path = "../build_support/wasm_source.rs"]
+mod wasm_source;
 
 const BIN: &str = env!("CARGO_BIN_EXE_ferret");
 
@@ -19,6 +26,11 @@ const HOOK_MARKERS: [&str; 3] = ["FERRET_E2E_CLOCK_FILE", "e2e-clock", "e2e_cloc
 fn contains(haystack: &[u8], needle: &str) -> bool {
     let needle = needle.as_bytes();
     haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// The second line of the build info (`features: …`).
+fn features_line(text: &str) -> &str {
+    text.lines().nth(1).unwrap_or("")
 }
 
 fn run_build_info(env: &[(&str, &str)]) -> String {
@@ -43,8 +55,76 @@ fn build_info_prints_the_version_and_the_features_of_this_build() {
     };
     assert_eq!(
         text,
-        format!("ferret {}\n{expected}\n", env!("CARGO_PKG_VERSION"))
+        format!(
+            "ferret {}\n{expected}\nwasm: {}\n",
+            env!("CARGO_PKG_VERSION"),
+            ferret_server::build_info::wasm()
+        )
     );
+}
+
+const SHA: &str = "8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c";
+
+#[test]
+fn the_binary_says_where_its_web_vault_wasm_came_from() {
+    let text = run_build_info(&[]);
+    let line = text.lines().nth(2).unwrap();
+    let wasm = line.strip_prefix("wasm: ").unwrap();
+    if wasm != "none" {
+        let (source, sha256) = wasm.split_once(' ').unwrap();
+        assert!(["lock", "release", "tree"].contains(&source), "{wasm}");
+        assert_eq!(sha256.len(), 64, "{wasm}");
+        assert!(sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{wasm}");
+    }
+    // An image built as a release (the Dockerfile sets this when it gets a revision) never says tree.
+    if option_env!("FERRET_RELEASE_BUILD").is_some_and(|v| !v.is_empty()) {
+        assert!(!wasm.starts_with("tree"), "{wasm}");
+        assert_ne!(wasm, "none");
+    }
+}
+
+#[test]
+fn the_release_server_image_refuses_a_tree_built_web_vault() {
+    let record = |source: &str| format!("{{\n  \"source\": \"{source}\",\n  \"sha256\": \"{SHA}\"\n}}\n");
+    // What the web build writes for each source is read as it is.
+    let lock = wasm_source::parse(&format!(
+        "{{\n  \"source\": \"lock\",\n  \"version\": \"0.8.0\",\n  \"sha256\": \"{SHA}\"\n}}\n"
+    ))
+    .unwrap();
+    assert_eq!((lock.source.as_str(), lock.sha256.as_str()), ("lock", SHA));
+    let release = wasm_source::parse(&record("release")).unwrap();
+    let tree = wasm_source::parse(&format!(
+        "{{\n  \"source\": \"tree\",\n  \"commit\": \"0123456789abcdef0123456789abcdef01234567-dirty\",\n  \"sha256\": \"{SHA}\"\n}}\n"
+    ))
+    .unwrap();
+    assert_eq!(tree.source, "tree");
+
+    // A release image takes the locked package or the package of its own release run, and nothing else.
+    wasm_source::check_release(&lock).unwrap();
+    wasm_source::check_release(&release).unwrap();
+    let refused = wasm_source::check_release(&tree).unwrap_err();
+    assert!(refused.contains("tree"), "{refused}");
+
+    // A record that is not one of the three, or whose digest is not a digest, never gets as far as the check.
+    for bad in [
+        record("elsewhere"),
+        record("Tree"),
+        record(""),
+        "{}".to_string(),
+        format!("{{\"source\": \"lock\", \"sha256\": \"{}\"}}", SHA.to_uppercase()),
+        format!("{{\"source\": \"lock\", \"sha256\": \"{}\"}}", &SHA[1..]),
+        "{\"source\": \"lock\"}".to_string(),
+    ] {
+        assert!(wasm_source::parse(&bad).is_err(), "{bad}");
+    }
+
+    // The wiring: the build script applies the check whenever the image is a release build, and the
+    // Dockerfile makes every build that gets a revision one.
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let build_rs = std::fs::read_to_string(format!("{manifest}/build.rs")).unwrap();
+    assert!(build_rs.contains("FERRET_RELEASE_BUILD") && build_rs.contains("wasm_source::check_release"));
+    let dockerfile = std::fs::read_to_string(format!("{manifest}/../../docker/server.Dockerfile")).unwrap();
+    assert!(dockerfile.contains("FERRET_RELEASE_BUILD=${REVISION:+1}"));
 }
 
 #[test]
@@ -78,7 +158,7 @@ mod release {
         for marker in HOOK_MARKERS {
             assert!(!contains(&binary, marker), "the binary contains {marker}");
         }
-        assert!(run_build_info(&[]).ends_with("features: none\n"));
+        assert_eq!(features_line(&run_build_info(&[])), "features: none");
     }
 
     #[test]
@@ -88,7 +168,7 @@ mod release {
         let file = std::env::temp_dir().join(format!("ferret-clock-{}", std::process::id()));
         std::fs::write(&file, "31536000").unwrap();
         let text = run_build_info(&[("FERRET_E2E_CLOCK_FILE", file.to_str().unwrap())]);
-        assert!(text.ends_with("features: none\n"), "{text}");
+        assert_eq!(features_line(&text), "features: none", "{text}");
         std::fs::remove_file(&file).unwrap();
         assert!(!contains(
             &std::fs::read(BIN).unwrap(),
@@ -105,7 +185,7 @@ mod e2e {
     fn e2e_binary_has_the_clock_hook_and_says_so() {
         let binary = std::fs::read(BIN).unwrap();
         assert!(contains(&binary, "FERRET_E2E_CLOCK_FILE"));
-        assert!(run_build_info(&[]).ends_with("features: e2e-clock\n"));
+        assert_eq!(features_line(&run_build_info(&[])), "features: e2e-clock");
     }
 }
 

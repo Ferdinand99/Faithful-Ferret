@@ -57,6 +57,11 @@ services:
         # At most 4 parallel jobs in the build: the build host is shared
         # (scripts/lanbox-ferret-test.sh checks FERRET_E2E_CARGO_JOBS).
         CARGO_JOBS: ${FERRET_E2E_CARGO_JOBS:-4}
+        # Where the web vault's WebAssembly package comes from: lock (the published package, the
+        # default) or tree (the package of this commit, built by scripts/lanbox-wasm.sh --tree; the
+        # script sets both when FERRET_WASM_SOURCE=tree). The server says which in `--build-info`.
+        WASM_SOURCE: ${FERRET_WASM_SOURCE:-lock}
+        WASM_COMMIT: ${FERRET_WASM_COMMIT:-}
       labels:
         owner: ferret-${FERRET_E2E_SUFFIX:-e2e}
     container_name: ferret-${FERRET_E2E_SUFFIX:-e2e}-app
