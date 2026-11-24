@@ -299,9 +299,9 @@ impl MethodDto {
                 device_salt: self.device_salt.ok_or(Fail::Input)?,
                 profile: PinProfile::from_wire(self.pin_profile.ok_or(Fail::Input)?)?,
             },
-            "pin_mobile" => Method::PinMobile {
-                device_salt: self.device_salt.ok_or(Fail::Input)?,
-            },
+            // The mobile PIN needs a hardware-bound secret that a browser does
+            // not have: the binding neither makes nor opens such a wrap.
+            "pin_mobile" => return Err(Fail::Input),
             "device" => Method::Device,
             _ => return Err(Fail::Input),
         })

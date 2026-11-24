@@ -210,7 +210,7 @@ fn the_rule_refuses_below_its_minimum_and_never_accepts_below_four() {
         Err(too_short())
     );
     assert_eq!(pin_meets_rule(&pin("\u{fb01}\u{fb01}"), &rule(4)), Ok(()));
-    // A rule that allows nothing keeps `after_restart` out of the decision.
+    // `after_restart` does not take part in the decision.
     let r = PinRule {
         after_restart: false,
         ..rule(6)
@@ -265,6 +265,66 @@ fn pin_profile_1_has_the_measured_parameters() {
     argon2id(b"correct horse", &salt, p, &mut want).unwrap();
     let kek = Kek::from_pin_extension(&pin, &salt, PinProfile::P1).unwrap();
     assert_eq!(kek_bytes(&kek), want);
+}
+
+#[test]
+fn a_kek_is_never_made_from_a_pin_below_the_floor() {
+    let salt = [0xc0u8; 16];
+    let dev = KekDevPin::from_test_bytes([0xd0; 32]);
+    let before = argon2_run_count();
+    for text in ["1", "12", "123", "e\u{301}e\u{301}e\u{301}"] {
+        let pin = Pin::new(text.as_bytes()).unwrap();
+        assert_eq!(
+            Kek::from_pin_extension(&pin, &salt, PinProfile::P1).err(),
+            Some(too_short()),
+            "{text:?}"
+        );
+        assert_eq!(
+            Kek::from_pin_mobile(&pin, &salt, &dev).err(),
+            Some(too_short()),
+            "{text:?}"
+        );
+    }
+    // A PIN that has been wiped is empty, and empty is below the floor.
+    let mut wiped = Pin::new(b"correct horse").unwrap();
+    wiped.zeroize();
+    assert_eq!(
+        Kek::from_pin_extension(&wiped, &salt, PinProfile::P1).err(),
+        Some(too_short())
+    );
+    assert_eq!(
+        Kek::from_pin_mobile(&wiped, &salt, &dev).err(),
+        Some(too_short())
+    );
+    assert_eq!(argon2_run_count(), before, "nothing was computed");
+    // Four characters are enough for the key (the rule of the server may ask
+    // for more, in `pin_meets_rule`).
+    let four = Pin::new(b"1234").unwrap();
+    assert!(Kek::from_pin_extension(&four, &salt, PinProfile::P1).is_ok());
+}
+
+#[test]
+fn no_pin_profile_is_cheaper_than_the_one_before_or_equal_to_the_sign_in() {
+    // The minimum profile is compared by cost, and a PIN wrap of the
+    // extension is told apart from a mobile one by its kdf bytes, so no PIN
+    // profile may have the parameters of profile 1 of the sign-in.
+    let mut previous = 0u64;
+    for profile in PinProfile::ALL {
+        let p = profile.params();
+        assert_ne!(p, KsfProfile::P1.params(), "{profile:?}");
+        let cost = u64::from(p.m_kib) * u64::from(p.t);
+        assert!(
+            cost >= previous,
+            "{profile:?} is cheaper than the one before"
+        );
+        previous = cost;
+        assert_eq!(profile.at_least_min(), Ok(*profile));
+        assert_eq!(
+            PinProfile::from_wire(u32::from(profile.number())),
+            Ok(*profile)
+        );
+    }
+    assert!(PinProfile::ALL.contains(&PIN_PROFILE_MIN));
 }
 
 #[test]

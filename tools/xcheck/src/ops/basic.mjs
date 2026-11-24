@@ -2,7 +2,7 @@
 import { unhex, hex, fail, concat, u8, u64be, repeat } from '../util.mjs';
 import { tlv, label, T } from '../tlv.mjs';
 import { argon2id } from '../crypto.mjs';
-import { pinNormalize } from '../text.mjs';
+import { pinNormalize, pinFloor } from '../text.mjs';
 import { checkKdfRange, kekPassword, kekRecovery, recoveryKeypair, kekPrf, kekPinExtension, kekPinMobile, vkDerive } from '../keys.mjs';
 import { wrapSeal, wrapOpen } from '../wrap.mjs';
 
@@ -56,7 +56,11 @@ ops['kdf.vk_derive'] = ({ input }) => {
 
 ops['kdf.kek.prf'] = ({ input }) => ({ expect: { kek: hex(kekPrf(unhex(input.credential_id), unhex(input.prf_output))) } });
 // The PIN text is NFKD'd first; the profile is looked up before Argon2id runs.
-const pinOf = (text) => pinNormalize(new Uint8Array(Buffer.from(text, 'utf8'))).nfkd;
+const pinOf = (text) => {
+  const r = pinNormalize(new Uint8Array(Buffer.from(text, 'utf8')));
+  pinFloor(r.text);
+  return r.nfkd;
+};
 ops['kdf.kek.pin_extension'] = ({ input }) => {
   const pin = pinOf(input.pin);
   return { expect: { kek: hex(kekPinExtension(pin, unhex(input.device_salt), input.pin_profile)) } };

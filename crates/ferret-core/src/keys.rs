@@ -7,7 +7,7 @@
 //! with a TLV salt (Fase 1 § 3.1) and a fixed `info`. Intermediate key bytes
 //! live in [`Zeroizing`] buffers and are wiped on every path.
 
-use crate::error::Error;
+use crate::error::{Error, InputError};
 use crate::ids::{AccountId, VaultId};
 use crate::ksf_profile::KsfProfile;
 use crate::pin_profile::PinProfile;
@@ -216,6 +216,17 @@ pub fn recovery_public_key(rk: &RecoveryKey, account_id: &AccountId) -> Result<[
     Ok(ed25519_from_seed(&*recovery_seed(rk, account_id)?).public_key())
 }
 
+/// A key is never made from a PIN below the absolute floor (a PIN of one to
+/// three characters, or one that has been wiped), whatever the rule says;
+/// nothing is computed.
+fn check_pin_floor(pin: &Pin) -> Result<(), Error> {
+    if pin.meets_floor() {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(InputError::TooShort))
+    }
+}
+
 /// `Argon2id(PIN, device_salt, params, 32)`.
 fn pin_stretch(
     pin: &Pin,
@@ -279,7 +290,8 @@ impl Kek {
     /// `device_salt` as the salt.
     ///
     /// A profile below [`crate::PIN_PROFILE_MIN`] is refused before any
-    /// Argon2id is run (`kdf_profile_downgrade`). The same profile goes into
+    /// Argon2id is run (`kdf_profile_downgrade`), and so is a PIN below the
+    /// floor of [`crate::PIN_FLOOR`] characters (`input_too_short`). The same profile goes into
     /// the `kdf` field of the wrap's AAD ([`crate::Method::Pin`]).
     ///
     /// Spec: Fase 1 § 7.2: `KEK_pin = Argon2id(PIN, device_salt, m, t, p,
@@ -289,7 +301,9 @@ impl Kek {
         device_salt: &[u8; 16],
         profile: PinProfile,
     ) -> Result<Kek, Error> {
-        let mut kek = pin_stretch(pin, device_salt, profile.at_least_min()?.params())?;
+        let params = profile.at_least_min()?.params();
+        check_pin_floor(pin)?;
+        let mut kek = pin_stretch(pin, device_salt, params)?;
         Ok(Kek::from_array_wiping(&mut kek))
     }
 
@@ -310,6 +324,7 @@ impl Kek {
         device_salt: &[u8; 16],
         kek_dev_pin: &KekDevPin,
     ) -> Result<Kek, Error> {
+        check_pin_floor(pin)?;
         let stretched = pin_stretch(pin, device_salt, KsfProfile::P1.params())?;
         let mut ikm = Zeroizing::new([0u8; 64]);
         let (head, tail) = ikm.split_at_mut(32);

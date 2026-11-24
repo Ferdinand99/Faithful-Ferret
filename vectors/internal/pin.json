@@ -942,6 +942,64 @@
         "utf8": ""
       },
       "expect_error": "input_too_short"
+    },
+    {
+      "id": "pin/kek/invalid/003",
+      "title": "a PIN of three characters is below the floor of four, whatever the rule says",
+      "op": "pin.kek",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin_profile": 1,
+        "utf8": "313233"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "pin/kek/invalid/004",
+      "title": "three letters with combining accents are three characters",
+      "op": "pin.kek",
+      "status": "invalid",
+      "tags": [
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin_profile": 1,
+        "utf8": "65cc8165cc8165cc81"
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "pin/kek/valid/006",
+      "title": "four characters are enough for the key",
+      "op": "pin.kek",
+      "status": "valid",
+      "tags": [
+        "slow",
+        "native-only"
+      ],
+      "synthetic": true,
+      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin_profile": 1,
+        "utf8": "31323334"
+      },
+      "expect": {
+        "kek": "492ac6ac95914d840b858508f9e73acdf67f3d726091fe938cf83e106a6f1b50"
+      },
+      "expect_error": null
     }
   ]
 }

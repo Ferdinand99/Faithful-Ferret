@@ -325,19 +325,16 @@ test("a_secret_array_is_wiped_and_a_second_call_with_it_fails_loudly", async () 
   const salt = fill(32, 5);
   for (const [name, args] of [
     ["wrap_prf", [fill(24, 1), salt, zero(), fill(16, 2), 1, fill(16, 3), "no_stored_passkeys"]],
-    ["wrap_pin", [enc.encode("123456"), fill(16, 2), zero()]],
     ["unlock_prf", ["https://x", {}, zero(), {}, {}]],
-    ["pin_unlock", [enc.encode("123456"), {}, {}, zero()]],
     ["import_open", [fill(100, 1), zero()]],
     ["reveal_plain_export", [[], "json", false, zero(), 1_700_000_000_000]],
   ]) {
     assert.equal((await rejection(client.vault[name](...args))).code, "input_all_zero", name);
   }
   assert.equal(made[0].received.length, 1);
-  // An optional key may be left out.
-  await client.vault.wrap_pin(enc.encode("123456"), fill(16, 2), null);
+  // A PIN call has no key argument: it goes through.
   await client.vault.wrap_pin(enc.encode("123456"), fill(16, 2));
-  assert.equal(made[0].received.length, 3);
+  assert.equal(made[0].received.length, 2);
 });
 
 test("key_arguments_must_be_uint8arrays", async () => {

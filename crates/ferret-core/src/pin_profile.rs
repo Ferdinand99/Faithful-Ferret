@@ -40,8 +40,13 @@ pub const PIN_OFFLINE_GUESSES_PER_SECOND: u32 = 100;
 
 /// A PIN profile.
 ///
-/// Later profiles are added here, never removed.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+/// Later profiles are added here, never removed. Every new profile must cost
+/// at least as much per guess as the ones before it (`m_kib * t` not lower, and
+/// it must never be the 64 MiB, 3, 1 of the sign-in: a PIN wrap and a mobile
+/// PIN wrap are told apart by their `kdf` bytes). A test walks [`PinProfile::ALL`]
+/// and checks both. The minimum profile is compared by that cost, not by the
+/// number.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PinProfile {
     /// 256 MiB, `t = 3`, `p = 1` (see [`PIN_PROFILE_1_PARAMS`]).
     P1 = 1,
@@ -52,6 +57,15 @@ pub enum PinProfile {
 pub const PIN_PROFILE_MIN: PinProfile = PinProfile::P1;
 
 impl PinProfile {
+    /// Every profile, in the order of their numbers.
+    pub const ALL: &'static [PinProfile] = &[PinProfile::P1];
+
+    /// The cost of one guess, as the product of memory and passes.
+    fn cost(self) -> u64 {
+        let p = self.params();
+        u64::from(p.m_kib).saturating_mul(u64::from(p.t))
+    }
+
     /// The profile for the number a stored record states. An unknown number
     /// is a hard error and nothing is computed; so is a known profile below
     /// [`PIN_PROFILE_MIN`].
@@ -68,7 +82,7 @@ impl PinProfile {
     /// The profile itself if it is not below [`PIN_PROFILE_MIN`], else
     /// [`Error::KdfProfileDowngrade`].
     pub fn at_least_min(self) -> Result<Self, Error> {
-        if self < PIN_PROFILE_MIN {
+        if self.cost() < PIN_PROFILE_MIN.cost() {
             return Err(Error::KdfProfileDowngrade);
         }
         Ok(self)

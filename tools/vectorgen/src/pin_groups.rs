@@ -451,6 +451,31 @@ pub(crate) fn pin() -> Result<Vec<u8>, Error> {
         "input_too_short",
     )));
 
+    cases.push(native(invalid_case(
+        "pin/kek/invalid/003",
+        "a PIN of three characters is below the floor of four, whatever the rule says",
+        "pin.kek",
+        vec![],
+        json!({ "utf8": hx(b"123"), "device_salt": h(&salt), "pin_profile": 1 }),
+        "input_too_short",
+    )));
+    cases.push(native(invalid_case(
+        "pin/kek/invalid/004",
+        "three letters with combining accents are three characters",
+        "pin.kek",
+        vec![],
+        json!({ "utf8": hx("e\u{301}e\u{301}e\u{301}".as_bytes()), "device_salt": h(&salt), "pin_profile": 1 }),
+        "input_too_short",
+    )));
+    cases.push(native(valid_case(
+        "pin/kek/valid/006",
+        "four characters are enough for the key",
+        "pin.kek",
+        vec![Tag::Slow],
+        json!({ "utf8": hx(b"1234"), "device_salt": h(&salt), "pin_profile": 1 }),
+        json!({ "kek": h(&stretch_with(b"1234", &salt, PIN_P1)?) }),
+    )));
+
     render(&VectorFile {
         format: FORMAT.into(),
         group: "pin".into(),

@@ -81,6 +81,11 @@ export function pinMeetsRule(pinText, rule) {
   if (scalars(pinText.normalize('NFC')) < min) fail('input_too_short');
 }
 
+// The floor of a key made from a PIN: four characters (scalars of the NFC form), whatever the rule says.
+export function pinFloor(pinText) {
+  if (scalars(pinText.normalize('NFC')) < PIN_FLOOR) fail('input_too_short');
+}
+
 export const MIN_WITH_SK = 12;
 export const MIN_WITHOUT_SK = 15;
 export const MIN_EXPORT = 12;

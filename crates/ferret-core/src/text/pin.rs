@@ -12,7 +12,7 @@
 //! recorded anywhere: nothing here or in a stored blob reveals the kind or
 //! the length of a PIN.
 
-use super::unicode::is_allowed;
+use super::unicode::{Normalized, normalize_text};
 use crate::error::{Error, InputError};
 use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -40,38 +40,22 @@ impl Pin {
     /// [`PIN_MAX_BYTES`] bytes after the normalization), `input_too_short`
     /// (empty). Nothing is computed from the PIN here. The rule of the
     /// server is applied by [`pin_meets_rule`], not here, so that a PIN that
-    /// was valid under an older rule can still be tried.
+    /// was valid under an older rule can still be tried. The absolute floor
+    /// of [`PIN_FLOOR`] is applied where a key is made from the PIN
+    /// ([`crate::Kek::from_pin_extension`], [`crate::Kek::from_pin_mobile`]).
     pub fn new(utf8: &[u8]) -> Result<Pin, Error> {
-        let text =
-            core::str::from_utf8(utf8).map_err(|_| Error::InvalidInput(InputError::NotUtf8))?;
-        if !text.chars().all(is_allowed) {
-            return Err(Error::InvalidInput(InputError::ForbiddenCharacter));
-        }
-        // Every input scalar gives at least one NFKD scalar, so this is exact
-        // and it bounds the work and the buffers of the normalizer.
-        if text.chars().nth(PIN_MAX_SCALARS).is_some() {
-            return Err(Error::InvalidInput(InputError::TooLong));
-        }
-        // Reserved at once, so the buffer is never reallocated and no unwiped
-        // copy is left behind.
-        let mut bytes = Zeroizing::new(Vec::with_capacity(PIN_MAX_BYTES));
-        let mut scalars = 0usize;
-        let mut encoded = [0u8; 4];
-        for c in text.nfkd() {
-            let piece = c.encode_utf8(&mut encoded).as_bytes();
-            scalars = scalars.saturating_add(1);
-            if scalars > PIN_MAX_SCALARS || bytes.len().saturating_add(piece.len()) > PIN_MAX_BYTES
-            {
-                encoded.zeroize();
-                return Err(Error::InvalidInput(InputError::TooLong));
-            }
-            bytes.extend_from_slice(piece);
-        }
-        encoded.zeroize();
+        let Normalized { bytes, .. } = normalize_text(utf8, PIN_MAX_SCALARS, PIN_MAX_BYTES)?;
         if bytes.is_empty() {
             return Err(Error::InvalidInput(InputError::TooShort));
         }
         Ok(Pin(bytes))
+    }
+
+    /// Whether the PIN has at least [`PIN_FLOOR`] characters: the absolute
+    /// floor, which no rule can lower and which no earlier rule ever allowed
+    /// below, so it never locks out a PIN that once worked.
+    pub(crate) fn meets_floor(&self) -> bool {
+        self.rule_len() >= usize::from(PIN_FLOOR)
     }
 
     pub(crate) fn as_bytes(&self) -> &[u8] {
@@ -80,7 +64,7 @@ impl Pin {
 
     /// The length that a rule counts: Unicode scalar values of the NFC form
     /// of the normalized PIN, so a letter with a combining accent is one.
-    fn rule_len(&self) -> usize {
+    pub(crate) fn rule_len(&self) -> usize {
         core::str::from_utf8(&self.0)
             .map(|text| text.nfc().count())
             .unwrap_or(0)

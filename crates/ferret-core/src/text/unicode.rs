@@ -81,20 +81,31 @@ pub(crate) struct Normalized {
 ///
 /// Spec: Fase 1 section 3.1 and 4.1 step 1 (a).
 pub(crate) fn normalize_password(utf8: &[u8]) -> Result<Normalized, Error> {
+    normalize_text(utf8, MAX_SCALARS, MAX_BYTES)
+}
+
+/// The steps of [`normalize_password`] with the limits as parameters: the PIN
+/// uses the same code with 64 scalars and 256 bytes, so the two cannot drift
+/// apart. `max_bytes` is also the capacity that is reserved, once.
+pub(crate) fn normalize_text(
+    utf8: &[u8],
+    max_scalars: usize,
+    max_bytes: usize,
+) -> Result<Normalized, Error> {
     let text = core::str::from_utf8(utf8).map_err(|_| Error::InvalidInput(InputError::NotUtf8))?;
     if !text.chars().all(is_allowed) {
         return Err(Error::InvalidInput(InputError::ForbiddenCharacter));
     }
-    if text.chars().nth(MAX_SCALARS).is_some() {
+    if text.chars().nth(max_scalars).is_some() {
         return Err(Error::InvalidInput(InputError::TooLong));
     }
-    let mut bytes = Zeroizing::new(Vec::with_capacity(MAX_BYTES));
+    let mut bytes = Zeroizing::new(Vec::with_capacity(max_bytes));
     let mut scalars = 0usize;
     let mut encoded = [0u8; 4];
     for c in text.nfkd() {
         let piece = c.encode_utf8(&mut encoded).as_bytes();
         scalars = scalars.saturating_add(1);
-        if scalars > MAX_SCALARS || bytes.len().saturating_add(piece.len()) > MAX_BYTES {
+        if scalars > max_scalars || bytes.len().saturating_add(piece.len()) > max_bytes {
             encoded.zeroize();
             return Err(Error::InvalidInput(InputError::TooLong));
         }

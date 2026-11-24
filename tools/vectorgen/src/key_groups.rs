@@ -363,6 +363,14 @@ pub(crate) fn kdf_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         json!({ "pin": "123456", "device_salt": h(&device_salt), "pin_profile": 2 }),
         Err("kdf_profile_unknown"),
     ));
+    cases.push(case(
+        "kdf/kek_pin_extension/invalid/004",
+        "a PIN of three characters is below the floor of four",
+        "kdf.kek.pin_extension",
+        vec![],
+        json!({ "pin": "123", "device_salt": h(&device_salt), "pin_profile": 1 }),
+        Err("input_too_short"),
+    ));
 
     // KEK_pin, mobile variant.
     let dev = arr::<32>(0xd0);
@@ -385,6 +393,14 @@ pub(crate) fn kdf_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
         "kdf.kek.pin_mobile",
         vec![],
         json!({ "pin": "", "device_salt": h(&device_salt), "kek_dev_pin": h(&dev) }),
+        Err("input_too_short"),
+    ));
+    cases.push(case(
+        "kdf/kek_pin_mobile/invalid/002",
+        "a PIN of three characters is below the floor of four",
+        "kdf.kek.pin_mobile",
+        vec![],
+        json!({ "pin": "123", "device_salt": h(&device_salt), "kek_dev_pin": h(&dev) }),
         Err("input_too_short"),
     ));
     Ok(())

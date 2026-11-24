@@ -677,6 +677,21 @@
       "expect_error": "kdf_profile_unknown"
     },
     {
+      "id": "kdf/kek_pin_extension/invalid/004",
+      "title": "a PIN of three characters is below the floor of four",
+      "op": "kdf.kek.pin_extension",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "123",
+        "pin_profile": 1
+      },
+      "expect_error": "input_too_short"
+    },
+    {
       "id": "kdf/kek_pin_mobile/valid/001",
       "title": "six digits",
       "op": "kdf.kek.pin_mobile",
@@ -728,6 +743,21 @@
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
         "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
         "pin": ""
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "kdf/kek_pin_mobile/invalid/002",
+      "title": "a PIN of three characters is below the floor of four",
+      "op": "kdf.kek.pin_mobile",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+        "pin": "123"
       },
       "expect_error": "input_too_short"
     }
