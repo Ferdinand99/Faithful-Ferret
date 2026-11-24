@@ -166,7 +166,7 @@ version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how 
     no login offer either and is not in these counts.
   - *68 forms modelled on the patterns of a public autofill test site* (written by us, not copied): filling 32 of 32,
     noticing 41 of 41, filling a generated password 12 of 12.
-  - In every run in both Firefox channels there were **no unsafe fills** (a value in a field that must stay empty, or a
+  - In the final runs in both Firefox channels there were **no unsafe fills** (a value in a field that must stay empty, or a
     fill under a rule that does not match) and **no unsafe offers**, and no form that does not belong to a sign-in made
     an offer. These are results on test forms that cover the patterns we know; they say nothing about a site that does
     something new.
