@@ -16,7 +16,9 @@ after(() => stopFixtures());
 const FILL_SHORTCUT = "Alt+Shift+L";
 const MENU_LABEL = "Fill with Ferret";
 /** @type {Record<string, string>} */
-const OWN_HOST = { release: "second.fixture.test", esr: "login.example.org" };
+// Neither host may be one that another spec or channel gives a login to, or one the "domain" entries of the other specs
+// (example.net, example.org) match: a name under `.test` has no registrable domain, so only a login of exactly that host matches.
+const OWN_HOST = { release: "second.fixture.test", esr: "forms-evil.test" };
 
 test("shortcut_and_menu_each_fill_the_fixture_login", async () => {
   for (const channel of channels()) {
