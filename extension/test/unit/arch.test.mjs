@@ -31,7 +31,7 @@ async function built({ manifest = "mv3", variant = "release", extra = {} } = {})
 }
 
 /** The handler files of a release, in the order of the register. */
-const RELEASE_HANDLERS = Object.freeze(["candidates.handler.mjs", "capture.handler.mjs", "captureSettings.handler.mjs", "copy.handler.mjs", "fill.handler.mjs", "fillReport.handler.mjs", "generator.handler.mjs", "grant.handler.mjs", "lock.handler.mjs", "offer.handler.mjs", "search.handler.mjs", "session.handler.mjs", "settings.handler.mjs", "sync.handler.mjs", "syncWrite.handler.mjs"]);
+const RELEASE_HANDLERS = Object.freeze(["candidates.handler.mjs", "capture.handler.mjs", "captureSettings.handler.mjs", "copy.handler.mjs", "fill.handler.mjs", "fillReport.handler.mjs", "generator.handler.mjs", "grant.handler.mjs", "lock.handler.mjs", "offer.handler.mjs", "search.handler.mjs", "session.handler.mjs", "settings.handler.mjs", "sync.handler.mjs", "syncWrite.handler.mjs", "unlock.handler.mjs"]);
 
 /** Only the exact files of the WASM package: a look-alike path (our own file under js/) is not part of it. @param {string} path */
 const insideWasmPackage = (path) => WASM_FILES.includes(path);
@@ -261,7 +261,7 @@ test("the_handler_register_lists_every_handler_file_in_order_and_refuses_strays"
   try {
     const text = /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
     assert.deepEqual(importsOf(text).specifiers, ["alpha.handler.mjs", ...RELEASE_HANDLERS, "zeta.handler.mjs"].map((name) => `./handlers/${name}`));
-    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6, handler7, handler8, handler9, handler10, handler11, handler12, handler13, handler14, handler15, handler16]\);/);
+    assert.match(text, /export const HANDLERS = Object\.freeze\(\[handler0, handler1, handler2, handler3, handler4, handler5, handler6, handler7, handler8, handler9, handler10, handler11, handler12, handler13, handler14, handler15, handler16, handler17]\);/);
   } finally {
     env.cleanup();
   }
@@ -289,7 +289,7 @@ test("background_exposes_nothing_on_globalThis", async () => {
       // content-script probe, and the lifetime log listens for the heartbeat.
       assert.equal(onMessage.length, variant === "test" ? 3 : 1);
       // The lock and the clipboard listen for their alarms (and the test build's lifetime log for its heartbeat).
-      assert.deepEqual(counts, { alarm: variant === "test" ? 3 : 2, idle: 1, command: 1, menuClick: 1 });
+      assert.deepEqual(counts, { alarm: variant === "test" ? 4 : 2, idle: 1, command: 1, menuClick: 1 });
       // The one menu item, with the English title (no catalog can be fetched here).
       assert.deepEqual(menuItems, [{ id: "ferret-fill", title: "Fill with Ferret", contexts: ["editable"] }]);
       assert.equal(session.has("lock_at"), false, "a new page starts locked");
@@ -365,7 +365,7 @@ test("anything_in_a_test_only_folder_is_left_out_of_a_release_and_refused_by_the
     for (const path of Object.keys(extra)) assert.equal(test_.files.has(path.slice("src/".length)), true, path);
     // A test-only handler is registered in the test build and not in the release.
     const registerOf = (/** @type {Map<string, Buffer>} */ files) => /** @type {Buffer} */ (files.get("background/handlers.gen.mjs")).toString("utf8");
-    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, [...RELEASE_HANDLERS, "test-only/probe.handler.mjs"].map((name) => `./handlers/${name}`));
+    assert.deepEqual(importsOf(registerOf(test_.files)).specifiers, [...RELEASE_HANDLERS, "test-only/probe.handler.mjs"].sort().map((name) => `./handlers/${name}`));
     assert.deepEqual(importsOf(registerOf(release.files)).specifiers, RELEASE_HANDLERS.map((name) => `./handlers/${name}`));
     // The release check refuses such a path even if the build were bypassed.
     for (const path of ["background/test-only/x.mjs", "pages/test-only/x.html", "background/handlers/test-only/x.handler.mjs"]) {

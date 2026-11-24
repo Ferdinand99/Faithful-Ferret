@@ -17,6 +17,7 @@
 //! ```text
 //! add    {"method_type":3,"method_id":"<hex>","wrap":"<hex>",
 //!         "kek_generation":N,"credential_id":"<hex>","prf_salt":"<hex>",
+//!         "aaguid":"<hex>",
 //!         "manifest":{"rev":N,"envelope":"<hex>","tag":"<hex>"}}
 //! remove {"method_id":"<hex>","manifest":{"rev":N,"envelope":"<hex>","tag":"<hex>"}}
 //! ```
@@ -24,6 +25,15 @@
 //! (compact, no spaces, in this key order, lowercase hex). The `remove` body
 //! names the method, which the design sends only in the URL: without it the
 //! proof would not say which wrap is meant.
+//!
+//! `aaguid` is the 16 bytes of the authenticator's AAGUID. It is display data:
+//! it can be all zero (shown as "unknown"), nothing is decided from it, and
+//! only Ferret's own AAGUID is refused, as an extra guard (the real guards are
+//! that the passkey override is off on the vault's origin and that the wrap of
+//! a passkey that Ferret stores is refused). The name the user gave the
+//! passkey and its BE and BS flags are **not** in the body: they are in the
+//! manifest, which is sealed, so the server neither sees nor can change them
+//! ([`PasskeyMeta`]).
 //!
 //! The rules are those of the design: only a passkey (PRF) wrap is added with
 //! this call (the password and the recovery wrap are replaced by their own
@@ -42,17 +52,86 @@
 //! anything the other does not.
 
 use crate::envelope::{SealedItem, decrypt_manifest, encrypt_manifest};
-use crate::error::{Error, InputError, MalformedKind, MethodListFailure};
+use crate::error::{Error, InputError, MalformedKind, MethodListFailure, MethodNameError};
 use crate::ids::MethodId;
 use crate::integrity::{AuthOp, auth_sign};
+use crate::item::folders::{is_refused, nfc_trimmed};
 use crate::item::{Manifest, ManifestEntry};
 use crate::keys::UnlockedVault;
+use crate::passkey::AAGUID;
 use crate::pinning::{MAX_CREDENTIAL_ID_LEN, MAX_FLOORS, MAX_GENERATION};
 use crate::rng::SecureRng;
 use crate::wrap::{Method, TYPE_PASSWORD, TYPE_RECOVERY, WRAP_LEN, WrapRecord};
 
 /// The most methods one manifest lists.
 pub const MAX_METHODS: usize = MAX_FLOORS;
+
+/// The most characters (Unicode scalar values) in the name of a passkey
+/// method, once it is in NFC and trimmed.
+pub const MAX_METHOD_NAME_CHARS: usize = 64;
+
+/// What the registration of a passkey tells about it, besides the wrap.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PasskeyMeta<'a> {
+    /// The authenticator's AAGUID (16 bytes), from the registration. Display
+    /// data only: all zero is accepted and shown as "unknown", and only
+    /// Ferret's own AAGUID is refused (`invalid_state`).
+    pub aaguid: [u8; 16],
+    /// The name the user gave the passkey. It follows the rule of a folder
+    /// name ([`normalize_method_name`]): put in NFC and trimmed, then 1 to 64
+    /// characters, none of them a control character, separator, bidirectional
+    /// mark or zero width space.
+    pub name: &'a str,
+    /// The BE flag of the registration: the key can be synced. It is fixed
+    /// for the key's life and decides whether the list says "synced".
+    pub be: bool,
+    /// The BS flag at registration. For information only: it can be 0 then
+    /// and 1 later. BS without BE is refused (`invalid_state`).
+    pub bs: bool,
+}
+
+/// The name of a passkey method as it is stored: in NFC and trimmed, 1 to
+/// [`MAX_METHOD_NAME_CHARS`] characters, and without a control character, a
+/// line or paragraph separator, a bidirectional mark, embedding, override or
+/// isolate, a zero width space or a byte order mark. This is the rule of a
+/// folder name, so a name cannot reorder or hide text in the list. The zero
+/// width joiner and non-joiner are allowed.
+///
+/// Spec: Fase 1 § 4.3 and Appendix B (the `n` key of a manifest entry).
+pub fn normalize_method_name(raw: &str) -> Result<String, Error> {
+    let name = nfc_trimmed(raw);
+    if name.is_empty() {
+        return Err(Error::MethodName(MethodNameError::Empty));
+    }
+    if name.chars().any(is_refused) {
+        return Err(Error::MethodName(MethodNameError::BadCharacter));
+    }
+    if name.chars().nth(MAX_METHOD_NAME_CHARS).is_some() {
+        return Err(Error::MethodName(MethodNameError::TooLong));
+    }
+    Ok(name)
+}
+
+/// A passkey method as the list shows it, read from the manifest.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PrfMethod {
+    /// The method's id.
+    pub method_id: MethodId,
+    /// The credential id of the passkey.
+    pub credential_id: Vec<u8>,
+    /// The current `kek_generation` of the method.
+    pub kek_generation: u64,
+    /// The name the user gave it, or `None` when the entry has none or the
+    /// stored name breaks the rule of [`normalize_method_name`] (the list
+    /// then shows it as unnamed).
+    pub name: Option<String>,
+    /// Whether the list says "synced passkey" (true) or "this device only"
+    /// (false). It follows the BE flag, which is fixed for the key's life,
+    /// never BS, which can change. An entry without the flag is device-only.
+    pub synced: bool,
+    /// The BS flag at registration, for information only.
+    pub bs: Option<bool>,
+}
 
 fn entries_error() -> Error {
     Error::Malformed(MalformedKind::Entries)
@@ -113,8 +192,15 @@ impl Manifest {
     /// length, an empty or over-long credential id or an all-zero PRF salt
     /// (`input_*`), a method id or credential id that the manifest lists
     /// already, a generation above `2^32 - 1`, and a manifest that would
-    /// list more than [`MAX_METHODS`] (all `malformed_entries`).
-    pub fn with_method(&self, wrap: &WrapRecord) -> Result<Manifest, Error> {
+    /// list more than [`MAX_METHODS`] (all `malformed_entries`); then Ferret's
+    /// own AAGUID or BS set without BE (`invalid_state`) and a name that breaks the rule of
+    /// [`normalize_method_name`] (`method_name_*`). The new entry carries the
+    /// name in its stored form and the BE and BS flags of `meta`.
+    pub fn with_method(
+        &self,
+        wrap: &WrapRecord,
+        meta: &PasskeyMeta<'_>,
+    ) -> Result<Manifest, Error> {
         let Method::Prf {
             credential_id,
             prf_salt,
@@ -146,13 +232,57 @@ impl Manifest {
         {
             return Err(entries_error());
         }
+        // Display data, but Ferret's own AAGUID is an extra guard: such a
+        // passkey lives in the vault it would have to open (Fase 1 § 9.4).
+        if meta.aaguid == AAGUID {
+            return Err(Error::InvalidState);
+        }
+        // BS says the key is backed up, which only a key that can be backed up
+        // (BE) can be. An authenticator that reports BS without BE is not
+        // conformant, and the list would call such a key "this device only".
+        if meta.bs && !meta.be {
+            return Err(Error::InvalidState);
+        }
+        let name = normalize_method_name(meta.name)?;
         let mut next = self.clone();
-        next.methods.push(ManifestEntry::passkey(
+        next.methods.push(ManifestEntry::passkey_named(
             wrap.method_id,
             wrap.kek_generation,
             credential_id.clone(),
+            name,
+            meta.be,
+            meta.bs,
         ));
         Ok(next)
+    }
+
+    /// The passkey (PRF) methods of the manifest, in the manifest's order,
+    /// with their names and synced flags, for the list of unlock methods.
+    ///
+    /// The label follows the BE flag, not BS: BE is fixed for the key's life,
+    /// BS can be 0 at registration and 1 later. An entry of `method_type` 3
+    /// without a credential id is left out (it cannot be used). A stored name
+    /// that does not pass [`normalize_method_name`] unchanged is given as
+    /// `None`.
+    pub fn prf_methods(&self) -> Vec<PrfMethod> {
+        self.methods
+            .iter()
+            .filter(|m| m.method_type == 3)
+            .filter_map(|m| {
+                Some(PrfMethod {
+                    method_id: m.method_id,
+                    credential_id: m.credential_id.clone()?,
+                    kek_generation: m.kek_generation,
+                    name: m
+                        .name
+                        .as_deref()
+                        .filter(|n| normalize_method_name(n).is_ok_and(|s| s == **n))
+                        .map(str::to_owned),
+                    synced: m.be == Some(true),
+                    bs: m.bs,
+                })
+            })
+            .collect()
     }
 
     /// The manifest without the method `method_id`. A method the manifest
@@ -233,7 +363,9 @@ fn seal_next<R: SecureRng>(
 
 /// Adds a passkey (PRF) wrap to the list of unlock methods. `wrap` is the
 /// record from [`crate::UnlockedVault::wrap_for_method`]; `current` is the
-/// manifest row the server holds. Draws the nonce of the new manifest.
+/// manifest row the server holds. `meta` is what the registration told: the
+/// AAGUID goes in the request body, the name and the BE and BS flags in the
+/// sealed manifest only. Draws the nonce of the new manifest.
 ///
 /// Spec: Fase 1 § 4.3 and § 4.6 (`POST /api/vault/unlock-methods`).
 pub fn manifest_add_method<R: SecureRng>(
@@ -241,9 +373,10 @@ pub fn manifest_add_method<R: SecureRng>(
     vault: &UnlockedVault,
     current: &CurrentManifest<'_>,
     wrap: WrapRecord,
+    meta: &PasskeyMeta<'_>,
 ) -> Result<MethodChange, Error> {
     let old = open_current(vault, current)?;
-    let next = old.with_method(&wrap)?;
+    let next = old.with_method(&wrap, meta)?;
     let Method::Prf {
         credential_id,
         prf_salt,
@@ -253,13 +386,14 @@ pub fn manifest_add_method<R: SecureRng>(
     };
     let sealed = seal_next(rng, vault, current, &next)?;
     let body = format!(
-        "{{\"method_type\":{},\"method_id\":\"{}\",\"wrap\":\"{}\",\"kek_generation\":{},\"credential_id\":\"{}\",\"prf_salt\":\"{}\",\"manifest\":{}}}",
+        "{{\"method_type\":{},\"method_id\":\"{}\",\"wrap\":\"{}\",\"kek_generation\":{},\"credential_id\":\"{}\",\"prf_salt\":\"{}\",\"aaguid\":\"{}\",\"manifest\":{}}}",
         wrap.method.type_code(),
         hex(wrap.method_id.as_bytes()),
         hex(&wrap.wrap),
         wrap.kek_generation,
         hex(credential_id),
         hex(prf_salt),
+        hex(&meta.aaguid),
         manifest_json(&sealed)
     )
     .into_bytes();

@@ -16,6 +16,7 @@ use crate::prim::{KdfParams, ct::ct_eq, hkdf::hkdf_sha256};
 use crate::rng::SecureRng;
 use crate::secret::{
     AuthSeed, ExportKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput, RecoveryKey, VaultKey,
+    check_not_all_zero,
 };
 use crate::text::Pin;
 use crate::tlv::{Tlv, tag};
@@ -319,7 +320,7 @@ impl Kek {
         profile: PinProfile,
     ) -> Result<Kek, Error> {
         let mut kek = pin_extension_key(pin, device_salt, profile)?;
-        Ok(Kek::from_pin_extension_key(&mut kek))
+        Kek::from_pin_extension_key(&mut kek)
     }
 
     /// The `KEK_pin` of the extension from its 32 bytes, as
@@ -328,9 +329,13 @@ impl Kek {
     /// For a binding that runs the Argon2id in one worker and the wrap in
     /// another: only these 32 bytes cross, never the PIN. It is the same key
     /// [`Kek::from_pin_extension`] makes; the checks (profile, floor) were
-    /// done by [`pin_extension_key`] before the bytes existed.
-    pub fn from_pin_extension_key(key: &mut [u8; 32]) -> Kek {
-        Kek::from_array_wiping(key)
+    /// done by [`pin_extension_key`] before the bytes existed. 32 zero bytes
+    /// are `input_all_zero` (a buffer that was wiped or never filled would
+    /// wrap the vault key under a value anyone can guess); the check reads
+    /// every byte and the array is wiped either way.
+    pub fn from_pin_extension_key(key: &mut [u8; 32]) -> Result<Kek, Error> {
+        check_not_all_zero(key)?;
+        Ok(Kek::from_array_wiping(key))
     }
 
     /// `KEK_pin` on mobile (step B): the stretched PIN mixed with the

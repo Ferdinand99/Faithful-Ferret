@@ -7,13 +7,20 @@
 //! ```text
 //! { "v": 1, "vk_epoch": u64,
 //!   "methods": [ { "t": u8 method_type, "id": bytes(16), "g": u64,
-//!                  "c": bytes? } ] }
+//!                  "c": bytes?, "n": text?, "be": bool?, "bs": bool? } ] }
 //! ```
 //!
 //! `c` is the credential id of a passkey (`t` = 3). It is what ties a
 //! passkey's `kek_generation` floor to the credential: the manifest is
 //! authenticated, so the floor never has to rely on a `method_id` to
 //! credential mapping that the server supplies.
+//!
+//! `n`, `be` and `bs` also belong to a passkey: the name the user gave it,
+//! the BE flag ("can be synced", fixed for the key's life; it decides whether
+//! the list says "synced") and the BS flag at registration (for information
+//! only). They live here, inside the sealed manifest, so the server neither
+//! sees nor can change them. A reader that does not know them keeps them as
+//! unknown keys of the entry.
 //!
 //! Like the item body, every object keeps the keys it does not know and
 //! writes them again after the known ones.
@@ -29,6 +36,16 @@ const fn bad() -> Error {
     Error::Malformed(MalformedKind::ItemBody)
 }
 
+/// An optional boolean key: absent is `None`, anything but a boolean is
+/// malformed.
+fn take_bool(e: &mut Entries, key: &str) -> Result<Option<bool>, Error> {
+    match e.take(key) {
+        None => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(b)),
+        Some(_) => Err(bad()),
+    }
+}
+
 /// One unlock method in the manifest.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ManifestEntry {
@@ -41,6 +58,15 @@ pub struct ManifestEntry {
     /// The credential id of a passkey method (`t` = 3), if the entry states
     /// it.
     pub credential_id: Option<Vec<u8>>,
+    /// The name of a passkey method (`n`), as the user gave it. What is
+    /// written is the form [`crate::methods::normalize_method_name`] makes.
+    pub name: Option<String>,
+    /// The BE flag of a passkey (`be`): the key can be synced. It is fixed
+    /// for the life of the key.
+    pub be: Option<bool>,
+    /// The BS flag of a passkey at registration (`bs`). For information
+    /// only: it can be 0 then and 1 later.
+    pub bs: Option<bool>,
     /// Keys this version does not know, in the order they were read.
     pub extra: Vec<(String, Value)>,
 }
@@ -53,19 +79,38 @@ impl ManifestEntry {
             method_id,
             kek_generation,
             credential_id: None,
+            name: None,
+            be: None,
+            bs: None,
             extra: Vec::new(),
         }
     }
 
     /// The entry of a passkey method: `method_type` 3 with its credential
-    /// id.
+    /// id, and no name or flags.
     pub fn passkey(method_id: MethodId, kek_generation: u64, credential_id: Vec<u8>) -> Self {
         Self {
-            method_type: 3,
-            method_id,
-            kek_generation,
             credential_id: Some(credential_id),
-            extra: Vec::new(),
+            ..Self::new(3, method_id, kek_generation)
+        }
+    }
+
+    /// The entry of a passkey method with its name and flags. The name is
+    /// stored as given: [`crate::methods::normalize_method_name`] makes the
+    /// form that is written.
+    pub fn passkey_named(
+        method_id: MethodId,
+        kek_generation: u64,
+        credential_id: Vec<u8>,
+        name: String,
+        be: bool,
+        bs: bool,
+    ) -> Self {
+        Self {
+            name: Some(name),
+            be: Some(be),
+            bs: Some(bs),
+            ..Self::passkey(method_id, kek_generation, credential_id)
         }
     }
 
@@ -87,11 +132,20 @@ impl ManifestEntry {
             None => None,
             Some(v) => Some(v.into_bytes().map_err(|_| bad())?),
         };
+        let name = match e.take("n") {
+            None => None,
+            Some(v) => Some(v.into_text().map_err(|_| bad())?),
+        };
+        let be = take_bool(&mut e, "be")?;
+        let bs = take_bool(&mut e, "bs")?;
         Ok(Self {
             method_type,
             method_id,
             kek_generation,
             credential_id,
+            name,
+            be,
+            bs,
             extra: e.into_rest(),
         })
     }
@@ -107,6 +161,15 @@ impl ManifestEntry {
         ];
         if let Some(credential_id) = &self.credential_id {
             m.push(("c".to_owned(), Value::Bytes(credential_id.clone())));
+        }
+        if let Some(name) = &self.name {
+            m.push(("n".to_owned(), Value::text(name.as_str())));
+        }
+        if let Some(be) = self.be {
+            m.push(("be".to_owned(), Value::Bool(be)));
+        }
+        if let Some(bs) = self.bs {
+            m.push(("bs".to_owned(), Value::Bool(bs)));
         }
         m.extend(self.extra.iter().cloned());
         Value::Map(m)

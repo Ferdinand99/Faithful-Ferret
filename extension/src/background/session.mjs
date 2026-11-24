@@ -32,10 +32,17 @@
 //
 // After an op has opened the vault, the listeners of `onOpen` hear it (the sync
 // engine starts there); every lock of the core host stops what they started.
+//
+// The PIN (build flag `unlock`): the session the host makes is the shared one plus the steps of pinSession.mjs
+// (`verifyPassword`, `pinUnlock`, `finishLocalUnlock`, `renewTokens`, `deviceAccount`), and the PIN host (pinHost.mjs)
+// joins by `setPins`, which gives this module the few events it must tell it: a sign-in, an unlock with the master
+// password, a renewal of the device's tokens (every one, also while the vault is locked), and a device whose tokens
+// have ended. `open` and `opener` are what the PIN host's unlock uses to open the vault the way an op of this module does.
 
 import { loadDeviceKey } from "../shared/auth/deviceKey.mjs";
+import { REFRESH_PATH } from "../shared/auth/tokens.mjs";
 import { hex16 } from "../shared/b64.mjs";
-import { createCryptoSession } from "../shared/crypto/session.mjs";
+import { createSessionCore } from "../shared/crypto/session.mjs";
 import { cache } from "../shared/store/cache.mjs";
 import { forgetServer, pendingWrites, sharedAccount } from "../shared/store/forget.mjs";
 import { openStore, req, run, serverKey } from "../shared/store/idb.mjs";
@@ -44,6 +51,7 @@ import { loadPinned, loadPinnedAccount, pinnedElsewhere, pinnedForSignIn, savePi
 import { deleteSetting, deviceId, getSetting, setSetting } from "../shared/store/settings.mjs";
 import { loadSyncState, saveSyncState } from "../shared/store/syncState.mjs";
 import { trash } from "../shared/store/trash.mjs";
+import { pinSessionMethods } from "./pinSession.mjs";
 
 /** Where the address of the signed-in server is kept (`storage.local`; an address is not a secret). */
 export const SERVER_KEY = "server";
@@ -227,9 +235,28 @@ export async function accountsOf(db, serverUrl) {
  *   allowTestHosts?: boolean,
  *   now?: () => number,
  *   createSession?: (options: Record<string, any>) => AccountSession,
+ *   fetchImpl?: typeof fetch,
  * }} SessionHostOptions
- *   `createSession` makes the shared session (`createCryptoSession` by default; the tests pass a fake one)
+ *   `createSession` makes the shared session (the shared one with the PIN's steps by default; the tests pass a fake one);
+ *   `fetchImpl` is the `fetch` the device's requests go through (the tests pass their own)
+ *
+ * @typedef {{
+ *   signedIn?: (server: string, accountId: string | null) => unknown,
+ *   unlocked?: (server: string, accountId: string | null, signedInAgain: boolean) => unknown,
+ *   renewed?: (server: string) => unknown,
+ *   deviceEnded?: (server: string, state: "revoked" | "signed_out") => unknown,
+ * }} PinEvents what the PIN host hears (`setPins`); a failure of one never fails the op that told it
  */
+
+/**
+ * The shared session and the PIN's steps over its environment.
+ * @param {Record<string, any>} options
+ * @returns {AccountSession}
+ */
+function createDeviceSession(options) {
+  const { session, inner } = createSessionCore(/** @type {any} */ (options));
+  return /** @type {AccountSession} */ (/** @type {unknown} */ (Object.freeze({ ...session, ...pinSessionMethods(inner) })));
+}
 
 /**
  * The session of the extension and its core-host operations. Call `attach`
@@ -243,7 +270,8 @@ export function createSessionHost({
   store = createLocalStore(),
   allowTestHosts = false,
   now = Date.now,
-  createSession = (options) => /** @type {AccountSession} */ (/** @type {unknown} */ (createCryptoSession(/** @type {any} */ (options)))),
+  createSession = createDeviceSession,
+  fetchImpl = (input, init) => globalThis.fetch(input, init),
 }) {
   /** The core host's live client (`attach`): the shared session's only way to the workers. @type {any} */
   let live = null;
@@ -261,6 +289,44 @@ export function createSessionHost({
   let lastAccount = null;
   /** Who hears that an op opened the vault. @type {Set<(opened: Opened) => void>} */
   const openListeners = new Set();
+  /** The PIN host's ears (`setPins`). @type {PinEvents | null} */
+  let pins = null;
+
+  /**
+   * Tells the PIN host an event. Never throws and never makes the op wait for a failure: what the PIN host does about it
+   * (a wipe) is its own to get right.
+   * @template {keyof PinEvents} K
+   * @param {K} name @param {Parameters<NonNullable<PinEvents[K]>>} args
+   */
+  async function tell(name, ...args) {
+    try {
+      const hear = /** @type {((...a: any[]) => unknown) | undefined} */ (pins === null ? undefined : pins[name]);
+      if (typeof hear === "function") await hear(...args);
+    } catch {
+      // Not the op's failure.
+    }
+  }
+
+  /**
+   * The `fetch` of a server's device requests: it tells the PIN host about every successful renewal of the tokens (the
+   * device has shown it is not revoked), whoever asked for it and whether or not the vault is open.
+   * @param {string} server
+   * @returns {typeof fetch}
+   */
+  function observedFetch(server) {
+    return async (input, init) => {
+      const response = await fetchImpl(input, init);
+      try {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : /** @type {Request} */ (input).url);
+        if (response.status >= 200 && response.status < 300 && url.pathname === REFRESH_PATH && serverKey(url.origin) === server) {
+          void tell("renewed", server);
+        }
+      } catch {
+        // Not a request this can read: nothing to tell.
+      }
+      return response;
+    };
+  }
 
   // The client the shared session works over: the core host's live client, and the core host's lock.
   const client = {
@@ -317,7 +383,7 @@ export function createSessionHost({
     const { deviceName, platform } = await deviceOf();
     if (active !== null && active.server === server) return active.session;
     if (active !== null) await resetSession();
-    const session = createSession({ client, store, serverUrl: server, mode: "device", deviceName, platform, now });
+    const session = createSession({ client, store, serverUrl: server, mode: "device", deviceName, platform, now, fetchImpl: observedFetch(server) });
     active = { server, session };
     return session;
   }
@@ -428,6 +494,8 @@ export function createSessionHost({
       if (server === null) return { signed_in: false };
       const session = await sessionOf(server);
       const state = await session.deviceState().catch(() => null);
+      // Tokens that have ended (revoked, reused, expired, signed out) leave no PIN that is any use.
+      if (state === "revoked" || state === "signed_out") await tell("deviceEnded", server, state);
       const shown = await hostOf(server).catch(() => null);
       const account = await accountOf(server);
       return {
@@ -460,6 +528,8 @@ export function createSessionHost({
       await open(context, server, session);
       lastAccount = { server, email: unlocked.email };
       await storageLocal.set({ [SERVER_KEY]: server });
+      // A new sign-in makes a new device: a PIN made for an older one is gone.
+      await tell("signedIn", server, session.current()?.accountId ?? null);
       return { ok: true, account_email: unlocked.email, server };
     }),
 
@@ -471,6 +541,9 @@ export function createSessionHost({
       const unlocked = await session.unlock({ password: args.mp, ...(typeof args.sk === "string" ? { skCode: args.sk, skBit: true } : {}) });
       await open(context, server, session);
       lastAccount = { server, email: unlocked.email };
+      // `login`: the device's tokens had ended and the unlock signed in again (a new device).
+      const now = session.current();
+      await tell("unlocked", server, now?.accountId ?? null, /** @type {any} */ (now)?.purpose === "login");
       return { ok: true };
     }),
   });
@@ -515,6 +588,24 @@ export function createSessionHost({
     /** The server this device is signed in at (`storage.local`), or null. */
     storedServer,
 
+    /**
+     * The PIN host's ears: what it must be told (see PinEvents). Called once, by the entry.
+     * @param {PinEvents | null} events
+     */
+    setPins(events) {
+      pins = events;
+    },
+
+    /** Opens the host for an op that has opened the vault, as the ops of this module do (see `open`). */
+    open,
+
+    /**
+     * Makes an op of the kind that opens the vault (a sign-in, an unlock): refused with `busy` while "forget this
+     * server" runs, and counted while it runs so that a forget waits for it.
+     * @param {(args: any, context: import("./coreHost.mjs").OpContext) => Promise<unknown>} run
+     */
+    opener,
+
     /** The shared session of `server`, made once (for "forget this server" of a locked device). @param {string} server */
     sessionFor: sessionOf,
 
@@ -544,6 +635,9 @@ export function createSessionHost({
      * caller has locked, revoked the device and removed the local records first.
      */
     async forget() {
+      // The PIN of the server goes first and is awaited, whatever else fails (the wipe at the lock for a sign-out is not).
+      const server = await storedServer().catch(() => null);
+      if (server !== null) await tell("deviceEnded", server, "signed_out");
       active = null;
       lastAccount = null;
       hosts.clear();
