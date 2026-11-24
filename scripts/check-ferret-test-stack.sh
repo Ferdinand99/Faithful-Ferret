@@ -858,6 +858,7 @@ grep -q '^ARG FEATURES=""$' "$dockerfile" || fail "ARG FEATURES must default to 
 # data never set it (their compose files have FEATURES as the only build argument, checked above).
 if grep -qiE 'WASM_LOCAL|wasm[.]local' "$dockerfile"; then fail "$dockerfile must not offer another WebAssembly package"; fi
 grep -qx 'ARG WASM_SOURCE=lock' "$dockerfile" || fail "ARG WASM_SOURCE must default to lock"
+# shellcheck disable=SC2016
 grep -qF 'FERRET_RELEASE_BUILD=${REVISION:+1}' "$dockerfile" || fail "a build with a revision must be a release build (FERRET_RELEASE_BUILD)"
 grep -qF 'a release image (REVISION is set) cannot carry a WebAssembly package built from the tree' "$dockerfile" || fail "the web stage must refuse the tree package when there is a revision"
 if grep -rqE 'WASM_SOURCE|FERRET_WASM' docker/compose.ferret-test.yml docker/compose.ferret-home.yml docker/compose.ferret-drill.yml; then
@@ -865,9 +866,12 @@ if grep -rqE 'WASM_SOURCE|FERRET_WASM' docker/compose.ferret-test.yml docker/com
 fi
 # The test stack says which WebAssembly package its web vault was built with (the server's own --build-info).
 grep -qF 'wasm_of() {' scripts/lanbox-ferret-test.sh || fail "lanbox-ferret-test.sh must be able to say which WebAssembly package a stack runs"
+# shellcheck disable=SC2016
 grep -qF 'echo "  wasm   $(wasm_of "$e2e_app")' scripts/lanbox-ferret-test.sh || fail "e2e-up must print which WebAssembly package the stack runs"
+# shellcheck disable=SC2016
 grep -qF 'echo "wasm: $(wasm_of "$container")"' scripts/lanbox-ferret-test.sh || fail "status must print which WebAssembly package the stack runs"
 grep -qx 'COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/' "$dockerfile" || fail "the image must carry LICENSE and THIRD-PARTY-NOTICES in /usr/share/doc/ferret/"
+# shellcheck disable=SC1003
 grep -qxF '      lock) node scripts/build.mjs ;; \' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock, for the lock source"
 if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github docker; then fail "no workflow or compose file may use a local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
