@@ -88,6 +88,12 @@ fn kek_pw_commit_path(r: &mut CtRunner, rng: &mut BenchRng) {
 fn info_unwrap_valid_vs_bad_commit(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "info_unwrap_valid_vs_bad_commit");
 }
+fn kek_pin_commit_path(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "kek_pin_commit_path");
+}
+fn info_unwrap_pin_valid_vs_bad_commit(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "info_unwrap_pin_valid_vs_bad_commit");
+}
 
 fn info_unpad_position_zeros(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "info_unpad_position_zeros");
@@ -171,6 +177,8 @@ ctbench_main!(
     base32_decode,
     kek_pw_commit_path,
     info_unwrap_valid_vs_bad_commit,
+    kek_pin_commit_path,
+    info_unwrap_pin_valid_vs_bad_commit,
     info_unpad_position_zeros,
     info_unpad_content,
     info_unpad_random_pair,

@@ -393,7 +393,7 @@ test("no_reply_holds_key_material", () => {
   assert.deepEqual(vaultKey(unlocked.vault), secrets.get("VK"));
 
   const pinWrap = call("wrap_pin", () => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), null));
-  addSecret("KEK_pin", fromHex(op("kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt) }).kek));
+  addSecret("KEK_pin", fromHex(op("kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt), pin_profile: pinWrap.method.pin_profile }).kek));
   call("pin_unlock", () => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, null));
 
   const prfOutput = fill(32, 0x33);

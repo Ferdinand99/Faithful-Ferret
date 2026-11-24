@@ -50,6 +50,7 @@ pub mod ksf_profile;
 pub mod methods;
 pub mod opaque;
 pub mod passkey;
+pub mod pin_profile;
 pub mod pinning;
 pub mod prim;
 pub mod rng;
@@ -113,6 +114,9 @@ pub use passkey::{
     PasskeyRecord, RpId, UserVerification, UvOutcome, canonical_origin, passkey_create,
     passkey_get, prf_output, seal_passkey_item, validate_rp_id,
 };
+pub use pin_profile::{
+    PIN_OFFLINE_GUESSES_PER_SECOND, PIN_PROFILE_1_PARAMS, PIN_PROFILE_MIN, PinProfile,
+};
 pub use pinning::{MethodFloor, MethodKey, MethodManifestView, Pinned, ServerView};
 pub use prim::{KDF_CEIL, KDF_FLOOR, KdfParams, check_kdf_params};
 pub use rng::{OsRng, SecureRng};
@@ -128,7 +132,8 @@ pub use sync_memory::{MAX_TRACKED_ITEMS, RollbackMemory, SYNC_MEMORY_VERSION, Sy
 #[cfg(feature = "test-support")]
 pub use testing::{ReplayRng, TestRng};
 pub use text::{
-    ExportPassword, MasterPassword, MpPolicy, OpaqueInput, PIN_MAX_DIGITS, PIN_MIN_DIGITS, Pin,
+    ExportPassword, MasterPassword, MpPolicy, OpaqueInput, PIN_FLOOR, PIN_MAX_BYTES,
+    PIN_MAX_SCALARS, Pin, PinRule, pin_meets_rule,
 };
 pub use tlv::Tlv;
 pub use totp::{

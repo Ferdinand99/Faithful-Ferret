@@ -42,17 +42,47 @@ pub(crate) fn hk(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], Error
     Ok(out)
 }
 
-const P1: KdfParams = KdfParams {
+pub(crate) const P1: KdfParams = KdfParams {
     m_kib: 65_536,
     t: 3,
     p: 1,
 };
 
-fn stretch(pin: &str, device_salt: &[u8; 16]) -> Result<[u8; 32], Error> {
+/// PIN profile 1: 256 MiB, 3 passes, 1 lane (written out here on purpose, apart from the core).
+pub(crate) const PIN_P1: KdfParams = KdfParams {
+    m_kib: 262_144,
+    t: 3,
+    p: 1,
+};
+
+/// The `kdf` field of a PIN wrap's AAD: `m`, `t`, `p`, each a big-endian `u32`.
+pub(crate) fn kdf_field(p: KdfParams) -> [u8; 12] {
+    let mut out = [0u8; 12];
+    out[..4].copy_from_slice(&p.m_kib.to_be_bytes());
+    out[4..8].copy_from_slice(&p.t.to_be_bytes());
+    out[8..].copy_from_slice(&p.p.to_be_bytes());
+    out
+}
+
+/// Argon2id of the PIN text bytes (already NFKD) with the given parameters.
+pub(crate) fn stretch_with(
+    pin: &[u8],
+    device_salt: &[u8; 16],
+    params: KdfParams,
+) -> Result<[u8; 32], Error> {
     let mut out = [0u8; 32];
-    argon2id(pin.as_bytes(), device_salt, P1, &mut out)
-        .map_err(|e| format!("argon2id failed: {e}"))?;
+    argon2id(pin, device_salt, params, &mut out).map_err(|e| format!("argon2id failed: {e}"))?;
     Ok(out)
+}
+
+/// The extension's PIN stretch: PIN profile 1.
+fn stretch(pin: &str, device_salt: &[u8; 16]) -> Result<[u8; 32], Error> {
+    stretch_with(pin.as_bytes(), device_salt, PIN_P1)
+}
+
+/// The mobile PIN stretch: profile 1 of the sign-in (64 MiB).
+fn stretch_mobile(pin: &str, device_salt: &[u8; 16]) -> Result<[u8; 32], Error> {
+    stretch_with(pin.as_bytes(), device_salt, P1)
 }
 
 pub(crate) fn arr<const N: usize>(start: u8) -> [u8; N] {
@@ -89,7 +119,7 @@ fn kek_prf(credential_id: &[u8], prf_output: &[u8; 32]) -> Result<[u8; 32], Erro
 
 fn kek_pin_mobile(pin: &str, device_salt: &[u8; 16], dev: &[u8; 32]) -> Result<[u8; 32], Error> {
     let mut ikm = dev.to_vec();
-    ikm.extend_from_slice(&stretch(pin, device_salt)?);
+    ikm.extend_from_slice(&stretch_mobile(pin, device_salt)?);
     let salt = cat(&[label("ferret/v1/kek/pin"), t(0x37, device_salt)]);
     hk(&salt, &ikm, b"ferret/v1/kek/pin")
 }
@@ -280,22 +310,39 @@ pub(crate) fn kdf_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             title,
             "kdf.kek.pin_extension",
             vec![Tag::Slow],
-            json!({ "pin": pin, "device_salt": h(&device_salt) }),
+            json!({ "pin": pin, "device_salt": h(&device_salt), "pin_profile": 1 }),
             Ok(json!({ "kek": h(&stretch(pin, &device_salt)?) })),
         ));
     }
+    // Text, not only digits: the PIN is NFKD, and the expected KEK is of the
+    // normalized bytes written out here ("e" with an acute accent is "e" and a
+    // combining acute accent).
+    cases.push(case(
+        "kdf/kek_pin_extension/valid/003",
+        "a text PIN",
+        "kdf.kek.pin_extension",
+        vec![Tag::Slow],
+        json!({ "pin": "caf\u{e9} 42", "device_salt": h(&device_salt), "pin_profile": 1 }),
+        Ok(json!({ "kek": h(&stretch("cafe\u{301} 42", &device_salt)?) })),
+    ));
+    cases.push(case(
+        "kdf/kek_pin_extension/valid/004",
+        "fullwidth digits are the same PIN as ASCII digits",
+        "kdf.kek.pin_extension",
+        vec![Tag::Slow],
+        json!({
+            "pin": "\u{ff11}\u{ff12}\u{ff13}\u{ff14}\u{ff15}\u{ff16}",
+            "device_salt": h(&device_salt),
+            "pin_profile": 1,
+        }),
+        Ok(json!({ "kek": h(&stretch("123456", &device_salt)?) })),
+    ));
     for (n, title, pin, code) in [
-        (1, "five digits are too few", "12345", "input_too_short"),
+        (1, "an empty PIN", "", "input_too_short"),
         (
             2,
-            "a letter is not a digit",
-            "12a456",
-            "input_forbidden_character",
-        ),
-        (
-            3,
-            "fullwidth digits are not ASCII digits",
-            "\u{ff11}\u{ff12}\u{ff13}\u{ff14}\u{ff15}\u{ff16}",
+            "a control character is refused",
+            "12\u{9}456",
             "input_forbidden_character",
         ),
     ] {
@@ -304,10 +351,18 @@ pub(crate) fn kdf_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
             title,
             "kdf.kek.pin_extension",
             vec![],
-            json!({ "pin": pin, "device_salt": h(&device_salt) }),
+            json!({ "pin": pin, "device_salt": h(&device_salt), "pin_profile": 1 }),
             Err(code),
         ));
     }
+    cases.push(case(
+        "kdf/kek_pin_extension/invalid/003",
+        "an unknown PIN profile is refused before Argon2id",
+        "kdf.kek.pin_extension",
+        vec![],
+        json!({ "pin": "123456", "device_salt": h(&device_salt), "pin_profile": 2 }),
+        Err("kdf_profile_unknown"),
+    ));
 
     // KEK_pin, mobile variant.
     let dev = arr::<32>(0xd0);
@@ -326,10 +381,10 @@ pub(crate) fn kdf_cases(cases: &mut Vec<Case>) -> Result<(), Error> {
     }
     cases.push(case(
         "kdf/kek_pin_mobile/invalid/001",
-        "five digits are too few",
+        "an empty PIN",
         "kdf.kek.pin_mobile",
         vec![],
-        json!({ "pin": "12345", "device_salt": h(&device_salt), "kek_dev_pin": h(&dev) }),
+        json!({ "pin": "", "device_salt": h(&device_salt), "kek_dev_pin": h(&dev) }),
         Err("input_too_short"),
     ));
     Ok(())
@@ -343,6 +398,7 @@ enum M {
     Recovery,
     Prf(Vec<u8>, [u8; 32]),
     Pin([u8; 16]),
+    PinMobile([u8; 16]),
     Device,
 }
 
@@ -352,13 +408,13 @@ impl M {
             M::Password => 1,
             M::Recovery => 2,
             M::Prf(..) => 3,
-            M::Pin(_) => 4,
+            M::Pin(_) | M::PinMobile(_) => 4,
             M::Device => 5,
         }
     }
 
     fn has_commit(&self) -> bool {
-        matches!(self, M::Password | M::Pin(_))
+        matches!(self, M::Password | M::Pin(_) | M::PinMobile(_))
     }
 
     fn json(&self) -> Value {
@@ -368,7 +424,8 @@ impl M {
             M::Prf(cred, salt) => {
                 json!({ "type": "prf", "credential_id": h(cred), "prf_salt": h(salt) })
             }
-            M::Pin(salt) => json!({ "type": "pin", "device_salt": h(salt) }),
+            M::Pin(salt) => json!({ "type": "pin", "device_salt": h(salt), "pin_profile": 1 }),
+            M::PinMobile(salt) => json!({ "type": "pin_mobile", "device_salt": h(salt) }),
             M::Device => json!({ "type": "device" }),
         }
     }
@@ -385,10 +442,15 @@ struct W {
 }
 
 impl W {
-    /// `aad_wrap`, or the PIN AAD of § 7.2 (same field order, no generation). `kdf` overrides the 12 `kdf`
-    /// bytes of a password wrap (profile 1 otherwise).
+    /// `aad_wrap`, or the PIN AAD of § 7.2 (same field order, no generation, and the `kdf` last). `kdf`
+    /// overrides the 12 `kdf` bytes of a password or PIN wrap (the profile's own otherwise).
     fn aad(&self, kdf: Option<[u8; 12]>) -> Vec<u8> {
-        if let M::Pin(device_salt) = &self.m {
+        let pin = match &self.m {
+            M::Pin(device_salt) => Some((device_salt, PIN_P1)),
+            M::PinMobile(device_salt) => Some((device_salt, P1)),
+            _ => None,
+        };
+        if let Some((device_salt, params)) = pin {
             return cat(&[
                 label("ferret/v1/pin"),
                 t(0x03, &[1]),
@@ -398,6 +460,7 @@ impl W {
                 t(0x13, &self.method_id),
                 t(0x20, &self.epoch.to_be_bytes()),
                 t(0x37, device_salt),
+                t(0x30, &kdf.unwrap_or_else(|| kdf_field(params))),
             ]);
         }
         let mut parts = vec![
@@ -420,7 +483,7 @@ impl W {
                 parts.push(t(0x31, cred));
                 parts.push(t(0x32, salt));
             }
-            M::Recovery | M::Device | M::Pin(_) => {}
+            M::Recovery | M::Device | M::Pin(_) | M::PinMobile(_) => {}
         }
         cat(&parts)
     }
@@ -505,9 +568,10 @@ fn seal_case(id: &str, title: &str, w: W, source: Source, vk: [u8; 32]) -> Resul
             let mut i = w.input();
             i["device_salt"] = h(salt);
             i["pin"] = json!(pin);
+            i["pin_profile"] = json!(1);
             ("wrap.seal.pin", stretch(pin, salt)?, i)
         }
-        (Source::PinMobile(pin, dev), M::Pin(salt)) => {
+        (Source::PinMobile(pin, dev), M::PinMobile(salt)) => {
             slow = true;
             let mut i = w.input();
             i["device_salt"] = h(salt);
@@ -646,7 +710,7 @@ fn sealed_wraps() -> Result<Vec<Sealed>, Error> {
     add(
         "wrap/pin_mobile/valid/001",
         "PIN wrap of the mobile variant",
-        base(0x7a, 1, 1, M::Pin(device_salt)),
+        base(0x7a, 1, 1, M::PinMobile(device_salt)),
         Source::PinMobile("123456", arr(0xd0)),
         vk,
     )?;
@@ -886,6 +950,41 @@ pub(crate) fn unlock() -> Result<Vec<u8>, Error> {
             "aad_kdf",
             "password: wrap made with another kdf in the AAD",
             open_input(&pw.w, &pw.kek, &wrap),
+        );
+    }
+
+    // The kdf field of the PIN wrap: made with the AAD of another kdf (here the
+    // 64 MiB of the sign-in profile), it does not open as a PIN profile 1 wrap.
+    {
+        let other_kdf: [u8; 12] = [0, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1];
+        let nonce: [u8; 24] = draw("unlock/aad_kdf_pin/nonce");
+        let aad = pin.w.aad(Some(other_kdf));
+        let wrap = seal(&pin.w, &pin.kek, &pin.vk, &nonce, &aad)?;
+        bad(
+            "aad_kdf_pin",
+            "pin: wrap made with another kdf in the AAD",
+            open_input(&pin.w, &pin.kek, &wrap),
+        );
+        // One bit of the memory field of an otherwise right AAD.
+        let mut one_bit = kdf_field(PIN_P1);
+        one_bit[3] ^= 1;
+        let nonce: [u8; 24] = draw("unlock/aad_kdf_pin_bit/nonce");
+        let aad = pin.w.aad(Some(one_bit));
+        let wrap = seal(&pin.w, &pin.kek, &pin.vk, &nonce, &aad)?;
+        bad(
+            "aad_kdf_pin_bit",
+            "pin: wrap made with one bit of the kdf changed in the AAD",
+            open_input(&pin.w, &pin.kek, &wrap),
+        );
+    }
+    // The extension's PIN wrap presented as the mobile one (another kdf in the AAD).
+    {
+        let mut w = pin.w.clone();
+        w.m = M::PinMobile(arr(0xc0));
+        bad(
+            "pin_as_mobile",
+            "pin: the extension wrap presented as the mobile wrap",
+            open_input(&w, &pin.kek, &pin.wrap),
         );
     }
 

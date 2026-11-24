@@ -98,7 +98,7 @@ impl MethodKey {
             Method::Password { .. } => Some(MethodKey::Password),
             Method::Recovery => Some(MethodKey::Recovery),
             Method::Prf { credential_id, .. } => Some(MethodKey::Prf(credential_id.clone())),
-            Method::Pin { .. } | Method::Device => None,
+            Method::Pin { .. } | Method::PinMobile { .. } | Method::Device => None,
         }
     }
 }

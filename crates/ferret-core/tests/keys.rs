@@ -13,8 +13,8 @@ use ferret_core::testing::keys::{derived_keys, kek_bytes, recovery_seed, unlocke
 use ferret_core::testing::prim::{argon2_run_count, ed25519_public_key, hkdf_sha256};
 use ferret_core::testing::vector::{self, Case, Outcome};
 use ferret_core::{
-    AccountId, Error, ExportKey, InputError, Kek, KekDevPin, KsfProfile, Pin, PrfOutput,
-    RecoveryKey, UnlockedVault, VaultContext, recovery_public_key,
+    AccountId, Error, ExportKey, InputError, Kek, KekDevPin, KsfProfile, Pin, PinProfile,
+    PrfOutput, RecoveryKey, UnlockedVault, VaultContext, recovery_public_key,
 };
 use serde_json::json;
 use static_assertions::{assert_impl_all, assert_not_impl_any};
@@ -246,16 +246,15 @@ fn pin_rules_are_checked_when_the_pin_is_built() {
     let too_long = Error::InvalidInput(InputError::TooLong);
     for (pin, want) in [
         (b"".as_slice(), too_short),
-        (b"12345", too_short),
-        (b"12345a", forbidden),
-        (b"12 456", forbidden),
-        (b"-12345", forbidden),
-        ("١٢٣٤٥٦".as_bytes(), forbidden), // Arabic-Indic digits
+        (b"12a\x00456", forbidden),
+        (b"12 456\t", forbidden),
         (&[b'1'; 65], too_long),
+        (&[0xff, 0xfe], Error::InvalidInput(InputError::NotUtf8)),
     ] {
         assert_eq!(Pin::new(pin).err(), Some(want));
     }
-    // The longest PIN is accepted.
+    // Any PIN of one to 64 scalar values is built; the rule decides the rest.
+    assert!(Pin::new(b"1").is_ok());
     assert!(Pin::new(&[b'1'; 64]).is_ok());
     assert_eq!(
         argon2_run_count(),
@@ -265,22 +264,27 @@ fn pin_rules_are_checked_when_the_pin_is_built() {
 }
 
 #[test]
-fn pin_keks_use_profile_1_and_the_device_salt() {
+fn pin_keks_use_their_profile_and_the_device_salt() {
     let salt = [0xc0u8; 16];
     let before = argon2_run_count();
-    let ext = Kek::from_pin_extension(&pin(), &salt).unwrap();
+    let ext = Kek::from_pin_extension(&pin(), &salt, PinProfile::P1).unwrap();
     assert_eq!(argon2_run_count(), before + 1);
 
-    // The extension KEK is Argon2id with profile 1 and nothing else.
+    // The extension KEK is Argon2id with the PIN profile and nothing else.
     let mut want = [0u8; 32];
-    ferret_core::testing::prim::argon2id(b"123456", &salt, KsfProfile::P1.params(), &mut want)
+    ferret_core::testing::prim::argon2id(b"123456", &salt, PinProfile::P1.params(), &mut want)
         .unwrap();
     assert_eq!(kek_bytes(&ext), want);
 
-    // The mobile KEK mixes in the hardware secret through HKDF.
+    // The mobile KEK mixes in the hardware secret through HKDF, over the
+    // 64 MiB stretch of profile 1 of the sign-in.
+    let mut stretched = [0u8; 32];
+    ferret_core::testing::prim::argon2id(b"123456", &salt, KsfProfile::P1.params(), &mut stretched)
+        .unwrap();
+    assert_ne!(stretched, want);
     let mobile =
         Kek::from_pin_mobile(&pin(), &salt, &KekDevPin::from_test_bytes([0xd0; 32])).unwrap();
-    let ikm = [[0xd0u8; 32].as_slice(), want.as_slice()].concat();
+    let ikm = [[0xd0u8; 32].as_slice(), stretched.as_slice()].concat();
     let want_mobile = hk32(
         &[label("ferret/v1/kek/pin"), t(0x37, &salt)].concat(),
         &ikm,
@@ -290,7 +294,7 @@ fn pin_keks_use_profile_1_and_the_device_salt() {
     assert_ne!(kek_bytes(&mobile), kek_bytes(&ext));
 
     // Another device salt or hardware secret gives another KEK.
-    let other_salt = Kek::from_pin_extension(&pin(), &[0xc1; 16]).unwrap();
+    let other_salt = Kek::from_pin_extension(&pin(), &[0xc1; 16], PinProfile::P1).unwrap();
     assert_ne!(kek_bytes(&other_salt), kek_bytes(&ext));
     let other_dev =
         Kek::from_pin_mobile(&pin(), &salt, &KekDevPin::from_test_bytes([0xd1; 32])).unwrap();
@@ -351,7 +355,9 @@ fn run_kdf_case(case: &Case) -> Result<Outcome, Error> {
         }
         "kdf.kek.pin_extension" => {
             let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
-            let kek = Kek::from_pin_extension(&pin, &hexn(&i["device_salt"]))?;
+            let profile =
+                PinProfile::from_wire(u32::try_from(i["pin_profile"].as_u64().unwrap()).unwrap())?;
+            let kek = Kek::from_pin_extension(&pin, &hexn(&i["device_salt"]), profile)?;
             json!({ "kek": he(&kek_bytes(&kek)) })
         }
         "kdf.kek.pin_mobile" => {

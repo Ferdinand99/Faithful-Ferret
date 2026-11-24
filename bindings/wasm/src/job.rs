@@ -603,13 +603,21 @@ impl UnlockJob {
             let dev = kek_dev_pin.map(Zeroizing::new);
             let record = from_js::<PinnedDto>(pinned)?.core()?;
             let rec = from_js::<WrapDto>(pin_wrap)?.core()?;
-            let Method::Pin { device_salt } = &rec.method else {
-                return Err(Fail::Input);
-            };
+            // The profile of the stored wrap decides how the KEK is made, and
+            // it is looked at before any Argon2id is run.
             let digits = PinDigits::new(&pin)?;
-            let kek = match &dev {
-                Some(d) => Kek::from_pin_mobile(&digits, device_salt, &KekDevPin::from_slice(d)?)?,
-                None => Kek::from_pin_extension(&digits, device_salt)?,
+            let kek = match (&rec.method, &dev) {
+                (Method::PinMobile { device_salt }, Some(d)) => {
+                    Kek::from_pin_mobile(&digits, device_salt, &KekDevPin::from_slice(d)?)?
+                }
+                (
+                    Method::Pin {
+                        device_salt,
+                        profile,
+                    },
+                    None,
+                ) => Kek::from_pin_extension(&digits, device_salt, *profile)?,
+                _ => return Err(Fail::Input),
             };
             let vault = record.unlock_local(&rec, &kek)?;
             outcome(Vault::from_unlocked(vault, None), &record)

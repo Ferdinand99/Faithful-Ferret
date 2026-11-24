@@ -2,6 +2,7 @@
 import { unhex, hex, fail, concat, u8, u64be, repeat } from '../util.mjs';
 import { tlv, label, T } from '../tlv.mjs';
 import { argon2id } from '../crypto.mjs';
+import { pinNormalize } from '../text.mjs';
 import { checkKdfRange, kekPassword, kekRecovery, recoveryKeypair, kekPrf, kekPinExtension, kekPinMobile, vkDerive } from '../keys.mjs';
 import { wrapSeal, wrapOpen } from '../wrap.mjs';
 
@@ -54,8 +55,13 @@ ops['kdf.vk_derive'] = ({ input }) => {
 };
 
 ops['kdf.kek.prf'] = ({ input }) => ({ expect: { kek: hex(kekPrf(unhex(input.credential_id), unhex(input.prf_output))) } });
-ops['kdf.kek.pin_extension'] = ({ input }) => ({ expect: { kek: hex(kekPinExtension(input.pin, unhex(input.device_salt))) } });
-ops['kdf.kek.pin_mobile'] = ({ input }) => ({ expect: { kek: hex(kekPinMobile(input.pin, unhex(input.device_salt), unhex(input.kek_dev_pin))) } });
+// The PIN text is NFKD'd first; the profile is looked up before Argon2id runs.
+const pinOf = (text) => pinNormalize(new Uint8Array(Buffer.from(text, 'utf8'))).nfkd;
+ops['kdf.kek.pin_extension'] = ({ input }) => {
+  const pin = pinOf(input.pin);
+  return { expect: { kek: hex(kekPinExtension(pin, unhex(input.device_salt), input.pin_profile)) } };
+};
+ops['kdf.kek.pin_mobile'] = ({ input }) => ({ expect: { kek: hex(kekPinMobile(pinOf(input.pin), unhex(input.device_salt), unhex(input.kek_dev_pin))) } });
 
 function wrapFields(input) {
   return {
@@ -65,6 +71,7 @@ function wrapFields(input) {
     vkEpoch: BigInt(input.vk_epoch),
     kekGeneration: BigInt(input.kek_generation),
     ksfProfile: input.ksf_profile,
+    pinProfile: input.pin_profile,
     credentialId: input.credential_id !== undefined ? unhex(input.credential_id) : undefined,
     prfSalt: input.prf_salt !== undefined ? unhex(input.prf_salt) : undefined,
     deviceSalt: input.device_salt !== undefined ? unhex(input.device_salt) : undefined,
@@ -88,8 +95,8 @@ function sealCase(type, getKek) {
 ops['wrap.seal.password'] = sealCase('password', (i, v) => kekPassword(v.accountId, unhex(i.export_key)));
 ops['wrap.seal.recovery'] = sealCase('recovery', (i, v) => kekRecovery(v.accountId, unhex(i.rk)));
 ops['wrap.seal.prf'] = sealCase('prf', (i) => kekPrf(unhex(i.credential_id), unhex(i.prf_output)));
-ops['wrap.seal.pin'] = sealCase('pin', (i) => kekPinExtension(i.pin, unhex(i.device_salt)));
-ops['wrap.seal.pin_mobile'] = sealCase('pin', (i) => kekPinMobile(i.pin, unhex(i.device_salt), unhex(i.kek_dev_pin)));
+ops['wrap.seal.pin'] = sealCase('pin', (i) => kekPinExtension(pinOf(i.pin), unhex(i.device_salt), i.pin_profile));
+ops['wrap.seal.pin_mobile'] = sealCase('pin_mobile', (i) => kekPinMobile(pinOf(i.pin), unhex(i.device_salt), unhex(i.kek_dev_pin)));
 // Two draws: the 32-byte KEK, then the 24-byte nonce.
 ops['wrap.seal.device'] = sealCase('device', (i, v, rng) => rng.draw(32));
 
@@ -102,6 +109,7 @@ ops['wrap.open'] = ({ input }) => {
     vkEpoch: BigInt(input.vk_epoch),
     kekGeneration: BigInt(input.kek_generation),
     ksfProfile: m.ksf_profile,
+    pinProfile: m.pin_profile,
     credentialId: m.credential_id !== undefined ? unhex(m.credential_id) : undefined,
     prfSalt: m.prf_salt !== undefined ? unhex(m.prf_salt) : undefined,
     deviceSalt: m.device_salt !== undefined ? unhex(m.device_salt) : undefined,

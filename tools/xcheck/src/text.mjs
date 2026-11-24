@@ -51,6 +51,36 @@ export function checkText(bytes, min) {
   return { nfkd: utf8(nfkd), text: nfkd };
 }
 
+// ---- the PIN (section 7.2): NFKD like the master password, 1 to 64 scalars, 256 bytes -------
+export const PIN_FLOOR = 4;
+export const PIN_MAX_SCALARS = 64;
+export const PIN_MAX_BYTES = 256;
+
+// Returns the NFKD bytes of a PIN given as UTF-8 bytes. Order of refusals: not UTF-8, a forbidden
+// character, too long (more than 64 scalars before or after NFKD, or more than 256 bytes after it), empty.
+export function pinNormalize(bytes) {
+  let s;
+  try {
+    s = strictUtf8.decode(bytes);
+  } catch {
+    fail('input_not_utf8');
+  }
+  for (const ch of s) if (forbidden(ch.codePointAt(0))) fail('input_forbidden_character');
+  if (scalars(s) > PIN_MAX_SCALARS) fail('input_too_long');
+  const nfkd = s.normalize('NFKD');
+  if (scalars(nfkd) > PIN_MAX_SCALARS || utf8(nfkd).length > PIN_MAX_BYTES) fail('input_too_long');
+  if (nfkd.length === 0) fail('input_too_short');
+  return { nfkd: utf8(nfkd), text: nfkd };
+}
+
+// The rule of the server: the length is counted in scalars of the NFC form of the normalized PIN; a
+// minimum below 4 is 4 and one above 64 is 64; a rule that forbids PINs refuses every PIN.
+export function pinMeetsRule(pinText, rule) {
+  if (!rule.allowed) fail('pin_not_allowed');
+  const min = Math.min(Math.max(rule.min_length, PIN_FLOOR), PIN_MAX_SCALARS);
+  if (scalars(pinText.normalize('NFC')) < min) fail('input_too_short');
+}
+
 export const MIN_WITH_SK = 12;
 export const MIN_WITHOUT_SK = 15;
 export const MIN_EXPORT = 12;

@@ -242,6 +242,8 @@ pub enum Error {
     Folder(FolderError),
     /// The options of the password or passphrase generator are out of range.
     GeneratorOptions,
+    /// The server's rule does not allow a PIN at all.
+    PinNotAllowed,
 }
 
 impl Error {
@@ -323,6 +325,7 @@ impl Error {
         Error::Folder(FolderError::TooMany),
         Error::Folder(FolderError::Duplicate),
         Error::GeneratorOptions,
+        Error::PinNotAllowed,
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -415,6 +418,7 @@ impl Error {
                 FolderError::Duplicate => "folder_duplicate",
             },
             Error::GeneratorOptions => "generator_options",
+            Error::PinNotAllowed => "pin_not_allowed",
         }
     }
 }

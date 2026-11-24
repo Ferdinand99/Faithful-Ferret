@@ -31,6 +31,8 @@
 //! | `base32_decode` | `decode_letters`, 32 letters | all `A` | random letters, mixed case |
 //! | `kek_pw_commit_path` | `unwrap_vk`, whole path | commit: first byte wrong | commit: last byte wrong |
 //! | `info_unwrap_valid_vs_bad_commit` | `unwrap_vk` | intact (AEAD runs) | commit wrong (AEAD skipped) |
+//! | `kek_pin_commit_path` | `unwrap_vk` of a PIN wrap, whole path | commit: first byte wrong | commit: last byte wrong |
+//! | `info_unwrap_pin_valid_vs_bad_commit` | `unwrap_vk` of a PIN wrap | intact (AEAD runs) | commit wrong (AEAD skipped) |
 //! | `server_*` | the OPAQUE server library, see [`server`] (feature `server`, native only) | | |
 //! | `control_null` | `commit_eq`, same inputs in both classes | equal | equal |
 //! | `control_leaky` | a comparison that stops at the first difference | equal | first byte wrong |
@@ -53,8 +55,8 @@
 
 use ferret_core::testing::TestRng;
 use ferret_core::{
-    AccountId, Kek, KsfProfile, Method, MethodId, UnlockedVault, VaultContext, VaultId, VaultKey,
-    WrapRecord, unwrap_vk, wrap_vk,
+    AccountId, Kek, KsfProfile, Method, MethodId, PinProfile, UnlockedVault, VaultContext, VaultId,
+    VaultKey, WrapRecord, unwrap_vk, wrap_vk,
 };
 use std::hint::black_box;
 use subtle::ConstantTimeEq;
@@ -636,9 +638,22 @@ impl Target for Unwrap {
     }
 }
 
-/// A `password` wrap of a vault key under `kek`, with the byte at `flip` (an
-/// index into the wrap) changed, or intact for `None`.
-fn wrap_record(mix: &mut Mix, kek: &Kek, ctx: &VaultContext, flip: Option<usize>) -> WrapRecord {
+/// Which wrap a target opens: both carry a key commitment.
+#[derive(Clone, Copy)]
+enum WrapKind {
+    Password,
+    Pin,
+}
+
+/// A `password` or PIN wrap of a vault key under `kek`, with the byte at
+/// `flip` (an index into the wrap) changed, or intact for `None`.
+fn wrap_record(
+    mix: &mut Mix,
+    kek: &Kek,
+    ctx: &VaultContext,
+    flip: Option<usize>,
+    kind: WrapKind,
+) -> WrapRecord {
     let mut rng = TestRng::new(&mix.next().to_le_bytes());
     let vk = VaultKey::from_test_bytes(mix.array::<32>());
     let mut rec = wrap_vk(
@@ -648,8 +663,14 @@ fn wrap_record(mix: &mut Mix, kek: &Kek, ctx: &VaultContext, flip: Option<usize>
         kek,
         MethodId::from_bytes([0x33; 16]),
         1,
-        Method::Password {
-            ksf: KsfProfile::P1,
+        match kind {
+            WrapKind::Password => Method::Password {
+                ksf: KsfProfile::P1,
+            },
+            WrapKind::Pin => Method::Pin {
+                device_salt: [0xc0; 16],
+                profile: PinProfile::P1,
+            },
         },
     )
     .expect("a wrap under a fixed KEK");
@@ -665,16 +686,17 @@ fn unwrap_target(
     info: bool,
     left: Option<usize>,
     right: Option<usize>,
+    kind: WrapKind,
 ) -> Unwrap {
     let ctx = context();
     let kek = Kek::from_test_bytes(mix.array::<32>());
     let pools = Pools::new(mix, |m| {
         (
-            wrap_record(m, &kek, &ctx, left).wrap,
-            wrap_record(m, &kek, &ctx, right).wrap,
+            wrap_record(m, &kek, &ctx, left, kind).wrap,
+            wrap_record(m, &kek, &ctx, right, kind).wrap,
         )
     });
-    let cell = wrap_record(mix, &kek, &ctx, None);
+    let cell = wrap_record(mix, &kek, &ctx, None, kind);
     Unwrap {
         name,
         info,
@@ -734,6 +756,7 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
             false,
             Some(COMMIT_AT),
             Some(COMMIT_AT + 31),
+            WrapKind::Password,
         )),
         Box::new(unwrap_target(
             &mut mix,
@@ -741,6 +764,23 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
             true,
             None,
             Some(COMMIT_AT),
+            WrapKind::Password,
+        )),
+        Box::new(unwrap_target(
+            &mut mix,
+            "kek_pin_commit_path",
+            false,
+            Some(COMMIT_AT),
+            Some(COMMIT_AT + 31),
+            WrapKind::Pin,
+        )),
+        Box::new(unwrap_target(
+            &mut mix,
+            "info_unwrap_pin_valid_vs_bad_commit",
+            true,
+            None,
+            Some(COMMIT_AT),
+            WrapKind::Pin,
         )),
         Box::new(unpad_target(
             &mut mix,

@@ -21,13 +21,13 @@ use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, Pinned, PinnedField,
-    PrfOutput, RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow, SyncMemory,
-    UnlockedVault, WrapRecord, auth_sign, decode_recovery_key, decrypt_item, decrypt_manifest,
-    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
-    make_tombstone, parse_otpauth, renew_recovery, renew_recovery_after_restore, totp_code,
-    totp_seconds_left, verify_checkpoint, verify_recovery_setup, verify_secret_key_entry,
-    verify_tombstone,
+    KekDevPin, KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, PinProfile, Pinned,
+    PinnedField, PrfOutput, RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow,
+    SyncMemory, UnlockedVault, WrapRecord, auth_sign, decode_recovery_key, decrypt_item,
+    decrypt_manifest, emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item,
+    make_checkpoint, make_tombstone, parse_otpauth, renew_recovery, renew_recovery_after_restore,
+    totp_code, totp_seconds_left, verify_checkpoint, verify_recovery_setup,
+    verify_secret_key_entry, verify_tombstone,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -974,16 +974,25 @@ impl Vault {
             let pin = Pin::new(&pin)?;
             let mut salt = [0u8; 16];
             ferret_core::SecureRng::fill(&mut OsRng, &mut salt);
-            let kek = match &dev {
-                Some(d) => Kek::from_pin_mobile(&pin, &salt, &KekDevPin::from_slice(d)?)?,
-                None => Kek::from_pin_extension(&pin, &salt)?,
+            let (kek, method) = match &dev {
+                Some(d) => (
+                    Kek::from_pin_mobile(&pin, &salt, &KekDevPin::from_slice(d)?)?,
+                    ferret_core::Method::PinMobile { device_salt: salt },
+                ),
+                None => (
+                    Kek::from_pin_extension(&pin, &salt, PinProfile::P1)?,
+                    ferret_core::Method::Pin {
+                        device_salt: salt,
+                        profile: PinProfile::P1,
+                    },
+                ),
             };
             let rec = vault.wrap_for_method(
                 &mut OsRng,
                 &kek,
                 MethodId::from_bytes(arr(&method_id)?),
                 1,
-                ferret_core::Method::Pin { device_salt: salt },
+                method,
             )?;
             to_js(&WrapDto::of(&rec))
         })

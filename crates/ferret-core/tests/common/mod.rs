@@ -3,7 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use ferret_core::testing::{hex_decode, hex_encode};
-use ferret_core::{AccountId, KsfProfile, Method, MethodId, VaultContext, VaultId, VaultKey};
+use ferret_core::{
+    AccountId, KsfProfile, Method, MethodId, PinProfile, VaultContext, VaultId, VaultKey,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -93,6 +95,7 @@ pub fn prf_method() -> Method {
 pub fn pin_method() -> Method {
     Method::Pin {
         device_salt: [0xc0; 16],
+        profile: PinProfile::P1,
     }
 }
 

@@ -729,7 +729,7 @@ test("pin_and_passkey_unlock_go_through_the_same_checks", () => {
   const out = job.pin_unlock(enc.encode("123456"), created.pinned, pinWrap, null);
   assert.deepEqual(out.vault.auth_public_key(), created.pk_a);
   assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("654321"), created.pinned, pinWrap, null)), "decrypt");
-  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("12ab56"), created.pinned, pinWrap, null)), "input_forbidden_character");
+  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("12\u0009456"), created.pinned, pinWrap, null)), "input_forbidden_character");
   assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, fill(32, 1))), "decrypt", "the mobile variant is another key");
   // Passkey (PRF): the 32 bytes the authenticator gave.
   const prf = fill(32, 0x33);
