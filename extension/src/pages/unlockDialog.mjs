@@ -42,22 +42,24 @@ function secretField({ id, name, label, role, toggleLabel, toggleRole, hint }) {
 
 /**
  * @typedef {import("./unlockFlow.mjs").Outcome} Outcome
- * @typedef {{ mode: "set" | "change", minLength: number, afterRestart: boolean }} OpenOptions
+ * @typedef {{ mode: "set" | "change", minLength: number, afterRestart: boolean, location?: "disk" | "session" | null }} OpenOptions
  * @param {{
  *   texts: import("./page.mjs").Texts,
  *   flow: ReturnType<typeof import("./unlockFlow.mjs").createUnlockFlow>,
  *   onDone: (result: { mode: "set" | "change" }) => void,
  *   onClosed: (why: "cancel" | "done" | "locked" | "gone") => void,
+ *   onLate?: () => void,
  *   pollMs?: number,
  * }} deps
- *   `onDone` is told the PIN was saved (the dialog is closed already); `onClosed` that the dialog is closed and emptied, and why
+ *   `onDone` is told the PIN was saved (the dialog is closed already); `onClosed` that the dialog is closed and emptied, and why;
+ *   `onLate` that a PIN was saved after the dialog had been closed (the section reads what is true again)
  */
-export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_POLL_MS }) {
+export function createPinDialog({ texts, flow, onDone, onClosed, onLate = () => {}, pollMs = LOCK_POLL_MS }) {
   const t = (/** @type {string} */ key, /** @type {Record<string, string | number>} */ vars = {}) => texts.t(key, vars);
   const ID = "unlock-pin";
 
   const title = el("h4", { id: `${ID}-title`, class: "ff-pin-title", tabindex: "-1", "data-role": "pin-title" });
-  const rule = el("p", { class: "ff-hint", "data-role": "pin-rule" });
+  const rule = el("p", { class: "ff-hint", id: `${ID}-rule`, "data-role": "pin-rule" });
   const password = secretField({ id: `${ID}-password`, name: "master-password", label: t("settings.unlock.dialog.password.label"), role: "pin-password", toggleLabel: t("settings.unlock.dialog.password.show"), toggleRole: "pin-password-toggle" });
   const secret = secretField({ id: `${ID}-secret`, name: "secret-key", label: t("settings.unlock.dialog.secret.label"), role: "pin-secret", toggleLabel: t("settings.unlock.dialog.secret.show"), toggleRole: "pin-secret-toggle" });
   const pin = secretField({ id: `${ID}-pin`, name: "pin", label: t("settings.unlock.dialog.pin.label"), role: "pin-pin", toggleLabel: t("settings.unlock.dialog.pin.show"), toggleRole: "pin-pin-toggle" });
@@ -67,7 +69,7 @@ export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_P
   const numeric = /** @type {HTMLButtonElement} */ (
     el("button", { type: "button", class: "ff-button ff-pin-numeric", "aria-pressed": "false", "aria-label": t("settings.unlock.dialog.pin.numeric.label"), "data-role": "pin-numeric" }, t("settings.unlock.dialog.pin.numeric"))
   );
-  const pinHint = el("p", { class: "ff-hint", "data-role": "pin-hint" }, t("settings.unlock.dialog.pin.hint"));
+  const pinHint = el("p", { class: "ff-hint", id: `${ID}-hint`, "data-role": "pin-hint" }, t("settings.unlock.dialog.pin.hint"));
 
   const restart = /** @type {HTMLInputElement} */ (el("input", { id: `${ID}-restart`, name: "require-master-password-after-restart", type: "checkbox", "aria-describedby": `${ID}-restart-hint`, "data-role": "pin-restart" }));
   const restartHint = el("p", { class: "ff-hint", id: `${ID}-restart-hint`, "data-role": "pin-restart-hint" });
@@ -78,10 +80,10 @@ export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_P
   const warning = el(
     "div",
     { class: "ff-pin-warning", id: `${ID}-warning`, "data-role": "pin-warning" },
-    el("p", { class: "ff-pin-warning-title" }, t("settings.unlock.warning.title")),
+    el("p", { class: "ff-pin-warning-title", id: `${ID}-warning-title` }, t("settings.unlock.warning.title")),
     el("p", { "data-role": "pin-warning-text" }, t("settings.unlock.warning.body")),
   );
-  const acknowledge = /** @type {HTMLInputElement} */ (el("input", { id: `${ID}-ack`, name: "acknowledge-pin-risk", type: "checkbox", "aria-describedby": `${ID}-warning`, "data-role": "pin-ack" }));
+  const acknowledge = /** @type {HTMLInputElement} */ (el("input", { id: `${ID}-ack`, name: "acknowledge-pin-risk", type: "checkbox", "aria-describedby": `${ID}-warning-title`, "data-role": "pin-ack" }));
   const acknowledgeRow = el("div", { class: "ff-check", "data-role": "pin-ack-row" }, acknowledge, el("label", { for: `${ID}-ack`, class: "ff-label" }, t("settings.unlock.warning.acknowledge")));
 
   const error = el("p", { class: "ff-error", role: "alert", "data-role": "pin-error", hidden: true });
@@ -114,6 +116,9 @@ export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_P
       el("div", { class: "ff-actions" }, submitButton, cancelButton),
     )
   );
+
+  // The rule and the note about the "123" button are read out with the PIN fields.
+  for (const input of [pin.input, again]) input.setAttribute("aria-describedby", `${ID}-rule ${ID}-hint`);
 
   let open = false;
   let busy = false;
@@ -265,7 +270,11 @@ export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_P
     fields.secretKey = "";
     fields.pin = "";
     // The dialog was closed (cancelled, locked, the page went away) while the request was out: the answer is not shown.
-    if (mine !== epoch) return;
+    if (mine !== epoch) {
+      // The dialog was closed meanwhile; a PIN that did get saved is read again, so the section does not say otherwise.
+      if (outcome.ok) onLate();
+      return;
+    }
     busy = false;
     submitButton.removeAttribute("disabled");
     submitButton.removeAttribute("aria-busy");
@@ -298,7 +307,8 @@ export function createPinDialog({ texts, flow, onDone, onClosed, pollMs = LOCK_P
       title.textContent = t(mode === "change" ? "settings.unlock.dialog.title.change" : "settings.unlock.dialog.title.set");
       rule.textContent = t("settings.unlock.dialog.rule", { min: minLength, max: PIN_MAX_CHARS });
       // The restart choice is off unless the administrator forbids a PIN on disk: then it is on, locked, and says why.
-      restart.checked = forced;
+      // A PIN that is kept in memory stays there when it is changed; moving it to disk is the user's own choice.
+      restart.checked = forced || (mode === "change" && options.location === "session");
       if (forced) restart.setAttribute("disabled", "");
       else restart.removeAttribute("disabled");
       restartHint.textContent = t(forced ? "settings.unlock.restart.locked" : "settings.unlock.restart.hint");

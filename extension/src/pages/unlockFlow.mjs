@@ -6,7 +6,7 @@
 //
 //   unlock_policy {}  ->  { pin: { allowed, after_restart, min_length, set, location, failures_left, wait_ms, offline_ok,
 //                                  last_contact_at? }, prf: { enabled, count } }
-//   pin_set { password, secret_key?, pin, location, acknowledged }  ->  { ok: true } | { ok: false, reason }
+//   pin_set { mp, sk?, pin, location, acknowledged }  ->  { ok: true } | { ok: false, reason }
 //   pin_off {}        ->  { ok: true } | { ok: false, reason }
 //
 // `location` is "disk" (the default: the PIN works after a restart of the browser) or "session" (memory only, gone when
@@ -167,8 +167,8 @@ export function createUnlockFlow(request, { openTab = null } = {}) {
       if (location === "disk" && acknowledged !== true) return { ok: false, reason: "not_acknowledged" };
       try {
         const reply = await request("pin_set", {
-          password,
-          ...(secretKey === "" ? {} : { secret_key: secretKey }),
+          mp: password,
+          ...(secretKey === "" ? {} : { sk: secretKey }),
           pin,
           location,
           acknowledged: acknowledged === true,

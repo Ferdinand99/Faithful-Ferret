@@ -7,6 +7,10 @@
 // session storage), a turn-off removes it, and across a restart of the browser the PIN kept on disk is still there while the
 // PIN kept in memory is gone.
 //
+// These are stand-in tests: the page talks to a function in the page, not to the real background over the UI port, so the
+// protocol, the router and the real handlers are not under test. Once the background handlers exist, the same assertions
+// must run on pages/settings.html over the real port, and this stand-in goes.
+//
 // Run by the Firefox runner with the test build (see 01-corehost.spec.mjs). The page is the test bridge, because a page of the
 // extension may import the store there; the build's own pages may not reach the background.
 import assert from "node:assert/strict";
@@ -71,7 +75,7 @@ async function mount(session, account) {
           };
         }
         if (type === "pin_set") {
-          if (body.password !== master) return { ok: false, reason: "wrong_credentials" };
+          if (body.mp !== master) return { ok: false, reason: "wrong_credentials" };
           const bytes = (/** @type {number} */ n) => crypto.getRandomValues(new Uint8Array(n));
           await local.save(
             server,
@@ -176,7 +180,7 @@ const storedFor = (session, account) =>
     account,
   );
 
-describe("unlock settings in real Firefox", () => {
+describe("unlock settings in real Firefox (stand-in background)", () => {
   test("set_change_and_turn_off_a_pin_from_settings", async () => {
     for (const channel of channels()) {
       {
@@ -247,7 +251,7 @@ describe("unlock settings in real Firefox", () => {
 
           // The secrets went nowhere but the one request: the stand-in saw the keys of the body, and no field holds anything.
           const asked = await session.content(() => /** @type {any} */ (window).unlockHarness.asked);
-          assert.ok(asked.some(([type, keys]) => type === "pin_set" && keys.includes("pin") && keys.includes("password")), where);
+          assert.ok(asked.some(([type, keys]) => type === "pin_set" && keys.includes("pin") && keys.includes("mp")), where);
           assert.deepEqual((await look(session)).fields, ["", "", "", ""], where);
 
           // Turn it off: no password asked, the record is gone.

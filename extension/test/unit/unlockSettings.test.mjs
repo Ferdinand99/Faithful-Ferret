@@ -149,9 +149,9 @@ test("the_unlock_flow_sends_a_pin_only_in_one_request_and_refuses_what_needs_no_
   });
   const base = { password: "pw", pin: "123456", location: "session", acknowledged: false };
   assert.deepEqual(await flow.setPin(base), { ok: true });
-  assert.deepEqual(sent[0], ["pin_set", { password: "pw", pin: "123456", location: "session", acknowledged: false }]);
+  assert.deepEqual(sent[0], ["pin_set", { mp: "pw", pin: "123456", location: "session", acknowledged: false }]);
   assert.deepEqual(await flow.setPin({ ...base, secretKey: "sk-1", location: "disk", acknowledged: true }), { ok: true });
-  assert.deepEqual(sent[1], ["pin_set", { password: "pw", secret_key: "sk-1", pin: "123456", location: "disk", acknowledged: true }]);
+  assert.deepEqual(sent[1], ["pin_set", { mp: "pw", sk: "sk-1", pin: "123456", location: "disk", acknowledged: true }]);
   const count = sent.length;
   // On disk without the acknowledgement, a missing password, an empty PIN and an odd place: nothing goes out.
   assert.deepEqual(await flow.setPin({ ...base, location: "disk", acknowledged: false }), { ok: false, reason: "not_acknowledged" });
@@ -335,7 +335,7 @@ test("the_pin_is_not_saved_to_disk_without_the_acknowledgement", async () => {
   await submit(dialogOf(world.root));
   const sent = setRequests(world.log);
   assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0][1], { password: SENTINEL_PASSWORD, pin: SENTINEL_PIN, location: "disk", acknowledged: true });
+  assert.deepEqual(sent[0][1], { mp: SENTINEL_PASSWORD, pin: SENTINEL_PIN, location: "disk", acknowledged: true });
   assert.equal(world.state.pin.location, "disk");
   // In memory only, no acknowledgement is asked or sent.
   const memory = await sectionOf(on);
@@ -391,6 +391,10 @@ test("moving_to_disk_asks_for_the_password", async () => {
   const world = await sectionOf(on, { pin: { set: true, location: "session" } });
   await click(one(world.root, "unlock-pin-change"));
   assert.equal(field(world.root, "pin-password").getAttribute("type"), "password");
+  // The dialog starts from memory; moving to disk is the user's own choice.
+  assert.equal(field(world.root, "pin-restart").checked, true);
+  field(world.root, "pin-restart").checked = false;
+  fire(field(world.root, "pin-restart"), "change");
   fill(world.root, { password: "" });
   field(world.root, "pin-ack").checked = true;
   await submit(dialogOf(world.root));
@@ -399,14 +403,14 @@ test("moving_to_disk_asks_for_the_password", async () => {
   assert.equal(world.doc.activeElement, field(world.root, "pin-password"));
   field(world.root, "pin-password").value = "the master password";
   await submit(dialogOf(world.root));
-  assert.deepEqual(setRequests(world.log).map(([, body]) => [body.password, body.location]), [["the master password", "disk"]]);
-  // The secret key goes along only when it was typed.
+  assert.deepEqual(setRequests(world.log).map(([, body]) => [body.mp, body.location]), [["the master password", "disk"]]);
+  // The secret key goes along only when it was typed (the PIN is on disk now, so the change starts from disk).
   await click(one(world.root, "unlock-pin-change"));
   fill(world.root, { secret: "A3-SECRET" });
   field(world.root, "pin-ack").checked = true;
   await submit(dialogOf(world.root));
-  assert.equal(setRequests(world.log)[1][1].secret_key, "A3-SECRET");
-  assert.equal("secret_key" in setRequests(world.log)[0][1], false);
+  assert.equal(setRequests(world.log)[1][1].sk, "A3-SECRET");
+  assert.equal("sk" in setRequests(world.log)[0][1], false);
 });
 
 test("admin_forbidding_after_restart_locks_the_choice_on_and_says_why", async () => {
@@ -573,6 +577,76 @@ test("fields_are_emptied_on_close_lock_and_answer", async () => {
   empty(late.root);
   assert.equal(errorText(late.root), null);
   assert.equal(dialogOf(late.root).hidden, true);
+});
+
+test("the_change_dialog_starts_from_where_the_pin_is", async () => {
+  // A PIN kept in memory is changed in memory: moving it to disk is the user's own choice.
+  const memory = await sectionOf(on, { pin: { set: true, location: "session" } });
+  await click(one(memory.root, "unlock-pin-change"));
+  assert.equal(field(memory.root, "pin-restart").checked, true);
+  assert.equal(field(memory.root, "pin-restart").hasAttribute("disabled"), false, "it can still be changed");
+  assert.equal(field(memory.root, "pin-ack-row").hidden, true);
+  // A PIN on disk is changed with the choice off, and a new PIN starts off too.
+  const disk = await sectionOf(on, { pin: { set: true, location: "disk" } });
+  await click(one(disk.root, "unlock-pin-change"));
+  assert.equal(field(disk.root, "pin-restart").checked, false);
+  assert.equal(field(disk.root, "pin-ack-row").hidden, false);
+  const none = await sectionOf(on);
+  await click(one(none.root, "unlock-pin-on"));
+  assert.equal(field(none.root, "pin-restart").checked, false);
+});
+
+test("a_locked_vault_gets_no_pin_dialog", async () => {
+  const world = await sectionOf(on);
+  world.state.vault = "locked";
+  await click(one(world.root, "unlock-pin-on"));
+  assert.equal(dialogOf(world.root).hidden, true);
+  assert.equal(one(world.root, "unlock-error")?.hidden, false);
+  assert.equal(one(world.root, "unlock-error")?.textContent, world.catalog["settings.unlock.error.vault_locked"]);
+  assert.equal(byRole(world.root, "unlock-pin-actions")[0].hidden, false, "the button stays");
+  // Unlocked again: the dialog opens and the note is gone.
+  world.state.vault = "unlocked";
+  await click(one(world.root, "unlock-pin-on"));
+  assert.equal(dialogOf(world.root).hidden, false);
+  assert.equal(one(world.root, "unlock-error")?.hidden, true);
+});
+
+test("a_pin_saved_after_the_dialog_was_closed_is_read_again", async () => {
+  const world = await sectionOf(on);
+  let release = () => {};
+  world.state.hold = new Promise((resolve) => {
+    release = () => resolve();
+  });
+  await click(one(world.root, "unlock-pin-on"));
+  fill(world.root);
+  field(world.root, "pin-ack").checked = true;
+  fire(dialogOf(world.root), "submit");
+  await settle();
+  await click(field(world.root, "pin-cancel"));
+  assert.ok(one(world.root, "unlock-pin-on"), "the section still says there is no PIN");
+  release();
+  await settle();
+  assert.equal(world.state.pin.set, true, "the background did save it");
+  assert.ok(one(world.root, "unlock-pin-change") && !one(world.root, "unlock-pin-on"), "the section reads what is true");
+  assert.match(one(world.root, "unlock-pin-status")?.textContent ?? "", /PIN is on/);
+});
+
+test("the_rule_and_the_keyboard_note_are_read_with_the_pin_fields", async () => {
+  const world = await sectionOf(on);
+  await click(one(world.root, "unlock-pin-on"));
+  for (const role of ["pin-pin", "pin-again"]) {
+    const ids = (field(world.root, role).getAttribute("aria-describedby") ?? "").split(" ");
+    assert.deepEqual(ids, ["unlock-pin-rule", "unlock-pin-hint"], role);
+    for (const id of ids) assert.ok(withAttribute(world.root, "id").some((node) => node.getAttribute("id") === id), id);
+  }
+  assert.equal(field(world.root, "pin-ack").getAttribute("aria-describedby"), "unlock-pin-warning-title");
+});
+
+test("the_popup_empties_the_settings_view_when_it_is_torn_down", () => {
+  for (const built of [on, off]) {
+    const popup = built.files.get("pages/popup.mjs")?.toString("utf8") ?? "";
+    assert.match(popup, /settingsView\?\.wipe\(\)/, "the lock of the popup reaches the view");
+  }
 });
 
 test("the_pin_and_the_passwords_are_never_in_the_page_after_use", async () => {
@@ -743,6 +817,11 @@ test("texts_exist_in_en_and_nb", async () => {
   for (const key of Object.keys(en)) if (!["settings.unlock.dialog.pin.numeric", "settings.unlock.dialog.pin.label", "settings.unlock.pin.title", "settings.unlock.passkey.title"].includes(key)) assert.notEqual(en[key], nb[key], key);
   assert.match(en["settings.unlock.warning.body"], /Your PIN is kept on this computer, encrypted, so it works after a restart and without a network/);
   assert.match(en["settings.unlock.warning.body"], /the five-attempt limit does not apply there/);
+  // Two plain sentences more: a revoked device stays usable offline for up to 7 days, and a removed PIN may stay on disk.
+  assert.match(en["settings.unlock.warning.body"], /A device that has been revoked can still be opened with its PIN for up to 7 days while it stays offline\./);
+  assert.match(en["settings.unlock.warning.body"], /A PIN you remove may remain in your browser profile's files on disk\./);
+  assert.match(nb["settings.unlock.warning.body"], /tilbakekalt, kan fortsatt åpnes med PIN-en i opptil 7 dager/);
+  assert.match(nb["settings.unlock.warning.body"], /En PIN du fjerner, kan bli liggende i filene i nettleserprofilen din på disken\./);
   assert.match(nb["settings.unlock.warning.body"], /PIN-en din lagres kryptert på denne datamaskinen/);
   assert.match(nb["settings.unlock.warning.body"], /grensen på fem forsøk gjelder ikke der/);
   assert.equal(nb["settings.unlock.warning.acknowledge"], "Jeg forstår");

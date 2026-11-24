@@ -46,6 +46,7 @@ function buildSection(flow, texts, { pollMs } = {}) {
     texts,
     flow,
     pollMs,
+    onLate: () => void refresh(),
     onDone: ({ mode }) => {
       status.textContent = t(mode === "change" ? "settings.unlock.pin.done.change" : "settings.unlock.pin.done.set");
       void refresh().then(() => {
@@ -73,11 +74,18 @@ function buildSection(flow, texts, { pollMs } = {}) {
     }
   };
 
-  const open = (/** @type {"set" | "change"} */ mode) => {
+  const open = async (/** @type {"set" | "change"} */ mode) => {
     if (state === null || !state.pin.allowed) return;
     showFailure(null);
+    // A locked vault (the settings tab can be open while Ferret is locked) cannot set a PIN: say so before a form is offered.
+    const vault = await flow.vaultState();
+    if (vault === "locked" || vault === "signed_out") {
+      showFailure("settings.unlock.error.vault_locked");
+      return;
+    }
+    if (state === null || dialog.isOpen()) return;
     actions.hidden = true;
-    dialog.open({ mode, minLength: state.pin.minLength, afterRestart: state.pin.afterRestart });
+    dialog.open({ mode, minLength: state.pin.minLength, afterRestart: state.pin.afterRestart, location: state.pin.location });
   };
 
   const turnOff = async () => {
@@ -124,8 +132,8 @@ function buildSection(flow, texts, { pollMs } = {}) {
       ...(!pin.allowed
         ? []
         : pin.set
-          ? [button("unlock-pin-change", t("settings.unlock.pin.change"), true, () => open("change")), button("unlock-pin-off", t("settings.unlock.pin.off"), false, () => void turnOff())]
-          : [button("unlock-pin-on", t("settings.unlock.pin.on"), true, () => open("set"))]),
+          ? [button("unlock-pin-change", t("settings.unlock.pin.change"), true, () => void open("change")), button("unlock-pin-off", t("settings.unlock.pin.off"), false, () => void turnOff())]
+          : [button("unlock-pin-on", t("settings.unlock.pin.on"), true, () => void open("set"))]),
     );
     // The passkeys.
     manageSlot.replaceChildren();
