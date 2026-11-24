@@ -1,0 +1,147 @@
+/* The "Unlock" part of the settings view (unlockSettings.mjs, unlockDialog.mjs): the PIN's state and buttons, the dialog that
+   sets a PIN, and the passkeys. It is shown in the settings tab and in the popup, so it fits the width of the popup. Sizes and
+   colours are the tokens of session.css; nothing here is a fixed colour. */
+
+.ff-unlock {
+  min-width: 0;
+}
+
+.ff-unlock h2,
+.ff-unlock h3,
+.ff-pin-title {
+  margin: 0;
+  text-wrap: balance;
+}
+
+/* A tap on a control is a tap, not the start of a zoom. */
+.ff-unlock button,
+.ff-unlock input,
+.ff-unlock label {
+  touch-action: manipulation;
+}
+
+/* Long words and addresses wrap rather than push the popup wider. */
+.ff-unlock p,
+.ff-pin-dialog {
+  overflow-wrap: anywhere;
+}
+
+.ff-unlock h3 {
+  margin-top: var(--sp-2);
+  font-size: 0.9375rem;
+}
+
+.ff-unlock p {
+  margin: 0;
+}
+
+.ff-unlock .ff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ff-unlock .ff-actions[hidden],
+.ff-pin-dialog[hidden] {
+  display: none;
+}
+
+.ff-unlock-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* The status line takes the focus after an action, so it must not look like a control. */
+.ff-unlock .ff-status:focus {
+  outline: none;
+}
+
+.ff-unlock .ff-status:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* The dialog is a card in the page, in place of the buttons while it is open. */
+.ff-pin-dialog {
+  padding: var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card-raised);
+}
+
+.ff-pin-title {
+  font-size: 1rem;
+}
+
+.ff-pin-title:focus {
+  outline: none;
+}
+
+.ff-pin-title:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ff-pin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ff-pin-numeric {
+  min-width: 3.5rem;
+}
+
+.ff-pin-numeric[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--brand-fill);
+  color: var(--brand);
+}
+
+.ff-pin-dialog input[type="checkbox"] {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.ff-pin-dialog .ff-check .ff-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The warning is information the user must read, not an error: the info colours. */
+.ff-pin-warning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  border: 1px solid var(--info-text);
+  border-radius: var(--r-sm);
+  background: var(--info-fill);
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+
+.ff-pin-warning-title {
+  font-weight: 700;
+}
+
+.ff-pin-warning p {
+  text-wrap: pretty;
+}
+
+.ff-pin-dialog button[aria-busy="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+@media (forced-colors: active) {
+  .ff-pin-warning,
+  .ff-pin-dialog {
+    border-color: CanvasText;
+  }
+}

@@ -6,6 +6,7 @@
 
 import { CAPTURE_ORIGINS } from "../shared/captureConfig.mjs";
 import { LOCK_CHOICES } from "../shared/protocol.mjs";
+import { createUnlockFlow } from "./unlockFlow.mjs";
 
 export { LOCK_CHOICES };
 
@@ -40,11 +41,13 @@ const reasonOf = (error) => {
  * @param {{
  *   requestPermission?: ((wanted: { origins: string[] }) => Promise<boolean>) | null,
  *   removePermission?: ((gone: { origins: string[] }) => Promise<boolean>) | null,
+ *   openTab?: ((url: string) => Promise<unknown>) | null,
  * }} [options]
  *   `requestPermission` is `browser.permissions.request`, which the browser lets a page call only from a click: the
- *   steps that need it call it first, before anything is awaited; `removePermission` is `browser.permissions.remove`
+ *   steps that need it call it first, before anything is awaited; `removePermission` is `browser.permissions.remove`;
+ *   `openTab` opens an address in a tab of the browser (the way from the "Unlock" part to the web vault)
  */
-export function createSettingsFlow(request, { requestPermission = null, removePermission = null } = {}) {
+export function createSettingsFlow(request, { requestPermission = null, removePermission = null, openTab = null } = {}) {
   /**
    * What the background says about capture: whether it is on, whether the permission for https pages is there, and
    * the hosts of the never list. An answer of another shape is not shown.
@@ -81,6 +84,11 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
   return {
     /** Reads the setting. */
     load: () => ask({}),
+    /**
+     * The steps of the "Unlock" part (the PIN and the passkeys). Nothing is asked of the background until the part, which
+     * a build with unlock off does not show, calls one of them.
+     */
+    unlock: createUnlockFlow(request, { openTab }),
     /** What is true of "Offer to save passwords" and the never list. */
     capture: Object.freeze({
       load: () => askCapture({}),
