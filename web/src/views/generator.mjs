@@ -14,6 +14,7 @@
 import { el, mount } from "../dom.mjs";
 import { describeError, codeOf } from "./common.mjs";
 import { createOptionsStore } from "../generatorPrefs.mjs";
+import { secretClipboardFor } from "../secretClipboard.mjs";
 import {
   CLASSES, ERROR_CODES, LENGTH_RANGE, SEPARATORS, SEPARATOR_NAMES, WORDS_RANGE, generatedHandoff, makeValue, readOptions, strengthOf,
 } from "./generatorModel.mjs";
@@ -51,6 +52,8 @@ export function generatorView({
   let token = 0;
   /** The page was wiped: it makes no more values. */
   let dead = false;
+
+  const secrets = secretClipboardFor(clipboard);
 
   const root = el("section", { class: "generator-page", "data-role": "generator-page" });
 
@@ -253,13 +256,8 @@ export function generatorView({
     const label = t(options.kind === "passphrase" ? "generator.mode.passphrase" : "vault.edit.password");
     problem(null);
     try {
-      if (!clipboard?.writeText) throw Object.assign(new Error("clipboard"), { code: "clipboard" });
-      try {
-        await clipboard.writeText(text);
-      } catch {
-        throw Object.assign(new Error("clipboard"), { code: "clipboard" });
-      }
-      if (!dead) say(t("vault.item.copied", { label }));
+      await secrets.copy(text); // cleared again after 30 seconds, and by a lock
+      if (!dead) say(t("vault.item.copied_secret", { label }));
     } catch (error) {
       if (!dead) problem(describe(error));
     }
@@ -291,6 +289,7 @@ export function generatorView({
   // ---- where the value goes when the page does
   // A lock, a sign-out and another tab taking the vault run the wipe scope of the screen.
   const removeWipe = scope?.add(wipe);
+  scope?.add(() => void secrets.clearNow());
   /** The address left this page, or the page left the screen: the value goes. */
   const onHash = () => {
     const path = String(win?.location?.hash ?? "").replace(/^#/, "").split("?")[0] || "/";

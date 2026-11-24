@@ -1,7 +1,8 @@
 // One item. Fields that are secret show as dots. "Show" asks the worker for ONE
 // field's value, on the user's click, and puts it in the page; showing another
 // field hides the first. "Copy" asks the worker for the value and hands it to
-// the clipboard without putting it on the page.
+// the clipboard without putting it on the page. A secret is taken off the clipboard again after 30 seconds, and by a lock
+// (secretClipboard.mjs); a user name and an address are not secrets and are copied as they are.
 //
 // The view never keeps an item open. It opens the item to read what the core
 // shows without secrets, closes it again, and opens it once more for each
@@ -14,6 +15,7 @@
 // `reveal_password_history(handle, index)` (after checking that the entry still has the same date), shows one at a
 // time together with every other secret on the page, and goes with the same wipes: a lock, leaving the page, a rebuild.
 import { el, mount } from "../dom.mjs";
+import { secretClipboardFor } from "../secretClipboard.mjs";
 import { askConfirm, canChange, describeError, formatMoment, listenWhileShown, markBadges } from "./common.mjs";
 import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, historyEntries, tileLetter, tileType } from "./itemModel.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
@@ -138,8 +140,13 @@ export async function itemView({
     });
   }
 
-  /** @param {string} text */
-  async function toClipboard(text) {
+  const secrets = secretClipboardFor(clipboard);
+  // A lock takes a copied secret off the clipboard at once, whichever screen it was copied from.
+  scope?.add(() => void secrets.clearNow());
+
+  /** @param {string} text @param {boolean} [secret] a secret is cleared again after 30 seconds */
+  async function toClipboard(text, secret = false) {
+    if (secret) return secrets.copy(text);
     if (!clipboard?.writeText) throw Object.assign(new Error("clipboard"), { code: "clipboard" });
     try {
       await clipboard.writeText(text);
@@ -190,8 +197,8 @@ export async function itemView({
     copy.addEventListener("click", async () => {
       if (!touch()) return;
       try {
-        await toClipboard(plain ?? (await get()));
-        say(t("vault.item.copied", { label: speak }));
+        await toClipboard(plain ?? (await get()), plain === null);
+        say(t(plain === null ? "vault.item.copied_secret" : "vault.item.copied", { label: speak }));
       } catch (error) {
         say(describeError(t, error));
       }

@@ -25,6 +25,7 @@ import { THEME_KEY, createThemeChoice } from "../theme.mjs";
 import { createUiPrefs } from "../uiPrefs.mjs";
 import { folderIndex } from "../folders.mjs";
 import { createPinStore } from "../pinStore.mjs";
+import { clearOnLock } from "../secretClipboard.mjs";
 import { clearFolderLinks, tokenFor } from "./folderLinks.mjs";
 
 /** @typedef {import("./common.mjs").Translate} Translate */
@@ -454,6 +455,9 @@ export async function enterVault(ctx) {
   const sync = services.sync;
   if (!session || !sync) throw new Error("vault: the account session or the sync service is missing");
   const autoLock = autoLockFor(session, sync);
+
+  // A lock or a sign-out takes a copied secret off the clipboard.
+  clearOnLock(session);
 
   const open = session.current?.() ?? null;
   // After an unlock the same screen comes back, with the filters of its address (the list keeps them there).

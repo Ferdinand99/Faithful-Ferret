@@ -49,6 +49,7 @@
   "vault.item.card_fields": "Custom fields",
   "vault.item.card_login": "Sign-in",
   "vault.item.copied": "{label} copied.",
+  "vault.item.copied_secret": "{label} copied. Ferret clears it in 30 seconds if this tab is open.",
   "vault.item.copy": "Copy",
   "vault.item.copy_label": "Copy {label}",
   "vault.item.edit": "Edit",

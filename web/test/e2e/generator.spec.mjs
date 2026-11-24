@@ -175,6 +175,29 @@ test.describe("the generator page on a desktop", () => {
     expect(await page.locator('[data-role="generator-status"]').innerText()).not.toContain(value);
   });
 
+  test("the_copied_value_is_cleared_from_the_clipboard_after_30_seconds_and_by_a_lock", async ({ page }) => {
+    await ready(page);
+    await scene(page, "generator");
+    const value = await shown(page);
+    await page.evaluate(() => {
+      const original = window.setTimeout.bind(window);
+      window.__clears = [];
+      window.setTimeout = (fn, ms, ...rest) => (ms === 30000 ? (window.__clears.push(fn), 0) : original(fn, ms, ...rest));
+    });
+    await page.locator('[data-role="copy"]').click();
+    await expect(page.locator('[data-role="generator-status"]')).toContainText("Ferret clears it in 30 seconds if this tab is open");
+    expect(await page.evaluate(() => window.__clears.length)).toBe(1);
+    await page.evaluate(() => window.__clears[0]());
+    await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, ""]);
+    // A second copy, and a lock: it is cleared at once.
+    await page.locator('[data-role="regenerate"]').click();
+    const second = await changedFrom(page, value);
+    await page.locator('[data-role="copy"]').click();
+    await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, "", second]);
+    await page.evaluate(() => window.__scope.run());
+    await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, "", second, ""]);
+  });
+
   test("use_as_new_item_opens_the_new_form_with_the_password_in_it_hidden_and_the_page_forgets_it", async ({ page }) => {
     await ready(page);
     await scene(page, "generator");
