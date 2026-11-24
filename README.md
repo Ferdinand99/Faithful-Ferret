@@ -233,8 +233,9 @@ backup, which has to pass before real data goes in, is in [`docs/TESTING-M3.md`]
 
 Ferret aims to be a password manager that is light to run and gets the everyday details right:
 
-- **Autofill that notices.** Reliable detection of new and changed passwords, tested against a matrix of real
-  sites before release.
+- **Autofill that notices.** Reliable detection of new and changed passwords, tested before release
+  against our own test forms, modelled on common sign-in, sign-up and change-password patterns, in Firefox Release and
+  ESR.
 - **Unlock the way you want.** Biometric unlock and an optional local PIN, including in the desktop browser
   extension. Ferret never collects or stores biometric data; the operating system confirms it is you.
 - **Small to run.** One container with SQLite and a Rust core, like the other Hedgerow apps, and an extension that
