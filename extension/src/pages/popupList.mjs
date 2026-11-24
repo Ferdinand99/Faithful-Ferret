@@ -4,15 +4,19 @@
 // candidates of the page, with "Fill" and "Copy password"), "Favourites" and
 // "All items" (open the site, the copy menu with "Copy user name" or "Copy
 // e-mail" and "Copy password", and a menu with "View", "Copy user name", "Copy
-// password" and "Open the site"). "View" shows one item.
+// password" and "Open the site"). "View" shows one item; an item with a one-time
+// code shows the live code there (codeCard.mjs), and under a suggestion whose
+// sign-in Ferret filled in this tab a short while ago.
 //
 // The popup builds everything with `el()` from what the background answered:
-// names, user names, marks and references. A password or a code never reaches
-// this page. A copy is written to the clipboard by the background, and a fill
+// names, user names, marks and references. A password never reaches this page,
+// and a one-time code only in the live code of an item's view (it changes every
+// 30 seconds and is made in the core). A copy is written to the clipboard by the background, and a fill
 // is done by the background in the page's frame; the popup only learns
 // whether it worked.
 
 import { el, mount } from "../shared/dom.mjs";
+import { createCodeCard } from "./codeCard.mjs";
 import { createCopyMenu } from "./copyMenu.mjs";
 import { COPY_FIELDS, FILTER_TYPES, actionErrorKey } from "./popupFlow.mjs";
 
@@ -71,6 +75,16 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   let openMenu = null;
   /** How many rows each section showed (after "Show more"), so a reload of the popup's own keeps them. @type {Map<string, number>} */
   const shownOf = new Map();
+  /** Whether the list that is built now is a read the popup made by itself (the sync changed something), not an action of the user. */
+  let quietBuild = false;
+  /** The live codes on show: each one's timer ends when the list is built again or an item's view opens. @type {Array<{ stop: () => void }>} */
+  let cards = [];
+
+  /** Ends the timers of the codes on show. */
+  function stopCards() {
+    for (const card of cards) card.stop();
+    cards = [];
+  }
 
   const count = el("span", { class: "ff-count", "data-role": "item-count" });
   const picker = el(
@@ -138,17 +152,20 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   /**
    * Runs an action of the background and says how it went.
    * @param {() => Promise<{ ok: boolean, reason?: string }>} action @param {string} done the i18n key when it worked
+   * @param {Record<string, string>} [texts] the i18n key to say for a reason instead of the usual one
    */
-  async function act(action, done) {
+  async function act(action, done, texts = {}) {
+    /** @param {unknown} reason */
+    const refused = (reason) => say(typeof reason === "string" && Object.hasOwn(texts, reason) ? texts[reason] : actionErrorKey(reason), undefined, true);
     try {
       const result = await action();
       if (result?.ok) {
         say(done);
         return true;
       }
-      say(actionErrorKey(result?.reason), undefined, true);
+      refused(result?.reason);
     } catch (error) {
-      say(actionErrorKey(/** @type {any} */ (error)?.code), undefined, true);
+      refused(/** @type {any} */ (error)?.code);
     }
     return false;
   }
@@ -157,6 +174,27 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   const copy = (ref, field, done = `popup.copied.${field}`) => act(() => list.copy(ref, field), done);
   /** @param {string} ref */
   const openSite = (ref) => act(() => list.openSite(ref), "popup.opened");
+
+  /**
+   * The live code of an item, with "Copy" and, where the popup is about a page and the page is encrypted, "Fill the
+   * code" into the page's one-time code field. A page without such a field gets its own text.
+   * @param {Row} row @param {boolean} [emphasis] the page may ask for this code now
+   * @param {boolean} [quiet] the card is built by the popup itself, not by an action of the user
+   */
+  function codeCard(row, emphasis = false, quiet = false) {
+    const fillable = tabId !== null && row.frameId !== null && !row.insecure;
+    const card = createCodeCard({
+      t,
+      emphasis,
+      quiet,
+      fetchCode: (automatic) => list.itemCode(row.ref, automatic),
+      copy: () => copy(row.ref, "totp"),
+      fill: fillable ? () => act(() => list.fill(row, /** @type {number} */ (tabId), { only: "totp" }), "popup.filled_totp", { no_fields: "popup.error.no_code_field" }).then((ok) => ok && onFilled()) : null,
+      onRefused: (reason) => say(actionErrorKey(reason), undefined, true),
+    });
+    cards.push(card);
+    return card.root;
+  }
 
   /** An icon button of a row. @param {string} role @param {string} label @param {string} name */
   const iconButton = (role, label, name) =>
@@ -240,13 +278,16 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
     });
     const text = rowText(row);
     if (warning) /** @type {HTMLElement} */ (text[1]).append(warning);
-    return el(
+    const line = el(
       "div",
       { class: "ff-row", "data-role": "suggestion", "data-ref": row.ref },
       ...text,
       fill,
       copyMenu(row),
+      rowMenu(row),
     );
+    // The page that follows a sign-in may ask for the code: the code is there to fill or copy.
+    return row.next === true ? el("div", { class: "ff-suggest", "data-role": "suggestion-next" }, line, codeCard(row, true, quietBuild)) : line;
   }
 
   /**
@@ -366,6 +407,8 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   async function reload({ automatic = false } = {}) {
     generation += 1;
     const mine = generation;
+    quietBuild = automatic;
+    stopCards();
     closeMenus();
     const searching = query.trim() !== "";
     const [page, found] = await Promise.all([
@@ -421,6 +464,7 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
   /** Shows one item: its name, user name and addresses, and what can be copied. Never a value that is secret. @param {Row} row */
   async function showItem(row) {
     generation += 1;
+    stopCards();
     const back = el("button", { type: "button", class: "ff-back", "data-role": "back" }, icon("back"), t("popup.item.back"));
     back.addEventListener("click", () => {
       searchRow.hidden = false;
@@ -473,9 +517,9 @@ export function createVaultList({ texts, list, tabId, onFilled, onGrant }) {
         back,
         el("div", { class: "ff-item-head" }, el("span", { class: `ff-tile ${tintOf(name)}`, "aria-hidden": "true" }, initialOf(name)), el("h2", { class: "ff-item-name", "data-role": "item-name" }, name, view.favorite ? el("span", { class: "ff-star", role: "img", "aria-label": t("popup.item.favorite") }, " ★") : null)),
         copyable.includes("username") ? valueRow("username", typeof view.username === "string" ? view.username : "") : null,
-        // A password and a code are never shown: the popup does not have them.
+        // A password is never shown: the popup does not have it. The one-time code is: it is made for the minute.
         copyable.includes("password") ? valueRow("password", "••••••••") : null,
-        copyable.includes("totp") ? valueRow("totp", "••• •••") : null,
+        copyable.includes("totp") ? codeCard(row) : null,
         urls.length > 0 ? el("ul", { class: "ff-urls", "data-role": "item-urls" }, ...urls.map((u) => el("li", { class: "ff-host", dir: "ltr" }, u))) : null,
         site,
       ),

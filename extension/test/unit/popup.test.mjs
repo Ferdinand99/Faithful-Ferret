@@ -164,6 +164,8 @@ test("rows_keep_only_what_the_popup_shows", () => {
   const rows = rowsOf({ handles: [{ ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, frame_id: 3, extra: "x" }, { name: "no ref" }, null] });
   assert.deepEqual(rows, [{ ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, insecure: false, frameId: 3 }]);
   assert.deepEqual(rowsOf(null), []);
+  // The mark of a code the page may ask for next is kept only when it is true.
+  assert.deepEqual(rowsOf({ handles: [{ ref: "r2", next: true }, { ref: "r3", next: "yes" }] }).map((r) => r.next), [true, undefined]);
   assert.equal(actionErrorKey("origin_changed"), "popup.error.origin_changed");
   assert.equal(actionErrorKey("<b>"), "popup.error.unknown");
   assert.equal(actionErrorKey(undefined), "popup.error.unknown");
@@ -179,7 +181,7 @@ test("every_text_of_the_list_is_there_in_both_languages", () => {
   for (const reason of [...FILL_REASONS, ...COPY_REASONS]) assert.ok(ACTION_ERRORS.includes(reason) || reason === "unknown", reason);
   for (const type of [...FILTER_TYPES, "all", "other"]) assert.ok(Object.hasOwn(en, `popup.type.${type}`), type);
   // Every literal key of the list and the popup is in the catalog.
-  for (const file of ["popupList.mjs", "popup.mjs", "copyMenu.mjs"]) {
+  for (const file of ["popupList.mjs", "popup.mjs", "copyMenu.mjs", "codeCard.mjs"]) {
     const code = readFileSync(join(src, "pages", file), "utf8");
     for (const [, key] of code.matchAll(/t\("(popup\.[a-z_.]+)"/g)) assert.ok(Object.hasOwn(en, key), `${file}: ${key}`);
   }

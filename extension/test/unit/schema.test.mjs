@@ -134,7 +134,8 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
         // reply carries the value the core has just made. Nothing else.
         const generatorReply = channel === "ui" && type === "generate" && direction === "reply";
         const revealReply = channel === "ui" && type === "offer_reveal" && direction === "reply";
-        assert.equal(generatorReply || revealReply || channel === (type === "form_capture" ? "content" : "push"), true, `${where}: only the push type, the generator's and the offer's replies and the capture's typed password carry a value`);
+        const codeReply = channel === "ui" && type === "item_code" && direction === "reply";
+        assert.equal(generatorReply || revealReply || codeReply || channel === (type === "form_capture" ? "content" : "push"), true, `${where}: only the push type, the generator's, the offer's and the one-time code's replies and the capture's typed password carry a value`);
         if (type === "form_capture") assert.equal(direction, "request", `${where}: never in a reply`);
         continue;
       }
@@ -147,7 +148,7 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     [...seenTyped].sort(),
     ["pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
-  assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "vk", "pin", "prf_output"]);
+  assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "code", "vk", "pin", "prf_output"]);
 
   // And the decoder refuses them where they are not in the schema.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) =>
@@ -237,7 +238,7 @@ test("every UI request and reply round-trips with a sample body", () => {
     candidates: [
       { tab_id: 1, frame_id: 0 },
       {
-        handles: [{ ref: "h1", name: "Example", username: "me", insecure: false, favorite: true, type: "login", site: true, frame_id: 0 }],
+        handles: [{ ref: "h1", name: "Example", username: "me", insecure: false, favorite: true, type: "login", site: true, next: true, frame_id: 0 }],
         host: { a_label: "login.example.net", unicode: "login.example.net" },
         insecure: false,
         grant: [{ origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" } }],
@@ -248,7 +249,8 @@ test("every UI request and reply round-trips with a sample body", () => {
       { ok: true, origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" }, pattern: "https://sso.example.net/*" },
     ],
     search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
-    fill: [{ ref: "h1", tab_id: 1, frame_id: 0 }, { ok: true }],
+    fill: [{ ref: "h1", tab_id: 1, frame_id: 0, only: "totp" }, { ok: true }],
+    item_code: [{ ref: "h1", automatic: true }, { ok: true, code: "081804", seconds_left: 21 }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],
     item: [{ ref: "h1" }, { ok: true, name: "Example", username: "me", type: "login", favorite: false, urls: ["https://example.com/login"], copyable: ["username", "password", "totp"] }],
     open_site: [{ ref: "h1" }, { ok: false, reason: "no_site" }],
@@ -337,7 +339,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   // Both keys are forbidden names, and the one place that may carry them is the capture of a submitted form.
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
   assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, {
-    fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"],
+    fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"], item_code: ["code"],
     pin_set: ["pin"], pin_unlock: ["pin"], unlock_policy: ["pin"],
   });
   /** @type {string[]} */
@@ -352,6 +354,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "content/form_capture/request/password",
     "push/fill_field/request/value",
     "ui/generate/reply/value",
+    "ui/item_code/reply/code",
     "ui/offer_reveal/reply/value",
     "ui/pin_set/request/pin",
     "ui/pin_unlock/request/pin",

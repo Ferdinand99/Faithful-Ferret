@@ -271,7 +271,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
  *   scripting: { executeScript: (injection: any) => Promise<any[]> },
  *   tabs: { sendMessage: (tabId: number, message: string, options: Record<string, unknown>) => Promise<unknown>, create: (info: { url: string }) => Promise<unknown> },
  *   source?: CandidateSource | null,
- *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void } | null,
+ *   fillContext?: { record(entry: { tabId: number, frameId: number, documentId?: string, url: string, fieldKind: string, itemId: string }): void, clear(): void, filledIn?(tabId: number): Array<{ itemId: string, codeFilled: boolean }> } | null,
  *   generator?: { get(id: unknown): { value: string, kind: string, expiresAt: number } | null, fit(id: string, limit: number | null, forbid?: string[]): Promise<{ ok: boolean }> } | null,
  *   offers?: { onGenerated(meta: GeneratedMeta): Promise<string | null> | string | null } | null,
  *   now?: () => number,
@@ -447,6 +447,11 @@ export function createFillHost({
     const insecure = found?.insecure === true;
     /** @type {any[]} */
     const handles = [];
+    // The items whose sign-in Ferret filled in this tab a short while ago and whose code it has not filled since: the page
+    // that follows the sign-in may ask for the code.
+    const recent = new Set((fillContext?.filledIn?.(tabId) ?? []).filter((f) => !f.codeFilled).map((f) => f.itemId));
+    /** Whether an item holds a one-time code. A vault that cannot open it has no code to offer. @param {string} itemId */
+    const holdsCode = (itemId) => (running === null ? Promise.resolve(false) : withItem(itemId, async ({ view }) => view?.has_totp === true).catch(() => false));
     for (const item of Array.isArray(found?.items) ? found.items : []) {
       if (handles.length >= PAGE_SIZE) break;
       /** @type {RefFrame[]} */
@@ -460,7 +465,8 @@ export function createFillHost({
       /** @type {Summary} */
       const summary = known ?? { id: item.itemId, name: item.name, username: item.username ?? "", favorite: false, type: "other", urls: [] };
       const ref = refs.issue(own, "fill", { purpose: "fill", itemId: item.itemId, tabId, frames });
-      handles.push(handleOf(summary, ref, { insecure, frame_id: frames[0].frameId, frame_ids: frames.map((f) => f.frameId) }));
+      const next = recent.has(item.itemId) && (await holdsCode(item.itemId));
+      handles.push(handleOf(summary, ref, { insecure, frame_id: frames[0].frameId, frame_ids: frames.map((f) => f.frameId), ...(next ? { next: true } : {}) }));
     }
     /** @param {any} h */
     const hostOf = (h) => ({ a_label: String(h?.a_label ?? ""), unicode: String(h?.unicode ?? "") });
@@ -513,6 +519,24 @@ export function createFillHost({
     if (value === null) return { ok: false, reason: "no_value" };
     await clipboard.copy(value);
     return { ok: true };
+  }
+
+  /**
+   * The current one-time code of an item for the popup to show, made in the core from the device's clock, and the seconds
+   * it still holds. Any reference of this session may ask (the code shows in the item's view and in a suggestion's row).
+   * @param {{ session: string, ref: string }} args
+   */
+  async function itemCode({ session, ref }) {
+    const entry = entryOf(sessionOf(session), ref, PURPOSES);
+    if (entry === null) return { ok: false, reason: "not_offered" };
+    const core = client();
+    return withItem(entry.itemId, async (opened) => {
+      if (opened.view?.has_totp !== true) return { ok: false, reason: "no_value" };
+      const made = await core.vault.totp_code(opened.handle, Math.floor(now() / 1000));
+      const left = made?.seconds_left;
+      if (typeof made?.code !== "string" || !/^[0-9]{6,10}$/.test(made.code) || !Number.isSafeInteger(left) || left < 0) return { ok: false, reason: "no_value" };
+      return { ok: true, code: made.code, seconds_left: left };
+    });
   }
 
   /** @param {{ session: string, ref: string }} args */
@@ -610,8 +634,13 @@ export function createFillHost({
     );
   }
 
-  /** @param {{ session: string, ref: string, tab_id: number, frame_id?: number }} args */
-  async function fill({ session, ref, tab_id: tabId, frame_id: frameId }) {
+  /**
+   * "Fill" on the page. `only: "totp"` puts the one-time code into its field and nothing else: the frame is the first one
+   * (the top first) whose report has such a field, whether or not it also has a sign-in form.
+   * @param {{ session: string, ref: string, tab_id: number, frame_id?: number, only?: string }} args
+   */
+  async function fill({ session, ref, tab_id: tabId, frame_id: frameId, only }) {
+    if (only !== undefined && only !== "totp") return { ok: false, reason: "not_filled" };
     const entry = entryOf(sessionOf(session), ref, ["fill"]);
     // Only a reference the page matching made, in this session, for this tab; and a frame named must be one of its.
     if (entry === null || entry.tabId !== tabId || !Array.isArray(entry.frames)) return { ok: false, reason: "not_offered" };
@@ -664,7 +693,10 @@ export function createFillHost({
       /** @param {number} i @param {(kinds: Set<string>) => boolean} test */
       const reportHas = (i, test) => reports[i].status === "fulfilled" && test(/** @type {PromiseFulfilledResult<{ kinds: Set<string> }>} */ (reports[i]).value.kinds);
       const signIn = (/** @type {Set<string>} */ kinds) => kinds.has("username") || kinds.has("password");
-      const order = [...reports.keys()].filter((i) => reportHas(i, signIn)).concat([...reports.keys()].filter((i) => reportHas(i, (kinds) => !signIn(kinds) && kinds.has("totp"))));
+      const order =
+        only === "totp"
+          ? [...reports.keys()].filter((i) => reportHas(i, (kinds) => kinds.has("totp")))
+          : [...reports.keys()].filter((i) => reportHas(i, signIn)).concat([...reports.keys()].filter((i) => reportHas(i, (kinds) => !signIn(kinds) && kinds.has("totp"))));
       let chosen = -1;
       /** Why a frame with sign-in fields was passed over, the first such reason (a frame reason before any other). @type {string | null} */
       let passed = null;
@@ -687,7 +719,7 @@ export function createFillHost({
       // The other frames' requests end here: a later report or result of theirs does nothing.
       for (const other of requests) if (other !== request) pending.delete(other.requestId);
       const report = /** @type {PromiseFulfilledResult<{ kinds: Set<string>, url: string }>} */ (reports[chosen]).value;
-      const kinds = FILL_ORDER.filter((kind) => report.kinds.has(kind));
+      const kinds = FILL_ORDER.filter((kind) => report.kinds.has(kind) && (only === undefined || kind === only));
       return await withItem(entry.itemId, async (opened) => {
         let filled = 0;
         for (const kind of kinds) {
@@ -898,6 +930,7 @@ export function createFillHost({
     fill_report: op(onReport),
     search: op(search),
     item: op(item),
+    item_code: op(itemCode),
     copy: op(copy),
     open_site: op(openSite),
   });

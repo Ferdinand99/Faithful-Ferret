@@ -42,7 +42,7 @@ async function handle(body, ctx) {
   const call = /** @type {NonNullable<typeof ctx.call>} */ (ctx.call);
   try {
     const reply = /** @type {{ ok: boolean, reason?: string }} */ (
-      await call("fill", { session: ctx.session, ref: body.ref, tab_id: body.tab_id, frame_id: body.frame_id })
+      await call("fill", { session: ctx.session, ref: body.ref, tab_id: body.tab_id, frame_id: body.frame_id, ...(body.only !== undefined ? { only: body.only } : {}) })
     );
     return reply.ok ? { ok: true } : { ok: false, reason: reasonOf(reply.reason) };
   } catch (error) {
