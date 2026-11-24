@@ -101,6 +101,7 @@ async function main() {
   const settingsFlow = createSettingsFlow(ui.request, {
     requestPermission: (wanted) => browser.permissions.request(wanted),
     removePermission: (gone) => browser.permissions.remove(gone),
+    openTab: (url) => browser.tabs.create({ url }),
   });
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");

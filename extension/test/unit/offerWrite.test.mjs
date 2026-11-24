@@ -632,7 +632,9 @@ const ALLOWED_WRITES = Object.freeze({
   "background/lock.mjs": ["alarms.create"],
   "background/menus.mjs": ["menus.create"],
   "background/fillFlow.mjs": ["tabs.create"],
-  "pages/popup.mjs": ["browser.tabs.create", "browser.tabs.create", "browser.windows.create"],
+  // The popup and the settings page open the web vault in a tab ("Manage in the web vault").
+  "pages/popup.mjs": ["browser.tabs.create", "browser.tabs.create", "browser.tabs.create", "browser.windows.create"],
+  "pages/settings.mjs": ["browser.tabs.create"],
   "background/sync.mjs": ["run.writer.update"],
   "background/offerWrite.mjs": ["engine.create", "engine.update"],
 });

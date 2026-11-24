@@ -1,5 +1,6 @@
 // The settings view: "Lock after", in a build with saving passwords on "Offer to save passwords" with its never list and the
-// popup that opens by itself (design document, sections 7.2 and 10.9), and the credits. One module builds it for both
+// popup that opens by itself (design document, sections 7.2 and 10.9), in a build with unlock on the PIN and the passkeys
+// ("Unlock"), and the credits. One module builds it for both
 // places that show it, so there is one source of the logic and of the texts: the settings page (the add-on's options page,
 // pages/settings.html) and the "Settings" part of the open popup (popupTabs.mjs). It talks to the background through the
 // flow it is given (settingsFlow.mjs) and never sees a key or a captured value.
@@ -9,12 +10,13 @@ import { createCaptureSection } from "./captureSettings.mjs";
 import { createCredits } from "./credits.mjs";
 import { errorBox, showError } from "./page.mjs";
 import { LOCK_CHOICES, choiceKey, errorKey } from "./settingsFlow.mjs";
+import { createUnlockSection } from "./unlockSettings.mjs";
 
 /**
  * Builds the view and starts reading what is true. The nodes are returned for the caller to put in its own container; the
  * values are filled in as the background answers, and `ready` settles when the first read is done.
  * @param {{ texts: import("./page.mjs").Texts, flow: ReturnType<typeof import("./settingsFlow.mjs").createSettingsFlow> }} deps
- * @returns {{ nodes: HTMLElement[], ready: Promise<void>, refresh: () => Promise<void> }}
+ * @returns {{ nodes: HTMLElement[], ready: Promise<void>, refresh: () => Promise<void>, wipe: () => void }}
  */
 export function createSettingsView({ texts, flow }) {
   const select = /** @type {HTMLSelectElement} */ (
@@ -52,6 +54,9 @@ export function createSettingsView({ texts, flow }) {
   // Only a build with saving passwords on has the section (the module asks the build flag).
   const capture = createCaptureSection(flow, texts);
 
+  // Only a build with unlock on has the section (the module asks the build flag).
+  const unlock = createUnlockSection(flow, texts);
+
   const nodes = [
     el("h1", { class: "ff-settings-title", "data-role": "settings-title" }, texts.t("settings.title")),
     el(
@@ -68,6 +73,7 @@ export function createSettingsView({ texts, flow }) {
       error,
     ),
     ...(capture === null ? [] : [capture.node]),
+    ...(unlock === null ? [] : [unlock.node]),
     createCredits(texts),
   ];
 
@@ -76,6 +82,7 @@ export function createSettingsView({ texts, flow }) {
     if (first.ok) show(first.seconds);
     else showError(error, texts, errorKey(first.reason));
     if (capture !== null) await capture.refresh();
+    if (unlock !== null) await unlock.refresh();
   };
-  return { nodes, ready: refresh(), refresh };
+  return { nodes, ready: refresh(), refresh, wipe: () => unlock?.wipe() };
 }
