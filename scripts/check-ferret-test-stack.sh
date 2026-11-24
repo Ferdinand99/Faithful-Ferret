@@ -15,7 +15,7 @@
 # The end-to-end stack (checked below the owner's):
 #  * its own project, containers, network and image, all named ferret-e2e* and
 #    labelled owner=ferret-e2e; one named volume for the data and no bind mount, no
-#    published port; built with the e2e-clock feature; and shares no name,
+#    published port; built with the e2e-clock and quick-unlock features; and shares no name,
 #    network, volume or address with the ferret-test stack. The volume of the
 #    snapshot is made by the script (checked below), with the label owner=ferret-e2e.
 #  * the malicious server ferret-e2e-evil, the one place the sync answers are
@@ -138,7 +138,7 @@ const evil = e2e.services["ferret-e2e-evil"];
 const monitor = e2e.services["ferret-e2e-monitor"];
 if (app.image !== "ferret-e2e-app:latest") fail("image of the app");
 if (app.build?.labels?.owner !== "ferret-e2e") fail("build label owner=ferret-e2e");
-if (Object.keys(app.build?.args || {}).sort().join() !== "CARGO_JOBS,FEATURES" || app.build.args.FEATURES !== "e2e-clock") fail("the app is built with FEATURES=e2e-clock and CARGO_JOBS, nothing else");
+if (Object.keys(app.build?.args || {}).sort().join() !== "CARGO_JOBS,FEATURES" || app.build.args.FEATURES !== "e2e-clock,quick-unlock") fail("the app is built with FEATURES=e2e-clock,quick-unlock and CARGO_JOBS, nothing else");
 // The build host is shared: the server build runs at most 4 jobs at a time.
 if (!/^[1-4]$/.test(String(app.build.args.CARGO_JOBS))) fail("CARGO_JOBS of the app build must be 1 to 4, got " + app.build.args.CARGO_JOBS);
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("app cap_add");
