@@ -684,7 +684,7 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
  *   now?: () => number,
  *   onChange?: () => void,
  * }} deps `onChange`: an offer was answered (the list of the vault may have a new item)
- * @returns {{ root: HTMLElement, reload: () => Promise<number>, refresh: () => Promise<number | null>, loaded: Promise<number>, focus: () => void, hide: () => void }}
+ * @returns {{ root: HTMLElement, reload: (automatic?: boolean) => Promise<number>, refresh: () => Promise<number | null>, loaded: Promise<number>, focus: () => void, hide: () => void }}
  */
 export function createOfferSection({ texts, flow, tabId, now = () => Date.now(), onChange = () => {} }) {
   if (!FEATURES.save) throw Object.assign(new Error("not_available"), { code: "not_available" });
@@ -702,13 +702,13 @@ export function createOfferSection({ texts, flow, tabId, now = () => Date.now(),
   }
 
   /** Reads the offers again and shows one card for each; resolves with how many there are. @returns {Promise<number>} */
-  async function reload() {
+  async function reload(automatic = false) {
     hide();
     if (tabId === null) {
       root.hidden = true;
       return 0;
     }
-    const found = await flow.list(tabId);
+    const found = await flow.list(tabId, automatic);
     if (!found.ok) {
       root.hidden = true;
       return 0;
@@ -749,7 +749,7 @@ export function createOfferSection({ texts, flow, tabId, now = () => Date.now(),
     const fresh = found.offers.some((o) => !shown.includes(o.offerId));
     if (found.notice !== null) notice = found.notice;
     if (!fresh && found.notice === null) return null;
-    return reload();
+    return reload(true);
   }
 
   const loaded = reload();

@@ -357,7 +357,7 @@ test("an_open_popup_shows_an_offer_that_arrives_later_and_leaves_the_cards_it_ha
   assert.equal(byRole(section.root, "offer-card").length, 2);
   // The looks of the refresh are the popup's own (automatic): they do not move the auto-lock's deadline.
   assert.deepEqual(automatic.slice(1, 4), [true, true, true]);
-  assert.equal(automatic[4], false, "the rebuild is an ordinary read");
+  assert.equal(automatic[4], true, "the rebuild after a refresh is automatic too");
   // A popup about no page looks at nothing.
   const none = mod.createOfferSection({ texts, flow: fake.flow, tabId: null, now });
   assert.equal(await none.refresh(), null);

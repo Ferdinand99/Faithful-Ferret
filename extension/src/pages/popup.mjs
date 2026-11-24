@@ -383,16 +383,23 @@ async function main() {
         : createOfferSection({ texts, flow: offerFlow, tabId, onChange: () => void vault.reload({ automatic: true }).catch(() => {}) });
     // An offer that arrives while the popup is open (the browser opens no second popup) is shown here within a moment; the
     // look is not the user's doing, so it does not move the auto-lock's deadline.
+    let looking = false;
     const watching =
       offers === null
         ? null
         : setInterval(() => {
+            // One look at a time: a slow background does not make them pile up.
+            if (looking) return;
+            looking = true;
             void offers
               .refresh()
               .then((count) => {
                 if (count !== null && count > 0) offers.focus();
               })
-              .catch(() => {});
+              .catch(() => {})
+              .finally(() => {
+                looking = false;
+              });
           }, OFFER_REFRESH_MS);
     teardown = () => {
       if (watching !== null) clearInterval(watching);
