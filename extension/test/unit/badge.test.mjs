@@ -161,18 +161,107 @@ test("auto_open_only_when_the_probe_passed_for_the_active_tab_of_the_focused_win
   assert.equal(locked.popup.attempts, 0, "no popup opens by itself on a locked vault");
   assert.equal(locked.badgeText.get(TAB), "1");
 
-  // The browser refuses to open the popup without a gesture: the first refusal is the probe. From then on the badge alone
-  // is used, and the setting page says so.
+  // The browser refuses to open the popup without a gesture: after three refusals in a row and no success, the badge
+  // alone is used, and the setting page says so.
   const refused = await uiWorld();
   refused.popup.refuse = true;
   await refused.offerReady();
   assert.equal(refused.popup.attempts, 1);
-  assert.equal(refused.autoOpen.probe(), "fails");
+  assert.equal(refused.autoOpen.probe(), "unknown", "one refusal is not yet the answer");
   await refused.offerReady({ capture_id: "cap2", kind: "change", password: "Typed-another-password-7" });
-  assert.equal(refused.popup.attempts, 1, "after a refusal it is not tried again");
-  assert.equal(refused.badgeText.get(TAB), "2", "the badge still counts the offers");
+  assert.equal(refused.popup.attempts, 2, "tried again after the first refusal");
+  await refused.offerReady({ capture_id: "cap3", kind: "change", password: "Typed-another-password-8" });
+  assert.equal(refused.popup.attempts, 3);
+  assert.equal(refused.autoOpen.probe(), "fails");
+  await refused.offerReady({ capture_id: "cap4", kind: "change", password: "Typed-another-password-9" });
+  assert.equal(refused.popup.attempts, 3, "after that it is not tried again");
+  assert.equal(refused.badgeText.get(TAB), "2", "the badge still counts the offers (a newer change replaces an older one)");
   const page = refused.connectPopup();
   assert.equal((await page.ask("capture_settings", {})).auto_open_state, "fails");
+});
+
+test("a_refusal_after_the_popup_has_opened_once_is_only_that_offers_and_the_next_one_opens_again", async () => {
+  const w = await uiWorld();
+  await w.offerReady();
+  assert.equal(w.popup.attempts, 1);
+  assert.equal(w.autoOpen.probe(), "works");
+
+  // The next offers are refused (the popup was closing, say): the probe stays, however many times it happens.
+  w.popup.refuse = true;
+  for (let i = 0; i < 5; i += 1) await w.offerReady({ capture_id: `r${i}`, kind: "change", password: `Typed-another-password-${i}` });
+  assert.equal(w.popup.attempts, 6);
+  assert.equal(w.autoOpen.probe(), "works", "a refusal after a success is never the probe's answer");
+
+  // And the offer after that opens it again.
+  w.popup.refuse = false;
+  await w.offerReady({ capture_id: "again", kind: "change", password: "Typed-another-password-again" });
+  assert.equal(w.popup.attempts, 7);
+  assert.equal(w.autoOpen.probe(), "works");
+});
+
+test("a_success_resets_the_count_of_refusals_in_a_row_and_three_refusals_with_no_success_end_the_attempts", async () => {
+  const { load } = await pkg();
+  const { createAutoOpen } = await load("background/autoOpen.mjs");
+  let refuse = true;
+  let attempts = 0;
+  const make = (/** @type {() => Promise<void>} */ openPopup) =>
+    createAutoOpen({
+      storageLocal: { get: async () => ({}), set: async () => {} },
+      action: { openPopup },
+      tabs: { get: async () => ({ active: true, windowId: 1 }) },
+      windows: { get: async () => ({ focused: true }) },
+      unlocked: () => true,
+    });
+  const autoOpen = make(async () => {
+    attempts += 1;
+    if (refuse) throw new Error("refused");
+  });
+  assert.equal(await autoOpen.maybeOpen(1), "refused");
+  assert.equal(await autoOpen.maybeOpen(1), "refused");
+  refuse = false;
+  assert.equal(await autoOpen.maybeOpen(1), "opened", "two refusals do not end the attempts");
+  assert.equal(autoOpen.probe(), "works");
+  refuse = true;
+  for (let i = 0; i < 4; i += 1) assert.equal(await autoOpen.maybeOpen(1), "refused");
+  assert.equal(autoOpen.probe(), "works");
+
+  // A browser that never allows it: three refusals in a row, then "unsupported" without a further attempt.
+  attempts = 0;
+  const never = make(async () => {
+    attempts += 1;
+    throw new Error("refused");
+  });
+  assert.deepEqual([await never.maybeOpen(1), await never.maybeOpen(1), await never.maybeOpen(1)], ["refused", "refused", "refused"]);
+  assert.equal(never.probe(), "fails");
+  assert.equal(await never.maybeOpen(1), "unsupported");
+  assert.equal(attempts, 3);
+});
+
+test("an_offer_that_arrives_while_the_popup_is_open_does_not_ask_the_browser_and_the_popup_lists_it", async () => {
+  const w = await uiWorld();
+  await w.offerReady();
+  assert.equal(w.popup.attempts, 1);
+  const popup = w.connectPopup();
+  assert.equal((await popup.ask("offer_list", { tab_id: TAB })).offers.length, 1);
+
+  // The popup is showing: the browser would refuse a second one, so none is asked for. The open popup reads the offers
+  // again and finds the new one.
+  w.popup.open = true;
+  w.popup.refuse = true;
+  await w.offerReady({ capture_id: "cap2", kind: "change", password: "Typed-another-password-7" });
+  assert.equal(w.popup.attempts, 1, "no attempt while a popup is open");
+  assert.equal(w.autoOpen.probe(), "works", "and no refusal that could count against the probe");
+  const listed = await popup.ask("offer_list", { tab_id: TAB, automatic: true });
+  assert.equal(listed.offers.length, 2, "the open popup is told of the new offer");
+  assert.equal(w.badgeText.get(TAB), "2");
+
+  // A fresh run that never opened a popup is not hurt by an open one either.
+  const fresh = await uiWorld();
+  fresh.popup.open = true;
+  fresh.popup.refuse = true;
+  for (let i = 0; i < 4; i += 1) await fresh.offerReady({ capture_id: `c${i}`, kind: "change", password: `Typed-another-password-${i}` });
+  assert.equal(fresh.popup.attempts, 0);
+  assert.equal(fresh.autoOpen.probe(), "unknown");
 });
 
 test("a_login_the_vault_holds_gets_no_badge_and_no_popup", async () => {

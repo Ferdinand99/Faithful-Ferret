@@ -101,11 +101,12 @@ export function createOfferFlow(request) {
     /**
      * The offers ready for a tab, and the reason of a refused shortcut or menu click that the tab shows.
      * @param {number} tabId
+     * @param {boolean} [automatic] the open popup looks again by itself (not the user): the auto-lock's deadline does not move
      * @returns {Promise<{ ok: true, offers: Offer[], notice: string | null } | { ok: false, reason: string }>}
      */
-    async list(tabId) {
+    async list(tabId, automatic = false) {
       try {
-        const reply = await request("offer_list", { tab_id: tabId });
+        const reply = await request("offer_list", automatic ? { tab_id: tabId, automatic: true } : { tab_id: tabId });
         if (reply?.ok !== true) return { ok: false, reason: String(reply?.reason ?? "unknown") };
         /** @type {Offer[]} */
         const offers = [];
@@ -683,7 +684,7 @@ export function createOfferCard({ texts, flow, offer, now = () => Date.now(), on
  *   now?: () => number,
  *   onChange?: () => void,
  * }} deps `onChange`: an offer was answered (the list of the vault may have a new item)
- * @returns {{ root: HTMLElement, reload: () => Promise<number>, loaded: Promise<number>, focus: () => void, hide: () => void }}
+ * @returns {{ root: HTMLElement, reload: () => Promise<number>, refresh: () => Promise<number | null>, loaded: Promise<number>, focus: () => void, hide: () => void }}
  */
 export function createOfferSection({ texts, flow, tabId, now = () => Date.now(), onChange = () => {} }) {
   if (!FEATURES.save) throw Object.assign(new Error("not_available"), { code: "not_available" });
@@ -692,6 +693,8 @@ export function createOfferSection({ texts, flow, tabId, now = () => Date.now(),
   let notice = null;
   /** @type {Array<ReturnType<typeof createOfferCard>>} */
   let cards = [];
+  /** The ids of the offers the cards show now. @type {string[]} */
+  let shown = [];
 
   function hide() {
     for (const card of cards) card.hide();
@@ -711,6 +714,7 @@ export function createOfferSection({ texts, flow, tabId, now = () => Date.now(),
       return 0;
     }
     if (found.notice !== null) notice = found.notice;
+    shown = found.offers.map((o) => o.offerId);
     /** @type {HTMLElement[]} */
     const parts = [];
     if (notice !== null) {
@@ -731,10 +735,28 @@ export function createOfferSection({ texts, flow, tabId, now = () => Date.now(),
     return found.offers.length;
   }
 
+  /**
+   * The popup is open and the background may have a new offer for the page (one that arrived while the popup was showing:
+   * the browser cannot open a popup that is open already). Only an offer that is not on a card yet, or a new refusal
+   * notice, builds the cards again; a card the user works on is left alone, and so is one that shows its answer.
+   * Resolves with the number of offers after a rebuild, or null when nothing changed.
+   * @returns {Promise<number | null>}
+   */
+  async function refresh() {
+    if (tabId === null) return null;
+    const found = await flow.list(tabId, true);
+    if (!found.ok) return null;
+    const fresh = found.offers.some((o) => !shown.includes(o.offerId));
+    if (found.notice !== null) notice = found.notice;
+    if (!fresh && found.notice === null) return null;
+    return reload();
+  }
+
   const loaded = reload();
   return {
     root,
     reload,
+    refresh,
     loaded,
     focus: () => cards[0]?.focus(),
     hide,

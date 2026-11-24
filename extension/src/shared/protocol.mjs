@@ -425,7 +425,7 @@ export const UI_TYPES = defineTypes({
   // The offers to save or update a password that wait for a tab (the popup's own list; `tab_id` is the page the popup
   // is about), and `notice`: the reason a shortcut or menu click of the tab was refused, shown once.
   offer_list: {
-    request: object({ tab_id: tabId }),
+    request: object({ tab_id: tabId, automatic: boolean() }, { optional: ["automatic"] }),
     reply: object({ ok: boolean(), reason, offers: array(offerMeta, { max: 4 }), notice: reason }, { optional: ["reason", "offers", "notice"] }),
   },
   // What an offer means for the vault now (the core decides: save, update, choose, none).
