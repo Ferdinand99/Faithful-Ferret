@@ -370,6 +370,16 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         false,
     )?;
     stored_case(
+        "name_trailing_next_line_trimmed",
+        "U+0085 is white space and is trimmed at the end of a name; a zero width non-joiner is kept",
+        0x77,
+        "Key\u{200c}\u{85}",
+        "Key\u{200c}",
+        arr(0x23),
+        false,
+        false,
+    )?;
+    stored_case(
         "name_joiner_allowed",
         "the zero width joiner of an emoji sequence is allowed in a name",
         0x76,
@@ -502,6 +512,33 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         "a bad character is reported before the length",
         &format!("{}\u{202e}", "x".repeat(70)),
         "method_name_bad_character",
+    );
+    with_name(
+        "name_leading_byte_order_mark",
+        "a byte order mark is not white space, so it is not trimmed and is refused",
+        "\u{feff}Key",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_isolate",
+        "a name with a bidirectional isolate",
+        "a\u{2066}b",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_next_line",
+        "a next-line control inside a name",
+        "a\u{85}b",
+        "method_name_bad_character",
+    );
+    let mut bs_only = input1.clone();
+    bs_only["passkey"]["be"] = json!(false);
+    bs_only["passkey"]["bs"] = json!(true);
+    refused(
+        "bs_without_be",
+        "BS set without BE is not a conformant registration",
+        bs_only,
+        "invalid_state",
     );
     let mut own = input1.clone();
     own["passkey"]["aaguid"] = json!("dc704a44b994410ca689ed8d71a84ac3");

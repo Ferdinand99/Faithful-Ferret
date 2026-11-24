@@ -86,7 +86,7 @@ pub struct PasskeyMeta<'a> {
     /// for the key's life and decides whether the list says "synced".
     pub be: bool,
     /// The BS flag at registration. For information only: it can be 0 then
-    /// and 1 later.
+    /// and 1 later. BS without BE is refused (`invalid_state`).
     pub bs: bool,
 }
 
@@ -193,7 +193,7 @@ impl Manifest {
     /// (`input_*`), a method id or credential id that the manifest lists
     /// already, a generation above `2^32 - 1`, and a manifest that would
     /// list more than [`MAX_METHODS`] (all `malformed_entries`); then Ferret's
-    /// own AAGUID (`invalid_state`) and a name that breaks the rule of
+    /// own AAGUID or BS set without BE (`invalid_state`) and a name that breaks the rule of
     /// [`normalize_method_name`] (`method_name_*`). The new entry carries the
     /// name in its stored form and the BE and BS flags of `meta`.
     pub fn with_method(
@@ -235,6 +235,12 @@ impl Manifest {
         // Display data, but Ferret's own AAGUID is an extra guard: such a
         // passkey lives in the vault it would have to open (Fase 1 § 9.4).
         if meta.aaguid == AAGUID {
+            return Err(Error::InvalidState);
+        }
+        // BS says the key is backed up, which only a key that can be backed up
+        // (BE) can be. An authenticator that reports BS without BE is not
+        // conformant, and the list would call such a key "this device only".
+        if meta.bs && !meta.be {
             return Err(Error::InvalidState);
         }
         let name = normalize_method_name(meta.name)?;

@@ -388,7 +388,6 @@ fn synced_follows_be_not_bs() {
         (true, true, true),
         (true, false, true),
         (false, false, false),
-        (false, true, false),
     ]
     .into_iter()
     .enumerate()
@@ -414,6 +413,18 @@ fn synced_follows_be_not_bs() {
         .map(|m| (m.method_id, m.synced, m.bs))
         .collect();
     assert_eq!(got, want);
+    // BS without BE is not a conformant registration: refused, nothing drawn.
+    let mut none = ReplayRng::new(vec![]);
+    let odd = PasskeyMeta {
+        be: false,
+        bs: true,
+        ..meta()
+    };
+    assert_eq!(
+        manifest_add_method(&mut none, &vault, &row(&current), prf_wrap(0x90, 1), &odd).map(|_| ()),
+        Err(Error::InvalidState)
+    );
+    none.finish().unwrap();
     // An entry that states no flag (not made by this version) is shown as
     // "this device only", and an entry of another type is not listed.
     let plain = manifest(vec![password(), recovery(), passkey(0x72, 1)]);

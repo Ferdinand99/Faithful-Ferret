@@ -53,7 +53,7 @@ const reRefused = /[\p{Cc}\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u20
 
 // The name of a passkey method as it is stored (section 4.3, Appendix B): NFC, trimmed, 1 to 64 characters, none refused.
 function methodName(utf8) {
-  const name = new TextDecoder('utf-8', { fatal: true }).decode(utf8).normalize('NFC').replace(reTrim, '');
+  const name = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(utf8).normalize('NFC').replace(reTrim, '');
   if (name.length === 0) fail('method_name_empty');
   if (reRefused.test(name)) fail('method_name_bad_character');
   if (Array.from(name).length > MAX_NAME_CHARS) fail('method_name_too_long');
@@ -126,7 +126,10 @@ ops['methods.add'] = ({ input, rng }) => {
   const pk = input.passkey;
   const aaguid = unhex(pk.aaguid);
   // display data: all zero is fine; only Ferret's own is refused, and then the name is judged
-  if (aaguid.length !== 16 || hex(aaguid) === FERRET_AAGUID) fail('invalid_state');
+  if (aaguid.length !== 16) fail('invalid_input');
+  if (hex(aaguid) === FERRET_AAGUID) fail('invalid_state');
+  // BS says the key is backed up, which only a key that can be backed up (BE) can be
+  if (pk.bs && !pk.be) fail('invalid_state');
   const name = methodName(unhex(pk.name_utf8));
   const entry = C.map([
     ['t', C.uint(3)],

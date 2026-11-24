@@ -321,6 +321,45 @@ test("u32_list_and_string_args_tables_match_the_rust_signatures", async () => {
   }
 });
 
+test("bool_args_table_matches_the_rust_signatures", async () => {
+  // A `bool` is typed `boolean` in the .d.ts, but `wasm-bindgen` coerces any
+  // truthy value, so each position that decides what the user is told has its
+  // check in `protocol.mjs`. A new `bool` parameter fails here until it is
+  // listed (or listed as a position that needs no check, with a reason).
+  const { BOOL_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
+  const { readdirSync } = await import("node:fs");
+  const dir = join(root, "bindings", "wasm", "src");
+  const found = {};
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".rs") && f !== "vector_ops.rs")) {
+    const text = readFileSync(join(dir, file), "utf8");
+    for (const m of text.matchAll(/^\s*pub fn (\w+)\(([^)]*)\)/gm)) {
+      const params = [];
+      let depth = 0;
+      let current = "";
+      for (const ch of m[2]) {
+        if (ch === "<") depth++;
+        if (ch === ">") depth--;
+        if (ch === "," && depth === 0) {
+          params.push(current.trim());
+          current = "";
+        } else current += ch;
+      }
+      if (current.trim()) params.push(current.trim());
+      params
+        .filter((p) => !/^(&?(mut )?self\b|vault: &(mut )?Vault)/.test(p))
+        .forEach((p, index) => {
+          if (p.split(":").slice(1).join(":").trim() === "bool") (found[m[1]] ??= []).push(index);
+        });
+    }
+  }
+  assert.deepEqual(Object.fromEntries(Object.entries(found).filter(([m]) => m in BOOL_ARGS)), BOOL_ARGS);
+  // The other exports that take a `bool` have no check yet: the plain export's
+  // `include_passkeys` and the `sk_bit` of a setup QR. Listed, so that a new
+  // one is a decision and not an oversight.
+  const unchecked = Object.keys(found).filter((m) => !(m in BOOL_ARGS)).sort();
+  assert.deepEqual(unchecked, ["reveal_plain_export", "setup_qr_build"]);
+});
+
 test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async () => {
   const { SECRET_ARGS, TEXT_ARGS, BYTES_ARGS } = await import("../../bindings/wasm/js/protocol.mjs");
   // Each secret position must be type-checked as a Uint8Array at the worker,

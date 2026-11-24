@@ -1294,12 +1294,12 @@ test("a_passkey_method_has_a_name_a_synced_flag_and_an_aaguid", () => {
   row = phone.sealed;
   const mac = add(row, 0x63, fill(16, 3), "Touch ID", true, true);
   row = mac.sealed;
-  const odd = add(row, 0x64, fill(16, 4), "Odd one", false, true);
-  row = odd.sealed;
+  // BS without BE is refused.
+  assert.equal(code(() => add(row, 0x64, fill(16, 4), "Odd one", false, true)), "invalid_state");
   const listed = vault.prf_methods(row);
   assert.deepEqual(
     listed.map((m) => [m.name, m.synced, m.bs]),
-    [["Caf\u00e9", false, false], ["Phone", true, false], ["Touch ID", true, true], ["Odd one", false, true]],
+    [["Caf\u00e9", false, false], ["Phone", true, false], ["Touch ID", true, true]],
   );
   assert.deepEqual(Array.from(listed[0].credential_id), Array.from(fill(24, 0x61)));
   assert.equal(listed[0].method_id.length, 16);
@@ -1311,9 +1311,9 @@ test("a_passkey_method_has_a_name_a_synced_flag_and_an_aaguid", () => {
 
   // Removing one keeps the names of the others.
   const gone = vault.manifest_remove_method(row, fill(16, 0x62));
-  assert.deepEqual(vault.prf_methods(gone.sealed).map((m) => m.name), ["Caf\u00e9", "Touch ID", "Odd one"]);
+  assert.deepEqual(vault.prf_methods(gone.sealed).map((m) => m.name), ["Caf\u00e9", "Touch ID"]);
   // The name is not in anything the server reads.
-  for (const change of [plain, phone, mac, odd, gone]) {
+  for (const change of [plain, phone, mac, gone]) {
     assert.ok(!Buffer.from(change.body).includes("Touch ID"));
     assert.ok(!Buffer.from(change.sealed.envelope).includes("Touch ID"));
   }
