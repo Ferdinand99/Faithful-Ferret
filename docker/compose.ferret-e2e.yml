@@ -6,8 +6,8 @@
 #
 #  * its own compose project (ferret-e2e), network, containers and image, all
 #    named ferret-e2e* and labelled owner=ferret-e2e;
-#  * its own app, built with the cargo feature `e2e-clock` (the test clock; a
-#    release image does not have it);
+#  * its own app, built with the cargo features `e2e-clock` (the test clock) and
+#    `quick-unlock` (PIN and passkey unlock); a release image has neither;
 #  * one named volume for the data (ferret-e2e-data, so that a container restart
 #    keeps it, which a restart test needs) that every `e2e-up` and `e2e-down`
 #    removes, so every run starts with a fresh, empty database; no published port:
@@ -53,7 +53,7 @@ services:
       dockerfile: docker/server.Dockerfile
       args:
         # The test clock (FERRET_E2E_CLOCK_FILE below). Only this image has it.
-        FEATURES: e2e-clock
+        FEATURES: e2e-clock,quick-unlock
         # At most 4 parallel jobs in the build: the build host is shared
         # (scripts/lanbox-ferret-test.sh checks FERRET_E2E_CARGO_JOBS).
         CARGO_JOBS: ${FERRET_E2E_CARGO_JOBS:-4}

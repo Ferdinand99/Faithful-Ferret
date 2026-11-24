@@ -14,7 +14,7 @@
 //! build from the commit, never a release image). `wasm: none` is a build without a vault.
 //!
 //! The test stack uses it to tell a release image (no features) from the image
-//! of the end-to-end stack (`features: e2e-clock`).
+//! of the end-to-end stack (`features: e2e-clock, quick-unlock`).
 
 use std::ffi::{OsStr, OsString};
 
@@ -32,6 +32,8 @@ pub fn active_features() -> Vec<&'static str> {
     features.push("dev-no-web");
     #[cfg(feature = "e2e-clock")]
     features.push("e2e-clock");
+    #[cfg(feature = "quick-unlock")]
+    features.push("quick-unlock");
     features
 }
 

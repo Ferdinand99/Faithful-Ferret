@@ -7,8 +7,8 @@
 // page with "Fill", the favourites and all items, search, a filter by type,
 // copying and one item's view. In a build with saving from the extension on,
 // the sync's part also shows the changes that wait and the items that need the
-// user, with their conflict cards (conflictCard.mjs), and the open popup has two
-// tabs, the vault and the generator (popupTabs.mjs, generatorView.mjs), and the offers
+// user, with their conflict cards (conflictCard.mjs), and the open popup has the
+// vault, the generator and the settings as its parts (popupTabs.mjs, generatorView.mjs, settingsView.mjs), and the offers
 // to save or update a password that wait for the page above them (offerCards.mjs). The
 // views are in popupFlow.mjs; this file builds them with `el()`.
 //
@@ -31,8 +31,9 @@ import {
   createListFlow, createOlderFlow, createPopupFlow, createSyncItemsFlow, followStep, forgetBodyKey, statusKey, stopKey, warningKey,
 } from "./popupFlow.mjs";
 import { createVaultList } from "./popupList.mjs";
-import { openSettings } from "./popupSettings.mjs";
 import { createPopupTabs } from "./popupTabs.mjs";
+import { createSettingsFlow } from "./settingsFlow.mjs";
+import { createSettingsView } from "./settingsView.mjs";
 import { UiError, connectUi, initialsOf, reasonKey } from "./ui.mjs";
 
 /** @typedef {import("./page.mjs").Texts} Texts */
@@ -91,6 +92,13 @@ async function main() {
   const generatorFlow = FEATURES.save ? createGeneratorFlow(ui.request) : null;
   const generatorStore = FEATURES.save ? createOptionsStore(browser.storage.local) : null;
   const offerFlow = FEATURES.save ? createOfferFlow(ui.request) : null;
+  // The settings' part of the popup is the settings page's view. A permission request must come from the click that turns the
+  // switch on (the flow calls it first, before it awaits anything). Firefox closes the popup when the prompt opens: the answer
+  // then goes nowhere, but a permission that was given stays given, and the switch says so the next time (see captureSettings.mjs).
+  const settingsFlow = createSettingsFlow(ui.request, {
+    requestPermission: (wanted) => browser.permissions.request(wanted),
+    removePermission: (gone) => browser.permissions.remove(gone),
+  });
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
   // The panel is as tall as Firefox lets a popup be; a tab or a window gives the popup its own height (popup.css).
@@ -375,8 +383,8 @@ async function main() {
     const tabs = createPopupTabs({
       texts,
       vault: vault.root,
-      // "Settings" opens the settings page (in every build) and the popup closes.
-      onSettings: () => void openSettings({ runtime: browser.runtime, close: () => window.close() }),
+      // "Settings" shows the settings view in the popup itself (in every build); no tab is opened.
+      makeSettings: () => el("div", { class: "ff-settings", "data-role": "settings-view" }, ...createSettingsView({ texts, flow: settingsFlow }).nodes),
       makeGenerator: () =>
         generatorFlow === null || generatorStore === null
           ? null

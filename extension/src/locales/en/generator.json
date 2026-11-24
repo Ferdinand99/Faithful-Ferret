@@ -1,9 +1,5 @@
 {
-  "generator.tabs.label": "Navigation",
-  "generator.tab.vault": "Vault",
   "generator.tab.generator": "Generator",
-  "generator.tab.health": "Health",
-  "generator.tab.soon": "Coming soon",
   "generator.title": "Password generator",
   "generator.mode.label": "What to make",
   "generator.mode.password": "Password",

@@ -7,12 +7,15 @@
 //   node scripts/build.mjs --check-release [--web-root <web folder>] <.xpi or folder>...
 //
 // --features names the features that are on, separated by commas ("none" for
-// none); without it a variant has its own default (DEFAULT_FEATURES). The one
-// feature is `save` (saving and updating passwords from the extension and the
-// password generator): on in a release and in the test variant. The build
-// writes shared/features.mjs with the result, and the release check refuses a
-// release package with `save` off, without that file, or without the capture
-// script. A package for a test can still be built with `--features none`.
+// none); without it a variant has its own default (DEFAULT_FEATURES). The
+// features are `save` (saving and updating passwords from the extension and the
+// password generator), on in a release and in the test variant, and `unlock`
+// (PIN and passkey unlock), on in the test variant only until it is released. The
+// build writes shared/features.mjs with the result, and the release check
+// refuses a release package with a feature on that a release does not have
+// (RELEASE_FEATURES), with a feature off that it must have, without that file, or
+// without the files of a feature that is on. A package for a test can still be
+// built with `--features none`.
 //
 // 1. The WebAssembly package (only the files in WASM_FILES are used), from one of two sources
 //    (--wasm, or FERRET_WASM_SOURCE; the default is lock):
@@ -88,12 +91,15 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
  * the extension (the capture script, the offer in Ferret's UI, the generator).
  * A release has it on, and so has the test variant; a test build can turn it off (`--features none`) to prove that
  * "off" leaves no path of the feature in the package.
+ * `unlock`: unlocking with a PIN or a passkey (the handlers, the unlock window, the controls, the PIN store). It is on
+ * in the test variant only, until it is released; a release has it off, and a package with it off holds no path of it
+ * (the only trace is the deletion of the unlock database at start, so that a blob left by an older build is removed).
  */
-export const FEATURES = Object.freeze(["save"]);
+export const FEATURES = Object.freeze(["save", "unlock"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
   release: Object.freeze(["save"]),
-  test: Object.freeze(["save"]),
+  test: Object.freeze(["save", "unlock"]),
 });
 /** The features a release package has on, no more and no fewer: the release check refuses any other set. */
 export const RELEASE_FEATURES = Object.freeze(["save"]);
@@ -104,6 +110,18 @@ export const FEATURES_FILE = "shared/features.mjs";
  * with `save` off never holds one (the build leaves them out), and a release always does (the release check).
  */
 export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", CAPTURE_ENTRY]);
+/**
+ * The package files of the `unlock` feature: the window for a passkey unlock and the one module that owns the PIN
+ * store (the only code that opens the unlock database). A package with `unlock` off never holds one, and a release
+ * that has the feature on always does (the release check). No file may import one of them by name: the build leaves
+ * them out of a package with the feature off and refuses a package with a dangling import, and an import() with a
+ * string literal counts as an import. Code reaches the PIN store and the window page only through the module that the
+ * build generates, `background/unlockStore.gen.mjs` (unlockStoreModule): it re-exports the store when the feature is
+ * on and says `null` when it is off. The handlers of the feature stay in the package and refuse when it is off.
+ */
+export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "background/localUnlock.mjs"]);
+/** The package files of each feature that has files of its own. */
+export const FEATURE_FILES = Object.freeze({ save: SAVE_FILES, unlock: UNLOCK_FILES });
 
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -809,6 +827,33 @@ export function variantModule(variant, dist) {
   return `${lines.join("\n")}\n`;
 }
 
+/** The generated module through which code reaches the files of the `unlock` feature. */
+export const UNLOCK_STORE_FILE = "background/unlockStore.gen.mjs";
+
+/**
+ * `background/unlockStore.gen.mjs`: the one way to the PIN store and the window page, decided here and not at run time.
+ * With `unlock` on it re-exports `createLocalUnlock` from the PIN store and names the window page; with it off it holds
+ * `null` for both and imports nothing, so a package without the feature has no import edge to the files that the build
+ * leaves out. A user of it checks for `null` (or `FEATURES.unlock`) before it uses either.
+ * @param {readonly string[]} on the features that are on
+ * @param {Map<string, Buffer>} dist
+ * @returns {string}
+ */
+export function unlockStoreModule(on, dist) {
+  if (dist.has(UNLOCK_STORE_FILE)) {
+    throw new Error(`src/${UNLOCK_STORE_FILE} is generated by the build and must not exist`);
+  }
+  const lines = ["// Generated by scripts/build.mjs. Do not edit."];
+  if (on.includes("unlock")) {
+    lines.push('export { createLocalUnlock } from "./localUnlock.mjs";');
+    lines.push('export const UNLOCK_WINDOW_PAGE = "pages/unlockWindow.html";');
+  } else {
+    lines.push("export const createLocalUnlock = null;");
+    lines.push("export const UNLOCK_WINDOW_PAGE = null;");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 /**
  * The features that are on, from the value of --features: names of FEATURES separated
  * by commas, or "none".
@@ -858,7 +903,8 @@ export function featuresModule(on, dist) {
 
 /**
  * What a release package must hold of the features: the features module that the build writes for a release (every
- * feature of RELEASE_FEATURES on, no other feature on), and every file of the `save` feature.
+ * feature of RELEASE_FEATURES on, no other feature on), every file of each feature a release has on, and no file of a
+ * feature it has not.
  * @param {Map<string, Buffer>} files path -> bytes
  * @returns {string[]}
  */
@@ -883,13 +929,25 @@ export function featureProblems(files) {
       if (problems.length === 0) problems.push(`${FEATURES_FILE}: not the module the build writes for a release`);
     }
   }
-  if (RELEASE_FEATURES.includes("save")) {
-    for (const path of SAVE_FILES) {
-      if (!files.has(path)) problems.push(`${path}: belongs to the save feature, which a release has on, and is missing`);
+  // A release without `unlock` names its database only to delete it (the one trace the feature leaves).
+  if (!RELEASE_FEATURES.includes("unlock")) {
+    for (const [path, bytes] of files) {
+      if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path)) continue;
+      const text = bytes.toString("utf8");
+      if (text.split("ferret-unlock").length !== text.split('deleteDatabase("ferret-unlock")').length) {
+        problems.push(`${path}: names the unlock database other than to delete it, which a release without the unlock feature may not do`);
+      }
     }
-  } else {
-    for (const path of SAVE_FILES) {
-      if (files.has(path)) problems.push(`${path}: belongs to the save feature, which a release may not have`);
+  }
+  for (const [name, paths] of Object.entries(FEATURE_FILES)) {
+    if (RELEASE_FEATURES.includes(name)) {
+      for (const path of paths) {
+        if (!files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release has on, and is missing`);
+      }
+    } else {
+      for (const path of paths) {
+        if (files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release may not have`);
+      }
     }
   }
   return problems;
@@ -1023,6 +1081,7 @@ export async function build({
   dist.set("background/handlers.gen.mjs", Buffer.from(handlerRegister(dist)));
   dist.set("background/variant.gen.mjs", Buffer.from(variantModule(variant, dist)));
   dist.set(FEATURES_FILE, Buffer.from(featuresModule(on, dist)));
+  dist.set(UNLOCK_STORE_FILE, Buffer.from(unlockStoreModule(on, dist)));
   // The content script, joined into one classic script (an injected file cannot be a module).
   if (dist.has(CONTENT_ENTRY)) dist.set(CONTENT_BUNDLE, Buffer.from(classicScript(CONTENT_ENTRY, dist)));
   // The capture script of the `save` feature: its own classic script, joined slim (it runs in every https page).
@@ -1056,8 +1115,10 @@ export async function build({
   }
   dist.set("manifest.json", Buffer.from(`${JSON.stringify(manifestJson, null, 2)}\n`));
 
-  // A package with `save` off holds no file of that feature (this runs after every step that adds files).
-  if (!on.includes("save")) for (const path of SAVE_FILES) dist.delete(path);
+  // A package with a feature off holds no file of that feature (this runs after every step that adds files).
+  for (const [name, paths] of Object.entries(FEATURE_FILES)) {
+    if (!on.includes(name)) for (const path of paths) dist.delete(path);
+  }
 
   // 5. Checks.
   for (const [path, bytes] of dist) checkFile(path, bytes);

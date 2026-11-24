@@ -293,7 +293,9 @@ test.describe("one item on a desktop", () => {
     await page.keyboard.press("Enter");
     await expect(input).toHaveAttribute("type", "text");
     await expect(input).toHaveValue("typed-by-the-user-1");
-    const hide = page.getByRole("button", { name: "Hide password" });
+    // One name, one state: the button is still "Show password" and only aria-pressed tells that it is on.
+    const hide = page.getByRole("button", { name: "Show password" });
+    await expect(page.getByRole("button", { name: "Hide password" })).toHaveCount(0);
     await expect(hide).toHaveAttribute("aria-pressed", "true");
     // The focus ring is drawn on the button (an outline, not nothing).
     await expect(hide).toBeFocused();
@@ -323,7 +325,7 @@ test.describe("one item on a desktop", () => {
     const button = page.getByRole("button", { name: "Show password" });
     await button.click();
     await expect(input).toHaveAttribute("type", "text");
-    const [field, control] = await Promise.all([input.boundingBox(), page.getByRole("button", { name: "Hide password" }).boundingBox()]);
+    const [field, control] = await Promise.all([input.boundingBox(), button.boundingBox()]);
     expect(control.x).toBeGreaterThanOrEqual(field.x);
     expect(control.x + control.width).toBeLessThanOrEqual(field.x + field.width + 0.5);
     expect(control.y).toBeGreaterThanOrEqual(field.y - 0.5);

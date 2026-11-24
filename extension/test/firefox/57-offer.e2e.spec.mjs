@@ -8,7 +8,11 @@
 // - change_password_on_the_fixture_update_and_see_the_old_one_under_previous_passwords: the change fixture is submitted with
 //   the password of an entry of the vault as the current one; the popup shows "Update the password?" with that entry; "Update" is
 //   clicked, and the item in the web vault has the old password under "Previous passwords".
-// - the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens_the_options_page.
+// - the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens_in_the_popup: Settings shows the settings view
+//   in the popup itself (marked in the bar) and opens no tab.
+// - offer_to_save_is_turned_on_and_off_from_the_settings_part_of_the_popup: the switch in the popup's settings view asks for
+//   access to https pages in its click and turns the setting on, and off again (the test profile answers the request without
+//   a prompt; a person's Firefox shows one and closes the popup, which captureSettings.mjs answers).
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
@@ -190,7 +194,7 @@ test("change_password_on_the_fixture_update_and_see_the_old_one_under_previous_p
   }
 });
 
-test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens_the_options_page", async () => {
+test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens_in_the_popup", async () => {
   for (const channel of channels()) {
     const w = await world(channel, { grant: [], entries: ENTRIES });
     try {
@@ -212,15 +216,60 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-vault"]')?.hasAttribute("aria-current")), false, channel);
       const before = (await w.session.windowHandles()).length;
       await w.page.click('[data-role="tab-settings"]');
-      // The settings page opens in a tab of the browser.
-      const found = await w.session.waitFor(async () => {
-        for (const h of await w.session.windowHandles()) {
-          await w.session.switchTo(h);
-          if ((await w.session.currentUrl()).startsWith(`${EXTENSION_ORIGIN}/pages/settings.html`)) return true;
-        }
-        return null;
-      }, 20_000, "the settings page");
-      assert.equal(found, true, `${channel}: Settings opens the settings page (${before} windows before)`);
+      // Settings is a part of the popup: the view is shown in it, the bar marks it, and no tab or window opens.
+      await w.page.waitVisible('[data-role="settings-view"]', SLOW);
+      assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-settings"]')?.getAttribute("aria-current")), "page", `${channel}: the settings item is marked`);
+      assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-generator"]')?.hasAttribute("aria-current")), false, channel);
+      await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="lock-after"]')?.value !== ""), 20_000, "the lock choice");
+      await sleep(1_000);
+      assert.equal((await w.session.windowHandles()).length, before, `${channel}: Settings opens no tab or window`);
+      assert.equal(await w.session.content(() => location.pathname), "/pages/popup.html", channel);
+    } finally {
+      await w.quit();
+    }
+  }
+});
+
+test("offer_to_save_is_turned_on_and_off_from_the_settings_part_of_the_popup", async () => {
+  for (const channel of channels()) {
+    const w = await world(channel, { grant: [], entries: ENTRIES });
+    try {
+      const tabId = await newestTab(w);
+      const handle = await w.session.newWindow();
+      await w.session.switchTo(handle);
+      await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
+      await w.page.ready();
+      await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
+      await w.page.click('[data-role="tab-settings"]');
+      await w.page.waitVisible('[data-role="capture-switch"]', SLOW);
+      const on = () => w.session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked"));
+      const https = () => w.session.content(() => browser.permissions.contains({ origins: ["https://*/*"] }));
+      await w.session.waitFor(async () => (await on()) === "false", 20_000, "the switch is read");
+      assert.equal(await https(), false, `${channel}: no access to https pages before`);
+      const before = (await w.session.windowHandles()).length;
+      // A real click: the access is asked for in the click (the test profile gives it without a prompt), then the setting goes on.
+      await w.page.click('[data-role="capture-switch"]');
+      await w.session.waitFor(async () => (await on()) === "true", 20_000, "the switch on");
+      assert.equal(await https(), true, `${channel}: the access to https pages is given`);
+      assert.match(await w.page.text('[data-role="capture-state"]'), /^On\./, channel);
+      // The same state is on the settings page of the add-on (one setting, two places), and it is kept when the popup is built again.
+      await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
+      await w.page.ready();
+      await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
+      await w.page.click('[data-role="tab-settings"]');
+      await w.session.waitFor(async () => (await on()) === "true", 20_000, "the switch on after a new popup");
+      // Off again: the setting goes, and so does the access.
+      await w.page.click('[data-role="capture-switch"]');
+      await w.session.waitFor(async () => (await on()) === "false", 20_000, "the switch off");
+      await w.session.waitFor(async () => (await https()) === false, 20_000, "the access taken back");
+      assert.equal((await w.session.windowHandles()).length, before, `${channel}: no tab or window was opened`);
+      // The lock choice is saved from the popup too.
+      await w.session.content(() => {
+        const node = /** @type {HTMLSelectElement} */ (document.querySelector('[data-role="lock-after"]'));
+        node.value = "3600";
+        node.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await w.session.waitFor(async () => (await w.page.text('[data-role="saved"]')) === "Saved.", 20_000, "the lock choice saved");
     } finally {
       await w.quit();
     }

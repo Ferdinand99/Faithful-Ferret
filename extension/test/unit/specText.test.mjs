@@ -98,3 +98,137 @@ test("the_capture_and_write_rules_are_in_the_spec", () => {
     "7.2",
   );
 });
+
+/** The text of one section of the design document, from its heading to the next heading of the same or a higher level. @param {string} heading */
+function section(heading) {
+  const start = spec.indexOf(heading);
+  assert.ok(start >= 0, `${heading} is there`);
+  const level = /^#+/.exec(heading)?.[0].length ?? 2;
+  const rest = spec.slice(start + heading.length);
+  const next = rest.search(new RegExp(String.raw`\n#{1,${level}} `));
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+test("the_pin_and_prf_rules_are_in_the_spec", () => {
+  const ext = section72();
+  // The PIN: setting, format, key and wrap, where it lives, the warning, the cost, the counter, deletion, honesty.
+  for (const rule of [
+    "- **PIN** (optional) is **a convenience, and in the extension it is not a hard boundary**:",
+    "Only with the vault open, a network, and the master password typed again in the same dialog",
+    "Every set or change makes a **new `device_salt` and a new local `method_id`**.",
+    "Only the extension's own top-level pages can send the messages that set, use or turn off a PIN",
+    "It is NFKD like MP (Unicode 16.0), control characters and unassigned characters are refused, the length counts Unicode scalar values, and a PIN has at most 64 scalar values and 256 bytes.",
+    "The minimum length comes from the server's rule (4 to 64, default 6), and the client never accepts less than 4",
+    "**The record holds neither the length nor whether the PIN is digits or text:**",
+    "KEK_pin = Argon2id(NFKD(PIN), device_salt, PIN profile 1: m = 256 MiB, t = 3, p = 1, L = 32)",
+    "device_salt, kdf]) ‖ commit",
+    "**By default on disk,** in a database of the extension's own",
+    "It is never in `storage.local` (a content script's process can write it) and never in the shared vault database",
+    '**In memory only** (`storage.session`, gone after a restart) when the user turns on "Require master password after restart" (**off** by default), or when the admin forbids a PIN after restart (§ 11).',
+    "Moving a PIN from memory to disk needs the master password; the other way does not.",
+    'Before a PIN is saved **on disk** the user must tick "I understand"; the box is never ticked beforehand.',
+    "can try PINs on their own computer, where the limit of five attempts does not apply.",
+    "One Argon2id with 256 MiB per guess, and about 100 guesses per second on one powerful machine",
+    "| 6 digits | 1 000 000 | under 3 hours | under 2 minutes |",
+    "(measured on a reference container with 2 CPUs and 4 GiB, in Firefox Release 159 and ESR 153, and on one Mac with 10 cores in Firefox 160, where profile 1 took 0.37 seconds at the median and 0.44 seconds at the 95th percentile; **to be confirmed on real machines**, and Windows is still to be measured)",
+    "Setting a PIN therefore derives `KEK_pin` in a separate worker",
+    "the counter is raised and written **before** Argon2id runs",
+    "An interrupted attempt counts, and attempts run one at a time.",
+    "The wait before attempt 1 to 5 is 0, 0, 5, 15 and 30 seconds, counted from the last failure in the record.",
+    "An unlock with the master password resets the counter.",
+    "A copy of the profile is attacked on another computer and never meets it; anyone who can write to the profile can reset the counter or put back an older copy of the blob",
+    "sign-out (also without a network, because it is local)",
+    "a blob whose VK does not give the pinned record's `pk_a` (a swapped blob)",
+    "the admin turns PINs off, or turns off PIN after restart (for the blob on disk)",
+    "Firefox does not use `secure_delete` for it (measured: a deleted blob stays in the file's free pages after a clean shutdown, and overwriting it first is not reliable)",
+  ]) {
+    assert.ok(ext.includes(rule), rule);
+  }
+  assert.equal(ext.includes("lives **only in `storage.session`**"), false, "the old memory-only rule is gone");
+  assert.equal(ext.includes("Exponential backoff"), false);
+
+  // The passkey (PRF) method.
+  for (const rule of [
+    "is a hardware or platform authenticator, device-bound or synced",
+    "`rp.id` is **the exact host of the vault's origin, never a parent domain**",
+    "`userVerification` is `required` and the UV flag of the authenticator data is checked",
+    "`results.first` must be exactly 32 bytes",
+    "**A passkey method opens VK without MP and without SK** for whoever has the wrap and the authenticator.",
+    "A **synced passkey is as safe as the cloud account** (iCloud, Google) it lives in",
+    'The list of methods says "Synced passkey" or "This device only" from `BE`',
+    "**The PRF output is never stored,**",
+    "from a window or tab of the extension's own, never from the toolbar popup (it closes when the platform's dialog takes focus), with one WebAuthn call per click, only with live tokens and online",
+    "**Another provider can take the call.**",
+    "a separate `get`, with its own click, is needed",
+    "an older backup still holds the wrap, so only a full rekey (§ 4.7) makes a leaked output useless",
+    "the core refuses to derive `KEK_pin` from a PIN below 4 whatever the rule says",
+  ]) {
+    assert.ok(ext.includes(rule), rule);
+  }
+
+  // The principle (7.1), the web vault (7.3), mobile (7.4) and revocation (7.6).
+  assert.ok(section("### 7.1 Common rules").includes("a PIN kept on disk, which is the default there, can be guessed offline from a copy of the browser profile"));
+  assert.ok(section("### 7.3 Web vault").includes("**while the vault session lives**; when the session has ended, MP is required. There is no PIN in the web vault."));
+  assert.ok(section("### 7.4 iOS").includes("The mobile PIN keeps the 64 MiB sign-in profile and the hardware limit, and it has the same AAD as the extension's PIN"));
+  assert.ok(section("### 7.4 iOS").includes("The WebAssembly build makes and opens only PIN profile 1"));
+  const devices = section("### 7.6 Devices and revocation");
+  for (const rule of [
+    "**A PIN can unlock without the server, for at most seven days**",
+    "**Contact** is a successful renewal of the device's token",
+    "**also while the vault is locked**",
+    "The answers `device_revoked`, `token_reused` and `token_expired` to that renewal delete the PIN blob",
+    "guards only against a clock set back",
+    "**Revocation deletes the PIN at the first contact.** A revoked device that is kept offline can still be unlocked with its PIN for at most seven days after its last contact with the server",
+    "The clock can be forged by someone who controls the machine before the extension has seen a later time, and whoever can set the system clock can keep an offline PIN usable for as long as they hold the clock still inside the window's logic",
+    "The window uses the device's own time, never the server's",
+    "A contact sets the highest time seen to the device's own time **on purpose**",
+    "**After every PIN unlock,** the blob's VK is checked against the pinned record's `pk_a`, offline too",
+    "The renewal while locked runs on the same schedule whether or not a PIN is set",
+    "within five attempts in the extension",
+  ]) {
+    assert.ok(devices.includes(rule), rule);
+  }
+
+  // The threat model: the offline guess, the revoked device, the passkey that goes around SK.
+  const threats = section("### 2.2 Attackers and what they must not achieve");
+  for (const rule of [
+    "**except when a PIN is kept on disk** (the extension's default, § 7.2)",
+    "one Argon2id (256 MiB, t = 3) per guess, with no limit on attempts",
+    "a revoked device that is kept offline can still be unlocked with its PIN for at most seven days after its last contact with the server",
+    "Seven days as the device's own clock counts them: whoever controls that clock can stretch the window for as long as they hold the clock still",
+    "a passkey method opens VK **without MP and without SK**",
+  ]) {
+    assert.ok(threats.includes(rule), rule);
+  }
+  assert.ok(section("### 2.3 Outside the threat model (documented limitations)").includes("**L9 Deleted data on disk.**"));
+
+  // The manifest, the wraps, the routes, the policy, the build and the decisions.
+  const wraps = section("### 4.3 Vault key and wraps");
+  assert.ok(wraps.includes("`pin` (local method, never on the server): adds `device_salt` and `kdf`"));
+  assert.ok(wraps.includes('The list of methods says "Synced passkey" or "This device only" from `BE`.'));
+  assert.ok(wraps.includes("Ferret's own AAGUID is refused as an extra guard (§ 9.4)"));
+  assert.ok(section("### 4.6 Sensitive operations and signed proofs (F-15, F-05, F-07)").includes("A local PIN is **no unlock method on the server**"));
+  assert.ok(section("### 9.4 Choice between Ferret and the browser (F-13)").includes('an all-zero AAGUID is accepted and shown as "unknown"'));
+  const server = section("## 11. Server and vole-kit – limits");
+  for (const rule of [
+    "**Allow PIN** (on; an emergency switch), **Allow PIN after restart** (on;",
+    "**minimum length** (4 to 64, default 6;",
+    "**`GET /api/vault/policy`**",
+    'An older server without the route (404) means "no PIN"',
+    "**Build feature `quick-unlock`.**",
+    "`GET /api/vault/policy` is mounted in both builds; with the feature off it answers `pin.allowed: false` and `prf.enabled: false`.",
+  ]) {
+    assert.ok(server.includes(rule), rule);
+  }
+  assert.ok(section("## 12. Releases and update chain (L2)").includes("it must equal the entry in that release's cosign-signed `SHA256SUMS`"));
+  const appendixB = section("## Appendix B – Schema: body, manifest, export");
+  assert.ok(appendixB.includes('"n": text? name (passkey only, the folder-name rule above'));
+  assert.ok(appendixB.includes('"be": bool?'));
+  assert.ok(appendixB.includes('"bs": bool?'));
+  const decisions = section("## 16. Decisions the maintainer must make");
+  assert.ok(decisions.includes('| E3 ✅ | "PIN after browser restart" | **Reopened and decided 2026-11-24:**'));
+  assert.ok(decisions.includes("| E16 ✅ | PIN without a network |"));
+  assert.ok(decisions.includes("**Provisional outcome on the Mac (2026-11-24):** the extension can use PRF from its own window or tab, never from the toolbar popup"));
+  assert.ok(section("## 15. What phase 0A has not proven yet (affects choices)").includes("It does not work in the toolbar popup, which closes when the system dialog takes focus."));
+  assert.ok(decisions.includes("| E17 ✅ | Synced passkeys as an unlock method |"));
+});

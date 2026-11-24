@@ -12,7 +12,8 @@
 # What it checks:
 #  * release_image_has_no_e2e_clock: an image built without FEATURES says
 #    `features: none`, and its binary holds neither the clock hook nor the name
-#    of its variable; the image of the e2e stack says `features: e2e-clock`.
+#    of its variable nor the name of the unlock feature; the image of the e2e stack
+#    says `features: e2e-clock, quick-unlock`.
 #  * e2e_clock_cannot_be_enabled_by_environment_alone: the release image ignores
 #    FERRET_E2E_CLOCK_FILE.
 #  * image_runs_as_uid_1000: the server process of the image runs as uid/gid 1000
@@ -63,7 +64,7 @@ has() { printf '%s\n' "$2" | grep -qxF -- "$1"; }
 release_image=ferret-e2e-check-release:latest
 probe=ferret-e2e-check-run
 uid_probe=ferret-e2e-check-uid
-markers=(FERRET_E2E_CLOCK_FILE e2e-clock e2e_clock)
+markers=(FERRET_E2E_CLOCK_FILE e2e-clock e2e_clock quick-unlock quick_unlock /settings/unlock)
 
 cleanup() {
   dk rm -f "$uid_probe" "$probe" >/dev/null 2>&1 || true
@@ -290,7 +291,7 @@ check_stack() {
   expect "e2e: the network has only the four containers" "$e2e_app $e2e_evil $e2e_monitor $e2e_tls" \
     "$(dk network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$e2e_network" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "e2e: the server runs as uid 1000" "1000" "$(dk exec "$e2e_app" awk '/^Uid:/{print $2}' /proc/1/status)"
-  contains "e2e: the e2e image says so" "$(dk run --rm --name "$probe" --label "$e2e_label" "$e2e_image" --build-info)" "features: e2e-clock"
+  contains "e2e: the e2e image says so" "$(dk run --rm --name "$probe" --label "$e2e_label" "$e2e_image" --build-info)" "features: e2e-clock, quick-unlock"
   expect "e2e: the e2e binary holds the clock hook (the variable name and the feature name)" "yes yes" \
     "$(binary_has "$e2e_image" FERRET_E2E_CLOCK_FILE) $(binary_has "$e2e_image" e2e-clock)"
   contains "e2e: the server started with the test clock" "$(dk logs "$e2e_app" 2>&1)" "TEST BUILD: the clock is moved"

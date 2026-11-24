@@ -84,7 +84,7 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
   const el = (await on.load("shared/dom.mjs")).el;
   const vault = el("div", { "data-role": "vault-list" }, "the vault");
   let made = 0;
-  let settingsOpened = 0;
+  let settingsMade = 0;
   const tabs = tabsOn.createPopupTabs({
     texts: on.texts("en"),
     vault,
@@ -92,8 +92,9 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
       made += 1;
       return el("section", { "data-role": "generator" });
     },
-    onSettings: () => {
-      settingsOpened += 1;
+    makeSettings: () => {
+      settingsMade += 1;
+      return el("section", { "data-role": "settings-view" });
     },
   });
   assert.notEqual(tabs.root, vault);
@@ -107,12 +108,18 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
   assert.equal(one(tabs.root, "panel-generator")?.hidden, true);
   assert.equal(one(tabs.root, "tab-vault")?.getAttribute("aria-current"), "page");
   assert.equal(one(tabs.root, "tab-generator")?.hasAttribute("aria-current"), false);
-  // "Health" has no view yet: disabled, tagged, out of the tab order, and a click does nothing.
+  // "Health" has no view yet: disabled, tagged, still in the tab order (a disabled item of a bar stays focusable, so that it is
+  // found and read as disabled), and a click does nothing.
   const health = one(tabs.root, "tab-health");
-  assert.equal(health?.getAttribute("tabindex"), "-1");
+  assert.equal(health?.hasAttribute("tabindex"), false, "a button's own place in the tab order, not taken out of it");
   assert.equal(one(health, "tab-soon")?.textContent, "Coming soon");
   assert.equal(health?.getAttribute("title"), "Coming soon");
-  assert.equal(health?.textContent, "HealthComing soon");
+  assert.equal(health?.textContent, "Health Coming soon", "the name reads Health, then the tag");
+  assert.equal(one(tabs.root, "tabs")?.getAttribute("aria-label"), "Navigation");
+  const nb = tabsOn.createPopupTabs({ texts: on.texts("nb"), vault: el("div"), makeGenerator: () => null, makeSettings: () => null });
+  assert.equal(one(nb.root, "tab-vault")?.textContent, "Hvelv");
+  assert.equal(one(nb.root, "tab-health")?.textContent, "Helse Kommer snart");
+  assert.equal(one(nb.root, "tabs")?.getAttribute("aria-label"), "Navigasjon");
   await click(health);
   assert.equal(tabs.selected(), "vault", "a click on Health changes nothing");
   assert.equal(health?.hasAttribute("aria-current"), false);
@@ -128,11 +135,26 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
   await click(one(tabs.root, "tab-vault"));
   await click(one(tabs.root, "tab-generator"));
   assert.equal(made, 1, "the generator is made once");
-  // "Settings" is no part of the popup: it opens the settings page and takes no mark.
+  // "Settings" is a part of the popup like the others: made once, on the first choice of its item, shown with the mark, and no
+  // tab or page is opened (the popup is given nothing to open one with).
+  assert.equal(settingsMade, 0, "opening the popup asks nothing of the settings");
+  assert.equal(one(tabs.root, "panel-settings")?.hidden, true);
   await click(one(tabs.root, "tab-settings"));
-  assert.equal(settingsOpened, 1);
+  assert.equal(settingsMade, 1);
+  assert.equal(tabs.selected(), "settings");
+  assert.equal(one(tabs.root, "panel-settings")?.hidden, false);
+  assert.equal(roles(tabs.root, "settings-view").length, 1);
+  assert.equal(one(tabs.root, "panel-vault")?.hidden, true);
+  assert.equal(one(tabs.root, "panel-generator")?.hidden, true);
+  assert.equal(one(tabs.root, "tab-settings")?.getAttribute("aria-current"), "page");
+  assert.equal(one(tabs.root, "tab-generator")?.hasAttribute("aria-current"), false);
+  await click(one(tabs.root, "tab-vault"));
+  await click(one(tabs.root, "tab-settings"));
+  assert.equal(settingsMade, 1, "the settings part is made once");
+  assert.equal(one(tabs.root, "tab-settings")?.getAttribute("aria-current"), "page");
+  await click(one(tabs.root, "tab-generator"));
+  assert.equal(tabs.selected(), "generator", "the popup goes on to the part chosen");
   assert.equal(one(tabs.root, "tab-settings")?.hasAttribute("aria-current"), false);
-  assert.equal(tabs.selected(), "generator", "the popup stays on the part it showed");
   // Every item is a button (operable with the keyboard) with an icon that screen readers skip; only the generator's item and
   // part carry the mark that the release check looks for.
   for (const role of ["tab-vault", "tab-generator", "tab-settings"]) assert.equal(one(tabs.root, role)?.tagName, "BUTTON", role);
@@ -151,7 +173,7 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
       texts: off.texts("en"),
       vault: offVault,
       makeGenerator: () => { madeOff += 1; return el("section"); },
-      onSettings: () => { settingsOff += 1; },
+      makeSettings: () => { settingsOff += 1; return el("section", { "data-role": "settings-view" }); },
     });
     assert.deepEqual(roles(plain.root, "tab-vault").length + roles(plain.root, "tab-settings").length, 2);
     assert.equal(roles(plain.root, "tab-generator").length, 0);
@@ -159,6 +181,8 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
     assert.deepEqual(["tab-vault", "tab-settings"].map((role) => one(plain.root, role)?.textContent), ["Vault", "Settings"]);
     assert.deepEqual(roles(plain.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-health", "tab-settings"], "Vault, Health (not yet) and Settings");
     assert.equal(one(plain.root, "tab-health")?.getAttribute("aria-disabled"), "true");
+    assert.equal(one(plain.root, "tab-health")?.textContent, "Health Coming soon", "the bar's own texts are there without the feature");
+    assert.equal(one(plain.root, "tabs")?.getAttribute("aria-label"), "Navigation");
     await click(one(plain.root, "tab-health"));
     assert.equal(plain.selected(), "vault");
     assert.equal(one(plain.root, "tab-vault")?.getAttribute("aria-current"), "page");
@@ -166,7 +190,9 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
     assert.equal(madeOff, 0);
     assert.equal(plain.selected(), "vault");
     await click(one(plain.root, "tab-settings"));
-    assert.equal(settingsOff, 1, "settings opens in every build");
+    assert.equal(settingsOff, 1, "settings is shown in every build");
+    assert.equal(plain.selected(), "settings");
+    assert.equal(one(plain.root, "tab-settings")?.getAttribute("aria-current"), "page");
     // The view is not made either.
     const viewOff = await off.load("pages/generatorView.mjs");
     assert.equal(viewOff.createGeneratorView({ texts: off.texts("en"), flow: {}, store: {}, tabId: 1 }), null);
