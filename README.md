@@ -22,7 +22,7 @@
 > stored field with a given value, and password history to the core. v0.9.0 shows the previous passwords of an item in
 > the web vault, makes the side menu's "Import and export" reach both pages, and teaches the Firefox extension to
 > work out what a form is for before it fills. v0.10.0 lets you show or hide the password while you edit an item in the
-> web vault, and the Firefox extension 0.8.0, the first signed build with it, offers to save a new password or update a
+> web vault, and the Firefox extension 0.8.0, built from v0.10.0, is the first signed build that offers to save a new password or update a
 > changed one and has a password generator in its popup. The web vault has no generator screen yet, and the extension is
 > not on the Firefox add-ons store. A health check is next. Ferret is a single-author project and is **not for real
 > passwords yet**. There is no external audit, and none is planned.
