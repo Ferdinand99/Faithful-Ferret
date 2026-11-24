@@ -6,10 +6,11 @@
 //
 // The options (length, classes, words, separator) are kept on this device (generatorPrefs.mjs), and nothing else: never the value
 // (generatorModel.mjs). The value lives in this page only. It is wiped, and a call that is still on its way is dropped, when the
-// vault locks (the screen's wipe scope: also a sign-out and another tab taking the vault), when the address leaves this page,
-// and when the page is taken off the screen. It is never in an address, a store, a message or a log.
+// vault locks (the screen's wipe scope: also a sign-out and another tab taking the vault) and when the address leaves this page.
+// It is never in an address, a store, a message or a log. A copy of it on the clipboard is not the page's to wipe: it is cleared 30
+// seconds after the copy, wherever the user is by then, and at once by a lock or a sign-out (secretClipboard.mjs).
 //
-// "Copy" is the clipboard path of the item page (`navigator.clipboard.writeText`, with the same text). "Use as new item" puts the
+// "Copy" is the secret copy of the item page (secretClipboard.mjs: `navigator.clipboard.writeText`, cleared after 30 seconds). "Use as new item" puts the
 // value in the one-shot handoff (generatorModel.mjs) and opens the form of a new item, which takes it once.
 import { el, mount } from "../dom.mjs";
 import { describeError, codeOf } from "./common.mjs";
@@ -289,7 +290,6 @@ export function generatorView({
   // ---- where the value goes when the page does
   // A lock, a sign-out and another tab taking the vault run the wipe scope of the screen.
   const removeWipe = scope?.add(wipe);
-  scope?.add(() => void secrets.clearNow());
   /** The address left this page, or the page left the screen: the value goes. */
   const onHash = () => {
     const path = String(win?.location?.hash ?? "").replace(/^#/, "").split("?")[0] || "/";

@@ -2,7 +2,7 @@
 // lock, and the text says so), a user name or an address is written as it is and left alone.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { secretClipboardFor } from "../../src/secretClipboard.mjs";
+import { clearOnLock, secretClipboardFor } from "../../src/secretClipboard.mjs";
 import { createWipeScope } from "../../src/views/common.mjs";
 import { generatorView } from "../../src/views/generator.mjs";
 import { createOptionsStore } from "../../src/generatorPrefs.mjs";
@@ -69,19 +69,26 @@ test("a_user_name_and_an_address_are_copied_as_they_are_and_nothing_is_scheduled
   });
 });
 
-test("a_lock_clears_the_secret_at_once", async () => {
+test("leaving_the_screen_does_not_clear_the_secret_but_a_lock_does_at_once", async () => {
   await withDom(async () => {
     const { root, clipboard, scope, helper } = await open();
     await click(find(root, "copy", "f1"));
     assert.equal(helper.pending(), true);
-    scope.run(); // a lock
+    scope.run(); // the screen is wiped (a lock wipes it too, but a page change does not run this)
+    await settle();
+    assert.deepEqual(clipboard.writes, [PASSWORD], "the 30 seconds still run");
+    assert.equal(helper.pending(), true);
+    // The lock of the session is what clears it at once.
+    const listeners = [];
+    clearOnLock({ onLock: (fn) => void listeners.push(fn) }, clipboard);
+    listeners[0]();
     await settle();
     assert.deepEqual(clipboard.writes, [PASSWORD, ""]);
     assert.equal(helper.pending(), false);
   });
 });
 
-test("the_generators_copy_is_cleared_too_and_a_lock_clears_it_at_once", async () => {
+test("the_generators_copy_is_cleared_too_and_stays_when_the_page_is_wiped", async () => {
   await withDom(async () => {
     const clipboard = fakeClipboard();
     const scope = createWipeScope();
@@ -95,8 +102,11 @@ test("the_generators_copy_is_cleared_too_and_a_lock_clears_it_at_once", async ()
     assert.deepEqual(clipboard.writes, ["GEN-1"]);
     assert.equal(secretClipboardFor(clipboard).pending(), true);
     assert.ok(textOf(find(root, "generator-status")).includes("vault.item.copied_secret"));
-    scope.run();
+    scope.run(); // the page forgets its value, the clipboard keeps its 30 seconds
     await settle();
+    assert.deepEqual(clipboard.writes, ["GEN-1"]);
+    assert.equal(secretClipboardFor(clipboard).pending(), true);
+    await secretClipboardFor(clipboard).clearNow();
     assert.deepEqual(clipboard.writes, ["GEN-1", ""]);
   });
 });

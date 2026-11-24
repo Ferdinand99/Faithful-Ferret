@@ -63,6 +63,7 @@ async function scene(page, which) {
     if (which === "generator") {
       const { generatorView } = await import("/app/views/generator.mjs");
       const clipboard = { writeText: async (text) => { window.__calls.copied.push(text); } };
+      window.__clipboard = clipboard;
       content = generatorView({
         t, client, scope, clipboard,
         go: async (path) => {
@@ -189,12 +190,19 @@ test.describe("the generator page on a desktop", () => {
     expect(await page.evaluate(() => window.__clears.length)).toBe(1);
     await page.evaluate(() => window.__clears[0]());
     await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, ""]);
-    // A second copy, and a lock: it is cleared at once.
+    // A second copy: the screen being wiped leaves it, a lock clears it at once.
     await page.locator('[data-role="regenerate"]').click();
     const second = await changedFrom(page, value);
     await page.locator('[data-role="copy"]').click();
     await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, "", second]);
     await page.evaluate(() => window.__scope.run());
+    expect(await page.evaluate(() => window.__calls.copied)).toEqual([value, "", second]);
+    await page.evaluate(async () => {
+      const { clearOnLock } = await import("/app/secretClipboard.mjs");
+      const listeners = [];
+      clearOnLock({ onLock: (fn) => listeners.push(fn) }, window.__clipboard);
+      listeners[0]();
+    });
     await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual([value, "", second, ""]);
   });
 

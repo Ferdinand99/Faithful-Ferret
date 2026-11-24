@@ -49,7 +49,7 @@
   "vault.item.card_fields": "Egne felt",
   "vault.item.card_login": "Innlogging",
   "vault.item.copied": "{label} er kopiert.",
-  "vault.item.copied_secret": "{label} er kopiert. Ferret tømmer den om 30 sekunder hvis denne fanen er åpen.",
+  "vault.item.copied_secret": "{label} er kopiert. Ferret fjerner den fra utklippstavlen om 30 sekunder hvis denne fanen er åpen.",
   "vault.item.copy": "Kopier",
   "vault.item.copy_label": "Kopier {label}",
   "vault.item.edit": "Rediger",

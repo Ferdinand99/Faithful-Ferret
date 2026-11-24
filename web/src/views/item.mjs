@@ -141,8 +141,8 @@ export async function itemView({
   }
 
   const secrets = secretClipboardFor(clipboard);
-  // A lock takes a copied secret off the clipboard at once, whichever screen it was copied from.
-  scope?.add(() => void secrets.clearNow());
+  // A copied secret stays on the clipboard for its 30 seconds when this screen is left; a lock and a sign-out clear it at once
+  // (clearOnLock, from the frame).
 
   /** @param {string} text @param {boolean} [secret] a secret is cleared again after 30 seconds */
   async function toClipboard(text, secret = false) {

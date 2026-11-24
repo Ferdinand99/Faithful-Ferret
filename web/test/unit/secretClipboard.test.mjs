@@ -1,7 +1,7 @@
 // A copied secret is taken off the clipboard again after 30 seconds, but only while it is still ours, and at once by a lock.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CLEAR_AFTER_MS, clearOnLock, createSecretClipboard, secretClipboardFor } from "../../src/secretClipboard.mjs";
+import { CLEAR_AFTER_MS, RETRY_WINDOW_MS, clearOnLock, createSecretClipboard, secretClipboardFor } from "../../src/secretClipboard.mjs";
 import { fakeClock, settle } from "./vaultHelpers.mjs";
 
 /** A clipboard that records what is written and holds the last text; `refuse` makes the next writes fail. */
@@ -173,6 +173,40 @@ test("a_write_the_browser_refuses_is_tried_once_more_when_the_tab_has_focus_and_
   assert.equal(second.focus.listening, 0);
   assert.deepEqual(second.clipboard.writes, ["S3CRET"]);
   assert.equal(second.clipboard.refuse, 3, "two tries in all: at the time, then once when the tab had focus");
+});
+
+test("a_clear_that_waits_for_the_focus_is_dropped_after_5_minutes", async () => {
+  assert.equal(RETRY_WINDOW_MS, 300_000);
+  const { clipboard, clock, helper, focus } = rig();
+  await helper.copy("S3CRET");
+  focus.focused = false;
+  clock.advance(30_000);
+  await settle();
+  assert.equal(focus.listening, 1);
+  clock.advance(RETRY_WINDOW_MS - 1);
+  await settle();
+  assert.equal(helper.pending(), true, "still waiting just before the end");
+  clock.advance(1);
+  await settle();
+  assert.equal(helper.pending(), false);
+  assert.equal(focus.listening, 0);
+  focus.focus(); // the tab comes back much later: nothing is cleared
+  await settle();
+  assert.deepEqual(clipboard.writes, ["S3CRET"]);
+  assert.equal(clock.pending, 0);
+});
+
+test("the_wait_for_the_focus_leaves_no_timer_behind_when_it_ends_by_a_clear", async () => {
+  const { clock, helper, focus } = rig();
+  await helper.copy("S3CRET");
+  focus.focused = false;
+  clock.advance(30_000);
+  await settle();
+  assert.equal(clock.pending, 1, "the end of the wait");
+  focus.focus();
+  await settle();
+  assert.equal(clock.pending, 0);
+  assert.equal(helper.pending(), false);
 });
 
 test("a_lock_clears_at_once_and_stops_the_timer", async () => {

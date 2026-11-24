@@ -10,7 +10,8 @@
 //     this helper replaces the older one (the older timer is cancelled). What the user copied from another program in
 //     between cannot be seen then, and is cleared too. That is the best a page can do, and the text says "if this tab is open".
 //   - A browser may refuse a write while the tab is not in focus. The clear is then tried again, once, when the tab gets focus
-//     back. If that fails too, the clipboard is left as it is.
+//     back, and the wait for the focus ends after RETRY_WINDOW_MS (a tab that comes back after an hour has no business
+//     clearing what the user may have copied since). If that fails too, the clipboard is left as it is.
 //   - A lock and a sign-out clear it at once (`clearOnLock`), and the timer is stopped.
 //
 // The value is kept in memory only until the clear (to compare with what is read back) and is dropped with it. Nothing is
@@ -19,12 +20,15 @@
 /** How long a copied secret stays on the clipboard. */
 export const CLEAR_AFTER_MS = 30_000;
 
+/** How long a clear that waits for the tab to get focus back is kept: 5 minutes. */
+export const RETRY_WINDOW_MS = 300_000;
+
 /** @param {string} code */
 const fail = (code) => Object.assign(new Error(code), { code });
 
 /**
  * @typedef {{ writeText(text: string): Promise<void>, readText?: () => Promise<string> }} ClipboardLike
- * @typedef {{ value: string, timer: any, retried: boolean, offFocus: (() => void) | null }} Held
+ * @typedef {{ value: string, timer: any, retried: boolean, offFocus: (() => void) | null, giveUp: any }} Held
  */
 
 /**
@@ -54,6 +58,8 @@ export function createSecretClipboard({
   function forget(mine) {
     if (mine.timer !== null) clearTimer(mine.timer);
     mine.timer = null;
+    if (mine.giveUp !== null) clearTimer(mine.giveUp);
+    mine.giveUp = null;
     mine.offFocus?.();
     mine.offFocus = null;
     mine.value = "";
@@ -100,6 +106,11 @@ export function createSecretClipboard({
     };
     win.addEventListener("focus", onFocus, { once: true });
     mine.offFocus = () => win?.removeEventListener?.("focus", onFocus);
+    // The wait has an end: it is kept from the first wait only, so two waits do not make ten minutes.
+    if (mine.giveUp === null) {
+      mine.giveUp = setTimer(() => forget(mine), RETRY_WINDOW_MS);
+      mine.giveUp?.unref?.();
+    }
   }
 
   /** @param {Held} mine */
@@ -141,7 +152,7 @@ export function createSecretClipboard({
       }
       if (held !== null) forget(held);
       /** @type {Held} */
-      const mine = { value: text, timer: null, retried: false, offFocus: null };
+      const mine = { value: text, timer: null, retried: false, offFocus: null, giveUp: null };
       held = mine;
       mine.timer = setTimer(() => expire(mine), ttlMs);
       // A timer that only waits for the clear never keeps a process (a test run) alive.
@@ -154,6 +165,8 @@ export function createSecretClipboard({
       if (mine === null) return;
       if (mine.timer !== null) clearTimer(mine.timer);
       mine.timer = null;
+      if (mine.giveUp !== null) clearTimer(mine.giveUp);
+      mine.giveUp = null;
       mine.offFocus?.();
       mine.offFocus = null;
       await clearIfOurs(mine);
