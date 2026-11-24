@@ -67,6 +67,8 @@ export class FakeElement extends FakeNode {
     /** @type {Array<[string, (event: any) => void]>} */
     this.listeners = [];
     this.value = "";
+    /** @type {Record<string, string>} */
+    this.dataset = {};
     const element = this;
     this.classList = {
       /** @param {string} name */
@@ -97,6 +99,12 @@ export class FakeElement extends FakeNode {
   /** @param {...(FakeNode | string)} nodes */
   append(...nodes) {
     for (const node of nodes) this.appendChild(typeof node === "string" ? new FakeText(node) : node);
+  }
+
+  /** @param {...(FakeNode | string)} nodes */
+  replaceChildren(...nodes) {
+    for (const child of [...this.childNodes]) this.removeChild(child);
+    this.append(...nodes);
   }
 
   /** @param {string} name @param {string} value */

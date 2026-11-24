@@ -1,14 +1,13 @@
 // The settings page (design document, section 7.2): opened in a tab by the
-// browser's "Preferences" button of the add-on. "Lock after", a select with the
-// fixed choices, and, in a build with saving passwords on, "Offer to save
-// passwords" with its never list (section 10.9). It talks to the background over
-// the UI port like the other pages; it never sees a key or a captured value.
+// browser's "Preferences" button of the add-on. What it shows is the settings
+// view (settingsView.mjs), the same one the open popup shows under "Settings".
+// It talks to the background over the UI port like the other pages; it never
+// sees a key or a captured value.
 
-import { el, mount } from "../shared/dom.mjs";
-import { createCaptureSection } from "./captureSettings.mjs";
-import { createCredits } from "./credits.mjs";
-import { errorBox, loadTexts, showError, translateStatic } from "./page.mjs";
-import { LOCK_CHOICES, choiceKey, createSettingsFlow, errorKey } from "./settingsFlow.mjs";
+import { mount } from "../shared/dom.mjs";
+import { loadTexts, translateStatic } from "./page.mjs";
+import { createSettingsFlow } from "./settingsFlow.mjs";
+import { createSettingsView } from "./settingsView.mjs";
 import { connectUi } from "./ui.mjs";
 
 async function main() {
@@ -21,65 +20,9 @@ async function main() {
     requestPermission: (wanted) => browser.permissions.request(wanted),
     removePermission: (gone) => browser.permissions.remove(gone),
   });
-
-  const select = el(
-    "select",
-    { id: "lock-after", class: "ff-input", "data-role": "lock-after" },
-    ...LOCK_CHOICES.map((seconds) => el("option", { value: String(seconds), "data-seconds": String(seconds) }, texts.t(choiceKey(seconds)))),
-  );
-  const status = el("p", { class: "ff-status", "data-role": "saved", "aria-live": "polite" });
-  const error = errorBox();
-  const shown = /** @type {HTMLSelectElement} */ (select);
-
-  /** @param {number} seconds */
-  const show = (seconds) => {
-    shown.value = String(seconds);
-  };
-
-  const first = await flow.load();
-  if (first.ok) show(first.seconds);
-  else showError(error, texts, errorKey(first.reason));
-
-  shown.addEventListener("change", async () => {
-    status.textContent = "";
-    showError(error, texts, null);
-    shown.disabled = true;
-    const outcome = await flow.setLockSeconds(Number(shown.value));
-    shown.disabled = false;
-    if (outcome.ok) {
-      show(outcome.seconds);
-      status.textContent = texts.t("settings.saved");
-    } else {
-      // The setting did not change: show the one the background keeps.
-      const now = await flow.load();
-      if (now.ok) show(now.seconds);
-      showError(error, texts, errorKey(outcome.reason));
-    }
-  });
-
-  // Only a build with saving passwords on has the section (the module asks the build flag).
-  const capture = createCaptureSection(flow, texts);
-
-  mount(
-    root,
-    el("h1", { "data-role": "settings-title" }, texts.t("settings.title")),
-    el(
-      "form",
-      { class: "ff-form", "data-role": "settings-form" },
-      el(
-        "div",
-        { class: "ff-field" },
-        el("label", { for: "lock-after", class: "ff-label" }, texts.t("settings.lock.label")),
-        select,
-        el("p", { class: "ff-hint" }, texts.t("settings.lock.hint")),
-      ),
-      status,
-      error,
-    ),
-    ...(capture === null ? [] : [capture.node]),
-    createCredits(texts),
-  );
-  if (capture !== null) await capture.refresh();
+  const view = createSettingsView({ texts, flow });
+  mount(root, ...view.nodes);
+  await view.ready;
   document.body.dataset.ready = "1";
 }
 
