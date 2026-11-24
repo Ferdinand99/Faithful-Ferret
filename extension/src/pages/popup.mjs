@@ -101,6 +101,7 @@ async function main() {
   const settingsFlow = createSettingsFlow(ui.request, {
     requestPermission: (wanted) => browser.permissions.request(wanted),
     removePermission: (gone) => browser.permissions.remove(gone),
+    openTab: (url) => browser.tabs.create({ url }),
   });
   const { tabId, windowed } = await placeOf();
   const poppedOut = new URLSearchParams(location.search).has("tab");
@@ -401,16 +402,22 @@ async function main() {
                 looking = false;
               });
           }, OFFER_REFRESH_MS);
+    /** The settings view, once its part has been made: a lock empties what is typed in it at once. @type {ReturnType<typeof createSettingsView> | null} */
+    let settingsView = null;
     teardown = () => {
       if (watching !== null) clearInterval(watching);
       offers?.hide();
+      settingsView?.wipe();
     };
     // The bottom bar: the vault, in a build with saving on the generator, and the settings.
     const tabs = createPopupTabs({
       texts,
       vault: vault.root,
       // "Settings" shows the settings view in the popup itself (in every build); no tab is opened.
-      makeSettings: () => el("div", { class: "ff-settings", "data-role": "settings-view" }, ...createSettingsView({ texts, flow: settingsFlow }).nodes),
+      makeSettings: () => {
+        settingsView = createSettingsView({ texts, flow: settingsFlow });
+        return el("div", { class: "ff-settings", "data-role": "settings-view" }, ...settingsView.nodes);
+      },
       makeGenerator: () =>
         generatorFlow === null || generatorStore === null
           ? null

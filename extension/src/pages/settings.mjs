@@ -19,6 +19,7 @@ async function main() {
   const flow = createSettingsFlow(ui.request, {
     requestPermission: (wanted) => browser.permissions.request(wanted),
     removePermission: (gone) => browser.permissions.remove(gone),
+    openTab: (url) => browser.tabs.create({ url }),
   });
   const view = createSettingsView({ texts, flow });
   mount(root, ...view.nodes);
