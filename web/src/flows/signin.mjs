@@ -306,6 +306,26 @@ async function open(env, p) {
 }
 
 /**
+ * What follows every unlock of the vault, whichever method opened it (the password, a passkey): the generation floors
+ * of the manifest are added to the pinned record, the server's list of unlock methods is compared with the manifest, the
+ * account key the server lists must be the one the vault pins, and only then is the record kept on this device. A
+ * refusal ends here; the caller locks the vault.
+ * @param {Env} env
+ * @param {import("../store/idb.mjs").Store} db
+ * @param {{ opened: { pinned: Record<string, any> }, methods: Record<string, any>, accountId: string, email: string }} o
+ * @returns {Promise<Record<string, any>>} the pinned record to keep
+ */
+export async function sealOpened(env, db, { opened, methods, accountId, email }) {
+  const { client, store, server } = env;
+  const seeded = await client.vault.seed_pinned(opened.pinned, rowToCore(methods.manifest));
+  await client.vault.check_server_methods(rowToCore(methods.manifest), serverMethods(methods.methods));
+  // The account key the server lists must be the one the vault pins.
+  if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
+  await store.savePinned(db, server, accountId, email, seeded);
+  return seeded;
+}
+
+/**
  * The steps that open the vault once the server's account, wraps and manifest are known: the one password wrap, the
  * core's unlock under the pin state, the generation floors, the server's list against the manifest, the account key,
  * the pin, and what becomes of the remembered secret key. Shared by a sign-in, a re-authentication and a device's unlock.
@@ -327,7 +347,7 @@ async function open(env, p) {
  * @returns {Promise<Unlocked>}
  */
 async function openWith(env, db, o) {
-  const { client, store, server } = env;
+  const { client, server } = env;
   const { methods } = o;
   const passwordWraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
   if (passwordWraps.length !== 1) throw new AccountError("methods_invalid");
@@ -339,11 +359,7 @@ async function openWith(env, db, o) {
   const pin = o.record ? { kind: "pinned", record: o.record } : { kind: "first_use", sk_bit: o.skBit };
   const ctx = { account_id: hex16.decode(o.accountId), vault_id: hex16.decode(o.vaultId), vk_epoch: o.vkEpoch };
   const opened = await client.vault.unlock_password(server, ctx, wrapToCore(passwordWraps[0], o.profile), pin);
-  const seeded = await client.vault.seed_pinned(opened.pinned, rowToCore(methods.manifest));
-  await client.vault.check_server_methods(rowToCore(methods.manifest), serverMethods(methods.methods));
-  // The account key the server lists must be the one the vault pins.
-  if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
-  await store.savePinned(db, server, o.accountId, o.email, seeded);
+  const seeded = await sealOpened(env, db, { opened, methods, accountId: o.accountId, email: o.email });
 
   /** @type {Unlocked["secretKey"]} */
   let secretKey = "unchanged";

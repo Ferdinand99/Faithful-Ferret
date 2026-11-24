@@ -18,19 +18,14 @@
 //
 // A browser lets a page make one WebAuthn call for each click, so the page calls `createPasskey` from one click and
 // `evaluatePasskey` from the next. This module does not wait or ask; it only makes the call it is told to.
-import { b64u } from "../b64.mjs";
 import { AccountError } from "../crypto/errors.mjs";
+import {
+  AT, BE, BS, PRF_OUTPUT_LENGTH, TIMEOUT_MS,
+  bytesOf, checkClientData, checkedAuthData, firstResultOf, refused, sameBytes,
+} from "./passkeyAnswer.mjs";
 
-/** The length of a PRF result in bytes. */
-export const PRF_OUTPUT_LENGTH = 32;
-/** A failure sooner than this after the call is the browser or the system refusing it, not a user who said no. */
-export const FAST_FAILURE_MS = 2_000;
-/** The bits of the flags byte of the authenticator data. */
-const UP = 0x01;
-const UV = 0x04;
-const BE = 0x08;
-const BS = 0x10;
-const AT = 0x40;
+/** @typedef {import("./passkeyAnswer.mjs").CeremonyDeps} CeremonyDeps */
+
 /** Where the AAGUID sits in the authenticator data of a registration: 32 (rpIdHash) + 1 (flags) + 4 (counter). */
 const AAGUID_AT = 37;
 /** The shortest authenticator data of a registration: the fixed part, the AAGUID, and the length of the credential id. */
@@ -39,23 +34,6 @@ const MIN_REGISTRATION_DATA = AAGUID_AT + 16 + 2;
 const MAX_CREDENTIAL_ID = 1024;
 /** The two signature algorithms asked for: ES256 and RS256. */
 const ALGORITHMS = Object.freeze([-7, -257]);
-/** How long the browser may wait for the user, in milliseconds. */
-const TIMEOUT_MS = 120_000;
-
-/**
- * @typedef {object} Credentials
- * @property {(options: any) => Promise<any>} create
- * @property {(options: any) => Promise<any>} get
- */
-
-/**
- * @typedef {object} CeremonyDeps
- * @property {Credentials | undefined} [credentials] `navigator.credentials`
- * @property {(bytes: Uint8Array) => Uint8Array} rand fills a byte array with random values and gives it back
- * @property {() => number} now milliseconds
- * @property {(data: Uint8Array) => Promise<Uint8Array>} sha256
- * @property {string} origin the page's origin, as the browser writes it into the client data
- */
 
 /**
  * What a registration said about the credential. The PRF result, when the authenticator gave one at registration,
@@ -67,105 +45,6 @@ const TIMEOUT_MS = 120_000;
  * @property {boolean} bs "backup state" at registration (information only)
  * @property {Uint8Array | null} firstResult the PRF result of the registration, or null when there was none
  */
-
-/** @param {unknown} value @returns {Uint8Array | null} a copy of the bytes of a buffer or a view, or null */
-function bytesOf(value) {
-  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
-  return null;
-}
-
-/** @param {Uint8Array} a @param {Uint8Array} b */
-function sameBytes(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-
-/**
- * The name of a failed call, as the error of the flow. A call that is refused at once (before the user could have
- * seen anything) says so: the usual cause is another password manager that has taken over the passkeys of the browser,
- * or a system with no passkey provider set up.
- * @param {unknown} error
- * @param {number} elapsed
- */
-function refused(error, elapsed) {
-  const name = /** @type {any} */ (error)?.name;
-  switch (name) {
-    case "NotAllowedError":
-    case "AbortError":
-      return new AccountError(elapsed < FAST_FAILURE_MS ? "passkey_blocked" : "passkey_cancelled");
-    case "InvalidStateError":
-      return new AccountError("passkey_exists");
-    case "NotSupportedError":
-      return new AccountError("passkey_unsupported");
-    case "SecurityError":
-      return new AccountError("passkey_security");
-    default:
-      return new AccountError("passkey_failed");
-  }
-}
-
-/**
- * Reads the client data of an answer and checks what the browser says it was asked.
- * @param {unknown} raw
- * @param {{ type: string, challenge: Uint8Array, origin: string }} expected
- */
-function checkClientData(raw, { type, challenge, origin }) {
-  const bytes = bytesOf(raw);
-  if (bytes === null) throw new AccountError("passkey_bad_answer");
-  /** @type {any} */
-  let data;
-  try {
-    data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw new AccountError("passkey_bad_answer");
-  }
-  if (data === null || typeof data !== "object" || data.type !== type || data.origin !== origin || data.challenge !== b64u.encode(challenge)) {
-    throw new AccountError("passkey_bad_answer");
-  }
-  // A cross-origin frame has no business making this call.
-  if (data.crossOrigin === true) throw new AccountError("passkey_bad_answer");
-}
-
-/**
- * The part of the authenticator data every answer has: the relying party hash must be the hash of `rpId`, the user
- * must be present and verified.
- * @param {unknown} raw
- * @param {string} rpId
- * @param {CeremonyDeps} deps
- * @returns {Promise<Uint8Array>}
- */
-async function checkedAuthData(raw, rpId, deps) {
-  const data = bytesOf(raw);
-  if (data === null || data.length < 37) throw new AccountError("passkey_bad_answer");
-  const expected = await deps.sha256(new TextEncoder().encode(rpId));
-  if (!sameBytes(data.subarray(0, 32), expected)) throw new AccountError("passkey_bad_answer");
-  if ((data[32] & UP) === 0) throw new AccountError("passkey_bad_answer");
-  // The user was verified (a PIN, a fingerprint, a face), not only present: without it the result would be a weaker secret.
-  if ((data[32] & UV) === 0) throw new AccountError("passkey_not_verified");
-  return data;
-}
-
-/**
- * The 32 bytes of a PRF result, or null when there is none. A result of another length is refused.
- * @param {any} results `extensions.prf.results`
- * @returns {Uint8Array | null}
- */
-function firstResultOf(results) {
-  if (results === undefined || results === null) return null;
-  const first = bytesOf(results.first);
-  // The browser's own buffer is wiped as far as script can: the copy is the one that goes on.
-  if (results.first instanceof ArrayBuffer) new Uint8Array(results.first).fill(0);
-  else if (ArrayBuffer.isView(results.first)) new Uint8Array(results.first.buffer, results.first.byteOffset, results.first.byteLength).fill(0);
-  if (first === null) throw new AccountError("passkey_bad_output");
-  if (first.length !== PRF_OUTPUT_LENGTH) {
-    first.fill(0);
-    throw new AccountError("passkey_bad_output");
-  }
-  return first;
-}
 
 /**
  * Registers a new credential for this site with the PRF extension asked for.
@@ -286,6 +165,7 @@ export async function evaluatePasskey({ rpId, credentialId, salt, be }, deps) {
     output?.fill(0);
   }
 }
+
 
 /**
  * Whether the output of the registration (when there was one) is the output of the evaluation. A passkey whose

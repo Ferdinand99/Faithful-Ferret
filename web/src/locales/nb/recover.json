@@ -10,6 +10,8 @@
   "recover.done_old_files": "Eksporter og backuper fra før gjenopprettingen åpnes fortsatt med det gamle hovedpassordet og den gamle gjenopprettingsnøkkelen.",
   "recover.done_old_key": "Den gamle gjenopprettingsnøkkelen virker ikke lenger på denne tjeneren. Gjenopprettes tjeneren fra en backup fra før i dag, virker det gamle hovedpassordet og den gamle gjenopprettingsnøkkelen igjen, og de nye ikke. Ta vare på den gamle side 2 til du vet at en ny backup er tatt.",
   "recover.done_open": "Åpne hvelvet",
+  "recover.done_passkeys": "Passkeys som ble lagt til før gjenopprettingen, åpner fortsatt hvelvet. Se gjennom listen og fjern dem du ikke kjenner igjen.",
+  "recover.done_passkeys_link": "Opplåsingsmetoder",
   "recover.done_sheet": "Side 1 av nødarket er uendret: QR-teksten og den hemmelige nøkkelen er de samme.",
   "recover.done_signed_in": "Du er logget inn med det nye hovedpassordet.",
   "recover.email": "E-post",

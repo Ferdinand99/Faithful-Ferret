@@ -127,9 +127,10 @@ const wireOf = (p) => ({
  * A signed-in account with passkey methods. `world.methods` is what the server and the manifest hold (the fake core and
  * the fake server share it); `world.posts` and `world.deletes` are the signed requests the server received, with the bytes
  * the core wrote and the bytes `auth_sign` was given.
- * @param {{ passkeys?: any[], items?: Array<{ id: string, credential: Uint8Array }>, offered?: boolean, postStatus?: number, deleteStatus?: number, reauthUntil?: number | null, refuseWrap?: boolean }} [options]
+ * @param {{ passkeys?: any[], items?: Array<{ id: string, credential: Uint8Array }>, offered?: boolean, postStatus?: number, deleteStatus?: number, reauthUntil?: number | null, refuseWrap?: boolean, handlers?: Record<string, Function> }} [options]
+ * `world.prfUnlocks` has what the core was given to open the vault with a passkey (`handlers` replace any call of the fake core).
  */
-export async function passkeyWorld({ passkeys = [], items = [], offered = true, postStatus = 200, deleteStatus = 200, reauthUntil = null, refuseWrap = false } = {}) {
+export async function passkeyWorld({ passkeys = [], items = [], offered = true, postStatus = 200, deleteStatus = 200, reauthUntil = null, refuseWrap = false, handlers: moreHandlers = {} } = {}) {
   /** What the manifest and the server hold. */
   const methods = { list: passkeys.map((p) => ({ ...p })), rev: 1 };
   const posts = [];
@@ -138,6 +139,7 @@ export async function passkeyWorld({ passkeys = [], items = [], offered = true, 
   const adds = [];
   const wraps = [];
   const removes = [];
+  const prfUnlocks = [];
   /** The rows of the vault the fake core opens: id -> credential id of the passkey item. */
   const stored = new Map(items.map((item) => [item.id, item.credential]));
   let nextHandle = 1;
@@ -200,6 +202,14 @@ export async function passkeyWorld({ passkeys = [], items = [], offered = true, 
       signed.push({ op, bytes: bytes.slice() });
       return filled(64, 5);
     },
+    // The real client wipes a secret array after it has copied it for the worker; the fake does the same.
+    unlock_prf: (server, ctx, output, wrap, pinned) => {
+      prfUnlocks.push({ server, ctx, output: output.slice(), wrap, pinned });
+      output.fill(0);
+      // The core gives back the record it was given (a passkey unlock raises a floor only when the wrap is above it).
+      return { pinned: pinned.record };
+    },
+    ...moreHandlers,
   };
 
   const overrides = {
@@ -228,7 +238,7 @@ export async function passkeyWorld({ passkeys = [], items = [], offered = true, 
   for (const id of [...passkeys.map((p) => p.id), hex16.encode(METHOD_ID)]) overrides[`DELETE /api/vault/unlock-methods/${id}`] = deleteHandler(id);
 
   const world = await signedInWorld({ handlers, overrides, reauthUntil });
-  Object.assign(world, { methods, posts, deletes, signed, adds, wraps, removes, stored });
+  Object.assign(world, { methods, posts, deletes, signed, adds, wraps, removes, stored, prfUnlocks });
   // The rows of the vault this device holds: one per passkey item, so the flow can read their credential ids.
   const scope = { accountId: ACCOUNT, vaultId: VAULT, vkEpoch: 1 };
   const db = await world.store.open();

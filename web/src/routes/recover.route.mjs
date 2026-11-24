@@ -31,6 +31,7 @@ export default {
       serverUrl: session.serverUrl,
       readSetupQr: (text) => session.readSetupQr(text),
       deviceStatus: (email) => session.deviceStatus(email),
+      passkeysOffered: () => session.passkeysOffered(),
       recover: async (args) => {
         // A vault that is open in this tab is locked first: the recovery opens the vault in the worker itself.
         if (session.current() !== null) await session.lock();

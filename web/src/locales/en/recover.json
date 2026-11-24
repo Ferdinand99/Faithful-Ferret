@@ -10,6 +10,8 @@
   "recover.done_old_files": "Exports and backups made before the recovery still open with the old master password and the old recovery key.",
   "recover.done_old_key": "Your old recovery key no longer works on this server. If the server is restored from a backup made before today, the old master password and the old recovery key work again and the new ones do not. Keep your old page 2 until you know a new backup has been made.",
   "recover.done_open": "Open the vault",
+  "recover.done_passkeys": "Passkeys that were added before the recovery still open the vault. Look at the list and remove any you do not recognise.",
+  "recover.done_passkeys_link": "Unlock methods",
   "recover.done_sheet": "Page 1 of your emergency sheet did not change: the QR text and the secret key stay the same.",
   "recover.done_signed_in": "You are signed in with your new master password.",
   "recover.email": "E-mail",
