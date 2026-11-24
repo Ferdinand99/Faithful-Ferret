@@ -793,12 +793,6 @@ max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
-function = "^unlockjob_pin_unlock externref shim multivalue shim$"
-instruction = "br_table"
-max = 1
-reason = "APPROVED: The table jump is the match on the unlock method of the stored wrap (extension PIN or mobile PIN) and on whether a device secret was handed in, inlined into the shim: public tags of the call and of the record. The PIN bytes are only passed on to the key derivation, and no byte of the PIN or of a key decides a branch or an address here."
-
-[[allow]]
 function = "^unlockjob_recover externref shim multivalue shim$"
 instruction = "br_table"
 max = 1
