@@ -1014,11 +1014,8 @@ impl Vault {
             let method_id = arr::<16>(&method_id)?;
             let salt = arr::<16>(&device_salt)?;
             let mut bytes = Zeroizing::new(arr::<32>(&key)?);
-            // No branch on the bytes of the key: every one is read.
-            if bytes.iter().fold(0u8, |acc, b| acc | b) == 0 {
-                return Err(Error::InvalidInput(ferret_core::InputError::AllZero).into());
-            }
-            let kek = Kek::from_pin_extension_key(&mut bytes);
+            // The core refuses 32 zero bytes (reading every one) and wipes the array.
+            let kek = Kek::from_pin_extension_key(&mut bytes)?;
             to_js(&pin_wrap_out(vault, &kek, salt, method_id, 0)?)
         })
     }

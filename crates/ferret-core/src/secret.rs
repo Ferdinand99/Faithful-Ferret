@@ -177,7 +177,7 @@ secret_types! {
 /// authenticator, keystore or key derivation returns that; it is a buffer
 /// that was wiped, never filled or reused, and using it as a key would wrap
 /// the vault under a value anyone can guess.
-fn check_not_all_zero<const N: usize>(bytes: &mut [u8; N]) -> Result<(), Error> {
+pub(crate) fn check_not_all_zero<const N: usize>(bytes: &mut [u8; N]) -> Result<(), Error> {
     if bytes.iter().fold(0u8, |acc, b| acc | b) == 0 {
         zeroize::Zeroize::zeroize(bytes);
         return Err(Error::InvalidInput(InputError::AllZero));
