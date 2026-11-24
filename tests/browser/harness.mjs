@@ -435,6 +435,7 @@ async function leakRun() {
     if (wrap.method.credential_id != null) method.credential_id = hex(wrap.method.credential_id);
     if (wrap.method.prf_salt != null) method.prf_salt = hex(wrap.method.prf_salt);
     if (wrap.method.device_salt != null) method.device_salt = hex(wrap.method.device_salt);
+    if (wrap.method.pin_profile != null) method.pin_profile = wrap.method.pin_profile;
     const reply = JSON.parse(
       wasm.test_run_case(
         "wrap_open",
