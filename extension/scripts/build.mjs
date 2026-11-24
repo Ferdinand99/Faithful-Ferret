@@ -6,12 +6,15 @@
 //   node scripts/build.mjs --check-release <.xpi or folder>...
 //
 // --features names the features that are on, separated by commas ("none" for
-// none); without it a variant has its own default (DEFAULT_FEATURES). The one
-// feature is `save` (saving and updating passwords from the extension and the
-// password generator): on in a release and in the test variant. The build
-// writes shared/features.mjs with the result, and the release check refuses a
-// release package with `save` off, without that file, or without the capture
-// script. A package for a test can still be built with `--features none`.
+// none); without it a variant has its own default (DEFAULT_FEATURES). The
+// features are `save` (saving and updating passwords from the extension and the
+// password generator), on in a release and in the test variant, and `unlock`
+// (PIN and passkey unlock), on in the test variant only until it is released. The
+// build writes shared/features.mjs with the result, and the release check
+// refuses a release package with a feature on that a release does not have
+// (RELEASE_FEATURES), with a feature off that it must have, without that file, or
+// without the files of a feature that is on. A package for a test can still be
+// built with `--features none`.
 //
 // 1. Reads ../web/wasm.lock.json ({version, url, sha256}), fetches the published
 //    ferret-core-wasm-web-<version>.tar.gz (or takes --wasm-tar), checks its
@@ -81,12 +84,15 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
  * the extension (the capture script, the offer in Ferret's UI, the generator).
  * A release has it on, and so has the test variant; a test build can turn it off (`--features none`) to prove that
  * "off" leaves no path of the feature in the package.
+ * `unlock`: unlocking with a PIN or a passkey (the handlers, the unlock window, the controls, the PIN store). It is on
+ * in the test variant only, until it is released; a release has it off, and a package with it off holds no path of it
+ * (the only trace is the deletion of the unlock database at start, so that a blob left by an older build is removed).
  */
-export const FEATURES = Object.freeze(["save"]);
+export const FEATURES = Object.freeze(["save", "unlock"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
   release: Object.freeze(["save"]),
-  test: Object.freeze(["save"]),
+  test: Object.freeze(["save", "unlock"]),
 });
 /** The features a release package has on, no more and no fewer: the release check refuses any other set. */
 export const RELEASE_FEATURES = Object.freeze(["save"]);
@@ -97,6 +103,16 @@ export const FEATURES_FILE = "shared/features.mjs";
  * with `save` off never holds one (the build leaves them out), and a release always does (the release check).
  */
 export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", CAPTURE_ENTRY]);
+/**
+ * The package files of the `unlock` feature: the window for a passkey unlock and the one module that owns the PIN
+ * store (the only code that opens the unlock database). A package with `unlock` off never holds one, and a release
+ * that has the feature on always does (the release check). A file that imports one of them must do so behind
+ * `FEATURES.unlock`, as a dynamic import, because the build leaves them out and refuses a package with a dangling
+ * import. The handlers of the feature stay in the package and refuse when the feature is off.
+ */
+export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "background/localUnlock.mjs"]);
+/** The package files of each feature that has files of its own. */
+export const FEATURE_FILES = Object.freeze({ save: SAVE_FILES, unlock: UNLOCK_FILES });
 
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -818,7 +834,8 @@ export function featuresModule(on, dist) {
 
 /**
  * What a release package must hold of the features: the features module that the build writes for a release (every
- * feature of RELEASE_FEATURES on, no other feature on), and every file of the `save` feature.
+ * feature of RELEASE_FEATURES on, no other feature on), every file of each feature a release has on, and no file of a
+ * feature it has not.
  * @param {Map<string, Buffer>} files path -> bytes
  * @returns {string[]}
  */
@@ -843,13 +860,15 @@ export function featureProblems(files) {
       if (problems.length === 0) problems.push(`${FEATURES_FILE}: not the module the build writes for a release`);
     }
   }
-  if (RELEASE_FEATURES.includes("save")) {
-    for (const path of SAVE_FILES) {
-      if (!files.has(path)) problems.push(`${path}: belongs to the save feature, which a release has on, and is missing`);
-    }
-  } else {
-    for (const path of SAVE_FILES) {
-      if (files.has(path)) problems.push(`${path}: belongs to the save feature, which a release may not have`);
+  for (const [name, paths] of Object.entries(FEATURE_FILES)) {
+    if (RELEASE_FEATURES.includes(name)) {
+      for (const path of paths) {
+        if (!files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release has on, and is missing`);
+      }
+    } else {
+      for (const path of paths) {
+        if (files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release may not have`);
+      }
     }
   }
   return problems;
@@ -996,8 +1015,10 @@ export async function build({
   }
   dist.set("manifest.json", Buffer.from(`${JSON.stringify(manifestJson, null, 2)}\n`));
 
-  // A package with `save` off holds no file of that feature (this runs after every step that adds files).
-  if (!on.includes("save")) for (const path of SAVE_FILES) dist.delete(path);
+  // A package with a feature off holds no file of that feature (this runs after every step that adds files).
+  for (const [name, paths] of Object.entries(FEATURE_FILES)) {
+    if (!on.includes(name)) for (const path of paths) dist.delete(path);
+  }
 
   // 5. Checks.
   for (const [path, bytes] of dist) checkFile(path, bytes);
