@@ -95,9 +95,10 @@ test("the_menu_is_built_from_the_routes_and_a_page_with_no_routes_has_no_entries
       prefs: createUiPrefs(null),
     });
     assert.equal(find(bare, "nav-items"), null);
-    // The planned pages are shown all the same, and they are not links.
-    assert.ok(find(bare, "nav-generator"));
-    assert.equal(find(bare, "nav-generator").getAttribute("href"), null);
+    // The planned page is shown all the same, and it is not a link; the generator is a page and has no entry without its route.
+    assert.ok(find(bare, "nav-health"));
+    assert.equal(find(bare, "nav-health").getAttribute("href"), null);
+    assert.equal(find(bare, "nav-generator"), null);
   });
 });
 

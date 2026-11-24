@@ -291,6 +291,8 @@ export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
       } catch (error) {
         const toBridge = /gave no activeTab/.test(String(error)) && /"tabUrl":"moz-extension:/.test(String(error));
         if (!retry || attempt >= 3 || !toBridge) throw error;
+        // Said every time, so a run of focus races cannot hide in a green run.
+        console.error(`${channel}: the shortcut went to the bridge tab on ${url}; pressing it again (retry ${attempt} of 2)`);
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }

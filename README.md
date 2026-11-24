@@ -12,7 +12,7 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.9.0).** The cryptographic core, the OPAQUE server library, the server and the
+> **Status: in development, pre-1.0 (v0.10.0).** The cryptographic core, the OPAQUE server library, the server and the
 > web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
 > backups with an encrypted copy off the machine. v0.6.0 added devices: clients other than the web vault sign in with
@@ -21,11 +21,11 @@
 > session has ended (see [What works today](#what-works-today)). v0.8.0 added a password generator, a comparison of a
 > stored field with a given value, and password history to the core. v0.9.0 shows the previous passwords of an item in
 > the web vault, makes the side menu's "Import and export" reach both pages, and teaches the Firefox extension to
-> work out what a form is for before it fills.
-> The Firefox extension now also offers to save a new password or update a changed one, and has a password generator
-> in its popup; the web vault has no generator screen yet. The extension is not on the Firefox add-ons store. A health
-> check is next. Ferret is a
-> single-author project and is **not for real passwords yet**. There is no external audit, and none is planned.
+> work out what a form is for before it fills. v0.10.0 lets you show or hide the password while you edit an item in the
+> web vault, and the Firefox extension 0.8.0, built from v0.10.0, is the first signed build that offers to save a new password or update a
+> changed one and has a password generator in its popup. The web vault has no generator screen yet, and the extension is
+> not on the Firefox add-ons store. A health check is next. Ferret is a single-author project and is **not for real
+> passwords yet**. There is no external audit, and none is planned.
 
 Faithful Ferret ("Ferret") is a password manager you host yourself, planned as part of
 [Hedgerow](https://hedgerow.tools/), a family of small self-hosted apps. It is built around one rule: the server
@@ -34,7 +34,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.9.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.10.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -75,6 +75,9 @@ These are in v0.9.0 and are tested on a test instance. All of it is pre-1.0, and
   search, filter chips, sortable columns, bulk actions (favourite, move to the trash), a row menu with Move to folder, and an item
   opens in its own view with an edit form. The generator and the health check are in the menu as "Coming soon". The
   menu entry "Import and export" opens a page that leads to both the import page and the export page.
+- **Show or hide the password while editing.** The password field of the form for adding or editing an item has a button
+  that shows what you typed or hides it again (v0.10.0). The password is hidden again when you save, cancel or the vault
+  locks, and whether it is shown is held in the field only: never in an address, a store or a message.
 - **Previous passwords.** When the password of an item is changed in the web vault, the old one is kept in the item
   (encrypted with it) and listed under "Previous passwords" on the item page, newest first, with the date each one was
   replaced. An item keeps up to five. Each value is hidden until you ask for that one, and only one secret on the page
@@ -115,11 +118,13 @@ These are in v0.9.0 and are tested on a test instance. All of it is pre-1.0, and
 
 ### Firefox extension
 
-The first version of the Firefox extension came in v0.7.0. It needs Firefox 153 or newer and is early: it fills
-logins from its popup, offers to save and update passwords, and makes passwords, but it cannot handle passkeys yet.
-It is **not on the Firefox add-ons store**. A build that Mozilla has signed as an unlisted add-on is made by a manually started workflow, and the
-release downloads of v0.9.0 do not include it; the signed builds are on their own releases, named `extension-v` and the
-version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how that build is made, and
+The first version of the Firefox extension came in v0.7.0. Version 0.8.0 of the extension, from v0.10.0 of the
+repository, is the first signed build with saving and the password generator. It needs Firefox 153 or newer and is
+early: it fills logins from its popup, offers to save and update passwords, and makes passwords, but it cannot handle
+passkeys yet. It is **not on the Firefox add-ons store**. A build that Mozilla has
+signed as an unlisted add-on is made by a manually started workflow, and the release downloads of v0.10.0 do not
+include it; the signed builds are on their own releases, named `extension-v` and the version (`extension-v0.8.0` for
+this one). [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how that build is made, and
 [`docs/TESTING-U1.md`](docs/TESTING-U1.md) lists the checks.
 
 - **Sign-in and unlock.** You sign in once, in a tab, with the address of your server (https only), your e-mail, the
@@ -188,7 +193,7 @@ version. [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how 
     host or the exact address; the update changes the password, keeps everything else and keeps the old password under
     "Previous passwords" (up to five). A login that matches only by the site's main domain is listed apart and updated
     only if you pick it. If more than one login could be the one, you pick from a list. The card also names up
-    to three other logins that use the same password. The password is hidden on the card until you press "Show
+    to three logins of other sites that use the same password. The password is hidden on the card until you press "Show
     password".
   - *Nothing without your click.* A save or an update happens only when you press the button on the card, and each
     offer can be used once. "Not now" drops the offer, and "Never for this site" adds the site to a list on the
@@ -228,8 +233,9 @@ backup, which has to pass before real data goes in, is in [`docs/TESTING-M3.md`]
 
 Ferret aims to be a password manager that is light to run and gets the everyday details right:
 
-- **Autofill that notices.** Reliable detection of new and changed passwords, tested against a matrix of real
-  sites before release.
+- **Autofill that notices.** Reliable detection of new and changed passwords, tested before release
+  against our own test forms, modelled on common sign-in, sign-up and change-password patterns, in Firefox Release and
+  ESR.
 - **Unlock the way you want.** Biometric unlock and an optional local PIN, including in the desktop browser
   extension. Ferret never collects or stores biometric data; the operating system confirms it is you.
 - **Small to run.** One container with SQLite and a Rust core, like the other Hedgerow apps, and an extension that
@@ -331,11 +337,11 @@ The steps are the order of work, not cuts in scope, and there are no dates:
    change, encrypted export, import and backups are done (v0.5.0). Devices with tokens bound to a device key, and a
    device list with revoke, are done (v0.6.0). The new web vault layout with folders, and unlock after the session has
    ended, are done (v0.7.0). The core has a password generator, a field comparison and password history (v0.8.0); the
-   web vault lists the previous passwords of an item and keeps them when a password is changed (v0.9.0), and does not
-   use the generator or the field comparison yet.
+   web vault lists the previous passwords of an item and keeps them when a password is changed (v0.9.0) and can show or
+   hide the password while an item is edited (v0.10.0), and it does not use the generator or the field comparison yet.
 5. The browser extension and the iOS and Android apps. The first Firefox extension is done (v0.7.0): sign-in, sync,
    suggestions and fill from the popup, copy, and auto-lock; since v0.9.0 it also checks what a form is for before it
-   fills. It now also offers to save new and changed passwords and has a password
+   fills. Version 0.8.0 of the extension (v0.10.0) also offers to save new and changed passwords and has a password
    generator in its popup. A health check and the rest of the 1.0 list are next. The apps are later.
 6. Hardening and 1.0 (later).
 

@@ -12,6 +12,7 @@ const ROUTES = [
   { path: "/items", title: "t.items", sidebar: { section: "main", order: 10, icon: "items", role: "nav-items", count: "all" }, load() {} },
   { path: "/favorites", title: "t.fav", sidebar: { section: "main", order: 20, icon: "star", role: "nav-favorites", count: "favorites" }, load() {} },
   { path: "/items/new", title: "t.new", sidebar: { section: "primary", order: 1, icon: "plus", role: "nav-new" }, load() {} },
+  { path: "/generator", title: "t.generator", sidebar: { section: "tools", order: 10, icon: "generator", role: "nav-generator", title: "t.generator_label" }, load() {} },
   { path: "/trash", title: "t.trash", sidebar: { section: "manage", order: 20, icon: "trash", role: "nav-trash", title: "t.trash_label" }, load() {} },
   { path: "/transfer", title: "t.transfer", sidebar: { section: "tools", order: 30, icon: "transfer", role: "nav-transfer", activeFor: ["/import", "/export"] }, load() {} },
   { path: "/account", title: "t.account", load() {} },
@@ -25,7 +26,7 @@ test("the_entries_come_from_the_routes_in_sections_and_in_order", () => {
   assert.deepEqual(ids(sections), [
     ["primary", ["/items/new"]],
     ["main", ["/items", "/favorites"]],
-    ["tools", ["generator", "health", "/transfer"]],
+    ["tools", ["/generator", "health", "/transfer"]],
     ["manage", ["/trash"]],
   ]);
   const by = Object.fromEntries(sections.flatMap((s) => s.entries).map((e) => [e.id, e]));
@@ -42,7 +43,7 @@ test("a_route_that_does_not_ask_to_be_listed_is_not_listed", () => {
   const all = sidebarModel({ routes: ROUTES }).flatMap((s) => s.entries.map((e) => e.id));
   for (const unlisted of ["/account", "/password"]) assert.ok(!all.includes(unlisted), unlisted);
   // No routes at all: only the pages that are planned.
-  assert.deepEqual(ids(sidebarModel({ routes: [] })), [["tools", ["generator", "health"]]]);
+  assert.deepEqual(ids(sidebarModel({ routes: [] })), [["tools", ["health"]]]);
 });
 
 test("a_route_with_a_bad_menu_entry_is_left_out_and_never_breaks_the_menu", () => {
@@ -63,7 +64,7 @@ test("a_route_with_a_bad_menu_entry_is_left_out_and_never_breaks_the_menu", () =
 
 test("the_planned_pages_are_entries_that_are_not_links", () => {
   const soon = sidebarModel({ routes: [] }).flatMap((s) => s.entries);
-  assert.deepEqual(soon.map((e) => [e.id, e.kind, e.href]), [["generator", "soon", null], ["health", "soon", null]]);
+  assert.deepEqual(soon.map((e) => [e.id, e.kind, e.href]), [["health", "soon", null]]);
   // The Folders page is a route now (routes/folders.route.mjs), not a planned page.
   assert.ok(!soon.some((e) => e.id === "folders"));
 });
@@ -124,7 +125,8 @@ test("the_entry_the_page_belongs_to_is_the_closest_one_and_only_one", () => {
   assert.equal(at("/trash"), "/trash");
   assert.equal(at("/account"), null);
   assert.equal(at("/itemsx"), null, "a longer word is not below the path");
-  assert.equal(at("/generator"), null, "a planned page is never current");
+  assert.equal(at("/generator"), "/generator", "the generator is a page now");
+  assert.equal(at("/health"), null, "a planned page is never current");
 });
 
 test("every_route_of_the_build_that_asks_for_a_place_in_the_menu_gets_one", async () => {

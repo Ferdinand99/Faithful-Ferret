@@ -182,6 +182,25 @@ test.describe("one item on a desktop", () => {
     expect(await page.evaluate(() => window.__calls.copied)).toEqual([PASSWORD, "https://github.com/login"]);
   });
 
+  test("a_copied_secret_is_cleared_after_30_seconds_and_a_web_address_is_left_alone", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item");
+    // The 30 seconds are taken by the test, so that it does not wait for them.
+    await page.evaluate(() => {
+      const original = window.setTimeout.bind(window);
+      window.__clears = [];
+      window.setTimeout = (fn, ms, ...rest) => (ms === 30000 ? (window.__clears.push(fn), 0) : original(fn, ms, ...rest));
+    });
+    await page.getByRole("button", { name: "Copy Web address" }).click();
+    expect(await page.evaluate(() => window.__clears.length)).toBe(0);
+    await page.getByRole("button", { name: "Copy Password" }).click();
+    await expect(page.locator('[data-role="message"]')).toContainText("Ferret clears it in 30 seconds if this tab is open");
+    expect(await page.evaluate(() => window.__clears.length)).toBe(1);
+    expect(await page.evaluate(() => window.__calls.copied)).toEqual(["https://github.com/login", PASSWORD]);
+    await page.evaluate(() => window.__clears[0]());
+    await expect.poll(() => page.evaluate(() => window.__calls.copied)).toEqual(["https://github.com/login", PASSWORD, ""]);
+  });
+
   test("the_tab_order_in_the_item_goes_through_the_actions_then_the_buttons_of_each_field", async ({ page }) => {
     await ready(page);
     await scene(page, "item");
