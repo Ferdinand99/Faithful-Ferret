@@ -730,7 +730,8 @@ test("pin_set_confirms_the_account_key_of_the_password_wrap_without_making_a_vau
   w.state.confirmCheck = () => {
     throw coded("pinned_auth_key");
   };
-  assert.deepEqual(await w.setPin(), { ok: false, reason: "wrong_credentials" });
+  // That is the signal of a server that lies, not a typo: the attack warning.
+  assert.deepEqual(await w.setPin(), { ok: false, reason: "attack_warning" });
   assert.equal(w.state.wraps, 0, "no Argon2id and no wrap");
   assert.equal((await w.status()).set, false);
   assert.equal(w.coreHost.state(), "unlocked", "the vault that is open stays open");
@@ -742,6 +743,16 @@ test("pin_set_confirms_the_account_key_of_the_password_wrap_without_making_a_vau
   assert.deepEqual(Object.keys(call.ctx).sort(), ["account_id", "vault_id", "vk_epoch"]);
   assert.equal(call.ctx.vk_epoch, 1);
   assert.equal(w.client.calls.filter((c) => c.method === "unlock_password").length, unlocks, "no second vault was made");
+  assert.deepEqual(await w.page.request("pin_off", {}), { ok: true });
+
+  // The server says the vault is at another epoch than the one that is open: the core takes a vault key of a higher
+  // epoch as new, so the password is not confirmed against it, and the core is not asked.
+  w.state.vkEpoch = 2;
+  const asked = w.state.confirmCalls.length;
+  assert.deepEqual(await w.setPin(), { ok: false, reason: "attack_warning" });
+  assert.equal(w.state.confirmCalls.length, asked);
+  assert.equal(w.state.wraps, 1, "only the first PIN was wrapped");
+  assert.equal((await w.status()).set, false);
 });
 
 test("every_refusal_after_a_pin_unlock_that_is_not_an_answer_of_the_server_locks_and_wipes", async () => {

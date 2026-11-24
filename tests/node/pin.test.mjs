@@ -307,3 +307,45 @@ test("confirm_password_proves_the_password_and_the_account_key_without_making_a_
   // A wrap for another epoch than the pinned one is refused too.
   assert.equal(typeof code(() => login().confirm_password(URL_, { ...CTX, vk_epoch: 2 }, created.wraps[0], pinned(created.pinned))), "string");
 });
+
+test("confirm_password_refuses_a_wrap_of_another_vault_key_made_for_the_next_epoch", () => {
+  // A server that knows the export key (an account without a secret key, an OPAQUE record of its own) serves the password
+  // wrap of ANOTHER vault key, made for the next epoch under that export key. The core takes a vault key of a higher
+  // epoch as new and does not compare `pk_a`, so `unlock_password` opens it; confirming a password must not.
+  const { server, created, record } = newAccount("confirm-epoch", { secretKey: false });
+  const other = newAccount("confirm-epoch-other");
+  const [ptr, len] = other.vault.test_vk_region();
+  const otherVk = Buffer.from(wasm.test_read_memory(ptr, len)).toString("hex");
+  const hex = (bytes) => Buffer.from(bytes).toString("hex");
+  const login = () => {
+    const job = new wasm.UnlockJob();
+    const ke1 = job.login_start(enc.encode(PASSWORD), null);
+    const ke2 = server.login_start(record, IDS.account_id, ke1);
+    job.login_finish(ke2, 1, pinned(created.pinned));
+    return job;
+  };
+  const exportKey = login().test_export_key();
+  const sealed = JSON.parse(
+    wasm.test_run_case(
+      "wrap_password",
+      JSON.stringify({
+        op: "wrap.seal.password",
+        input: {
+          account_id: hex(IDS.account_id), vault_id: hex(IDS.vault_id), method_id: hex(created.wraps[0].method_id),
+          vk_epoch: "2", kek_generation: "1", ksf_profile: 1, export_key: hex(exportKey), vk: otherVk,
+        },
+        rng: [hex(fill(24, 7))],
+      }),
+    ),
+  );
+  assert.equal(sealed.ok, true, JSON.stringify(sealed));
+  const forged = { ...created.wraps[0], wrap: Uint8Array.from(Buffer.from(sealed.output.wrap, "hex")) };
+  const next = { ...CTX, vk_epoch: 2 };
+  // The gap is real in `unlock_password`: a higher epoch is new by design, and the wrap opens.
+  assert.doesNotThrow(() => login().unlock_password(URL_, next, forged, pinned(created.pinned)));
+  // Confirming a password refuses it, whichever epoch the caller names for it.
+  assert.equal(code(() => login().confirm_password(URL_, next, forged, pinned(created.pinned))), "pinned_vk_epoch");
+  assert.equal(code(() => login().confirm_password(URL_, CTX, forged, pinned(created.pinned))), "decrypt");
+  // And the honest wrap at the pinned epoch still confirms.
+  assert.equal(login().confirm_password(URL_, CTX, created.wraps[0], pinned(created.pinned)), undefined);
+});

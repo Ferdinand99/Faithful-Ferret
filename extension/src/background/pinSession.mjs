@@ -100,6 +100,11 @@ export function pinSessionMethods(inner) {
         const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
         const wraps = methods.methods.filter((/** @type {{ method_type: number }} */ m) => m.method_type === 1);
         if (wraps.length !== 1) throw new AccountError("methods_invalid");
+        // The password is confirmed for the vault that is open, at the epoch it is open at: the server's word that the
+        // epoch is another says nothing (and the core takes a vault key of a higher epoch as new, without `pk_a`).
+        if (num(methods.vk_epoch) !== num(open.vkEpoch) || num(methods.vk_epoch) !== num(record.vk_epoch_max)) {
+          throw new AccountError("pinned_vk_epoch");
+        }
         const ctx = { account_id: hex16.decode(accountId), vault_id: record.vault_id, vk_epoch: methods.vk_epoch };
         await env.client.vault.confirm_password(env.server, ctx, wrapToCore(wraps[0], start.ksf_profile), { kind: "pinned", record });
       } finally {

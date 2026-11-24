@@ -314,7 +314,6 @@ export function createPinHost({
     switch (code) {
       case "decrypt":
       case "denied":
-      case "pinned_auth_key":
       case "sk_required":
       case "sk_answer_required":
       case "password_required":

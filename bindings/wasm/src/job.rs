@@ -529,6 +529,10 @@ impl UnlockJob {
     /// refusal is the core's code: `pinned_auth_key` when the wrap opens to
     /// another vault key, `decrypt` for a wrong password. A pin state of
     /// `first_use` is refused: a device confirms against what it has pinned.
+    /// The epoch of `ctx` must be the pinned one: in a higher epoch the core
+    /// takes the vault key as new and does not compare `pk_a`, so a wrap of
+    /// another vault key at the next epoch would pass. Confirming says
+    /// nothing once the epoch has moved (`pinned_vk_epoch`).
     pub fn confirm_password(
         &mut self,
         server_url: &str,
@@ -538,10 +542,13 @@ impl UnlockJob {
     ) -> Result<JsValue, JsValue> {
         run(|| {
             let pin = from_js::<PinArg>(pin)?.core()?;
-            if !matches!(pin, Pin::Pinned { .. }) {
+            let Pin::Pinned { record, .. } = &pin else {
                 return Err(Fail::Input);
-            }
+            };
             let ctx = from_js::<CtxDto>(ctx)?.core();
+            if ctx.vk_epoch != record.vk_epoch_max {
+                return Err(Error::Pinned(PinnedField::VkEpoch).into());
+            }
             let rec = from_js::<WrapDto>(pw_wrap)?.core()?;
             if !matches!(rec.method, Method::Password { .. }) {
                 return Err(Fail::Input);
