@@ -8,8 +8,8 @@
 
 use crate::error::{Fail, Res};
 use ferret_core::{
-    AccountId, Error, KsfProfile, ManifestRow, Method, MethodId, MethodKey, Pinned, SealedItem,
-    VaultContext, VaultId, WrapRecord,
+    AccountId, Error, KsfProfile, ManifestRow, Method, MethodId, MethodKey, PinProfile, Pinned,
+    SealedItem, VaultContext, VaultId, WrapRecord,
 };
 use serde::de::{self, DeserializeOwned, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -274,6 +274,8 @@ pub(crate) struct MethodDto {
     pub(crate) r#type: String,
     #[serde(default)]
     pub(crate) ksf_profile: Option<u32>,
+    #[serde(default)]
+    pub(crate) pin_profile: Option<u32>,
     #[serde(default, with = "opt_bytes")]
     pub(crate) credential_id: Option<Vec<u8>>,
     #[serde(default, with = "opt_b32")]
@@ -295,7 +297,11 @@ impl MethodDto {
             },
             "pin" => Method::Pin {
                 device_salt: self.device_salt.ok_or(Fail::Input)?,
+                profile: PinProfile::from_wire(self.pin_profile.ok_or(Fail::Input)?)?,
             },
+            // The mobile PIN needs a hardware-bound secret that a browser does
+            // not have: the binding neither makes nor opens such a wrap.
+            "pin_mobile" => return Err(Fail::Input),
             "device" => Method::Device,
             _ => return Err(Fail::Input),
         })
@@ -305,6 +311,7 @@ impl MethodDto {
         let mut dto = Self {
             r#type: String::new(),
             ksf_profile: None,
+            pin_profile: None,
             credential_id: None,
             prf_salt: None,
             device_salt: None,
@@ -323,8 +330,16 @@ impl MethodDto {
                 dto.credential_id = Some(credential_id.clone());
                 dto.prf_salt = Some(*prf_salt);
             }
-            Method::Pin { device_salt } => {
+            Method::Pin {
+                device_salt,
+                profile,
+            } => {
                 dto.r#type = "pin".into();
+                dto.device_salt = Some(*device_salt);
+                dto.pin_profile = Some(u32::from(profile.number()));
+            }
+            Method::PinMobile { device_salt } => {
+                dto.r#type = "pin_mobile".into();
                 dto.device_salt = Some(*device_salt);
             }
             Method::Device => dto.r#type = "device".into(),
@@ -625,6 +640,7 @@ impl Shaped for MethodDto {
     const SHAPE: Shape = Shape::Obj(&[
         ("type", &ANY),
         ("ksf_profile", &ANY),
+        ("pin_profile", &ANY),
         ("credential_id", &ANY),
         ("prf_salt", &ANY),
         ("device_salt", &ANY),

@@ -81,8 +81,8 @@ generation rather than rewritten in place.
 ## The PIN wrap
 
 A local `pin` wrap (method type 4) has an AAD of its own. It uses a different
-label, the same field order, no `kek_generation`, and the 16-byte salt of the PIN
-stretching:
+label, the same field order, no `kek_generation`, the 16-byte salt of the PIN
+stretching, and, last, the Argon2id parameters the KEK was made with:
 
 ```
 label            0x01  "ferret/v1/pin"
@@ -93,7 +93,14 @@ method_type      0x14  0x04
 method_id        0x13
 vk_epoch         0x20
 device_salt      0x37
+kdf              0x30  m (KiB) | t | p, each a u32 big-endian (12 bytes)
 ```
+
+For the browser extension the `kdf` is the parameters of the PIN profile
+stored with the blob (profile 1: 256 MiB, `t = 3`, `p = 1`). The mobile PIN
+keeps profile 1 of the sign-in (64 MiB, `t = 3`, `p = 1`) and states that in
+the same field. A wrap whose `kdf` differs from the profile it is opened with
+does not open, so a blob cannot be presented under a weaker profile.
 
 The wrap exists only on one device and is replaced, never rolled forward, so it has
 no generation. It carries a key commitment, like the password wrap.

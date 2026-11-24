@@ -7,11 +7,12 @@
 //! with a TLV salt (Fase 1 § 3.1) and a fixed `info`. Intermediate key bytes
 //! live in [`Zeroizing`] buffers and are wiped on every path.
 
-use crate::error::Error;
+use crate::error::{Error, InputError};
 use crate::ids::{AccountId, VaultId};
 use crate::ksf_profile::KsfProfile;
+use crate::pin_profile::PinProfile;
 use crate::prim::ed25519::{Ed25519Key, ed25519_from_seed};
-use crate::prim::{ct::ct_eq, hkdf::hkdf_sha256};
+use crate::prim::{KdfParams, ct::ct_eq, hkdf::hkdf_sha256};
 use crate::rng::SecureRng;
 use crate::secret::{
     AuthSeed, ExportKey, KDel, KHead, KMeta, Kek, KekDevPin, PrfOutput, RecoveryKey, VaultKey,
@@ -215,15 +216,25 @@ pub fn recovery_public_key(rk: &RecoveryKey, account_id: &AccountId) -> Result<[
     Ok(ed25519_from_seed(&*recovery_seed(rk, account_id)?).public_key())
 }
 
-/// `Argon2id(PIN, device_salt, profile 1, 32)`.
-fn pin_stretch(pin: &Pin, device_salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, Error> {
+/// A key is never made from a PIN below the absolute floor (a PIN of one to
+/// three characters, or one that has been wiped), whatever the rule says;
+/// nothing is computed.
+fn check_pin_floor(pin: &Pin) -> Result<(), Error> {
+    if pin.meets_floor() {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(InputError::TooShort))
+    }
+}
+
+/// `Argon2id(PIN, device_salt, params, 32)`.
+fn pin_stretch(
+    pin: &Pin,
+    device_salt: &[u8; 16],
+    params: KdfParams,
+) -> Result<Zeroizing<[u8; 32]>, Error> {
     let mut out = Zeroizing::new([0u8; 32]);
-    crate::prim::argon2::argon2id(
-        pin.as_bytes(),
-        device_salt,
-        KsfProfile::P1.params(),
-        out.as_mut_slice(),
-    )?;
+    crate::prim::argon2::argon2id(pin.as_bytes(), device_salt, params, out.as_mut_slice())?;
     Ok(out)
 }
 
@@ -275,15 +286,24 @@ impl Kek {
     }
 
     /// `KEK_pin` of the browser extension: Argon2id of the PIN alone, with
-    /// profile 1 (64 MiB, `t = 3`, `p = 1`) and `device_salt` as the salt.
+    /// the parameters of a PIN profile ([`PinProfile::params`]) and
+    /// `device_salt` as the salt.
     ///
-    /// The PIN is a convenience, not a security boundary, in the extension
-    /// (Fase 1 § 7.1).
+    /// A profile below [`crate::PIN_PROFILE_MIN`] is refused before any
+    /// Argon2id is run (`kdf_profile_downgrade`), and so is a PIN below the
+    /// floor of [`crate::PIN_FLOOR`] characters (`input_too_short`). The same profile goes into
+    /// the `kdf` field of the wrap's AAD ([`crate::Method::Pin`]).
     ///
-    /// Spec: Fase 1 § 7.2: `KEK_pin = Argon2id(PIN, device_salt, m = 64 MiB,
-    /// t = 3, p = 1, L = 32)`.
-    pub fn from_pin_extension(pin: &Pin, device_salt: &[u8; 16]) -> Result<Kek, Error> {
-        let mut kek = pin_stretch(pin, device_salt)?;
+    /// Spec: Fase 1 § 7.2: `KEK_pin = Argon2id(PIN, device_salt, m, t, p,
+    /// L = 32)` with the parameters of the PIN profile.
+    pub fn from_pin_extension(
+        pin: &Pin,
+        device_salt: &[u8; 16],
+        profile: PinProfile,
+    ) -> Result<Kek, Error> {
+        let params = profile.at_least_min()?.params();
+        check_pin_floor(pin)?;
+        let mut kek = pin_stretch(pin, device_salt, params)?;
         Ok(Kek::from_array_wiping(&mut kek))
     }
 
@@ -295,12 +315,17 @@ impl Kek {
     /// `HKDF(salt = TLV[label="ferret/v1/kek/pin", device_salt],
     /// ikm = KEK_dev_pin ‖ Argon2id(PIN, device_salt, m=64 MiB, t=3, p=1, 32),
     /// info = "ferret/v1/kek/pin")`.
+    ///
+    /// The mobile PIN keeps profile 1 of the sign-in ([`KsfProfile::P1`], 64
+    /// MiB): the hardware-bound `KEK_dev_pin` limits the guessing to the
+    /// device, so the PIN profile of the extension does not apply.
     pub fn from_pin_mobile(
         pin: &Pin,
         device_salt: &[u8; 16],
         kek_dev_pin: &KekDevPin,
     ) -> Result<Kek, Error> {
-        let stretched = pin_stretch(pin, device_salt)?;
+        check_pin_floor(pin)?;
+        let stretched = pin_stretch(pin, device_salt, KsfProfile::P1.params())?;
         let mut ikm = Zeroizing::new([0u8; 64]);
         let (head, tail) = ikm.split_at_mut(32);
         head.copy_from_slice(kek_dev_pin.expose());

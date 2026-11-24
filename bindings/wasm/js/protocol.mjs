@@ -139,9 +139,9 @@ export const JOB_WORKER_FUNCTIONS = new Set(["argon2_export_key"]);
 export const SECRET_ARGS = {
   login_start: [0],
   register_start: [0],
-  pin_unlock: [0, 3],
+  pin_unlock: [0],
   unlock_prf: [2],
-  wrap_pin: [0, 2],
+  wrap_pin: [0],
   wrap_prf: [2],
   export_begin: [3],
   export_finish: [0],
@@ -169,9 +169,9 @@ export const SECRET_ARGS = {
 export const BYTES_ARGS = {
   login_start: [[0, false, false]],
   register_start: [[0, false, false]],
-  pin_unlock: [[0, false, false], [3, true, true]],
+  pin_unlock: [[0, false, false]],
   unlock_prf: [[2, false, true]],
-  wrap_pin: [[0, false, false], [2, true, true]],
+  wrap_pin: [[0, false, false]],
   wrap_prf: [[2, false, true]],
   export_begin: [[3, true, true]],
   export_finish: [[0, false, true]],

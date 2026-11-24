@@ -689,7 +689,11 @@ with its reason, and each is repeated in the report.
   device. Depending on inlining, the lookups sit in `normalize_password` itself
   or in helpers of `core` (UTF-8 decoding, `chars`) and of
   `unicode-normalization` (shared with the NFC of folder names), which the
-  scan counts but does not gate (R6). Accepted.
+  scan counts but does not gate (R6). Accepted. A text PIN goes through the
+  same normalization (`Pin::new`, with the same tables and the same reasoning:
+  once per PIN entry, in the user's own worker) and is accepted in the same
+  way; its length is looked at by the rule of the server, and nothing else is
+  decided on its characters.
 - **R2. TOTP code.** `totp_code` takes the dynamic truncation of the HMAC
   output modulo 10^digits. The dividend is the HMAC output of this one code,
   not the TOTP secret, and the code is shown to the user and sent to a server.

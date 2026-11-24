@@ -19,6 +19,7 @@ mod key_groups;
 mod opaque_groups;
 mod origin_groups;
 mod passkey_groups;
+mod pin_groups;
 mod server_groups;
 mod text_groups;
 mod totp_groups;
@@ -89,6 +90,7 @@ const GROUPS: &[Group] = &[
     ),
     ("internal/url-match.json", url_match_groups::url_match),
     ("internal/generator.json", generator_groups::generator_file),
+    ("internal/pin.json", pin_groups::pin),
 ];
 
 /// Serializes a vector file the way every generated file is written:

@@ -7,4 +7,4 @@ pub mod pin;
 pub mod unicode;
 
 pub use password::{ExportPassword, MasterPassword, MpPolicy, OpaqueInput};
-pub use pin::{PIN_MAX_DIGITS, PIN_MIN_DIGITS, Pin};
+pub use pin::{PIN_FLOOR, PIN_MAX_BYTES, PIN_MAX_SCALARS, Pin, PinRule, pin_meets_rule};

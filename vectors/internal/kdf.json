@@ -563,10 +563,11 @@
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-        "pin": "123456"
+        "pin": "123456",
+        "pin_profile": 1
       },
       "expect": {
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6"
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5"
       },
       "expect_error": null
     },
@@ -582,16 +583,57 @@
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-        "pin": "98765432"
+        "pin": "98765432",
+        "pin_profile": 1
       },
       "expect": {
-        "kek": "1848922560f245b3156f53632ec00006c9c667b3806b15140a82921677c08efa"
+        "kek": "79595a7dfff889855cc07de196e651014c9edb439aaf50bbc460560b52f891f3"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_extension/valid/003",
+      "title": "a text PIN",
+      "op": "kdf.kek.pin_extension",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "café 42",
+        "pin_profile": 1
+      },
+      "expect": {
+        "kek": "953f1178bcf43c3b8b77d96e99a0de351fed4f95ba7c03aaabfa9b04b1176862"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "kdf/kek_pin_extension/valid/004",
+      "title": "fullwidth digits are the same PIN as ASCII digits",
+      "op": "kdf.kek.pin_extension",
+      "status": "valid",
+      "tags": [
+        "slow"
+      ],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "１２３４５６",
+        "pin_profile": 1
+      },
+      "expect": {
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5"
       },
       "expect_error": null
     },
     {
       "id": "kdf/kek_pin_extension/invalid/001",
-      "title": "five digits are too few",
+      "title": "an empty PIN",
       "op": "kdf.kek.pin_extension",
       "status": "invalid",
       "tags": [],
@@ -599,13 +641,14 @@
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-        "pin": "12345"
+        "pin": "",
+        "pin_profile": 1
       },
       "expect_error": "input_too_short"
     },
     {
       "id": "kdf/kek_pin_extension/invalid/002",
-      "title": "a letter is not a digit",
+      "title": "a control character is refused",
       "op": "kdf.kek.pin_extension",
       "status": "invalid",
       "tags": [],
@@ -613,13 +656,14 @@
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-        "pin": "12a456"
+        "pin": "12\t456",
+        "pin_profile": 1
       },
       "expect_error": "input_forbidden_character"
     },
     {
       "id": "kdf/kek_pin_extension/invalid/003",
-      "title": "fullwidth digits are not ASCII digits",
+      "title": "an unknown PIN profile is refused before Argon2id",
       "op": "kdf.kek.pin_extension",
       "status": "invalid",
       "tags": [],
@@ -627,9 +671,25 @@
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-        "pin": "１２３４５６"
+        "pin": "123456",
+        "pin_profile": 2
       },
-      "expect_error": "input_forbidden_character"
+      "expect_error": "kdf_profile_unknown"
+    },
+    {
+      "id": "kdf/kek_pin_extension/invalid/004",
+      "title": "a PIN of three characters is below the floor of four",
+      "op": "kdf.kek.pin_extension",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "pin": "123",
+        "pin_profile": 1
+      },
+      "expect_error": "input_too_short"
     },
     {
       "id": "kdf/kek_pin_mobile/valid/001",
@@ -673,7 +733,7 @@
     },
     {
       "id": "kdf/kek_pin_mobile/invalid/001",
-      "title": "five digits are too few",
+      "title": "an empty PIN",
       "op": "kdf.kek.pin_mobile",
       "status": "invalid",
       "tags": [],
@@ -682,7 +742,22 @@
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
         "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
-        "pin": "12345"
+        "pin": ""
+      },
+      "expect_error": "input_too_short"
+    },
+    {
+      "id": "kdf/kek_pin_mobile/invalid/002",
+      "title": "a PIN of three characters is below the floor of four",
+      "op": "kdf.kek.pin_mobile",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+        "kek_dev_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+        "pin": "123"
       },
       "expect_error": "input_too_short"
     }

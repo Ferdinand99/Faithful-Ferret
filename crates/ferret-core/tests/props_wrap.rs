@@ -7,8 +7,8 @@
 use ferret_core::testing::TestRng;
 use ferret_core::testing::keys::unlocked_vault_keys;
 use ferret_core::{
-    AccountId, Error, Kek, KsfProfile, Method, MethodId, VaultContext, VaultId, VaultKey,
-    WrapRecord, unwrap_vk, wrap_vk,
+    AccountId, Error, Kek, KsfProfile, Method, MethodId, PinProfile, VaultContext, VaultId,
+    VaultKey, WrapRecord, unwrap_vk, wrap_vk,
 };
 use proptest::prelude::*;
 
@@ -76,7 +76,11 @@ fn method() -> impl Strategy<Value = Method> {
                 prf_salt
             }
         ),
-        any::<[u8; 16]>().prop_map(|device_salt| Method::Pin { device_salt }),
+        any::<[u8; 16]>().prop_map(|device_salt| Method::Pin {
+            device_salt,
+            profile: PinProfile::P1
+        }),
+        any::<[u8; 16]>().prop_map(|device_salt| Method::PinMobile { device_salt }),
         Just(Method::Device),
     ]
 }
@@ -149,7 +153,7 @@ proptest! {
         let mut rec2 = rec.clone();
         // Which AAD fields the method binds. The PIN wrap's AAD (Fase 1
         // § 7.2) has no kek_generation.
-        let is_pin = matches!(i.method, Method::Pin { .. });
+        let is_pin = matches!(i.method, Method::Pin { .. } | Method::PinMobile { .. });
         let flip16 = |b: &[u8; 16]| {
             let mut out = *b;
             out[at.index(16)] ^= mask;
@@ -176,10 +180,15 @@ proptest! {
                 salt[at.index(32)] ^= mask;
                 rec2.method = Method::Prf { credential_id: credential_id.clone(), prf_salt: salt };
             }
-            (7, Method::Pin { device_salt }) => {
+            (7, Method::Pin { device_salt, profile }) => {
                 let mut salt = *device_salt;
                 salt[at.index(16)] ^= mask;
-                rec2.method = Method::Pin { device_salt: salt };
+                rec2.method = Method::Pin { device_salt: salt, profile: *profile };
+            }
+            (7, Method::PinMobile { device_salt }) => {
+                let mut salt = *device_salt;
+                salt[at.index(16)] ^= mask;
+                rec2.method = Method::PinMobile { device_salt: salt };
             }
             (8, m) => {
                 // Another method type (of the same wrap length, so that the
@@ -188,8 +197,13 @@ proptest! {
                     Method::Recovery => Method::Device,
                     Method::Device => Method::Recovery,
                     Method::Prf { .. } => Method::Recovery,
-                    Method::Password { .. } => Method::Pin { device_salt: [mask; 16] },
-                    Method::Pin { .. } => Method::Password { ksf: KsfProfile::P1 },
+                    Method::Password { .. } => Method::Pin {
+                        device_salt: [mask; 16],
+                        profile: PinProfile::P1,
+                    },
+                    Method::Pin { .. } | Method::PinMobile { .. } => {
+                        Method::Password { ksf: KsfProfile::P1 }
+                    }
                 };
             }
             // The field does not exist for this method: nothing to test.

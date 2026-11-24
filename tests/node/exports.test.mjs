@@ -309,8 +309,8 @@ test("every_secret_argument_is_a_bytes_argument_and_every_key_is_listed", async 
     .flatMap(([method, list]) => list.filter(([, , zero]) => zero).map(([i]) => `${method}:${i}`))
     .sort();
   assert.deepEqual(zeroRefused, [
-    "export_begin:3", "export_finish:0", "import_open:1", "pin_unlock:3", "reveal_plain_export:3", "unlock_prf:2",
-    "wrap_pin:2", "wrap_prf:2",
+    "export_begin:3", "export_finish:0", "import_open:1", "reveal_plain_export:3", "unlock_prf:2",
+    "wrap_prf:2",
   ]);
 });
 

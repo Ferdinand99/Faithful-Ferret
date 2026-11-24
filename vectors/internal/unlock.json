@@ -238,16 +238,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect": {
         "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
@@ -265,16 +266,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "ab4a43b1b69b164870082abeb5c24a19c786a9d5c37361cad916674386fe3462",
+        "kek": "b1a3c19325b4b5bc2ff0536f45d53fb6b8af3c9469ebe7f97b0bf4893b135b89",
         "kek_generation": "1",
         "method": {
           "device_salt": "c1c2c3c4c5c6c7c8c9cacbcccdcecfd0",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "797a7b7c7d7e7f808182838485868788",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "2",
-        "wrap": "b0b59ad48ff87c8e9005b226f0554b9edb633ef4fc138261e1762659ee5b02855393312a3a39ce0b6fbd2d7ea42d7154f8f08048cb6e1d054057074394a034b3aee6ecfad17bb602d682a459fc80df63c48f695ff1a59964d495fd4a7c6d54fd4c72ab2de142b16c"
+        "wrap": "b0b59ad48ff87c8e9005b226f0554b9edb633ef4fc13826110b4f914fe41dabea85ef7531b42b50e629f900e97bad0ade3fd98eaa542f2ee77bb8f229a1e453c7b04bb6d607ae0069ad22b3c8620c4e0637d24bbbc137e32f3b55564caaff8e7bdddf8dfa8eddf94"
       },
       "expect": {
         "pk_a": "0a938f7143a37246284d43a8f10adc77d7b29012df19049c93413ad3cbdacaf2",
@@ -296,12 +298,12 @@
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-          "type": "pin"
+          "type": "pin_mobile"
         },
         "method_id": "7a7b7c7d7e7f80818283848586878889",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "6ff6bfc7c82825f0a604ed6cb0ca31de6f8acd093e9ed2a2140c2e495892e882e4a5a03c9a0e1351be86a6152905cff0bb415d2754c41c6709fcb4d79c4b4d8823352e604abe23eba18a678b25f7ec5dda75283bd0a1fc4dbd755b644b5e9ec3382d5ec0d304d326"
+        "wrap": "6ff6bfc7c82825f0a604ed6cb0ca31de6f8acd093e9ed2a2140c2e495892e882e4a5a03c9a0e1351be86a6152905cff0bb415d2754c41c676c46d6dd376497bfa7592bbd5a5ce10ea18a678b25f7ec5dda75283bd0a1fc4dbd755b644b5e9ec3382d5ec0d304d326"
       },
       "expect": {
         "pk_a": "14096862ec96e5ca655ec658a24a0e3c9bdc68dfa0616294f74f1f64a28489c6",
@@ -533,16 +535,17 @@
       "rng": [],
       "input": {
         "account_id": "111112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -556,16 +559,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "2",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -761,16 +765,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "313132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -784,16 +789,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "79797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -1012,6 +1018,7 @@
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "707172737475767778797a7b7c7d7e7f",
@@ -1079,16 +1086,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c1c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db521c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -1112,6 +1120,77 @@
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
         "wrap": "ae956989692eaace041f9d337141df691d1fad8b8c68a3f3064bc0c9fac307f5f5e6767f56957850ff1d89f26c5e2d31303f08a126271eb365bd22064abdbed0b88c2b03e81173b28624993ce813881ae9362350eca7ca507f7c807b97c43e1a435664aa22b1607c"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_kdf_pin/001",
+      "title": "pin: wrap made with another kdf in the AAD",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
+        "kek_generation": "1",
+        "method": {
+          "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
+          "type": "pin"
+        },
+        "method_id": "78797a7b7c7d7e7f8081828384858687",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "983cc1a12c81fd5d9ab9f5d592d2d975463d6582b74160834d1163f4df2b41f9bb23cb82225d34229c89988af408eb27aa2881aed2cc54fe580c1dab335660141b1582f970061024df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/aad_kdf_pin_bit/001",
+      "title": "pin: wrap made with one bit of the kdf changed in the AAD",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
+        "kek_generation": "1",
+        "method": {
+          "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
+          "type": "pin"
+        },
+        "method_id": "78797a7b7c7d7e7f8081828384858687",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "b8c80e74e0bfa84c1b01abb9b8ffc0b7863bb082d0f9da7174bb18f7f257e571fa02d64241e4650242d9a1aa98aed5287c471c9c01d40e452d31f9e0377d120fe4351a24c6712683df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
+      },
+      "expect_error": "decrypt"
+    },
+    {
+      "id": "unlock/pin_as_mobile/001",
+      "title": "pin: the extension wrap presented as the mobile wrap",
+      "op": "wrap.open",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "101112131415161718191a1b1c1d1e1f",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
+        "kek_generation": "1",
+        "method": {
+          "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "type": "pin_mobile"
+        },
+        "method_id": "78797a7b7c7d7e7f8081828384858687",
+        "vault_id": "303132333435363738393a3b3c3d3e3f",
+        "vk_epoch": "1",
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73df6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
@@ -1441,16 +1520,17 @@
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
-        "kek": "42c4b83a071228bfb2ae0b5436dbf7db7a058ddc98bf622d021e16b710d691a6",
+        "kek": "e6993aa69e9b3bf13de8eaf66f673ce3ced60580c331909bc5121afa0e48b3a5",
         "kek_generation": "1",
         "method": {
           "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+          "pin_profile": 1,
           "type": "pin"
         },
         "method_id": "78797a7b7c7d7e7f8081828384858687",
         "vault_id": "303132333435363738393a3b3c3d3e3f",
         "vk_epoch": "1",
-        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf2c9901a3958f9927919d168a74394f9a27f62f43bf986a7d8350e9e7e64a271fd7094707a2ebbe4a0cab3d0f56c606db531c9f76b013c96e03ca4a11ba962c2fec765f787e676085ab80bd0a1f16f14d"
+        "wrap": "7040fecb4012b350b1c2a524f9a0ca5ddf5c8754017f84bf75dfef722ca926e74b5ecf815afb30b2134f7a33f57cd8da76f0a73eb2fdd84d7fbcdfb8f6a502a17fb775f7cb756a73de6b59067ef38e569f41a5a5493f0550d1cd4c49d949ad7c21ded15db1c9ab9d"
       },
       "expect_error": "decrypt"
     },
