@@ -10,8 +10,9 @@
 // granted and the setting is on. `reconcile` makes it so, and runs on every start
 // of the background page; the browser tells when the permission is taken back
 // (`permissions.onRemoved`), and then the script is unregistered and the setting
-// goes off. Turning the setting off takes the permission back too (the settings page removes it; the browser then
-// tells this module, which finds nothing left to switch off). Tabs that are open when the script is registered get it only after
+// goes off. The other way round, when the permission is given (`permissions.onAdded`) the setting goes on, so a grant
+// whose popup was closed by the browser's prompt is finished here. Turning the setting off takes the permission back too
+// (`disable` removes it; the browser then tells this module, which finds nothing left to switch off). Tabs that are open when the script is registered get it only after
 // they are loaded again; the settings page says so.
 //
 // The "never" list is the hosts the user does not want offers for: A-labels in
@@ -42,7 +43,7 @@ const LABEL = /^[a-z0-9.-]+$/;
  *   unregisterContentScripts(filter: { ids: string[] }): Promise<void>,
  *   getRegisteredContentScripts(filter: { ids: string[] }): Promise<Array<{ id: string, js?: string[], matches?: string[], allFrames?: boolean, runAt?: string, persistAcrossSessions?: boolean }>>,
  * }} Scripting
- * @typedef {{ contains(wanted: { origins: string[] }): Promise<boolean> }} Permissions
+ * @typedef {{ contains(wanted: { origins: string[] }): Promise<boolean>, remove?(gone: { origins: string[] }): Promise<boolean> }} Permissions
  */
 
 /** @param {unknown} host @returns {string | null} the A-label as the list keeps it, or null */
@@ -270,7 +271,9 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
       return exclusive(async () => {
         if (!(await permitted())) return { ok: false, reason: "permission_missing" };
         try {
-          await register();
+          // A start that finds the current definition registered leaves it alone, so a second `enable` (the settings view's own,
+          // after the permission's `onAdded` already made one) does not register the script twice.
+          await ensure();
           await storageLocal.set({ [SETTING_KEY]: true });
         } catch {
           await unregister();
@@ -280,12 +283,35 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
       });
     },
 
-    /** Turns capture off: the script goes, and so does everything held for it. */
+    /**
+     * Turns capture off: the script goes, and so does everything held for it, and so does the access to https pages that was
+     * asked for with it. The permission is taken back here, not by the page that asked, so that "off" does not depend on the
+     * popup staying open. (`reconcile` never removes it: a grant that is there with the setting off is finished by
+     * `onAdded`, or by the next press of the switch.)
+     */
     disable() {
       return exclusive(async () => {
         await turnOff("capture_off");
+        try {
+          await permissions.remove?.({ origins: [...CAPTURE_ORIGINS] });
+        } catch {
+          // The access stays and the state read next says so.
+        }
         return { ok: true };
       });
+    },
+
+    /**
+     * The browser's `permissions.onAdded`: when the access to `https` pages is given, capture goes on. The request is made in
+     * the click on the switch, and Firefox closes a toolbar popup when its prompt opens, so the page that asked may be gone by the
+     * time the grant lands; the grant and the setting are one, so it is finished here.
+     * @param {{ origins?: string[] } | undefined} added
+     * @returns {Promise<boolean>} whether capture was switched on by it
+     */
+    async onAdded(added) {
+      const given = Array.isArray(added?.origins) && CAPTURE_ORIGINS.every((origin) => added.origins?.includes(origin));
+      if (!given) return false;
+      return (await this.enable()).ok;
     },
 
     /**
