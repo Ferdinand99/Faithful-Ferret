@@ -646,18 +646,27 @@ fn write_change(
             credential_id,
             prf_salt,
             aaguid,
-        } => add_method(
-            tx,
-            &writer.account,
-            now,
-            &NewPrfMethod {
-                method_id,
-                wrap,
-                credential_id,
-                prf_salt,
-                aaguid: aaguid.as_ref(),
-            },
-        ),
+        } => {
+            // As at registration, the id of the account or of its vault is
+            // not a method id.
+            if method_id.as_bytes() == writer.account.as_bytes()
+                || method_id.as_bytes() == account.vault.as_bytes()
+            {
+                return Err(ApiError::coded("bad_request"));
+            }
+            add_method(
+                tx,
+                &writer.account,
+                now,
+                &NewPrfMethod {
+                    method_id,
+                    wrap,
+                    credential_id,
+                    prf_salt,
+                    aaguid: aaguid.as_ref(),
+                },
+            )
+        }
         #[cfg(feature = "quick-unlock")]
         UnlockChange::RemoveMethod { method_id } => remove_method(tx, &writer.account, method_id),
     }

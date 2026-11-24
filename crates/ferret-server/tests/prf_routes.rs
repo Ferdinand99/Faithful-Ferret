@@ -963,6 +963,14 @@ mod with_routes {
                 Box::new(|b| b["method_id"] = json!("00".repeat(16))),
             ),
             (
+                "the id of the account",
+                Box::new(|b| b["method_id"] = json!(hex16::encode(&id16(0xa0, 12)))),
+            ),
+            (
+                "the id of the vault",
+                Box::new(|b| b["method_id"] = json!(hex16::encode(&id16(0xb0, 12)))),
+            ),
+            (
                 "an extra field",
                 Box::new(|b| b["name"] = json!("Work laptop")),
             ),
