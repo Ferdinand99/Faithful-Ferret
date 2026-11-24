@@ -220,10 +220,18 @@
 // Unlock methods: `vault.check_server_methods(manifestRow, serverList)`
 // compares the server's list with the manifest (`method_list_unknown`,
 // `method_list_changed`, `method_list_missing`). `vault.manifest_add_method(
-// currentRow, wrap)` and `vault.manifest_remove_method(currentRow, methodId)`
-// return `{ op, sealed, body, pk_a }`: upload `sealed` and `body` and sign the
+// currentRow, wrap, aaguid, label, be, bs)` and
+// `vault.manifest_remove_method(currentRow, methodId)` return
+// `{ op, sealed, body, pk_a }`: upload `sealed` and `body` and sign the
 // request with `vault.auth_sign(op, nonce, body)`. Removing the last password
-// or recovery method is `input_last_method`.
+// or recovery method is `input_last_method`. A new passkey method carries the
+// AAGUID of its registration in the body (display data; all zero is accepted,
+// Ferret's own is `invalid_state`); its name (`label`: NFC, trimmed, 1 to 64
+// characters, no control, separator, bidirectional or zero width character:
+// `method_name_empty`, `method_name_too_long`, `method_name_bad_character`)
+// and the BE and BS flags go into the sealed manifest only. The list of
+// passkeys is `vault.prf_methods(manifestRow)`: `[{ method_id, credential_id,
+// kek_generation, name, synced, bs }]`, where `synced` follows BE, never BS.
 
 import {
   FerretError,

@@ -52,6 +52,20 @@ pub enum FolderError {
     Duplicate,
 }
 
+/// Why the name of a passkey method was refused (Fase 1 § 4.3 and Appendix B,
+/// the `n` key of a manifest entry). The rules are those of a folder name.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodNameError {
+    /// A name that is empty once its surrounding white space is trimmed.
+    Empty,
+    /// A name longer than 64 characters once in NFC and trimmed.
+    TooLong,
+    /// A name with a control character, a line or paragraph separator, a
+    /// bidirectional control, a zero width space or a byte order mark.
+    BadCharacter,
+}
+
 /// Which structure was malformed.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +258,8 @@ pub enum Error {
     GeneratorOptions,
     /// The server's rule does not allow a PIN at all.
     PinNotAllowed,
+    /// The name of a passkey method breaks a rule.
+    MethodName(MethodNameError),
 }
 
 impl Error {
@@ -326,6 +342,9 @@ impl Error {
         Error::Folder(FolderError::Duplicate),
         Error::GeneratorOptions,
         Error::PinNotAllowed,
+        Error::MethodName(MethodNameError::Empty),
+        Error::MethodName(MethodNameError::TooLong),
+        Error::MethodName(MethodNameError::BadCharacter),
     ];
 
     /// The stable, data-free code that test vectors and bindings use.
@@ -419,6 +438,11 @@ impl Error {
             },
             Error::GeneratorOptions => "generator_options",
             Error::PinNotAllowed => "pin_not_allowed",
+            Error::MethodName(kind) => match kind {
+                MethodNameError::Empty => "method_name_empty",
+                MethodNameError::TooLong => "method_name_too_long",
+                MethodNameError::BadCharacter => "method_name_bad_character",
+            },
         }
     }
 }

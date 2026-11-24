@@ -58,7 +58,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.import_view", "Vault.is_locked", "Vault.item_field_equals", "Vault.item_view", "Vault.items_with_field_value", "Vault.lock", "Vault.make_checkpoint",
     "Vault.make_tombstone", "Vault.manifest_add_method", "Vault.manifest_remove_method", "Vault.match_page",
     "Vault.open_item",
-    "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get",
+    "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get", "Vault.prf_methods",
     "Vault.rekey_abort", "Vault.rekey_commit", "Vault.renew_recovery", "Vault.renew_recovery_after_restore", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
     "Vault.reveal_item_notes", "Vault.reveal_password_history", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
     "Vault.reveal_secret_key_code", "Vault.reveal_totp_secret", "Vault.seed_pinned", "Vault.totp_code",

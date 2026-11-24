@@ -6,6 +6,12 @@
 //! with the hand-made CBOR and the item helpers; the request bodies are
 //! spelled out as text; the proofs are signed over the TLV written out by
 //! hand. The core's `methods` module is not called.
+//!
+//! A passkey that is added carries its AAGUID in the request body and its
+//! name and BE and BS flags in the sealed manifest (keys `n`, `be`, `bs` of
+//! its entry, after `c`). The name of a case is given as hex of its UTF-8
+//! bytes (`name_utf8`), so that no bidirectional or control character stands
+//! in a text file.
 
 use super::*;
 use ferret_core::testing::prim::{ed25519_public_key, ed25519_sign};
@@ -49,6 +55,8 @@ struct Ent {
     id: u8,
     generation: u64,
     credential: Option<Vec<u8>>,
+    /// The stored name, BE and BS of a passkey (`n`, `be`, `bs`).
+    named: Option<(String, bool, bool)>,
     /// An unknown key of the entry.
     extra: bool,
 }
@@ -60,6 +68,7 @@ impl Ent {
             id,
             generation,
             credential: None,
+            named: None,
             extra: false,
         }
     }
@@ -71,10 +80,21 @@ impl Ent {
         }
     }
 
+    /// A passkey with the name as it is stored and its BE and BS flags.
+    fn named(mut self, name: &str, be: bool, bs: bool) -> Self {
+        self.named = Some((name.to_owned(), be, bs));
+        self
+    }
+
     fn cbor(&self) -> Vec<u8> {
         let mut extra: Vec<(&str, Vec<u8>)> = Vec::new();
         if let Some(c) = &self.credential {
             extra.push(("c", cb::bytes(c)));
+        }
+        if let Some((name, be, bs)) = &self.named {
+            extra.push(("n", cb::text(name)));
+            extra.push(("be", cb::boolean(*be)));
+            extra.push(("bs", cb::boolean(*bs)));
         }
         if self.extra {
             extra.push(("label", cb::text("kept")));
@@ -124,16 +144,25 @@ struct Add<'a> {
     credential: &'a [u8],
     salt: [u8; 32],
     wrap: Vec<u8>,
+    /// The AAGUID of the request body.
+    aaguid: [u8; 16],
+}
+
+/// The `passkey` object of an add: the AAGUID, the name as the user typed it
+/// (as hex of its UTF-8 bytes) and the flags.
+fn passkey_json(aaguid: &[u8; 16], name: &str, be: bool, bs: bool) -> Value {
+    json!({ "aaguid": h(aaguid), "name_utf8": h(name.as_bytes()), "be": be, "bs": bs })
 }
 
 fn add_body(w: &Add<'_>, rev: u64, envelope: &[u8], tag: &[u8; 32]) -> Vec<u8> {
     format!(
-        "{{\"method_type\":3,\"method_id\":\"{}\",\"wrap\":\"{}\",\"kek_generation\":{},\"credential_id\":\"{}\",\"prf_salt\":\"{}\",\"manifest\":{}}}",
+        "{{\"method_type\":3,\"method_id\":\"{}\",\"wrap\":\"{}\",\"kek_generation\":{},\"credential_id\":\"{}\",\"prf_salt\":\"{}\",\"aaguid\":\"{}\",\"manifest\":{}}}",
         hex(&[w.id; 16]),
         hex(&w.wrap),
         w.generation,
         hex(w.credential),
         hex(&w.salt),
+        hex(&w.aaguid),
         manifest_json(rev, envelope, tag)
     )
     .into_bytes()
@@ -162,7 +191,7 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
     let rk = Ent::new(2, 0x71, 1);
     let cred_a = pattern_bytes(0xc1, 20);
     let cred_b = pattern_bytes(0xc2, 32);
-    let prf_a = Ent::passkey(0x72, 1, cred_a.clone());
+    let prf_a = Ent::passkey(0x72, 1, cred_a.clone()).named("Work laptop", false, false);
     let current = |name: &str, list: &[Ent], top_extra: bool, rev: u64| -> Result<Sealed, Error> {
         seal_manifest(
             &format!("methods/current/{name}"),
@@ -181,6 +210,7 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         credential: &cred_a,
         salt: arr(0xb1),
         wrap: pattern_bytes(0x5a, 72),
+        aaguid: arr(0x9d),
     };
     let mut after = base.to_vec();
     after.push(prf_a.clone());
@@ -196,6 +226,7 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         &wrap_a.salt,
         &wrap_a.wrap,
     );
+    input["passkey"] = passkey_json(&wrap_a.aaguid, "Work laptop", false, false);
     let expect = json!({
         "manifest": h(&new_plain),
         "sealed": manifest_row(&next),
@@ -246,9 +277,11 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         credential: &cred_b,
         salt: arr(0xb2),
         wrap: pattern_bytes(0x5b, 72),
+        // Some authenticators report no AAGUID: all zero is accepted.
+        aaguid: [0; 16],
     };
     let mut after1 = kept.clone();
-    after1.push(Ent::passkey(0x73, 4, cred_b.clone()));
+    after1.push(Ent::passkey(0x73, 4, cred_b.clone()).named("Phone", true, false));
     let plain1 = manifest_plain(1, &after1, true);
     let next1 = seal_manifest("methods/next/add_second", &c1, 6, &plain1)?;
     let body1 = add_body(&wrap_b, next1.rev, &next1.envelope, &next1.tag);
@@ -261,9 +294,10 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         &wrap_b.salt,
         &wrap_b.wrap,
     );
+    input1["passkey"] = passkey_json(&wrap_b.aaguid, "Phone", true, false);
     let mut c = valid_case(
         "methods/add/second_passkey_keeps_unknown_keys",
-        "a second passkey; unknown keys of the manifest and its entries are kept",
+        "a second passkey with an all-zero AAGUID and BE set but BS not; unknown keys of the manifest and its entries are kept",
         "methods.add",
         vec![],
         input1.clone(),
@@ -271,6 +305,80 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
     );
     c.rng = vec![hex(&next1.nonce)];
     cases.push(c);
+
+    // The name is stored in NFC and trimmed, and the length is counted after
+    // that. Both start from the first manifest.
+    let mut stored_case = |slug: &str,
+                           title: &str,
+                           id: u8,
+                           typed: &str,
+                           stored: &str,
+                           aaguid: [u8; 16],
+                           be: bool,
+                           bs: bool|
+     -> Result<(), Error> {
+        let w = Add {
+            id,
+            generation: 1,
+            credential: &pattern_bytes(id, 24),
+            salt: arr(0xb3),
+            wrap: pattern_bytes(0x5d, 72),
+            aaguid,
+        };
+        let mut list = base.to_vec();
+        list.push(Ent::passkey(id, 1, w.credential.to_vec()).named(stored, be, bs));
+        let plain = manifest_plain(1, &list, false);
+        let next = seal_manifest(&format!("methods/next/{slug}"), &c1, 3, &plain)?;
+        let body = add_body(&w, next.rev, &next.envelope, &next.tag);
+        let mut input = c1.input();
+        input["current"] = manifest_row(&cur0);
+        input["wrap"] = wrap_json(w.id, w.generation, w.credential, &w.salt, &w.wrap);
+        input["passkey"] = passkey_json(&w.aaguid, typed, be, bs);
+        let mut c = valid_case(
+            &format!("methods/add/{slug}"),
+            title,
+            "methods.add",
+            vec![],
+            input,
+            json!({ "manifest": h(&plain), "sealed": manifest_row(&next), "body": h(&body) }),
+        );
+        c.rng = vec![hex(&next.nonce)];
+        cases.push(c);
+        Ok(())
+    };
+    stored_case(
+        "name_normalized_and_trimmed",
+        "the name is stored in NFC without the white space around it; a synced key with BS set",
+        0x74,
+        "  Cafe\u{301} \u{1f511}\t",
+        "Caf\u{e9} \u{1f511}",
+        [
+            0xfb, 0xfc, 0x30, 0x07, 0x15, 0x4e, 0x4e, 0xcf, 0xbc, 0x9b, 0x0e, 0x6b, 0x28, 0x3a,
+            0xf1, 0x55,
+        ],
+        true,
+        true,
+    )?;
+    stored_case(
+        "name_length_counts_after_nfc",
+        "64 letters with a combining accent are 64 characters once in NFC",
+        0x75,
+        &"e\u{301}".repeat(64),
+        &"\u{e9}".repeat(64),
+        arr(0x21),
+        false,
+        false,
+    )?;
+    stored_case(
+        "name_joiner_allowed",
+        "the zero width joiner of an emoji sequence is allowed in a name",
+        0x76,
+        "\u{1f468}\u{200d}\u{1f4bb}",
+        "\u{1f468}\u{200d}\u{1f4bb}",
+        arr(0x22),
+        true,
+        false,
+    )?;
 
     // ---- methods.add, refused
     let mut refused = |name: &str, title: &str, input: Value, code: &str| {
@@ -335,6 +443,73 @@ pub(crate) fn methods() -> Result<Vec<u8>, Error> {
         "an empty credential id",
         no_cred,
         "input_too_short",
+    );
+    let mut with_name = |slug: &str, title: &str, typed: &str, code: &str| {
+        let mut input = input1.clone();
+        input["passkey"]["name_utf8"] = h(typed.as_bytes());
+        refused(slug, title, input, code);
+    };
+    with_name(
+        "name_empty",
+        "a name that is empty",
+        "",
+        "method_name_empty",
+    );
+    with_name(
+        "name_only_white_space",
+        "a name that is only white space",
+        " \t\u{a0}\u{3000}",
+        "method_name_empty",
+    );
+    with_name(
+        "name_65_characters",
+        "a name of 65 characters",
+        &"x".repeat(65),
+        "method_name_too_long",
+    );
+    with_name(
+        "name_65_characters_after_nfc",
+        "65 letters with a combining accent are 65 characters once in NFC",
+        &"e\u{301}".repeat(65),
+        "method_name_too_long",
+    );
+    with_name(
+        "name_control_character",
+        "a name with a line feed",
+        "a\nb",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_bidirectional_override",
+        "a name with a right-to-left override",
+        "a\u{202e}b",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_zero_width_space",
+        "a name with a zero width space",
+        "a\u{200b}b",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_line_separator",
+        "a name with a line separator",
+        "a\u{2028}b",
+        "method_name_bad_character",
+    );
+    with_name(
+        "name_bad_character_before_length",
+        "a bad character is reported before the length",
+        &format!("{}\u{202e}", "x".repeat(70)),
+        "method_name_bad_character",
+    );
+    let mut own = input1.clone();
+    own["passkey"]["aaguid"] = json!("dc704a44b994410ca689ed8d71a84ac3");
+    refused(
+        "ferrets_own_aaguid",
+        "Ferret's own AAGUID is refused as an extra guard",
+        own,
+        "invalid_state",
     );
     let mut bad_tag = input1.clone();
     let mut tag = cur1.tag;

@@ -63,7 +63,7 @@ pub const MAX_FOLDER_CHARS: usize = 64;
 
 /// Whether `c` may not appear in a folder name (see the module
 /// documentation).
-fn is_refused(c: char) -> bool {
+pub(crate) fn is_refused(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
@@ -80,7 +80,7 @@ fn is_refused(c: char) -> bool {
 }
 
 /// The NFC form of `raw`, trimmed.
-fn nfc_trimmed(raw: &str) -> String {
+pub(crate) fn nfc_trimmed(raw: &str) -> String {
     let nfc: String = raw.nfc().collect();
     nfc.trim().to_owned()
 }

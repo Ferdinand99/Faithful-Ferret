@@ -36,11 +36,11 @@ use ferret_core::{
     AccountId, AuthOp, AuthPublicKey, CallerContext, Checkpoint, CheckpointEntry, CreateRequest,
     CurrentManifest, Error, ExistingCredential, ExportItem, ExportKey, ExportPassword, GetRequest,
     ItemBody, ItemId, KdfParams, Kek, KekDevPin, KsfProfile, Manifest, ManifestEntry,
-    MasterPassword, Method, MethodId, MethodKey, MpPolicy, MutationOp, PasskeyRecord, Pin,
-    PinProfile, PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey, RecoveryPublicKey,
-    RekeyInput, RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey, ServerMethod,
-    ServerRow, SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome, VaultContext,
-    VaultId, VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods,
+    MasterPassword, Method, MethodId, MethodKey, MpPolicy, MutationOp, PasskeyMeta, PasskeyRecord,
+    Pin, PinProfile, PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey,
+    RecoveryPublicKey, RekeyInput, RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey,
+    ServerMethod, ServerRow, SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome,
+    VaultContext, VaultId, VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods,
     decode_recovery_key, decode_secret_key, decrypt_item, decrypt_manifest, encode_recovery_key,
     encode_secret_key, encrypt_item, encrypt_manifest, export_encrypt, export_plain_csv,
     export_plain_json, import_decrypt, item_tag, make_checkpoint, make_tombstone,
@@ -710,7 +710,15 @@ fn methods_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
             method,
             wrap: hx(&w["wrap"]),
         };
-        manifest_add_method(rng, &vault, &current, wrap)?
+        let p = &i["passkey"];
+        let name = String::from_utf8(hx(&p["name_utf8"])).unwrap();
+        let meta = PasskeyMeta {
+            aaguid: hn(&p["aaguid"]),
+            name: &name,
+            be: p["be"].as_bool().unwrap(),
+            bs: p["bs"].as_bool().unwrap(),
+        };
+        manifest_add_method(rng, &vault, &current, wrap, &meta)?
     } else {
         manifest_remove_method(
             rng,

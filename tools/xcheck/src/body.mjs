@@ -137,7 +137,7 @@ export function normalizeManifest(value) {
   return inSchemaOrder(
     value,
     ['v', 'vk_epoch', 'methods'],
-    new Map([['methods', (arr) => ({ k: 'array', v: arr.v.map((m) => inSchemaOrder(m, ['t', 'id', 'g', 'c'])) })]]),
+    new Map([['methods', (arr) => ({ k: 'array', v: arr.v.map((m) => inSchemaOrder(m, ['t', 'id', 'g', 'c', 'n', 'be', 'bs'])) })]]),
   );
 }
 
@@ -148,7 +148,7 @@ export function parseBody(bytes) {
   return { value: readOnly ? raw : normalizeBody(raw), readOnly };
 }
 
-// Manifest: { v: 1, vk_epoch: u64, methods: [ { t: u8, id: bytes(16), g: u64, c?: bytes } ] }
+// Manifest: { v: 1, vk_epoch: u64, methods: [ { t: u8, id: bytes(16), g: u64, c?: bytes, n?: text, be?: bool, bs?: bool } ] }
 export function parseManifest(bytes) {
   const value = decode(bytes);
   if (!isMap(value)) bad('manifest is not a map');
@@ -163,6 +163,10 @@ export function parseManifest(bytes) {
     const id = need(m, 'id', isBytes, 'bytes');
     const g = need(m, 'g', uint, 'unsigned');
     const c = opt(m, 'c', isBytes, 'bytes');
+    // a passkey's name and flags (Appendix B): typed, but the name's own rule is judged when one is written
+    opt(m, 'n', isText, 'text');
+    opt(m, 'be', (x) => x.k === 'bool', 'a bool');
+    opt(m, 'bs', (x) => x.k === 'bool', 'a bool');
     // a type this version does not know is kept as it is (Fase 1 section 13), so the range is that of one byte
     if (t.v > 255n || t.v < 1n) bad('method type out of range');
     if (id.v.length !== 16) bad('method id is not 16 bytes');

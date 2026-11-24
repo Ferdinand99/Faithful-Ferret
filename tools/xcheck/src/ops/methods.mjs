@@ -39,6 +39,26 @@ ops['methods.check_server'] = ({ input }) => {
 const MAX_METHODS = 64;
 const MAX_GENERATION = 0xffffffffn;
 const MAX_CREDENTIAL = 1024;
+const MAX_NAME_CHARS = 64;
+// Ferret's own AAGUID (section 9.4), refused in an add as an extra guard.
+const FERRET_AAGUID = 'dc704a44b994410ca689ed8d71a84ac3';
+
+// White space as Unicode defines it (White_Space), which is what a name is trimmed of. Written out because the
+// trim of this language differs: it also strips U+FEFF and keeps U+0085.
+const WHITE = '[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
+const reTrim = new RegExp(`^${WHITE}+|${WHITE}+$`, 'gu');
+// A control character (Cc), the line and paragraph separators, the bidirectional marks, embeddings, overrides and
+// isolates, the zero width space and the byte order mark. The joiners U+200C and U+200D are allowed.
+const reRefused = /[\p{Cc}\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u200b\ufeff]/u;
+
+// The name of a passkey method as it is stored (section 4.3, Appendix B): NFC, trimmed, 1 to 64 characters, none refused.
+function methodName(utf8) {
+  const name = new TextDecoder('utf-8', { fatal: true }).decode(utf8).normalize('NFC').replace(reTrim, '');
+  if (name.length === 0) fail('method_name_empty');
+  if (reRefused.test(name)) fail('method_name_bad_character');
+  if (Array.from(name).length > MAX_NAME_CHARS) fail('method_name_too_long');
+  return name;
+}
 
 // Opens the manifest row the server holds.
 function openCurrent(v, keys, current) {
@@ -103,11 +123,24 @@ ops['methods.add'] = ({ input, rng }) => {
   ) {
     fail('malformed_entries');
   }
-  const entry = C.map([['t', C.uint(3)], ['id', C.bytes(methodId)], ['g', C.uint(generation)], ['c', C.bytes(credential)]]);
+  const pk = input.passkey;
+  const aaguid = unhex(pk.aaguid);
+  // display data: all zero is fine; only Ferret's own is refused, and then the name is judged
+  if (aaguid.length !== 16 || hex(aaguid) === FERRET_AAGUID) fail('invalid_state');
+  const name = methodName(unhex(pk.name_utf8));
+  const entry = C.map([
+    ['t', C.uint(3)],
+    ['id', C.bytes(methodId)],
+    ['g', C.uint(generation)],
+    ['c', C.bytes(credential)],
+    ['n', C.text(name)],
+    ['be', C.bool(pk.be)],
+    ['bs', C.bool(pk.bs)],
+  ]);
   const value = withMethods(cur.value, (list) => [...list, entry]);
   const n = nextManifest(v, keys, cur, value, rng);
   const body = ascii(
-    `{"method_type":3,"method_id":"${hex(methodId)}","wrap":"${hex(wrap)}","kek_generation":${generation},"credential_id":"${hex(credential)}","prf_salt":"${hex(salt)}","manifest":${rowJson(n)}}`,
+    `{"method_type":3,"method_id":"${hex(methodId)}","wrap":"${hex(wrap)}","kek_generation":${generation},"credential_id":"${hex(credential)}","prf_salt":"${hex(salt)}","aaguid":"${hex(aaguid)}","manifest":${rowJson(n)}}`,
   );
   return result(n, body, input, v, keys, 'unlock-method.add');
 };
