@@ -32,7 +32,7 @@ function buildSection(flow, texts) {
       showError(failure, texts, captureErrorKey(outcome.reason));
       return;
     }
-    const known = /** @type {{ on: boolean, never: string[], autoOpen?: boolean, autoOpenState?: string }} */ (outcome);
+    const known = /** @type {{ on: boolean, permission?: boolean, never: string[], autoOpen?: boolean, autoOpenState?: string }} */ (outcome);
     // The popup that opens by itself: the setting, and what the browser has shown about it.
     const wantsOpen = known.autoOpen !== false;
     autoOpen.setAttribute("aria-checked", wantsOpen ? "true" : "false");
@@ -40,7 +40,9 @@ function buildSection(flow, texts) {
     autoOpenState.textContent = !wantsOpen ? texts.t("capture.auto_open.off") : known.autoOpenState === "fails" ? texts.t("capture.auto_open.fails") : texts.t("capture.auto_open.on");
     toggle.setAttribute("aria-checked", known.on ? "true" : "false");
     toggle.dataset.on = known.on ? "1" : "0";
-    state.textContent = texts.t(known.on ? "capture.on" : "capture.off");
+    // Off with the access already given (the request was answered while the popup that asked closed, as Firefox closes it when
+    // the prompt opens): the next press of the switch does not ask again and finishes turning it on.
+    state.textContent = texts.t(known.on ? "capture.on" : known.permission === true ? "capture.off_access_given" : "capture.off");
     list.replaceChildren(
       ...known.never.map((host) =>
         el(

@@ -210,6 +210,9 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
       badge?.forget(tabId);
     }
   });
+  permissions.onAdded?.addListener((/** @type {any} */ added) => {
+    registry.onAdded(added).catch(() => {});
+  });
   permissions.onRemoved?.addListener((/** @type {any} */ removed) => {
     registry.onRemoved(removed).then((gone) => {
       if (gone) offers.clear("permission_removed");
