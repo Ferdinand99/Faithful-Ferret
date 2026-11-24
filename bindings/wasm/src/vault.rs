@@ -19,15 +19,15 @@ use crate::convert::{
 };
 use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
+use crate::pin::{checked_pin, pin_wrap_out, timed};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, PinProfile, Pinned, PinnedField,
-    PrfOutput, RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow, SyncMemory,
-    UnlockedVault, WrapRecord, auth_sign, decode_recovery_key, decrypt_item, decrypt_manifest,
-    emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
-    make_tombstone, parse_otpauth, renew_recovery, renew_recovery_after_restore, totp_code,
-    totp_seconds_left, verify_checkpoint, verify_recovery_setup, verify_secret_key_entry,
-    verify_tombstone,
+    KsfProfile, Manifest, ManifestRow, MethodId, OsRng, PinProfile, Pinned, PinnedField, PrfOutput,
+    RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow, SyncMemory, UnlockedVault,
+    WrapRecord, auth_sign, decode_recovery_key, decrypt_item, decrypt_manifest, emergency_sheet,
+    encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint, make_tombstone,
+    parse_otpauth, renew_recovery, renew_recovery_after_restore, totp_code, totp_seconds_left,
+    verify_checkpoint, verify_recovery_setup, verify_secret_key_entry, verify_tombstone,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -958,29 +958,68 @@ impl Vault {
     }
 
     /// A PIN wrap of the vault key (for the local PIN unlock, never
-    /// uploaded). The device salt is drawn here. The wrap is always made with
-    /// PIN profile 1: a browser has no hardware keystore, so the mobile
-    /// variant (64 MiB, with a device secret) is not offered here and cannot
-    /// be asked for. Argon2id runs in this worker. Returns the wrap record.
-    pub fn wrap_pin(&self, pin: Vec<u8>, method_id: Vec<u8>) -> Result<JsValue, JsValue> {
+    /// uploaded). `rule` is the server's `{ allowed, after_restart,
+    /// min_length }`: a rule that forbids PINs or a PIN below its minimum
+    /// (never below four) is refused before Argon2id. A new device salt is
+    /// drawn on every call. The wrap is always made with PIN profile 1: a
+    /// browser has no hardware keystore, so the mobile variant (64 MiB, with a
+    /// device secret) is not offered here and cannot be asked for.
+    ///
+    /// Argon2id (256 MiB) runs in this worker and is timed: a device that
+    /// runs out of memory (`kdf_out_of_memory`) or takes more than ten
+    /// seconds (`pin_too_slow`) gets the error and no wrap. The product
+    /// sets a PIN with `argon2_pin_key` in the job worker and
+    /// `wrap_pin_key` here, so that this worker does not grow by 256 MiB on
+    /// top of the master password's.
+    ///
+    /// Returns `{ method_id, wrap, device_salt, profile, vk_epoch, ms }`: the
+    /// 104 bytes, the 16-byte salt, the PIN profile number, the vault key
+    /// epoch the wrap was made for and the time of the Argon2id. This is what
+    /// the extension's PIN store keeps (`methodId`, `wrap`, `deviceSalt`,
+    /// `pinProfile`, `vkEpoch`), and nothing in it tells the kind or the
+    /// length of the PIN.
+    pub fn wrap_pin(
+        &self,
+        pin: Vec<u8>,
+        method_id: Vec<u8>,
+        rule: JsValue,
+    ) -> Result<JsValue, JsValue> {
         run(|| {
             let pin = Zeroizing::new(pin);
             let vault = self.unlocked()?;
-            let pin = Pin::new(&pin)?;
+            let method_id = arr::<16>(&method_id)?;
+            let digits = checked_pin(&pin, rule)?;
             let mut salt = [0u8; 16];
             ferret_core::SecureRng::fill(&mut OsRng, &mut salt);
-            let kek = Kek::from_pin_extension(&pin, &salt, PinProfile::P1)?;
-            let rec = vault.wrap_for_method(
-                &mut OsRng,
-                &kek,
-                MethodId::from_bytes(arr(&method_id)?),
-                1,
-                ferret_core::Method::Pin {
-                    device_salt: salt,
-                    profile: PinProfile::P1,
-                },
-            )?;
-            to_js(&WrapDto::of(&rec))
+            let (kek, ms) = timed(|| Ok(Kek::from_pin_extension(&digits, &salt, PinProfile::P1)?))?;
+            to_js(&pin_wrap_out(vault, &kek, salt, method_id, ms)?)
+        })
+    }
+
+    /// The second half of setting a PIN in the product: wraps the vault key
+    /// under `KEK_pin`, the 32 bytes that `argon2_pin_key` made in the job
+    /// worker for `device_salt`. The bytes are wiped here; wipe the array
+    /// you hold too (the client does). An all-zero key is refused. Returns
+    /// `{ method_id, wrap, device_salt, profile, vk_epoch, ms }` with `ms`
+    /// zero (the client adds the time of the Argon2id it was given).
+    pub fn wrap_pin_key(
+        &self,
+        key: Vec<u8>,
+        device_salt: Vec<u8>,
+        method_id: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        run(|| {
+            let key = Zeroizing::new(key);
+            let vault = self.unlocked()?;
+            let method_id = arr::<16>(&method_id)?;
+            let salt = arr::<16>(&device_salt)?;
+            let mut bytes = Zeroizing::new(arr::<32>(&key)?);
+            // No branch on the bytes of the key: every one is read.
+            if bytes.iter().fold(0u8, |acc, b| acc | b) == 0 {
+                return Err(Error::InvalidInput(ferret_core::InputError::AllZero).into());
+            }
+            let kek = Kek::from_pin_extension_key(&mut bytes);
+            to_js(&pin_wrap_out(vault, &kek, salt, method_id, 0)?)
         })
     }
 

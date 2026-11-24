@@ -16,11 +16,8 @@
       "title": "six ASCII digits",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "313233343536"
@@ -35,11 +32,8 @@
       "title": "four ASCII digits",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "30303030"
@@ -54,11 +48,8 @@
       "title": "fullwidth digits are ASCII digits after NFKD",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "efbc91efbc92efbc93efbc94efbc95efbc96"
@@ -73,11 +64,8 @@
       "title": "text with a space",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "636f727265637420686f727365"
@@ -92,11 +80,8 @@
       "title": "NFKD pair, composed: e with an acute accent",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "636166c3a9"
@@ -111,11 +96,8 @@
       "title": "NFKD pair, decomposed: e and a combining acute accent",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "63616665cc81"
@@ -130,11 +112,8 @@
       "title": "a compatibility ligature is two letters",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "efac817368"
@@ -149,11 +128,8 @@
       "title": "Arabic-Indic digits stay as they are (no compatibility mapping)",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "d9a1d9a2d9a3d9a4"
@@ -168,11 +144,8 @@
       "title": "a single scalar is enough for the normalization (the rule decides the minimum)",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "37"
@@ -187,11 +160,8 @@
       "title": "64 scalars",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "31313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131"
@@ -206,11 +176,8 @@
       "title": "64 four-byte scalars are exactly 256 bytes",
       "op": "pin.normalize",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880"
@@ -225,11 +192,8 @@
       "title": "an empty PIN",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": ""
@@ -241,11 +205,8 @@
       "title": "bytes that are not UTF-8",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "ff313233"
@@ -257,11 +218,8 @@
       "title": "a tab is a control character",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "313209343536"
@@ -273,11 +231,8 @@
       "title": "NUL is a control character",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "313200343536"
@@ -289,11 +244,8 @@
       "title": "an unassigned character (U+0378)",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "3132cdb8343536"
@@ -305,11 +257,8 @@
       "title": "65 scalars are too many",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "3131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131"
@@ -321,11 +270,8 @@
       "title": "65 four-byte scalars are too many",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880f09f9880"
@@ -337,11 +283,8 @@
       "title": "four ligatures that expand to more than 64 scalars after NFKD",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "efb7baefb7baefb7baefb7ba"
@@ -353,11 +296,8 @@
       "title": "a forbidden character wins over the length",
       "op": "pin.normalize",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "utf8": "0707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707"
@@ -369,11 +309,8 @@
       "title": "six characters, minimum 6",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -391,11 +328,8 @@
       "title": "four characters, minimum 4",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -413,11 +347,8 @@
       "title": "a minimum of 0 is raised to the floor of 4",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -435,11 +366,8 @@
       "title": "64 characters, minimum 64",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -457,11 +385,8 @@
       "title": "a minimum above 64 is lowered to 64",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -479,11 +404,8 @@
       "title": "a letter with a combining accent counts as one character",
       "op": "pin.rule",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -501,11 +423,8 @@
       "title": "five characters, minimum 6",
       "op": "pin.rule",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -522,11 +441,8 @@
       "title": "three characters, minimum 0: never below the floor",
       "op": "pin.rule",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -543,11 +459,8 @@
       "title": "a rule that forbids PINs refuses every PIN",
       "op": "pin.rule",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -564,11 +477,8 @@
       "title": "a rule that forbids PINs refuses a long PIN too",
       "op": "pin.rule",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -585,11 +495,8 @@
       "title": "three letters with combining accents are three characters",
       "op": "pin.rule",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "rule": {
@@ -606,11 +513,8 @@
       "title": "profile 1",
       "op": "pin.profile",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "pin_profile": 1
@@ -627,11 +531,8 @@
       "title": "profile 0 is unknown",
       "op": "pin.profile",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "pin_profile": 0
@@ -643,11 +544,8 @@
       "title": "profile 2 is unknown",
       "op": "pin.profile",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "pin_profile": 2
@@ -659,11 +557,8 @@
       "title": "profile 255 is unknown",
       "op": "pin.profile",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "pin_profile": 255
@@ -675,11 +570,8 @@
       "title": "the largest number is unknown",
       "op": "pin.profile",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "pin_profile": 4294967295
@@ -691,11 +583,8 @@
       "title": "extension PIN wrap, profile 1, epoch 1",
       "op": "pin.aad",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
@@ -719,11 +608,8 @@
       "title": "extension PIN wrap, epoch 2: the epoch is in the AAD",
       "op": "pin.aad",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
@@ -747,11 +633,8 @@
       "title": "extension PIN wrap, another device salt",
       "op": "pin.aad",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
@@ -775,11 +658,8 @@
       "title": "mobile PIN wrap keeps profile 1 of the sign-in (64 MiB) in its kdf field",
       "op": "pin.aad",
       "status": "valid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "account_id": "101112131415161718191a1b1c1d1e1f",
@@ -803,11 +683,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -825,11 +703,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -847,11 +723,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -869,11 +743,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -891,11 +763,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -912,11 +782,8 @@
       "title": "an unknown PIN profile is refused before Argon2id",
       "op": "pin.kek",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -930,11 +797,8 @@
       "title": "an empty PIN is refused before Argon2id",
       "op": "pin.kek",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -948,11 +812,8 @@
       "title": "a PIN of three characters is below the floor of four, whatever the rule says",
       "op": "pin.kek",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -966,11 +827,8 @@
       "title": "three letters with combining accents are three characters",
       "op": "pin.kek",
       "status": "invalid",
-      "tags": [
-        "native-only"
-      ],
+      "tags": [],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
@@ -985,11 +843,9 @@
       "op": "pin.kek",
       "status": "valid",
       "tags": [
-        "slow",
-        "native-only"
+        "slow"
       ],
       "synthetic": true,
-      "skip_reason": "the PIN operations are not exported by the WebAssembly binding yet",
       "rng": [],
       "input": {
         "device_salt": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",

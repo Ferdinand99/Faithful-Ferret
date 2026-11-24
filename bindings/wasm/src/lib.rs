@@ -40,6 +40,7 @@ mod job;
 mod matching;
 mod methods;
 mod passkey;
+mod pin;
 mod vault;
 
 #[cfg(feature = "test-support")]
@@ -49,6 +50,7 @@ pub use export::{argon2_export_key, import_header};
 pub use generator::{generate_passphrase, generate_password};
 pub use job::UnlockJob;
 pub use matching::{display_host, page_origin, same_site};
+pub use pin::argon2_pin_key;
 pub use vault::Vault;
 
 use crate::convert::{ByteBuf, arr, b16, b32, bytes, from_js_list, to_js};

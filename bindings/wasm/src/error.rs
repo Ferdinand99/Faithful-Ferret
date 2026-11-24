@@ -3,9 +3,9 @@
 //! An error is a JavaScript `Error` whose `message` and `code` are the same
 //! stable code and nothing else: no value, no length and no position from the
 //! input ever goes into it. The codes of the core are those of
-//! `vectors/ERRORS.md` (`Error::code`). The glue adds five of its own: three for
-//! mistakes in how the binding is called, one for a missing permission and
-//! one for a sheet that would be wrong:
+//! `vectors/ERRORS.md` (`Error::code`). The glue adds seven of its own: three for
+//! mistakes in how the binding is called, one for a missing permission, one
+//! for a sheet that would be wrong and two for the local PIN:
 //!
 //! * `invalid_input`: an argument has the wrong type, a wrong length or a
 //!   value out of range (a time that is not finite, a number above 2^53, an
@@ -17,7 +17,12 @@
 //! * `secret_key_not_held`: the full emergency sheet of an account with a
 //!   secret key, asked of a setup that does not hold the secret key (after a
 //!   recovery or a new recovery key). Page 1 would say "no secret key"; the
-//!   recovery key alone is `reveal_recovery_code`.
+//!   recovery key alone is `reveal_recovery_code`;
+//! * `pin_stale`: a stored PIN wrap was made for an older vault key epoch than
+//!   the pinned record states; it is refused before any Argon2id runs and the
+//!   caller deletes it. The answer depends on public data only;
+//! * `pin_too_slow`: setting a PIN took more than ten seconds on this device;
+//!   nothing is returned and no PIN is stored.
 //!
 //! Nothing in this crate formats data into text.
 
@@ -39,6 +44,10 @@ pub(crate) enum Fail {
     Reauth,
     /// The full emergency sheet needs a secret key this setup does not hold.
     SecretKeyNotHeld,
+    /// A stored PIN wrap is older than the pinned vault key epoch.
+    PinStale,
+    /// Setting a PIN took longer than the budget of this device.
+    PinTooSlow,
 }
 
 impl Fail {
@@ -51,6 +60,8 @@ impl Fail {
             Fail::Handle => "invalid_handle",
             Fail::Reauth => "reauth_required",
             Fail::SecretKeyNotHeld => "secret_key_not_held",
+            Fail::PinStale => "pin_stale",
+            Fail::PinTooSlow => "pin_too_slow",
         }
     }
 }

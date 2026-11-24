@@ -14,12 +14,9 @@ use crate::{Error, render};
 use ferret_core::testing::vector::{Case, FORMAT, Tag, VectorFile};
 use serde_json::{Value, json};
 
-/// Why a binding does not run this file yet.
-const SKIP: &str = "the PIN operations are not exported by the WebAssembly binding yet";
-
-fn native(mut case: Case) -> Case {
-    case.tags.push(Tag::NativeOnly);
-    case.skip_reason = Some(SKIP.into());
+/// Every case runs on every binding (the WebAssembly binding exports the PIN
+/// operations under `test-support`), so a case is kept as it is.
+fn native(case: Case) -> Case {
     case
 }
 
