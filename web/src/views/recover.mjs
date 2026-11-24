@@ -233,6 +233,8 @@ export function recoverView(deps) {
         el("p", null, t("recover.done_sheet")),
         el("p", null, t("recover.done_backup")),
         passkeys,
+        // Not signed in: the passkey list cannot be read yet, so the note says where to look once the user is.
+        signedIn ? null : el("p", { "data-role": "done-passkeys-later" }, t("recover.done_passkeys_later")),
         signedIn ? el("div", { class: "actions" }, open) : el("p", null, el("a", { href: "#/login" }, t("recover.sign_in_link"))),
       ),
     );

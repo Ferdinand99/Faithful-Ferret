@@ -123,6 +123,17 @@ export async function checkedAuthData(raw, rpId, deps) {
 }
 
 /**
+ * Wipes the browser's own buffer of a PRF result, as far as script can (best effort: the engine may have copied it). Safe to call
+ * again and on anything: a value that is not a buffer is left alone.
+ * @param {any} results `extensions.prf.results`
+ */
+export function wipeBrowserResult(results) {
+  const first = results?.first;
+  if (first instanceof ArrayBuffer) new Uint8Array(first).fill(0);
+  else if (ArrayBuffer.isView(first)) new Uint8Array(first.buffer, first.byteOffset, first.byteLength).fill(0);
+}
+
+/**
  * The 32 bytes of a PRF result, or null when there is none. A result of another length is refused.
  * @param {any} results `extensions.prf.results`
  * @returns {Uint8Array | null}
@@ -131,8 +142,7 @@ export function firstResultOf(results) {
   if (results === undefined || results === null) return null;
   const first = bytesOf(results.first);
   // The browser's own buffer is wiped as far as script can: the copy is the one that goes on.
-  if (results.first instanceof ArrayBuffer) new Uint8Array(results.first).fill(0);
-  else if (ArrayBuffer.isView(results.first)) new Uint8Array(results.first.buffer, results.first.byteOffset, results.first.byteLength).fill(0);
+  wipeBrowserResult(results);
   if (first === null) throw new AccountError("passkey_bad_output");
   if (first.length !== PRF_OUTPUT_LENGTH) {
     first.fill(0);
@@ -162,9 +172,9 @@ export function firstResultOf(results) {
  */
 export async function evaluateOneOf({ rpId, credentials, getAssertion }, deps) {
   if (typeof getAssertion !== "function") throw new AccountError("passkey_unsupported");
-  if (typeof rpId !== "string" || rpId === "" || credentials.length === 0 || credentials.some((c) => c.salt.length !== PRF_OUTPUT_LENGTH)) {
-    throw new TypeError("a passkey needs the host, a credential and a 32-byte salt");
-  }
+  if (typeof rpId !== "string" || rpId === "" || credentials.length === 0) throw new TypeError("a passkey needs the host and a credential");
+  // A salt of another size cannot make the key: the plain error of an unlock that did not work, not a fault of the page.
+  if (credentials.some((c) => c.salt.length !== PRF_OUTPUT_LENGTH)) throw new AccountError("passkey_unlock_failed");
   const challenge = deps.rand(new Uint8Array(32));
   /** @type {Record<string, { first: Uint8Array }>} */
   const evalByCredential = {};
@@ -201,7 +211,9 @@ export async function evaluateOneOf({ rpId, credentials, getAssertion }, deps) {
     output = null;
     return { credentialId: used.id.slice(), output: out };
   } finally {
-    // Only an output that was not handed on is wiped here (every path that throws).
+    // Only an output that was not handed on is wiped here (every path that throws), and the browser's own buffer is wiped
+    // even when the answer was refused before the result was read.
     output?.fill(0);
+    wipeBrowserResult(extensions?.prf?.results);
   }
 }

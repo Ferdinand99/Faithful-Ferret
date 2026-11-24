@@ -29,7 +29,7 @@ import { ApiError } from "../api.mjs";
 import { b64u, hex16 } from "../b64.mjs";
 import { wrapToCore } from "../crypto/convert.mjs";
 import { AccountError, codeOf } from "../crypto/errors.mjs";
-import { evaluateOneOf } from "./passkeyAnswer.mjs";
+import { evaluateOneOf, PRF_OUTPUT_LENGTH } from "./passkeyAnswer.mjs";
 import { sealOpened, sessionInfo } from "./signin.mjs";
 
 /** @typedef {import("../crypto/env.mjs").Env} Env */
@@ -74,7 +74,11 @@ export async function preparePasskeyUnlock(env, { rpId }) {
     const record = await env.store.pinnedForSignIn(db, env.server, info.email, info.accountId);
     if (!record) return null;
     const methods = await env.api.get(METHODS_PATH, { shape: "methods_res" });
-    const credentials = passkeyWraps(methods).map((wrap) => ({ id: b64u.decode(wrap.credential_id), salt: b64u.decode(wrap.prf_salt) }));
+    // A row whose salt is not 32 bytes cannot be evaluated: it is left out (the wire refuses such a list already; this keeps
+    // one bad row from breaking the button if that ever changes).
+    const credentials = passkeyWraps(methods)
+      .map((wrap) => ({ id: b64u.decode(wrap.credential_id), salt: b64u.decode(wrap.prf_salt) }))
+      .filter(({ salt }) => salt.length === PRF_OUTPUT_LENGTH);
     if (credentials.length === 0) return null;
     return { accountId: info.accountId, email: info.email, rpId, credentials };
   } catch {
@@ -156,9 +160,10 @@ async function openWith(env, offer, credentialId, output) {
   /** @type {{ pinned: Record<string, any> }} */
   let opened;
   try {
-    // A passkey unlock shows no OPAQUE server key, and the core refuses a record that pins one when none is shown. The
-    // device hands over the key it pinned: the wrap proves itself (it opens only under the passkey's key, for the pinned
-    // account, vault and `pk_a`), and the server proved its key when it started the session this unlock lives in.
+    // No OPAQUE exchange runs here, so the server shows no key to check. The record's own key is handed back so that the
+    // core's server-key pin is neutral (it never pins a new one). What this unlock authenticates is the data, not the
+    // server: the wrap opens only under the passkey's key for the pinned account, vault and epoch, and `pk_a`, the floors
+    // and the manifest are checked after it. Never take this key from a server response.
     const pinned = { kind: "pinned", record, ...(record.server_public_key instanceof Uint8Array ? { server_public_key: record.server_public_key } : {}) };
     opened = await env.client.vault.unlock_prf(env.server, ctx, output, wrapToCore(wrap, 0), pinned);
   } catch (error) {

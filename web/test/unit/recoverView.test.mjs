@@ -211,6 +211,29 @@ test("after_a_recovery_the_page_asks_the_user_to_look_at_the_passkeys_when_they_
   });
 });
 
+test("a_recovery_that_did_not_sign_in_says_where_to_look_at_the_passkeys_later", async () => {
+  for (const [lang, texts] of [["en", EN], ["nb", NB]]) {
+    await withDom(async () => {
+      const world = await recoverWorld();
+      const failing = async () => {
+        throw Object.assign(new Error("no sign-in"), { code: "network" });
+      };
+      const { root } = page({ world, lang, recover: (args) => recoverAccount(world.env, args, { signIn: failing }), passkeysOffered: async () => true });
+      await settle();
+      await fill(root);
+      void fire(byRole(root, "recover-form"), "submit");
+      await until(() => byRole(root, "sheet-page") !== null);
+      byRole(byRole(root, "sheet-page"), "rk-typed").value = NEW_RK;
+      await fire(byRole(byRole(root, "sheet-page"), "confirm-form"), "submit");
+      await until(() => byRole(root, "recover-done") !== null);
+      await settle();
+      assert.equal(textOf(byRole(root, "done-signed-in")).trim(), texts["recover.done_not_signed_in"]);
+      assert.equal(textOf(byRole(root, "done-passkeys-later")).trim(), texts["recover.done_passkeys_later"]);
+      assert.equal(byRole(root, "done-passkeys").hidden, true, "the list itself cannot be read before the sign-in");
+    });
+  }
+});
+
 test("a_wrong_code_shows_the_single_failure_text", async () => {
   await withDom(async () => {
     const texts = [];

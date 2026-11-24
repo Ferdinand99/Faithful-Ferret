@@ -9,6 +9,8 @@ import { test } from "node:test";
 import { b64u } from "../../src/b64.mjs";
 import { createI18n } from "../../src/i18n.mjs";
 import { req, run } from "../../src/store/idb.mjs";
+import { evaluateOneOf } from "../../src/flows/passkeyAnswer.mjs";
+import { evaluatePasskey } from "../../src/flows/passkeyCeremony.mjs";
 import { PASSKEY_UNLOCK_ERRORS, passkeyUnlockErrorText, prepareUnlock, unlockScreen } from "../../src/views/unlock.mjs";
 import { describeError } from "../../src/views/form.mjs";
 import { ACCOUNT, EMAIL, coded, dumpDatabase, filled, pinnedRecord } from "./accountHelpers.mjs";
@@ -277,6 +279,78 @@ test("a_wrong_or_missing_prf_result_gives_one_plain_error", async () => {
   const closed = await closedWorld();
   const fourth = await closed.session.preparePasskeyUnlock({ rpId: HOST });
   await assert.rejects(unlockWith(closed, fourth, phoneKey({ fail: { get: "NotAllowedError" }, clock: { at: 0 } })), { code: "passkey_blocked" });
+});
+
+test("a_refused_answer_still_wipes_the_browsers_own_result_buffer", async () => {
+  // The browser's `results.first` is the real PRF output. When the answer is refused before the result is read, the buffer is
+  // wiped all the same (best effort: script cannot reach a copy the engine made).
+  const keep = (credentials) => {
+    const held = PRF_RESULT.slice().buffer;
+    const get = credentials.get;
+    credentials.get = async (options) => {
+      const answer = await get(options);
+      const results = { prf: { results: { first: held } } };
+      answer.getClientExtensionResults = () => results;
+      return answer;
+    };
+    return held;
+  };
+  const zero = (buffer) => new Uint8Array(buffer).every((byte) => byte === 0);
+  // The unlock: another credential, not verified, another host.
+  for (const [extra, code] of [[{ otherId: true }, "passkey_other_credential"], [{ getUv: false }, "passkey_not_verified"], [{ host: "other.example.test" }, "passkey_bad_answer"]]) {
+    const world = await closedWorld();
+    const offer = await world.session.preparePasskeyUnlock({ rpId: HOST });
+    const credentials = phoneKey(extra);
+    const held = keep(credentials);
+    assert.equal(zero(held), false, "the control: the buffer holds the result before");
+    await assert.rejects(unlockWith(world, offer, credentials), { code });
+    assert.equal(zero(held), true, `${code}: the browser's buffer is wiped`);
+  }
+  // The same for the evaluation that registers a passkey.
+  for (const [extra, code] of [[{ otherId: true }, "passkey_other_credential"], [{ getUv: false }, "passkey_not_verified"]]) {
+    const credentials = phoneKey(extra);
+    const held = keep(credentials);
+    await assert.rejects(evaluatePasskey({ rpId: HOST, credentialId: PHONE.credential, salt: SALT }, ceremonyDeps(credentials)), { code });
+    assert.equal(zero(held), true, `${code}: the browser's buffer is wiped (registration)`);
+  }
+});
+
+test("a_salt_of_the_wrong_size_gives_the_plain_error_and_not_a_type_error", async () => {
+  // The call itself: nothing is asked of the passkey, and the error is the one of an unlock that did not work.
+  const credentials = phoneKey();
+  await assert.rejects(
+    evaluateOneOf({ rpId: HOST, credentials: [{ id: PHONE.credential, salt: filled(16, 0x61) }], getAssertion: (publicKey) => credentials.get({ publicKey }) }, ceremonyDeps(credentials)),
+    { code: "passkey_unlock_failed" },
+  );
+  assert.equal(credentials.calls.get.length, 0);
+  // A list with such a row is not read at all (the wire wants 32 bytes), so nothing is offered and the password is the way.
+  const world = await closedWorld({ passkeys: [PHONE, { ...KEY, salt: filled(16, 0x61) }] });
+  assert.equal(await world.session.preparePasskeyUnlock({ rpId: HOST }), null);
+});
+
+test("the_unlock_page_is_drawn_before_the_offer_is_known", async () => {
+  await withDom(async () => {
+    const session = fakeSession();
+    let release;
+    session.preparePasskeyUnlock = () => new Promise((resolve) => void (release = resolve));
+    session.unlockWithPasskey = async () => undefined;
+    const host = unlockScreen({ session, t, go: () => undefined, onUnlocked: () => undefined });
+    await settle();
+    assert.ok(find(host, "password"), "the password form is there while the offer is still being read");
+    assert.equal(find(host, "passkey-section"), null);
+    release({ accountId: "aa".repeat(16), email: "ada@example.test", rpId: HOST, credentials: [{ id: CREDENTIAL, salt: SALT }] });
+    await settle();
+    assert.ok(find(host, "passkey-section"), "the button comes when the offer is known");
+    // An offer that fails to read leaves the page as it was.
+    const failing = fakeSession();
+    failing.preparePasskeyUnlock = async () => {
+      throw new Error("no answer");
+    };
+    const other = unlockScreen({ session: failing, t, go: () => undefined, onUnlocked: () => undefined });
+    await settle();
+    assert.ok(find(other, "password"));
+    assert.equal(find(other, "passkey-section"), null);
+  });
 });
 
 // ----------------------------------------------------------------------------------------------- the checks after it

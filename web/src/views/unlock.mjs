@@ -70,9 +70,11 @@ export function passkeyUnlockErrorText(t, error, options) {
  *   remembered?(): Promise<import("../flows/rememberedAccount.mjs").Remembered | null>,
  *   preparePasskeyUnlock?(): Promise<import("../flows/prfUnlock.mjs").PasskeyOffer | null>,
  * }} session
+ * @param {{ passkey?: boolean }} [options] `passkey: false` leaves the passkey offer out (the screen asks for it itself, after it
+ *   has been drawn, so the three reads do not hold the page back)
  * @returns {Promise<UnlockFacts>}
  */
-export async function prepareUnlock(session) {
+export async function prepareUnlock(session, { passkey: withPasskey = true } = {}) {
   const info = await session.info();
   if (!info) {
     /** @type {import("../flows/rememberedAccount.mjs").Remembered | null} */
@@ -100,7 +102,7 @@ export async function prepareUnlock(session) {
   // passkey now. A failure of the check is "not offered".
   /** @type {import("../flows/prfUnlock.mjs").PasskeyOffer | null} */
   let passkey = null;
-  if (typeof session.preparePasskeyUnlock === "function") {
+  if (withPasskey && typeof session.preparePasskeyUnlock === "function") {
     try {
       passkey = (await session.preparePasskeyUnlock()) ?? null;
     } catch {
@@ -182,10 +184,8 @@ export function unlockView({ session, t, go, email, accountId, skRequired, passk
   const passkeyButton = /** @type {HTMLButtonElement} */ (el("button", {
     type: "button", class: "btn btn-secondary btn-block", "data-role": "passkey-unlock",
   }, t("vault.unlock.passkey.button")));
-  const passkeyBox = passkey === null || remembered ? null : el("div", { class: "stack passkey-unlock", "data-role": "passkey-section" },
-    el("p", { class: "aside" }, t("vault.unlock.passkey.or")),
-    passkeyButton,
-    el("small", { class: "help", "data-role": "passkey-help" }, t("vault.unlock.passkey.help")));
+  /** @type {HTMLElement | null} */
+  let passkeyBox = null;
   // What to check when the browser refuses the passkey at once, before it has asked the user anything.
   const blockedHelp = el("ul", { class: "help", "data-role": "passkey-blocked-help" },
     el("li", null, t("methods.blocked.other_manager")),
@@ -402,15 +402,33 @@ export function unlockView({ session, t, go, email, accountId, skRequired, passk
   offerBox,
   el("div", { class: "actions" }, submit));
 
+  const recoverRow = el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link")));
+
   mount(root,
     el("h1", null, t("vault.unlock.heading")),
     el("p", null, remembered ? t("vault.unlock.ended") : t("vault.unlock.as", { email })),
     form,
-    ...(passkeyBox === null ? [] : [passkeyBox]),
     // The way to account recovery from the lock screen: a forgotten master password, or a restore of the server (see above).
-    el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link"))),
+    recoverRow,
     // A live session of another account: the sign-in page (with "Sign out"). An ended one has "Not you? Sign out" above.
     ...(remembered ? [] : [el("p", { class: "aside" }, el("a", { href: "#/login", "data-role": "other-account" }, t("vault.unlock.other")))]));
+  /**
+   * Shows the passkey button for an offer (what `preparePasskeyUnlock` found), below the form. Nothing happens on the page of an
+   * ended session, for a second offer or for no offer.
+   * @param {import("../flows/prfUnlock.mjs").PasskeyOffer | null} offer
+   */
+  function offerPasskey(offer) {
+    if (offer === null || remembered || passkeyBox !== null) return;
+    passkey = offer;
+    passkeyBox = el("div", { class: "stack passkey-unlock", "data-role": "passkey-section" },
+      el("p", { class: "aside" }, t("vault.unlock.passkey.or")),
+      passkeyButton,
+      el("small", { class: "help", "data-role": "passkey-help" }, t("vault.unlock.passkey.help")));
+    root.insertBefore(passkeyBox, recoverRow);
+  }
+  offerPasskey(passkey);
+  // A screen that learns of the offer after it was drawn (see `unlockScreen`).
+  /** @type {any} */ (root).offerPasskey = offerPasskey;
   return root;
 }
 
@@ -432,7 +450,7 @@ export function unlockView({ session, t, go, email, accountId, skRequired, passk
 export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale }) {
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
     el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
-  prepareUnlock(session).then(
+  prepareUnlock(session, { passkey: false }).then(
     (found) => {
       if (found.signedIn === false && found.remembered !== true) {
         mount(box, el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" },
@@ -442,11 +460,19 @@ export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRes
         go("/login");
         return;
       }
-      mount(box, unlockView({
+      const view = unlockView({
         session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired,
-        passkey: found.signedIn ? found.passkey : null, remembered: found.signedIn === false,
+        remembered: found.signedIn === false,
         onUnlocked, restoreNote, clearRestoreNote, locale,
-      }));
+      });
+      mount(box, view);
+      // The page is drawn first; the button comes when the three reads of the offer are done (a failed read is no offer).
+      if (found.signedIn === true && typeof session.preparePasskeyUnlock === "function") {
+        Promise.resolve().then(() => session.preparePasskeyUnlock?.()).then(
+          (offer) => /** @type {any} */ (view).offerPasskey(offer ?? null),
+          () => undefined,
+        );
+      }
     },
     (error) => {
       mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },

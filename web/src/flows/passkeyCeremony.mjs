@@ -21,7 +21,7 @@
 import { AccountError } from "../crypto/errors.mjs";
 import {
   AT, BE, BS, PRF_OUTPUT_LENGTH, TIMEOUT_MS,
-  bytesOf, checkClientData, checkedAuthData, firstResultOf, refused, sameBytes,
+  bytesOf, checkClientData, checkedAuthData, firstResultOf, refused, sameBytes, wipeBrowserResult,
 } from "./passkeyAnswer.mjs";
 
 /** @typedef {import("./passkeyAnswer.mjs").CeremonyDeps} CeremonyDeps */
@@ -161,8 +161,10 @@ export async function evaluatePasskey({ rpId, credentialId, salt, be }, deps) {
     output = null;
     return out;
   } finally {
-    // Only an output that was not handed on is wiped here (every path that throws).
+    // Only an output that was not handed on is wiped here (every path that throws), and the browser's own buffer is wiped
+    // even when the answer was refused before the result was read.
     output?.fill(0);
+    wipeBrowserResult(extensions?.prf?.results);
   }
 }
 
