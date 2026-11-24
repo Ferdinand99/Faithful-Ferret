@@ -42,10 +42,9 @@ use crate::vault::policy::{self, UnlockPolicy};
 pub const PATH: &str = "/settings/unlock";
 
 /// How many PIN guesses per second one powerful computer makes against a PIN
-/// that is kept on disk (the cost of one Argon2id run at the strong PIN
-/// profile). The one number that the page's times are computed from, and the
-/// number the extension's own text uses.
-pub const OFFLINE_GUESSES_PER_SECOND: u32 = 100;
+/// that is kept on disk: the core's own number, the one the extension's text
+/// reads too. The page's times are computed from it.
+pub use ferret_core::PIN_OFFLINE_GUESSES_PER_SECOND as OFFLINE_GUESSES_PER_SECOND;
 
 /// How many computers the second figure on the page assumes.
 pub const MANY_COMPUTERS: u32 = 100;

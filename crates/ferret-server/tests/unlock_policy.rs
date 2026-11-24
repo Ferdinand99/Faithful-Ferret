@@ -732,10 +732,15 @@ mod page {
 
     #[tokio::test]
     async fn the_admin_text_uses_the_cores_offline_constant() {
-        // The one number sits in one place and the page's times are computed
+        // The one number sits in the core and the page's times are computed
         // from it: the time for a hundred computers is a hundredth of the time
         // for one.
-        let per = f64::from(OFFLINE_GUESSES_PER_SECOND);
+        assert_eq!(
+            OFFLINE_GUESSES_PER_SECOND,
+            ferret_core::PIN_OFFLINE_GUESSES_PER_SECOND,
+            "the page reads the core's number"
+        );
+        let per = f64::from(ferret_core::PIN_OFFLINE_GUESSES_PER_SECOND);
         for length in [4u8, 6, 8, 10] {
             let one = seconds_to_try_all(length, per);
             let many = seconds_to_try_all(length, per * f64::from(MANY_COMPUTERS));
@@ -747,27 +752,12 @@ mod page {
         let app = real_time_app().await;
         admin_user(&app, 1).await;
         let text = visible(&get(&app, PAGE).await.text());
-        let one = duration_text(10f64.powi(6) / f64::from(OFFLINE_GUESSES_PER_SECOND));
+        let one =
+            duration_text(10f64.powi(6) / f64::from(ferret_core::PIN_OFFLINE_GUESSES_PER_SECOND));
         assert!(
             text.contains(&format!("in {one} with one powerful computer")),
             "{text}"
         );
-
-        // It is the number of the core's PIN profile, where the core has it.
-        let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../ferret-core/src/pin_profile.rs");
-        if let Ok(source) = std::fs::read_to_string(&core) {
-            let line = source
-                .lines()
-                .find(|l| l.contains("pub const PIN_OFFLINE_GUESSES_PER_SECOND"))
-                .expect("the core's constant");
-            let value: u32 = line
-                .split('=')
-                .nth(1)
-                .and_then(|v| v.trim().trim_end_matches(';').trim().parse().ok())
-                .expect("a number");
-            assert_eq!(value, OFFLINE_GUESSES_PER_SECOND);
-        }
     }
 
     #[tokio::test]
