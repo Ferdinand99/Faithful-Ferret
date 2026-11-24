@@ -9,15 +9,19 @@
 /**
  * Asks the browser to delete the unlock database. Never throws and never rejects; the answer says whether the browser
  * confirmed the deletion (a refused or failed deletion is tried again at the next start).
- * @param {{ deleteDatabase(name: string): any } | null | undefined} idb the extension's `indexedDB`
+ * @param {{ deleteDatabase(name: string): any } | null | undefined} indexedDB the extension's `indexedDB`
  * @returns {Promise<boolean>}
  */
-export function deleteUnlockDatabase(idb) {
+export function deleteUnlockDatabase(indexedDB) {
   return new Promise((resolve) => {
+    if (!indexedDB) {
+      resolve(false);
+      return;
+    }
     /** @type {any} */
     let request;
     try {
-      request = idb?.deleteDatabase("ferret-unlock");
+      request = indexedDB.deleteDatabase("ferret-unlock");
     } catch {
       resolve(false);
       return;

@@ -174,7 +174,9 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "The answers `device_revoked`, `token_reused` and `token_expired` to that renewal delete the PIN blob",
     "guards only against a clock set back",
     "**Revocation deletes the PIN at the first contact.** A revoked device that is kept offline can still be unlocked with its PIN for at most seven days after its last contact with the server",
-    "The clock can be forged by someone who controls the machine before the extension has seen a later time",
+    "The clock can be forged by someone who controls the machine before the extension has seen a later time, and whoever can set the system clock can keep an offline PIN usable for as long as they hold the clock still inside the window's logic",
+    "The window uses the device's own time, never the server's",
+    "A contact sets the highest time seen to the device's own time **on purpose**",
   ]) {
     assert.ok(devices.includes(rule), rule);
   }
@@ -185,6 +187,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "**except when a PIN is kept on disk** (the extension's default, § 7.2)",
     "one Argon2id (256 MiB, t = 3) per guess, with no limit on attempts",
     "a revoked device that is kept offline can still be unlocked with its PIN for at most seven days after its last contact with the server",
+    "The window is counted on the device's own clock, so whoever controls that clock can keep an offline PIN usable inside the window's logic",
     "a passkey method opens VK **without MP and without SK**",
   ]) {
     assert.ok(threats.includes(rule), rule);

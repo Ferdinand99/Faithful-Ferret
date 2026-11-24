@@ -605,3 +605,38 @@ test("a_build_with_unlock_off_deletes_the_unlock_database_at_start", async () =>
   assert.equal(await deleteUnlockDatabase({ deleteDatabase: () => { const r = /** @type {any} */ ({}); setTimeout(() => r.onerror?.({}), 0); return r; } }), false);
   assert.equal(await deleteUnlockDatabase({ deleteDatabase: () => { const r = /** @type {any} */ ({}); setTimeout(() => r.onsuccess?.({}), 0); return r; } }), true);
 });
+
+test("only_the_pin_store_names_the_unlock_database_in_a_package", async () => {
+  // The architecture test over the built packages: in a package with `unlock` on, the one module that names the unlock
+  // database or the session key of the PIN is the PIN store; in a package with it off, there is no PIN store, and the
+  // only thing that names the database is the deletion at start.
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
+    /** @param {Map<string, Buffer>} files @returns {string[]} */
+    const holders = (files) =>
+      [...files]
+        .filter(([path]) => /\.(?:mjs|js|html)$/.test(path) && !WASM_FILES.includes(path) && !isTestOnlyPath(path))
+        .filter(([, bytes]) => {
+          const text = bytes.toString("utf8").replace(/indexedDB\s*\.\s*deleteDatabase\(\s*["']ferret-unlock["']\s*\)/g, "");
+          return text.includes("ferret-unlock") || /["'`]ferretPin\b/.test(text);
+        })
+        .map(([path]) => path)
+        .sort();
+    for (const manifest of ["mv2", "mv3"]) {
+      const on = await build({ ...options, out: join(env.out, `on-${manifest}`), manifest, variant: "test" });
+      assert.deepEqual(holders(on.files), ["background/localUnlock.mjs"], `${manifest}: unlock on`);
+      for (const [name, variant, features] of /** @type {const} */ ([["release", "release", undefined], ["test-off", "test", ["save"]]])) {
+        const off = await build({ ...options, out: join(env.out, `${name}-${manifest}`), manifest, variant, ...(features ? { features: [...features] } : {}) });
+        assert.equal(off.files.has("background/localUnlock.mjs"), false, `${manifest} ${name}: no PIN store`);
+        assert.deepEqual(holders(off.files), [], `${manifest} ${name}: unlock off`);
+        // Nothing in the package imports the PIN store (a dangling import would have failed the build).
+        for (const [path, bytes] of off.files) {
+          if (/\.(?:mjs|js)$/.test(path) && !WASM_FILES.includes(path)) assert.equal(bytes.toString("utf8").includes("localUnlock"), false, `${manifest} ${name}: ${path}`);
+        }
+      }
+    }
+  } finally {
+    env.cleanup();
+  }
+});
