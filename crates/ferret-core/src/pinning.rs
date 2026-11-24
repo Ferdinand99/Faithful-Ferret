@@ -457,12 +457,19 @@ impl Pinned {
     /// 1. the pins: account, vault, server address, SK bit, server public
     ///    key (when pinned), KSF profile ([`Error::KdfProfileDowngrade`] if
     ///    lower), the wrap's `kek_generation` against its floor, and the
-    ///    epoch against `vk_epoch_max`;
+    ///    epoch against `vk_epoch_max` (a lower one is
+    ///    [`PinnedField::VkEpoch`], a higher one [`PinnedField::EpochAhead`]);
     /// 2. the wrap is opened ([`Error::Decrypt`] for any failure);
-    /// 3. within the pinned epoch the vault's `pk_a` must be the pinned one
-    ///    (in a higher epoch it is new, by design);
-    /// 4. the record advances: KSF profile, the wrap's floor, epoch and
-    ///    `pk_a`, and a server key that was not pinned yet.
+    /// 3. the vault's `pk_a` must be the pinned one;
+    /// 4. the record advances: KSF profile, the wrap's floor, and a server
+    ///    key that was not pinned yet.
+    ///
+    /// A higher epoch comes only from a full rekey, which stores a proof
+    /// signed with the previous `sk_a` that a device must check against its
+    /// pinned `pk_a` (Fase 1 § 4.7, § 8.6). That proof is not checked yet, so
+    /// until it is, a device does not follow a higher epoch: the wrap of
+    /// another vault key at epoch + 1 would otherwise be taken as new, with no
+    /// `pk_a` to compare.
     ///
     /// A PIN or device wrap is refused with [`Error::Unsupported`]; use
     /// [`Pinned::unlock_local`].
@@ -510,12 +517,16 @@ impl Pinned {
         if ctx.vk_epoch < self.vk_epoch_max {
             return Err(Error::Pinned(PinnedField::VkEpoch));
         }
+        // No rekey proof is checked yet, so a higher epoch is not followed.
+        if ctx.vk_epoch > self.vk_epoch_max {
+            return Err(Error::Pinned(PinnedField::EpochAhead));
+        }
 
         // 2. Open the wrap.
         let vault = unwrap_vk(&ctx, kek, rec)?;
 
         // 3. The vault.
-        if ctx.vk_epoch == self.vk_epoch_max && vault.auth_public_key() != self.pk_a {
+        if vault.auth_public_key() != self.pk_a {
             return Err(Error::Pinned(PinnedField::AuthKey));
         }
 
@@ -524,8 +535,6 @@ impl Pinned {
             self.ksf_profile = self.ksf_profile.max(ksf.number());
         }
         self.raise_floor(key, rec.kek_generation);
-        self.vk_epoch_max = ctx.vk_epoch;
-        self.pk_a = vault.auth_public_key();
         if self.server_public_key.is_none() {
             self.server_public_key = seen.server_public_key;
         }

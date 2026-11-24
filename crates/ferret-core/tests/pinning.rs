@@ -197,37 +197,93 @@ fn the_password_floor_survives_a_new_method_id() {
 fn pinned_allows_the_upgrade_paths_only() {
     let mut f = fixture();
 
-    // A higher kek_generation and a higher epoch (a rekey, with a new vault
-    // key and so a new pk_a) are allowed and advance the record.
-    let c2 = VaultContext {
-        vk_epoch: 2,
-        ..f.ctx
-    };
-    let rec2 = seal(&c2, 0x70, 4, password_method(), 0x5b);
-    let vault2 = f.pinned.unlock_server(&view(c2), &rec2, &kek()).unwrap();
-    assert_eq!(f.pinned.vk_epoch_max, 2);
-    assert_eq!(f.pinned.pk_a, vault2.auth_public_key());
+    // A higher kek_generation of the same vault key, in the pinned epoch, is
+    // allowed and advances the floor. The record's epoch and pk_a stay.
+    let before = f.pinned.clone();
+    let rec4 = seal(&f.ctx, 0x70, 4, password_method(), 0x5a);
+    let vault = f.pinned.unlock_server(&view(f.ctx), &rec4, &kek()).unwrap();
+    assert_eq!(f.pinned.vk_epoch_max, 1);
+    assert_eq!(f.pinned.pk_a, vault.auth_public_key());
+    assert_eq!(f.pinned.pk_a, before.pk_a);
     assert_eq!(floor(&f.pinned, &MethodKey::Password), Some(4));
 
     // Within the pinned epoch another vault key (so another pk_a) is not
     // allowed, and the record stays as it was.
     let before = f.pinned.clone();
-    let other = seal(&c2, 0x70, 4, password_method(), 0x5c);
+    let other = seal(&f.ctx, 0x70, 4, password_method(), 0x5c);
     assert_eq!(
-        f.pinned.unlock_server(&view(c2), &other, &kek()).err(),
+        f.pinned.unlock_server(&view(f.ctx), &other, &kek()).err(),
         Some(pinned_error(PinnedField::AuthKey))
     );
     assert_eq!(f.pinned, before);
 
-    // The old epoch is a rollback now, also for a wrap whose generation is
-    // not lower.
+    // A higher epoch is refused until the rekey proof is checked: neither the
+    // wrap of the same vault key nor one of another vault key (which has no
+    // pk_a to compare) moves the record.
+    let c2 = VaultContext {
+        vk_epoch: 2,
+        ..f.ctx
+    };
+    for vk_byte in [0x5a, 0x5b] {
+        let rec2 = seal(&c2, 0x70, 5, password_method(), vk_byte);
+        assert_eq!(
+            f.pinned.unlock_server(&view(c2), &rec2, &kek()).err(),
+            Some(pinned_error(PinnedField::EpochAhead))
+        );
+        assert_eq!(f.pinned, before);
+    }
+
+    // A lower epoch is a rollback, also for a wrap whose generation is not
+    // lower.
+    let mut ahead = before.clone();
+    ahead.vk_epoch_max = 2;
     let old_epoch = seal(&f.ctx, 0x70, 4, password_method(), 0x5a);
     assert_eq!(
-        f.pinned
-            .unlock_server(&view(f.ctx), &old_epoch, &kek())
-            .err(),
+        ahead.unlock_server(&view(f.ctx), &old_epoch, &kek()).err(),
         Some(pinned_error(PinnedField::VkEpoch))
     );
+}
+
+#[test]
+fn a_higher_epoch_is_refused_before_the_wrap_is_opened() {
+    let mut f = fixture();
+    let before = f.pinned.clone();
+    let c2 = VaultContext {
+        vk_epoch: 2,
+        ..f.ctx
+    };
+    // A real wrap of another vault key for epoch + 1 opens under the KEK, but
+    // the device does not take it.
+    let rec = seal(&c2, 0x70, 2, password_method(), 0x77);
+    assert_eq!(
+        f.pinned.unlock_server(&view(c2), &rec, &kek()).err(),
+        Some(pinned_error(PinnedField::EpochAhead))
+    );
+    // A wrap that does not open at epoch + 1 gives the same answer: the epoch
+    // is judged with the other pins, before the wrap.
+    let wrong = Kek::from_test_bytes([8; 32]);
+    assert_eq!(
+        f.pinned.unlock_server(&view(c2), &rec, &wrong).err(),
+        Some(pinned_error(PinnedField::EpochAhead))
+    );
+    // The same pinned record still unlocks an honest wrap of its own epoch.
+    let rec1 = seal(&f.ctx, 0x70, 2, password_method(), 0x5a);
+    f.pinned.unlock_server(&view(f.ctx), &rec1, &kek()).unwrap();
+    assert_eq!(f.pinned.vk_epoch_max, before.vk_epoch_max);
+    assert_eq!(f.pinned.pk_a, before.pk_a);
+}
+
+#[test]
+fn a_first_unlock_takes_any_epoch() {
+    // No pinned record yet: the first unlock pins what it shows (the account
+    // may have been rekeyed before this device saw it).
+    let c2 = VaultContext {
+        vk_epoch: 3,
+        ..ctx()
+    };
+    let rec = seal(&c2, 0x70, 1, password_method(), 0x5a);
+    let (pinned, _) = Pinned::first_unlock(URL, true, Some(SERVER_KEY), &c2, &rec, &kek()).unwrap();
+    assert_eq!(pinned.vk_epoch_max, 3);
 }
 
 #[test]

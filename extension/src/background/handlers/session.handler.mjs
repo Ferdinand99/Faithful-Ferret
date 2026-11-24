@@ -62,6 +62,7 @@ const SAME_AS = Object.freeze({
   pinned_account_id: "attack_warning",
   pinned_account_mismatch: "attack_warning",
   pinned_auth_key: "attack_warning",
+  pinned_epoch_ahead: "attack_warning",
   pinned_epoch_downgrade: "attack_warning",
   pinned_floor_downgrade: "attack_warning",
   pinned_floor_missing: "attack_warning",

@@ -310,8 +310,8 @@ test("confirm_password_proves_the_password_and_the_account_key_without_making_a_
 
 test("confirm_password_refuses_a_wrap_of_another_vault_key_made_for_the_next_epoch", () => {
   // A server that knows the export key (an account without a secret key, an OPAQUE record of its own) serves the password
-  // wrap of ANOTHER vault key, made for the next epoch under that export key. The core takes a vault key of a higher
-  // epoch as new and does not compare `pk_a`, so `unlock_password` opens it; confirming a password must not.
+  // wrap of ANOTHER vault key, made for the next epoch under that export key. A higher epoch has no `pk_a` to compare,
+  // and no rekey proof is checked yet, so neither `unlock_password` nor `confirm_password` takes it.
   const { server, created, record } = newAccount("confirm-epoch", { secretKey: false });
   const other = newAccount("confirm-epoch-other");
   const [ptr, len] = other.vault.test_vk_region();
@@ -341,8 +341,10 @@ test("confirm_password_refuses_a_wrap_of_another_vault_key_made_for_the_next_epo
   assert.equal(sealed.ok, true, JSON.stringify(sealed));
   const forged = { ...created.wraps[0], wrap: Uint8Array.from(Buffer.from(sealed.output.wrap, "hex")) };
   const next = { ...CTX, vk_epoch: 2 };
-  // The gap is real in `unlock_password`: a higher epoch is new by design, and the wrap opens.
-  assert.doesNotThrow(() => login().unlock_password(URL_, next, forged, pinned(created.pinned)));
+  // `unlock_password` refuses a higher epoch than the pinned one, although the wrap opens under the export key.
+  assert.equal(code(() => login().unlock_password(URL_, next, forged, pinned(created.pinned))), "pinned_epoch_ahead");
+  // Without a pinned record (a first unlock) the epoch is not judged.
+  assert.doesNotThrow(() => login().unlock_password(URL_, next, forged, firstUse(false)));
   // Confirming a password refuses it, whichever epoch the caller names for it.
   assert.equal(code(() => login().confirm_password(URL_, next, forged, pinned(created.pinned))), "pinned_vk_epoch");
   assert.equal(code(() => login().confirm_password(URL_, CTX, forged, pinned(created.pinned))), "decrypt");

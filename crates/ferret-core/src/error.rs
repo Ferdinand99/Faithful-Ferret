@@ -197,6 +197,10 @@ pub enum PinnedField {
     KekGeneration,
     /// The vault context has a lower `vk_epoch` than the highest seen.
     VkEpoch,
+    /// A server unlock shows a higher `vk_epoch` than the highest seen. Only
+    /// a full rekey raises the epoch, and its proof (signed with the previous
+    /// `sk_a`) is not checked yet, so a device does not follow it.
+    EpochAhead,
     /// The secret key (SK) bit differs from the pinned one.
     SkBit,
     /// The OPAQUE server public key differs from the pinned one, or is
@@ -331,6 +335,7 @@ impl Error {
         Error::Pinned(PinnedField::VaultId),
         Error::Pinned(PinnedField::KekGeneration),
         Error::Pinned(PinnedField::VkEpoch),
+        Error::Pinned(PinnedField::EpochAhead),
         Error::Pinned(PinnedField::SkBit),
         Error::Pinned(PinnedField::ServerKey),
         Error::Pinned(PinnedField::AuthKey),
@@ -424,6 +429,7 @@ impl Error {
                 PinnedField::VaultId => "pinned_vault_id",
                 PinnedField::KekGeneration => "pinned_kek_generation",
                 PinnedField::VkEpoch => "pinned_vk_epoch",
+                PinnedField::EpochAhead => "pinned_epoch_ahead",
                 PinnedField::SkBit => "pinned_sk_bit",
                 PinnedField::ServerKey => "pinned_server_key",
                 PinnedField::AuthKey => "pinned_auth_key",

@@ -34,6 +34,7 @@
   "account.error.pinned_account_mismatch": "Warning: the server named another account than the one this device knows for this e-mail. This can be an attack. The sign-in was stopped.",
   "account.error.pinned_auth_key": "Warning: the account key the server lists is not the one in your vault. This can be an attack. The vault was closed. Tell the administrator.",
   "account.error.pinned_elsewhere": "This account is already pinned on this device under another server address ({server}). An account is pinned under one address only, and nothing was saved. Forget the other server first, then sign in here.",
+  "account.error.pinned_epoch_ahead": "Warning: the server showed a newer vault key than this device knows. This can be an attack. The sign-in was stopped. Sign in again on a trusted device, or tell the administrator.",
   "account.error.pinned_epoch_downgrade": "Warning: the server shows an older key epoch than this device has seen. This can be an attack. The vault was closed.",
   "account.error.pinned_floor_downgrade": "Warning: the server shows an older unlock method than this device has seen. This can be an attack. The vault was closed.",
   "account.error.pinned_floor_missing": "Warning: the server leaves out an unlock method that this device has seen. This can be an attack. The vault was closed.",

@@ -91,7 +91,7 @@ export const KNOWN_ERRORS = Object.freeze([
   "input_too_long", "input_too_short", "insecure_transport", "kdf_profile_downgrade", "kdf_profile_unknown",
   "malformed_code", "method_list_changed", "method_list_missing", "method_list_unknown", "methods_invalid", "network",
   "non_canonical", "not_confirmed", "password_mismatch", "password_required", "pin_save_failed", "pinned_account_id", "pinned_account_mismatch",
-  "pinned_auth_key", "pinned_epoch_downgrade", "pinned_floor_downgrade", "pinned_floor_missing", "pinned_identity_changed",
+  "pinned_auth_key", "pinned_epoch_ahead", "pinned_epoch_downgrade", "pinned_floor_downgrade", "pinned_floor_missing", "pinned_identity_changed",
   "pinned_kek_generation", "pinned_profile_downgrade", "pinned_server_key", "pinned_server_key_changed",
   "pinned_server_url", "pinned_sk_bit", "pinned_vault_id", "pinned_vk_epoch", "profile_rejected",
   "malformed_setup_qr", "pinned_elsewhere", "qr_account", "qr_not_confirmed", "qr_profile", "qr_sk_bit", "qr_server_key", "qr_server_url",
