@@ -107,12 +107,18 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
   assert.equal(one(tabs.root, "panel-generator")?.hidden, true);
   assert.equal(one(tabs.root, "tab-vault")?.getAttribute("aria-current"), "page");
   assert.equal(one(tabs.root, "tab-generator")?.hasAttribute("aria-current"), false);
-  // "Health" has no view yet: disabled, tagged, out of the tab order, and a click does nothing.
+  // "Health" has no view yet: disabled, tagged, still in the tab order (a disabled item of a bar stays focusable, so that it is
+  // found and read as disabled), and a click does nothing.
   const health = one(tabs.root, "tab-health");
-  assert.equal(health?.getAttribute("tabindex"), "-1");
+  assert.equal(health?.hasAttribute("tabindex"), false, "a button's own place in the tab order, not taken out of it");
   assert.equal(one(health, "tab-soon")?.textContent, "Coming soon");
   assert.equal(health?.getAttribute("title"), "Coming soon");
-  assert.equal(health?.textContent, "HealthComing soon");
+  assert.equal(health?.textContent, "Health Coming soon", "the name reads Health, then the tag");
+  assert.equal(one(tabs.root, "tabs")?.getAttribute("aria-label"), "Navigation");
+  const nb = tabsOn.createPopupTabs({ texts: on.texts("nb"), vault: el("div"), makeGenerator: () => null, onSettings: () => {} });
+  assert.equal(one(nb.root, "tab-vault")?.textContent, "Hvelv");
+  assert.equal(one(nb.root, "tab-health")?.textContent, "Helse Kommer snart");
+  assert.equal(one(nb.root, "tabs")?.getAttribute("aria-label"), "Navigasjon");
   await click(health);
   assert.equal(tabs.selected(), "vault", "a click on Health changes nothing");
   assert.equal(health?.hasAttribute("aria-current"), false);
@@ -159,6 +165,8 @@ test("the_bottom_bar_shows_vault_health_and_settings_and_with_the_save_feature_o
     assert.deepEqual(["tab-vault", "tab-settings"].map((role) => one(plain.root, role)?.textContent), ["Vault", "Settings"]);
     assert.deepEqual(roles(plain.root, "tabs")[0].childNodes.map((n) => /** @type {any} */ (n).getAttribute("data-role")), ["tab-vault", "tab-health", "tab-settings"], "Vault, Health (not yet) and Settings");
     assert.equal(one(plain.root, "tab-health")?.getAttribute("aria-disabled"), "true");
+    assert.equal(one(plain.root, "tab-health")?.textContent, "Health Coming soon", "the bar's own texts are there without the feature");
+    assert.equal(one(plain.root, "tabs")?.getAttribute("aria-label"), "Navigation");
     await click(one(plain.root, "tab-health"));
     assert.equal(plain.selected(), "vault");
     assert.equal(one(plain.root, "tab-vault")?.getAttribute("aria-current"), "page");
