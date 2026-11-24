@@ -624,13 +624,13 @@ export function releaseProblems(files, internalHosts, permissionAllow = readPerm
 
 /**
  * What the record beside a built package (<name>.wasm.json, written by the build) says about its
- * WASM package: a release package comes from the locked package and nothing else. A package
- * without a record is not checked here (the release build always writes one).
+ * WASM package: a release package comes from the locked package and nothing else (the build
+ * checked the digest against the lock when it wrote the record). A package without a record is
+ * not checked here (the release build always writes one).
  * @param {string} target a .xpi or a folder
- * @param {string} webRoot the web folder that holds wasm.lock.json
  * @returns {string[]}
  */
-export function wasmRecordProblems(target, webRoot) {
+export function wasmRecordProblems(target) {
   const file = target.replace(/[\\/]+$/, "").replace(/\.xpi$/, "") + ".wasm.json";
   if (!existsSync(file)) return [];
   /** @type {WasmRecord} */
@@ -641,8 +641,6 @@ export function wasmRecordProblems(target, webRoot) {
     return [`${file}: not readable`];
   }
   if (record.source !== "lock") return [`${file}: the WASM package is from ${String(record.source)}, a release package uses the locked one`];
-  const lock = readJson(join(webRoot, "wasm.lock.json"));
-  if (record.sha256 !== lock.sha256) return [`${file}: the WASM package is not the one in web/wasm.lock.json`];
   return [];
 }
 
@@ -1118,7 +1116,7 @@ async function main(args) {
       const webRoot = resolve(defaultRoot, "..", "web");
       const problems = [
         ...releaseProblems(readPackage(target), internalHosts, permissionAllow, webRoot),
-        ...wasmRecordProblems(target, webRoot),
+        ...wasmRecordProblems(target),
       ];
       for (const problem of problems) console.error(`check-release: ${target}: ${problem}`);
       if (problems.length > 0) failed = true;

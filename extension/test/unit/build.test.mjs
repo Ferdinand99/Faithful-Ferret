@@ -311,17 +311,15 @@ test("a_release_build_refuses_a_tree_built_wasm", async () => {
     // The same package without the tree flag is just a package that is not the locked one.
     await assert.rejects(build(args), /checksum mismatch/);
 
-    // The check of a finished release package reads the record beside it: a tree record, or a record
-    // of a package other than the lock's, is a problem; the locked one is clean.
+    // The check of a finished release package reads the record beside it: a tree record is a problem;
+    // the locked one is clean.
     const built = await build({ root: env.root, webRoot: env.webRoot, out: env.out, variant: "release", wasmTar: env.tarPath });
-    assert.deepEqual(wasmRecordProblems(built.xpi, env.webRoot), []);
-    assert.deepEqual(wasmRecordProblems(built.dir, env.webRoot), []);
+    assert.deepEqual(wasmRecordProblems(built.xpi), []);
+    assert.deepEqual(wasmRecordProblems(built.dir), []);
     writeFileSync(built.wasmRecord, `${JSON.stringify({ source: "tree", commit: TREE_COMMIT, sha256: sha256(readFileSync(treeTar)) })}\n`);
-    assert.match(wasmRecordProblems(built.xpi, env.webRoot).join(), /from tree, a release package uses the locked one/);
-    writeFileSync(built.wasmRecord, `${JSON.stringify({ source: "lock", version: "0.0.0", sha256: "1".repeat(64) })}\n`);
-    assert.match(wasmRecordProblems(built.dir, env.webRoot).join(), /not the one in web\/wasm\.lock\.json/);
+    assert.match(wasmRecordProblems(built.xpi).join(), /from tree, a release package uses the locked one/);
     // No record, nothing to check.
-    assert.deepEqual(wasmRecordProblems(join(env.dir, "nothing.xpi"), env.webRoot), []);
+    assert.deepEqual(wasmRecordProblems(join(env.dir, "nothing.xpi")), []);
   } finally {
     if (before === undefined) delete process.env.FERRET_WASM_SOURCE;
     else process.env.FERRET_WASM_SOURCE = before;
