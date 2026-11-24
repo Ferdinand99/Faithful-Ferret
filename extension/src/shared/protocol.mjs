@@ -62,6 +62,8 @@ export const FORBIDDEN_KEYS = Object.freeze([
   "secret",
   "totp_secret",
   "vk",
+  "pin",
+  "prf_output",
 ]);
 
 /**
@@ -77,6 +79,12 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   generate: Object.freeze(["value"]),
   form_capture: Object.freeze(["password", "current_password"]),
   offer_reveal: Object.freeze(["value"]),
+  // What the user types to open the vault with a PIN, and the PIN when one is set: a request from an extension page to
+  // the background, never a reply. (The master password and the secret key of `pin_set` are `mp` and `sk`, as in `unlock`.)
+  pin_set: Object.freeze(["pin"]),
+  pin_unlock: Object.freeze(["pin"]),
+  // The reply of `unlock_policy` has an object named `pin` (the rule and the state of the PIN: flags and numbers, nothing typed).
+  unlock_policy: Object.freeze(["pin"]),
 });
 
 /**
@@ -90,6 +98,10 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
 export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   sign_in: Object.freeze(["mp", "sk", "qr_text"]),
   unlock: Object.freeze(["mp", "sk"]),
+  // `pin_set` asks for the master password again (`mp`) and, when this device does not keep it, the secret key (`sk`).
+  // `pin` is a forbidden name, so SECRET_KEY_EXCEPTIONS names exactly these two types for it.
+  pin_set: Object.freeze(["mp", "sk", "pin"]),
+  pin_unlock: Object.freeze(["pin"]),
 });
 
 /** The type of the background's refusal. No table may define it. */
@@ -273,6 +285,62 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
+  // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
+  // it, and what this device has of a PIN (whether one is set, where it is kept, the attempts left, the wait, whether
+  // it works without the server now). It needs no key and works while the vault is locked. Nothing in it tells the
+  // length or the kind of the PIN.
+  unlock_policy: {
+    request: empty,
+    reply: object({
+      pin: object(
+        {
+          allowed: boolean(),
+          after_restart: boolean(),
+          min_length: integer({ min: 4, max: 64 }),
+          set: boolean(),
+          location: string({ max: 8, oneOf: ["disk", "session"] }),
+          failures_left: integer({ min: 0, max: 5 }),
+          wait_ms: integer({ min: 0, max: 3_600_000 }),
+          offline_ok: boolean(),
+        },
+        { optional: ["location"] },
+      ),
+      prf: object({ enabled: boolean(), count: integer({ min: 0, max: 1000 }) }),
+    }),
+  },
+  // Sets (or changes) the PIN: needs the open vault, the network and the master password again (and the secret key
+  // when this device does not keep it): `mp` and `sk` as in `unlock`. `acknowledged`: the user ticked "I understand"
+  // under the warning (required for `disk`). The PIN, the password and the secret key go to the background and nowhere else.
+  pin_set: {
+    request: object(
+      {
+        mp: string({ min: 1, max: 1024 }),
+        sk: string({ min: 1, max: 128 }),
+        pin: string({ min: 1, max: 256 }),
+        location: string({ max: 8, oneOf: ["disk", "session"] }),
+        acknowledged: boolean(),
+      },
+      { optional: ["sk"] },
+    ),
+    reply: okReply,
+  },
+  // Opens the vault with the PIN. A wrong PIN says how many attempts are left and how long to wait for the next.
+  pin_unlock: {
+    request: object({ pin: string({ min: 1, max: 256 }) }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        account_email: email,
+        server: serverUrl,
+        left: integer({ min: 0, max: 5 }),
+        wait_ms: integer({ min: 0, max: 3_600_000 }),
+      },
+      { optional: ["reason", "account_email", "server", "left", "wait_ms"] },
+    ),
+  },
+  // Turns the PIN off: the record is deleted. It needs no password.
+  pin_off: { request: empty, reply: okReply },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
   // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`

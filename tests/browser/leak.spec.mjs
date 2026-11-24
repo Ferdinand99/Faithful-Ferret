@@ -14,6 +14,8 @@ const CODE_ARGUMENTS = {
   "secret key code": ["login_start", "register_start"],
   "recovery key code (recovered)": [],
   "recovery key code (rekey)": [],
+  // The PIN text goes to the job worker that runs its Argon2id, and nowhere else.
+  "PIN (split)": ["argon2_pin_key"],
 };
 
 test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) => {
@@ -33,7 +35,7 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     "VK", "VK (new epoch)", "IK", "IK (new epoch)", "IK (passkey item)",
     "k_head (epoch 1)", "k_del (epoch 1)", "k_meta (epoch 1)", "seed_a (epoch 1)",
     "k_head (epoch 2)", "seed_a (epoch 2)",
-    "KEK_pw", "KEK_pw (changed)", "KEK_pw (recovered)", "KEK_rk", "KEK_rk (rekey)", "KEK_pin", "KEK_prf",
+    "KEK_pw", "KEK_pw (changed)", "KEK_pw (recovered)", "KEK_rk", "KEK_rk (rekey)", "KEK_pin", "KEK_pin (split)", "KEK_prf",
     "passkey scalar", "passkey seed_uv", "passkey seed_nouv", "PRF output", "RK", "SK",
     "export key (create)", "export key (changed)", "export key (recovered)",
   ];
@@ -47,7 +49,7 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     if (/^(VK|IK|passkey )/.test(name)) return "read from the worker";
     if (name === "PRF output") return "generated here and found in its arguments";
     if (/^(RK|SK)( \(.*\))?$/.test(name)) return "decoded from the code the worker revealed";
-    if ((m = /^(KEK_(?:pw|rk|pin|prf)(?: \((?:changed|recovered|rekey)\))?)$/.exec(name))) return `${m[1]} opens the wrap to the vault key`;
+    if ((m = /^(KEK_(?:pw|rk|pin|prf)(?: \((?:changed|recovered|rekey|split)\))?)$/.exec(name))) return `${m[1]} opens the wrap to the vault key`;
     if ((m = /^export key \((create|changed|recovered)\)$/.exec(name))) {
       return `KEK_pw${m[1] === "create" ? "" : ` (${m[1]})`} opens the wrap to the vault key`;
     }
@@ -67,7 +69,7 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     const fromSource = ["read from the worker", "generated here and found in its arguments", "decoded from the code the worker revealed"];
     expect(fromSource.includes(how) || anchored.includes(how), `${name}: ${how}`).toBe(true);
   }
-  expect(anchored).toHaveLength(17);
+  expect(anchored).toHaveLength(18);
 
   // The export-file key K_exp is the one secret that crosses, from the job
   // worker to the page and on to the vault worker.
@@ -90,6 +92,14 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
         (m.worker === "vault" && m.dir === "out" && (m.method === "export_finish" || m.method === "import_open"))
       );
     }
+    // KEK_pin of a PIN set in the product's way is made in the job worker and handed on to the vault worker, which
+    // wraps the vault key with it: the one crossing, and nothing else sees it.
+    if (name === "KEK_pin (split)") {
+      return (
+        (m.worker === "job" && m.dir === "in" && m.method === "argon2_pin_key") ||
+        (m.worker === "vault" && m.dir === "out" && m.method === "wrap_pin_key")
+      );
+    }
     // The page gets the PRF output from the authenticator and hands it over
     // to unlock a vault or to make a wrap: it is an argument, never a reply.
     if (name === "PRF output") {
@@ -100,9 +110,10 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
 
   // The codes the user is shown and types back (base32 text, not bytes).
   const codeAllowed = (m, name) =>
-    m.worker === "vault" &&
-    ((m.dir === "in" && (m.method === "reveal_recovery_code" || m.method === "reveal_secret_key_code")) ||
-      (m.dir === "out" && CODE_ARGUMENTS[name]?.includes(m.method)));
+    (m.worker === "job" && m.dir === "out" && CODE_ARGUMENTS[name]?.includes(m.method)) ||
+    (m.worker === "vault" &&
+      ((m.dir === "in" && (m.method === "reveal_recovery_code" || m.method === "reveal_secret_key_code")) ||
+        (m.dir === "out" && CODE_ARGUMENTS[name]?.includes(m.method))));
   const codeLeaks = findTextLeaks(messages, texts, codeAllowed);
   expect(codeLeaks.map((l) => `${place(l)} ${l.path} holds ${l.secret}`)).toEqual([]);
   const codePlaces = Object.fromEntries(
@@ -122,12 +133,15 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
   // The file is written and opened with the same password, salt and parameters: one key, twice.
   expect(kexp["K_exp #1"]).toBe(kexp["K_exp #2"]);
   expect(placements((n) => n === "PRF output")).toEqual(["vault:out:unlock_prf", "vault:out:wrap_prf"]);
-  expect(all.filter((l) => !isKexp(l.secret) && l.secret !== "PRF output")).toEqual([]);
+  // KEK_pin of the split way: out of the job worker, into the vault worker, and only there.
+  expect(placements((n) => n === "KEK_pin (split)")).toEqual(["job:in:argon2_pin_key", "vault:out:wrap_pin_key"]);
+  expect(all.filter((l) => !isKexp(l.secret) && l.secret !== "PRF output" && l.secret !== "KEK_pin (split)")).toEqual([]);
 
   // K_exp is wiped on the page once it has been sent, and the job workers are ended.
   expect(zeroChecks.exportKeyAfterFinish).toBe(true);
   expect(zeroChecks.exportKeyAfterOpen).toBe(true);
-  expect(run.jobWorkers).toEqual([true, true]);
+  // One job worker for the PIN's Argon2id and one for each of the two export steps, every one of them ended.
+  expect(run.jobWorkers).toEqual([true, true, true]);
   expect(run.imported).toBe(2);
 
   expect(codePlaces).toEqual({
@@ -135,6 +149,7 @@ test("worker_messages_contain_no_vault_secrets", async ({ page, browserName }) =
     "secret key code": ["vault:in:reveal_secret_key_code", "vault:out:login_start", "vault:out:register_start"],
     "recovery key code (recovered)": ["vault:in:reveal_recovery_code"],
     "recovery key code (rekey)": ["vault:in:reveal_recovery_code"],
+    "PIN (split)": ["job:out:argon2_pin_key"],
   });
 
   console.log(

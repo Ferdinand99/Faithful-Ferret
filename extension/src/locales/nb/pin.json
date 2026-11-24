@@ -1,0 +1,4 @@
+{
+  "pin.error.pin_stale": "Denne PIN-en passer ikke lenger til hvelvet: hvelvnøkkelen er byttet siden den ble satt. Den er slettet. Lås opp med hovedpassordet og sett en ny PIN.",
+  "pin.error.pin_too_slow": "Denne enheten brukte mer enn ti sekunder på å sjekke PIN-en, så ingen PIN ble satt. Prøv igjen når maskinen er mindre opptatt."
+}

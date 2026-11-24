@@ -29,6 +29,7 @@ export const JOB_METHODS = new Set([
   "login_start",
   "login_finish",
   "unlock_password",
+  "confirm_password",
   "unlock_recovery",
   "unlock_prf",
   "pin_unlock",

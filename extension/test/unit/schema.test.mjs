@@ -115,6 +115,20 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
     );
     for (const key of keysOf(schema)) {
       const where = `${channel}/${type} ${direction}: ${key}`;
+      if (typed.get(type)?.has(key)) {
+        // What the user types goes one way: an extension page to the background. (A typed key may be a forbidden name,
+        // `password` and `pin`, and then SECRET_KEY_EXCEPTIONS names exactly this type for it.)
+        assert.equal(channel, "ui", `${where}: typed in a page only`);
+        assert.equal(direction, "request", `${where}: never in a reply`);
+        if (FORBIDDEN_KEYS.includes(key)) assert.ok(allowed.has(key), `${where}: a forbidden name needs its exception`);
+        seenTyped.add(`${type}.${key}`);
+        continue;
+      }
+      if (allowed.has(key) && type === "unlock_policy") {
+        // An object named `pin` in the reply: the rule and the state of the PIN (flags and numbers), nothing typed.
+        assert.equal(channel === "ui" && direction === "reply", true, `${where}: only the reply of unlock_policy`);
+        continue;
+      }
       if (allowed.has(key)) {
         // The fill value goes down to a page (push); what the person typed into a form goes up (content); the generator's
         // reply carries the value the core has just made. Nothing else.
@@ -126,21 +140,14 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
       }
       assert.ok(!FORBIDDEN_KEYS.includes(key), `${where}: forbidden key`);
       assert.ok(!/pass|secret|token|seed|^vk$|^ik$|totp_|key$/i.test(key), `${where}: secret-like name`);
-      if (typed.get(type)?.has(key)) {
-        // What the user types goes one way: an extension page to the background.
-        assert.equal(channel, "ui", `${where}: typed in a page only`);
-        assert.equal(direction, "request", `${where}: never in a reply`);
-        seenTyped.add(`${type}.${key}`);
-      } else {
-        assert.ok(!/^(mp|sk|qr_text)$/.test(key), `${where}: typed credential outside its type`);
-      }
+      assert.ok(!/^(mp|sk|qr_text|secret_key)$/.test(key), `${where}: typed credential outside its type`);
     }
   }
   assert.deepEqual(
     [...seenTyped].sort(),
-    ["sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
+    ["pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
-  assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "vk"]);
+  assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "vk", "pin", "prf_output"]);
 
   // And the decoder refuses them where they are not in the schema.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) =>
@@ -306,6 +313,16 @@ test("every UI request and reply round-trips with a sample body", () => {
     offer_dismiss: [{ offer_id: "a1".repeat(16) }, { ok: true }],
     offer_never: [{ offer_id: "a1".repeat(16) }, { ok: false, reason: "not_offered" }],
     offer_reveal: [{ offer_id: "a1".repeat(16) }, { ok: true, value: "Zq9!sample" }],
+    unlock_policy: [
+      {},
+      {
+        pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 4, wait_ms: 5000, offline_ok: true },
+        prf: { enabled: false, count: 0 },
+      },
+    ],
+    pin_set: [{ mp: "p", sk: "FFS1-X", pin: "123456", location: "disk", acknowledged: true }, { ok: false, reason: "wrong_credentials" }],
+    pin_unlock: [{ pin: "123456" }, { ok: false, reason: "wrong_pin", left: 3, wait_ms: 5000 }],
+    pin_off: [{}, { ok: true }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {
@@ -319,7 +336,10 @@ test("every UI request and reply round-trips with a sample body", () => {
 test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   // Both keys are forbidden names, and the one place that may carry them is the capture of a submitted form.
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
-  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, { fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"] });
+  assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, {
+    fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"],
+    pin_set: ["pin"], pin_unlock: ["pin"], unlock_policy: ["pin"],
+  });
   /** @type {string[]} */
   const holders = [];
   for (const { type, channel, direction, schema } of allSchemas()) {
@@ -333,6 +353,9 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "push/fill_field/request/value",
     "ui/generate/reply/value",
     "ui/offer_reveal/reply/value",
+    "ui/pin_set/request/pin",
+    "ui/pin_unlock/request/pin",
+    "ui/unlock_policy/reply/pin",
   ]);
   // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) => JSON.stringify({ v: 1, id: "a", type, body });

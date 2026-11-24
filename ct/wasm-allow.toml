@@ -595,16 +595,16 @@ max = 4
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R6). The `argon2` crate, inlined into our wrapper `prim::argon2::argon2id`; third-party code that this project does not re-verify. Argon2id addresses memory by data by design."
 
 [[allow]]
+function = "^ferret_core::secret::check_not_all_zero$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The loop over the bytes of a key that refuses an all-zero array. It is shared by the constructors that take 32 bytes from another worker or from an authenticator (the PRF output and the PIN key), so it is no longer inlined in each of them. The index is a public counter; every byte is read and ORed, with no branch on a byte, so the time does not depend on the key."
+
+[[allow]]
 function = "^ferret_core::secret::PrfOutput>::from_slice$"
 instruction = "br_table"
 max = 1
 reason = "A match on how the length of the bytes handed in compares with 32 (too short, too long, right): a public length. The bytes are copied into the key, not used as an address."
-
-[[allow]]
-function = "^ferret_core::secret::PrfOutput>::from_slice$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 1
-reason = "APPROVED: Checking that the 32 bytes handed in are not all zero: a loop over a fixed length whose index is a public counter. The bytes are OR-ed together without a branch on any byte and the address never depends on a value; the result says only whether the buffer was wiped or never filled."
 
 [[allow]]
 function = "^ferret_core::sheet::parse_server_address$"
@@ -983,9 +983,3 @@ function = "^vault_totp_code multivalue shim$"
 instruction = "i64\\.rem_u"
 max = 1
 reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R2). The one-time code is the dynamic truncation of the HMAC output taken modulo 10^digits (RFC 4226 section 5.3). The dividend is the HMAC output of this one code, not the TOTP secret; the code is shown to the user and sent to a server. The offset of the truncation is the low nibble of that HMAC output, an index into this code's own digest. This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
-
-[[allow]]
-function = "^vault_wrap_pin_key multivalue shim$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 1
-reason = "APPROVED: The loop over the 32 bytes of the key that refuses an all-zero array. The index is a public counter; every byte is read and ORed, with no branch on a byte, so the time does not depend on the key."
