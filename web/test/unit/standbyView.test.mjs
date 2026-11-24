@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { autoLockFor } from "../../src/lock.mjs";
 import listRoute from "../../src/routes/list.route.mjs";
+import { secretClipboardFor } from "../../src/secretClipboard.mjs";
 import { standbyView } from "../../src/views/standby.mjs";
 import { enterVault } from "../../src/views/shell.mjs";
 import { EN, NB, textFor, translator, withFocus } from "./syncWarningsHelpers.mjs";
@@ -208,6 +209,30 @@ test("the_notice_can_lock_the_vault_and_the_lock_wipes_it", async () => {
     } finally {
       r.done();
     }
+  });
+});
+
+test("a_secret_copied_from_this_tab_leaves_the_clipboard_when_another_tab_takes_the_vault", async () => {
+  await withDom(async () => {
+    await withFocus(async () => {
+      const written = [];
+      const clipboard = { writeText: async (text) => void written.push(text) };
+      const saved = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+      Object.defineProperty(globalThis.navigator, "clipboard", { configurable: true, value: clipboard });
+      const r = rig();
+      try {
+        await listRoute.load(r.ctx("/items"));
+        await secretClipboardFor(clipboard).copy("S3CRET");
+        r.sync.tell(true);
+        await settle();
+        assert.deepEqual(written, ["S3CRET", ""]);
+        assert.equal(secretClipboardFor(clipboard).pending(), false);
+      } finally {
+        if (saved) Object.defineProperty(globalThis.navigator, "clipboard", saved);
+        else delete globalThis.navigator.clipboard;
+        r.done();
+      }
+    });
   });
 });
 

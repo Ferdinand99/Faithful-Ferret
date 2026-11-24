@@ -259,6 +259,13 @@ if ! docker "${docker_args[@]}" image inspect "$runner_image" > /dev/null 2>&1; 
 fi
 
 work="$(mktemp -d)"
+# A temp path that comes in Windows form (C:\Users\...\Temp) must not reach tar as it is: GNU tar reads "C:" as the name of a
+# remote host and fails. The path is turned into the POSIX form where cygpath exists, and the archives are read through the
+# shell's redirections, never through `-f <path>`. The one append (-r) needs a file name, so GNU tar gets --force-local
+# (BSD tar has no such option and no such habit).
+if command -v cygpath > /dev/null 2>&1; then work="$(cygpath -u "$work")"; fi
+tar_local=()
+if tar --force-local --version > /dev/null 2>&1; then tar_local=(--force-local); fi
 # The end-to-end stack this run started for itself (see the e2e step), removed again on exit.
 own_stack=""
 stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
@@ -405,11 +412,11 @@ e2e_setup() {
   e2e_evil_url="http://ferret-e2e-evil:9000"
 }
 
-tar -cf "$work/in.tar" \
+tar ${tar_local[@]+"${tar_local[@]}"} -cf "$work/in.tar" \
   --exclude='extension/node_modules' \
   --exclude='extension/dist' \
   extension web/wasm.lock.json web/src
-tar -rf "$work/in.tar" -C "$work" wasm.tar.gz
+tar ${tar_local[@]+"${tar_local[@]}"} -rf "$work/in.tar" -C "$work" wasm.tar.gz
 
 # The tests container for the channels in $1 (a comma list). $2 goes into the name
 # and the label (see dev_args). $3 is the step of run.sh (firefox, e2e or measure; the
@@ -490,7 +497,7 @@ if [ "$mode" = matrix ]; then
     one=0
     "${run[@]}" < "$work/in.tar" > "$work/matrix.tar" || one=$?
     if [ -s "$work/matrix.tar" ]; then
-      tar -x --no-same-owner -C "$out_dir" -f "$work/matrix.tar" || one=$?
+      tar -x --no-same-owner -C "$out_dir" < "$work/matrix.tar" || one=$?
     fi
     [ "$one" -eq 0 ] || rc=$one
   done
@@ -513,7 +520,7 @@ if [ "$mode" = gate ]; then
   rc=0
   "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
   if [ -s "$work/shots.tar" ]; then
-    tar -x --no-same-owner -C "$out_dir" -f "$work/shots.tar" || rc=$?
+    tar -x --no-same-owner -C "$out_dir" < "$work/shots.tar" || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     echo "lanbox-ext.sh: gate: the e2e step failed ($rc)" >&2
@@ -532,7 +539,7 @@ if [ "$mode" = gate ]; then
       "${run[@]}" < "$work/in.tar" > "$work/gate-matrix.tar" || rc=$?
       mkdir -p "$out_dir/gate-matrix/$matrix_set/$ch"
       if [ -s "$work/gate-matrix.tar" ]; then
-        tar -x --no-same-owner -C "$out_dir/gate-matrix/$matrix_set/$ch" -f "$work/gate-matrix.tar" || rc=$?
+        tar -x --no-same-owner -C "$out_dir/gate-matrix/$matrix_set/$ch" < "$work/gate-matrix.tar" || rc=$?
       fi
       if [ "$rc" -ne 0 ]; then
         echo "lanbox-ext.sh: gate: the $matrix_set matrix on $ch failed ($rc)" >&2
@@ -559,7 +566,7 @@ for ch in "${measure_channels[@]}"; do
     "${run[@]}" < "$work/in.tar" > "$work/report-$ch.tar" || rc=$?
     # A container that died before it wrote anything leaves an empty file: nothing to unpack.
     if [ -s "$work/report-$ch.tar" ]; then
-      tar -x --no-same-owner -C "$out_dir" -f "$work/report-$ch.tar" || rc=$?
+      tar -x --no-same-owner -C "$out_dir" < "$work/report-$ch.tar" || rc=$?
     fi
     exit "$rc"
   ) &
