@@ -118,7 +118,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "Every set or change makes a **new `device_salt` and a new local `method_id`**.",
     "Only the extension's own top-level pages can send the messages that set, use or turn off a PIN",
     "It is NFKD like MP (Unicode 16.0), control characters and unassigned characters are refused, the length counts Unicode scalar values, and a PIN has at most 64 scalar values and 256 bytes.",
-    "The minimum length comes from the server's rule (4 to 64, default 6), and the client never accepts less than 4.",
+    "The minimum length comes from the server's rule (4 to 64, default 6), and the client never accepts less than 4",
     "**The record holds neither the length nor whether the PIN is digits or text:**",
     "KEK_pin = Argon2id(NFKD(PIN), device_salt, PIN profile 1: m = 256 MiB, t = 3, p = 1, L = 32)",
     "device_salt, kdf]) ‖ commit",
@@ -130,7 +130,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "can try PINs on their own computer, where the limit of five attempts does not apply.",
     "One Argon2id with 256 MiB per guess, and about 100 guesses per second on one powerful machine",
     "| 6 digits | 1 000 000 | under 3 hours | under 2 minutes |",
-    "(measured on a reference container with 2 CPUs and 4 GiB, in Firefox Release 159 and ESR 153; **to be confirmed on real machines**)",
+    "(measured on a reference container with 2 CPUs and 4 GiB, in Firefox Release 159 and ESR 153, and on one Mac with 10 cores in Firefox 160, where profile 1 took 0.37 seconds at the median and 0.44 seconds at the 95th percentile; **to be confirmed on real machines**, and Windows is still to be measured)",
     "Setting a PIN therefore derives `KEK_pin` in a separate worker",
     "the counter is raised and written **before** Argon2id runs",
     "An interrupted attempt counts, and attempts run one at a time.",
@@ -157,7 +157,11 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "A **synced passkey is as safe as the cloud account** (iCloud, Google) it lives in",
     'The list of methods says "Synced passkey" or "This device only" from `BE`',
     "**The PRF output is never stored,**",
-    "from a small window of the extension, never from the toolbar popup, only with live tokens and online",
+    "from a window or tab of the extension's own, never from the toolbar popup (it closes when the platform's dialog takes focus), with one WebAuthn call per click, only with live tokens and online",
+    "**Another provider can take the call.**",
+    "a separate `get`, with its own click, is needed",
+    "an older backup still holds the wrap, so only a full rekey (§ 4.7) makes a leaked output useless",
+    "the core refuses to derive `KEK_pin` from a PIN below 4 whatever the rule says",
   ]) {
     assert.ok(ext.includes(rule), rule);
   }
@@ -166,6 +170,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
   assert.ok(section("### 7.1 Common rules").includes("a PIN kept on disk, which is the default there, can be guessed offline from a copy of the browser profile"));
   assert.ok(section("### 7.3 Web vault").includes("**while the vault session lives**; when the session has ended, MP is required. There is no PIN in the web vault."));
   assert.ok(section("### 7.4 iOS").includes("The mobile PIN keeps the 64 MiB sign-in profile and the hardware limit, and it has the same AAD as the extension's PIN"));
+  assert.ok(section("### 7.4 iOS").includes("The WebAssembly build makes and opens only PIN profile 1"));
   const devices = section("### 7.6 Devices and revocation");
   for (const rule of [
     "**A PIN can unlock without the server, for at most seven days**",
@@ -177,6 +182,9 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "The clock can be forged by someone who controls the machine before the extension has seen a later time, and whoever can set the system clock can keep an offline PIN usable for as long as they hold the clock still inside the window's logic",
     "The window uses the device's own time, never the server's",
     "A contact sets the highest time seen to the device's own time **on purpose**",
+    "**After every PIN unlock,** the blob's VK is checked against the pinned record's `pk_a`, offline too",
+    "The renewal while locked runs on the same schedule whether or not a PIN is set",
+    "within five attempts in the extension",
   ]) {
     assert.ok(devices.includes(rule), rule);
   }
@@ -187,7 +195,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "**except when a PIN is kept on disk** (the extension's default, § 7.2)",
     "one Argon2id (256 MiB, t = 3) per guess, with no limit on attempts",
     "a revoked device that is kept offline can still be unlocked with its PIN for at most seven days after its last contact with the server",
-    "The window is counted on the device's own clock, so whoever controls that clock can keep an offline PIN usable inside the window's logic",
+    "Seven days as the device's own clock counts them: whoever controls that clock can stretch the window for as long as they hold the clock still",
     "a passkey method opens VK **without MP and without SK**",
   ]) {
     assert.ok(threats.includes(rule), rule);
@@ -214,10 +222,13 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
   }
   assert.ok(section("## 12. Releases and update chain (L2)").includes("it must equal the entry in that release's cosign-signed `SHA256SUMS`"));
   const appendixB = section("## Appendix B – Schema: body, manifest, export");
-  assert.ok(appendixB.includes('"n": text? name (passkey only, 1 to 64 characters, no control character), "be": bool?'));
+  assert.ok(appendixB.includes('"n": text? name (passkey only, the folder-name rule above'));
+  assert.ok(appendixB.includes('"be": bool?'));
   assert.ok(appendixB.includes('"bs": bool?'));
   const decisions = section("## 16. Decisions the maintainer must make");
   assert.ok(decisions.includes('| E3 ✅ | "PIN after browser restart" | **Reopened and decided 2026-11-24:**'));
   assert.ok(decisions.includes("| E16 ✅ | PIN without a network |"));
+  assert.ok(decisions.includes("**Provisional outcome on the Mac (2026-11-24):** the extension can use PRF from its own window or tab, never from the toolbar popup"));
+  assert.ok(section("## 15. What phase 0A has not proven yet (affects choices)").includes("It does not work in the toolbar popup, which closes when the system dialog takes focus."));
   assert.ok(decisions.includes("| E17 ✅ | Synced passkeys as an unlock method |"));
 });
