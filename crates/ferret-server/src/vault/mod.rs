@@ -24,6 +24,8 @@ pub mod methods;
 pub mod notify;
 pub mod password;
 pub mod policy;
+#[cfg(feature = "quick-unlock")]
+pub mod prf_routes;
 pub mod quota;
 pub mod rate;
 pub mod reconcile;
@@ -87,7 +89,7 @@ where
     BackupStatus: FromRef<S>,
     Arc<dyn Clock>: FromRef<S>,
 {
-    Router::new()
+    let router = Router::new()
         .merge(methods::routes())
         .merge(password::routes())
         .merge(policy::routes())
@@ -99,8 +101,11 @@ where
         .merge(batch::routes())
         .merge(checkpoint::routes())
         .merge(events::routes())
-        .merge(reconcile::routes())
-        .layer(map_response(no_store))
+        .merge(reconcile::routes());
+    // The routes of the passkey methods are only in a build with the feature.
+    #[cfg(feature = "quick-unlock")]
+    let router = router.merge(prf_routes::routes());
+    router.layer(map_response(no_store))
 }
 
 #[cfg(test)]

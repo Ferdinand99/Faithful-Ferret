@@ -76,6 +76,11 @@ fn wrap_json(row: MethodRow) -> Result<WrapJson, ApiError> {
         wrap: row.wrap,
         credential_id: row.credential_id,
         prf_salt,
+        aaguid: row
+            .aaguid
+            .map(<[u8; 16]>::try_from)
+            .transpose()
+            .map_err(|_| inconsistent("an AAGUID is not 16 bytes"))?,
     })
 }
 

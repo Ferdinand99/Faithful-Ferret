@@ -320,7 +320,11 @@ async fn the_policy_route_exists_in_both_server_builds() {
         json!(cfg!(feature = "quick-unlock")),
         "the PIN switch follows the build"
     );
-    assert_eq!(body["prf"]["enabled"], json!(false));
+    assert_eq!(
+        body["prf"]["enabled"],
+        json!(cfg!(feature = "quick-unlock") && policy::PRF_ROUTES_MOUNTED),
+        "the passkey switch follows the build"
+    );
     // The page of the rule is the part that the feature adds.
     let page = app
         .call(Which::Admin, Req::get("/settings/unlock").build())

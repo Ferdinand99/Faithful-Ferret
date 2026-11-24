@@ -37,9 +37,10 @@ pub const MIN_LENGTH_CEILING: u8 = 64;
 /// The minimum length of a server that was never set up.
 pub const MIN_LENGTH_DEFAULT: u8 = 6;
 
-/// Whether the server has routes for unlocking with a passkey. None yet: the
-/// switch is turned on in the change that mounts them.
-pub const PRF_ROUTES_MOUNTED: bool = false;
+/// Whether this server has the routes that add and remove a passkey method.
+/// Whether a build offers them is up to the cargo feature `quick-unlock`; this
+/// says they are written.
+pub const PRF_ROUTES_MOUNTED: bool = true;
 
 /// The rule an administrator sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

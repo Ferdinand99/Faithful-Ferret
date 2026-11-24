@@ -741,6 +741,90 @@ async fn the_policy_is_in_the_backup_set_and_survives_a_restore() {
     assert_eq!(unlock_rule(&scene.data().join(DB_FILE)), (1, 1, 6));
 }
 
+/// The passkey rows of an account in a database: `(method_id, wrap,
+/// credential_id, prf_salt, aaguid)`.
+type PasskeyRow = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Option<Vec<u8>>);
+
+fn passkey_rows(db: &Path) -> Vec<PasskeyRow> {
+    let conn = peek(db);
+    let mut stmt = conn
+        .prepare(
+            "SELECT method_id, wrap, credential_id, prf_salt, aaguid \
+             FROM ferret_unlock_methods WHERE method_type = 3 ORDER BY method_id",
+        )
+        .expect("a statement");
+    stmt.query_map([], |row| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+        ))
+    })
+    .expect("rows")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("the rows")
+}
+
+#[tokio::test]
+async fn a_passkey_method_is_in_the_backup_set_and_survives_a_restore() {
+    let scene = new_scene().await;
+    assert!(passkey_rows(&scene.backup.join(DB_FILE)).is_empty());
+    let account = scene.first.account_id;
+    let wanted: PasskeyRow = (
+        vec![0xe1; 16],
+        vec![0x5a; 72],
+        vec![0xc7; 33],
+        vec![0x44; 32],
+        Some(vec![0x9d; 16]),
+    );
+    let row = wanted.clone();
+    scene
+        .app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO ferret_unlock_methods \
+                   (method_id, account_id, method_type, wrap, kek_generation, credential_id, \
+                    prf_salt, aaguid, created_at) \
+                 VALUES (?1, ?2, 3, ?3, 1, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    row.0,
+                    account.as_bytes().as_slice(),
+                    row.1,
+                    row.2,
+                    row.3,
+                    row.4,
+                    T2 + 1,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a passkey row");
+
+    // The next set holds the row and is a good set.
+    let cfg = cfg(&scene.app);
+    let later = make(&scene.app, &cfg, T2 + 60)
+        .await
+        .expect("a set with the passkey");
+    let with_passkey = cfg.dir.join(&later.name);
+    assert_eq!(
+        passkey_rows(&with_passkey.join(DB_FILE)),
+        std::slice::from_ref(&wanted)
+    );
+    set::verify(&with_passkey, &set::build_migrations()).expect("a good set");
+
+    // The restore puts it back over a data directory that has none.
+    assert!(passkey_rows(&scene.data().join(DB_FILE)).is_empty());
+    restore_scene(&scene, &with_passkey).expect("a restore");
+    assert_eq!(passkey_rows(&scene.data().join(DB_FILE)), [wanted]);
+    let state = start_on(scene.data()).await.expect("the server starts");
+    drop(state);
+}
+
 // ---------------------------------------------------------------- a kill at every step
 
 /// The live files of the data directory are the old ones, the restored ones or

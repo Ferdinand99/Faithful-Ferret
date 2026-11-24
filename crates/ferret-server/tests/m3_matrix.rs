@@ -1678,10 +1678,19 @@ fn every_route_that_writes_the_unlock_methods_or_ends_sessions_has_a_row_in_the_
     // The routes that write the unlock methods: each is a kind of change, and
     // each kind has rows (`password`, `renew`, `recover`).
     let writers = files_holding(&src, "unlock_write::apply(");
-    let expected: BTreeSet<String> = ["vault/password.rs", "vault/recovery.rs", "vault/recover.rs"]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    // `vault/prf_routes.rs` adds and removes a passkey method: it changes no
+    // generation, record or key that the matrix keeps a ledger of, and has its
+    // own rows in `tests/prf_routes.rs` (a stale re-authentication, a dead
+    // session, a spent nonce, two writers at once).
+    let expected: BTreeSet<String> = [
+        "vault/password.rs",
+        "vault/recovery.rs",
+        "vault/recover.rs",
+        "vault/prf_routes.rs",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     assert_eq!(
         writers, expected,
         "a route writes the unlock methods and the matrix has no row for it: add one to m3_matrix"
@@ -1699,10 +1708,16 @@ fn every_route_that_writes_the_unlock_methods_or_ends_sessions_has_a_row_in_the_
         .filter(|l| l.ends_with(',') && l.chars().next().is_some_and(char::is_uppercase))
         .map(|l| l.trim_end_matches(',').to_string())
         .collect();
-    let known: BTreeSet<String> = ["Password", "Recovery", "Recover"]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let known: BTreeSet<String> = [
+        "Password",
+        "Recovery",
+        "Recover",
+        "AddMethod",
+        "RemoveMethod",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     assert_eq!(
         kinds, known,
         "a new kind of change needs rows in the matrix"

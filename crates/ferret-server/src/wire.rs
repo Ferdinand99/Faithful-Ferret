@@ -446,6 +446,33 @@ pub mod serde_b32_opt {
     }
 }
 
+/// Binary data as lower-case hexadecimal text of any even length: the form
+/// in which the core writes the bytes of a request it signs (the body of
+/// adding or removing a passkey method).
+pub mod hex_text {
+    use super::WireError;
+
+    /// Reads lower-case hexadecimal text. An odd length, upper case, white
+    /// space, a prefix and any other character are refused.
+    pub fn decode(text: &str) -> Result<Vec<u8>, WireError> {
+        fn nibble(c: u8) -> Result<u8, WireError> {
+            match c {
+                b'0'..=b'9' => Ok(c - b'0'),
+                b'a'..=b'f' => Ok(c - b'a' + 10),
+                _ => Err(WireError::Hex),
+            }
+        }
+        let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+        if !rest.is_empty() {
+            return Err(WireError::Hex);
+        }
+        pairs
+            .iter()
+            .map(|pair| Ok((nibble(pair[0])? << 4) | nibble(pair[1])?))
+            .collect()
+    }
+}
+
 /// `#[serde(with = "serde_hex16")]` for `[u8; 16]`: an id.
 pub mod serde_hex16 {
     use super::{Deserialize, Deserializer, Serializer, de, hex16};
@@ -770,6 +797,15 @@ pub struct WrapJson {
         with = "serde_b32_opt"
     )]
     pub prf_salt: Option<[u8; 32]>,
+    /// The authenticator model (its AAGUID, 32 lower-case hexadecimal
+    /// characters), for a passkey. Display data: all zero is stored as it
+    /// comes, and a passkey that was added without one has none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_hex16_opt"
+    )]
+    pub aaguid: Option<[u8; 16]>,
 }
 
 /// A checkpoint as it is uploaded with the first row of a vault.

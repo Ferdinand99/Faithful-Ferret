@@ -212,6 +212,7 @@ fn recovery_res(
             wrap,
             credential_id,
             prf_salt,
+            aaguid: None,
         },
         manifest: SealedRowJson {
             rev: u64::try_from(rev).ok()?,
