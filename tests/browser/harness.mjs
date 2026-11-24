@@ -541,6 +541,14 @@ async function leakRun() {
   const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.device_salt), pin_profile: pinWrap.profile }).kek;
   add("KEK_pin", kekPin);
   anchorWrap("KEK_pin", pinWrapAsWrap(pinWrap), kekPin, vk1, 1);
+  // The product's way to set a PIN: the Argon2id runs in a job worker and only the 32 bytes of KEK_pin go on to the
+  // vault worker, which wraps the vault key. The PIN itself goes to the job worker only.
+  const splitPin = "split-pin-739415";
+  texts["PIN (split)"] = splitPin;
+  const { ms: _splitMs, ...splitWrap } = await client.pinWrap(enc.encode(splitPin), fill(16, 0x79), pinRule);
+  const kekPinSplit = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: splitPin, device_salt: hex(splitWrap.device_salt), pin_profile: splitWrap.profile }).kek;
+  add("KEK_pin (split)", kekPinSplit);
+  anchorWrap("KEK_pin (split)", pinWrapAsWrap(splitWrap), kekPinSplit, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
   add("PRF output", hex(prfOutput));
   const prfWrap = await client.vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prfOutput.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
