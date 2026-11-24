@@ -529,10 +529,10 @@ impl UnlockJob {
     /// refusal is the core's code: `pinned_auth_key` when the wrap opens to
     /// another vault key, `decrypt` for a wrong password. A pin state of
     /// `first_use` is refused: a device confirms against what it has pinned.
-    /// The epoch of `ctx` must be the pinned one: in a higher epoch the core
-    /// takes the vault key as new and does not compare `pk_a`, so a wrap of
-    /// another vault key at the next epoch would pass. Confirming says
-    /// nothing once the epoch has moved (`pinned_vk_epoch`).
+    /// The epoch of `ctx` must be the pinned one (`pinned_vk_epoch` if it is
+    /// not): confirming says nothing once the epoch has moved. The core
+    /// itself refuses a higher epoch than the pinned one
+    /// (`pinned_epoch_ahead`) until rekey proofs are checked.
     pub fn confirm_password(
         &mut self,
         server_url: &str,

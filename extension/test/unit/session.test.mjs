@@ -250,6 +250,13 @@ test("wrong_password_and_unknown_email_give_the_same_message", async () => {
   assert.equal(reasonOf({ code: "decrypt" }), "wrong_credentials");
 });
 
+test("a_vault_key_epoch_ahead_of_the_pinned_one_is_an_attack_warning", async () => {
+  const { load } = await pkg();
+  const { reasonOf } = await load("background/handlers/session.handler.mjs");
+  assert.equal(reasonOf({ code: "pinned_epoch_ahead" }), "attack_warning");
+  assert.equal(reasonOf({ code: "pinned_vk_epoch" }), "attack_warning");
+});
+
 test("a_pasted_sheet_qr_pins_the_server_key_and_a_different_server_key_is_refused", async () => {
   // A sheet whose server key is not the one the server proves: refused before KE3 is posted, nothing pinned.
   {

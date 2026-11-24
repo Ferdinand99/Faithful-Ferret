@@ -39,6 +39,16 @@ test("pinned_refusal_after_an_accepted_restore_shows_the_restore_text_with_the_d
   assert.doesNotMatch(NB[KEY], /gjenopprettet \{date\}|ble gjenopprettet/);
 });
 
+test("pinned_epoch_ahead_is_an_attack_warning_with_its_own_text", () => {
+  assert.equal(errorKey(coded("pinned_epoch_ahead")), "account.error.pinned_epoch_ahead");
+  for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
+    const text = describeError(translator(lang), coded("pinned_epoch_ahead"));
+    assert.equal(text, catalog["account.error.pinned_epoch_ahead"]);
+    assert.match(text, lang === "en" ? /newer vault key/ : /nyere hvelvnøkkel/);
+    assert.match(text, lang === "en" ? /This can be an attack/ : /Det kan være et angrep/);
+  }
+});
+
 test("pinned_refusal_without_a_note_keeps_the_attack_text", () => {
   for (const [lang, catalog] of [["en", EN], ["nb", NB]]) {
     const t = translator(lang);
@@ -52,7 +62,7 @@ test("pinned_refusal_without_a_note_keeps_the_attack_text", () => {
       }
     }
     // Other refusals keep their text, note or not: the note is about older unlock methods only.
-    for (const code of ["decrypt", "pinned_epoch_downgrade", "pinned_identity_changed", "kdf_profile_downgrade", "network"]) {
+    for (const code of ["decrypt", "pinned_epoch_ahead", "pinned_epoch_downgrade", "pinned_identity_changed", "kdf_profile_downgrade", "network"]) {
       assert.equal(describeError(t, coded(code), { restoreNote: note(), locale: lang }), describeError(t, coded(code)), `${lang}: ${code}`);
       assert.equal(restoreTextApplies(coded(code), note()), false);
     }

@@ -34,6 +34,7 @@
   "account.error.pinned_account_mismatch": "Advarsel: Tjeneren oppga en annen konto enn den denne enheten kjenner for denne e-postadressen. Det kan være et angrep. Innloggingen ble stoppet.",
   "account.error.pinned_auth_key": "Advarsel: Kontonøkkelen tjeneren oppgir er ikke den som ligger i hvelvet ditt. Det kan være et angrep. Hvelvet ble lukket. Si fra til administratoren.",
   "account.error.pinned_elsewhere": "Denne kontoen er allerede festet på denne enheten under en annen tjeneradresse ({server}). En konto festes bare under én adresse, og ingenting ble lagret. Glem den andre tjeneren først, og logg så inn her.",
+  "account.error.pinned_epoch_ahead": "Advarsel: Tjeneren viste en nyere hvelvnøkkel enn denne enheten kjenner til. Det kan være et angrep. Innloggingen ble stoppet. Logg inn på nytt på en enhet du stoler på, eller si fra til administratoren.",
   "account.error.pinned_epoch_downgrade": "Advarsel: Tjeneren viser en eldre nøkkelepoke enn denne enheten har sett. Det kan være et angrep. Hvelvet ble lukket.",
   "account.error.pinned_floor_downgrade": "Advarsel: Tjeneren viser en eldre opplåsingsmåte enn denne enheten har sett. Det kan være et angrep. Hvelvet ble lukket.",
   "account.error.pinned_floor_missing": "Advarsel: Tjeneren utelater en opplåsingsmåte som denne enheten har sett. Det kan være et angrep. Hvelvet ble lukket.",
