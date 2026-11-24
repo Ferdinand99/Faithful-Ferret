@@ -300,7 +300,8 @@ export function createSessionHost({
    */
   async function tell(name, ...args) {
     try {
-      await /** @type {(...a: any[]) => unknown} */ (pins?.[name])?.(...args);
+      const hear = /** @type {((...a: any[]) => unknown) | undefined} */ (pins === null ? undefined : pins[name]);
+      if (typeof hear === "function") await hear(...args);
     } catch {
       // Not the op's failure.
     }

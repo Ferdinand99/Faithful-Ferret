@@ -706,6 +706,45 @@ test("the_pin_is_never_stored_logged_or_echoed", async () => {
   ]);
 });
 
+test("the_real_protocol_accepts_the_exact_bodies_the_settings_view_sends", async () => {
+  // The settings view's own steps (pages/unlockFlow.mjs) over the real UI port, the real schemas and the real handler.
+  const { load } = await pkg();
+  const { createUnlockFlow, readUnlockState } = await load("pages/unlockFlow.mjs");
+  const w = await withPin();
+  await w.page.request("pin_off", {});
+  /** @type {Array<{ type: string, body: any }>} */
+  const sent = [];
+  const request = (/** @type {string} */ type, /** @type {any} */ body) => {
+    sent.push({ type, body });
+    return w.page.request(type, body);
+  };
+  const flow = createUnlockFlow(request);
+
+  const loaded = await flow.load();
+  assert.equal(loaded.ok, true, JSON.stringify(loaded));
+  assert.deepEqual(
+    { allowed: loaded.state.pin.allowed, afterRestart: loaded.state.pin.afterRestart, minLength: loaded.state.pin.minLength, set: loaded.state.pin.set },
+    { allowed: true, afterRestart: true, minLength: 6, set: false },
+  );
+  assert.notEqual(readUnlockState(await w.page.request("unlock_policy", {})), null);
+
+  // With and without the secret key: the exact bodies the view sends.
+  assert.deepEqual(await flow.setPin({ password: "not-the-password-0", pin: PIN, location: "disk", acknowledged: true }), { ok: false, reason: "wrong_credentials" });
+  assert.deepEqual(await flow.setPin({ password: MP, secretKey: SK_CODE, pin: PIN, location: "disk", acknowledged: true }), { ok: true });
+  assert.deepEqual(await flow.setPin({ password: MP, pin: PIN, location: "session", acknowledged: false }), { ok: true });
+  const bodies = sent.filter((m) => m.type === "pin_set").map((m) => m.body);
+  assert.deepEqual(Object.keys(bodies[0]).sort(), ["acknowledged", "location", "mp", "pin"]);
+  assert.deepEqual(Object.keys(bodies[1]).sort(), ["acknowledged", "location", "mp", "pin", "sk"]);
+  assert.equal(bodies[2].location, "session");
+
+  const after = await flow.load();
+  assert.equal(after.ok && after.state.pin.set, true);
+  assert.equal(after.ok && after.state.pin.location, "session");
+  assert.deepEqual(await flow.turnOff(), { ok: true });
+  const off = await flow.load();
+  assert.equal(off.ok && off.state.pin.set, false);
+});
+
 test("the_protocol_types_of_the_pin_are_the_ones_the_pages_use", async () => {
   // The request and the reply shapes of the messages the popup and the settings use.
   const encodes = [
