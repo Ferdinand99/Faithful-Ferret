@@ -353,10 +353,10 @@ test("every_control_with_no_text_has_a_name_and_every_link_says_where_it_goes", 
   });
 });
 
-test("the_planned_pages_are_not_in_the_tab_order_and_say_why", async () => {
+test("the_planned_page_is_not_in_the_tab_order_and_says_why", async () => {
   await withDom(async () => {
     const { root } = build();
-    for (const role of ["nav-generator", "nav-health"]) {
+    for (const role of ["nav-health"]) {
       const node = find(root, role);
       assert.equal(node.tagName, "span", "not a link and not a button");
       assert.equal(node.getAttribute("aria-disabled"), "true");

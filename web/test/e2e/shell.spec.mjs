@@ -92,6 +92,7 @@ const outside = (page) =>
 
 const ENTRIES = [
   ["nav-items", "#/items"],
+  ["nav-generator", "#/generator"],
   ["nav-favorites", "#/favorites"],
   ["nav-transfer", "#/transfer"],
   ["nav-folders", "#/folders"],
@@ -113,8 +114,8 @@ test.describe("the side menu on a desktop", () => {
       await expect(page.locator(`[data-role="${role}"]`)).toHaveAttribute("aria-current", "page");
       await expect(page.locator('#shell-test [aria-current="page"]')).toHaveCount(1);
     }
-    // The pages that are planned are in the menu, say so, and are not links.
-    for (const role of ["nav-generator", "nav-health"]) {
+    // The page that is planned is in the menu, says so, and is not a link.
+    for (const role of ["nav-health"]) {
       const entry = page.locator(`[data-role="${role}"]`);
       await expect(entry).toBeVisible();
       await expect(entry).toContainText(/coming soon/i);
@@ -188,11 +189,11 @@ test.describe("the side menu on a desktop", () => {
     await mountShell(page);
     await page.locator("#shell-test").evaluate((node) => node.scrollIntoView());
     const seen = [];
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 11; i += 1) {
       await page.keyboard.press("Tab");
       seen.push(await page.evaluate(() => document.activeElement?.getAttribute("data-role") ?? document.activeElement?.tagName));
     }
-    expect(seen.slice(0, 9)).toEqual(["skip", "brand", "collapse", "nav-items", "nav-favorites", "nav-transfer", "nav-folders", "nav-trash", "account-menu-button"]);
+    expect(seen.slice(0, 10)).toEqual(["skip", "brand", "collapse", "nav-items", "nav-favorites", "nav-generator", "nav-transfer", "nav-folders", "nav-trash", "account-menu-button"]);
     // The skip link puts the focus on the screen.
     await page.locator('[data-role="skip"]').focus();
     await expect(page.locator('[data-role="skip"]')).toBeVisible();
