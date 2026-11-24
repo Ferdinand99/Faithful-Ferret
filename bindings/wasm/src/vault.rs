@@ -21,7 +21,7 @@ use crate::error::{Fail, Res, run};
 use crate::item::{DraftDto, ViewDto, build_body};
 use ferret_core::{
     AuthOp, Checkpoint, CheckpointEntry, Error, ExportDraft, ExportItem, ItemBody, ItemId, Kek,
-    KekDevPin, KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, Pinned, PinnedField,
+    KsfProfile, Manifest, ManifestRow, MethodId, OsRng, Pin, PinProfile, Pinned, PinnedField,
     PrfOutput, RecoveryKey, RenewedRecovery, RollbackMemory, SecretKey, ServerRow, SyncMemory,
     UnlockedVault, WrapRecord, auth_sign, decode_recovery_key, decrypt_item, decrypt_manifest,
     emergency_sheet, encode_recovery_key, encode_secret_key, encrypt_item, make_checkpoint,
@@ -958,32 +958,27 @@ impl Vault {
     }
 
     /// A PIN wrap of the vault key (for the local PIN unlock, never
-    /// uploaded). The device salt is drawn here. With `kek_dev_pin` (32 bytes
-    /// from the platform keystore) it is the mobile variant. Argon2id runs in
-    /// this worker. Returns the wrap record.
-    pub fn wrap_pin(
-        &self,
-        pin: Vec<u8>,
-        method_id: Vec<u8>,
-        kek_dev_pin: Option<Vec<u8>>,
-    ) -> Result<JsValue, JsValue> {
+    /// uploaded). The device salt is drawn here. The wrap is always made with
+    /// PIN profile 1: a browser has no hardware keystore, so the mobile
+    /// variant (64 MiB, with a device secret) is not offered here and cannot
+    /// be asked for. Argon2id runs in this worker. Returns the wrap record.
+    pub fn wrap_pin(&self, pin: Vec<u8>, method_id: Vec<u8>) -> Result<JsValue, JsValue> {
         run(|| {
             let pin = Zeroizing::new(pin);
-            let dev = kek_dev_pin.map(Zeroizing::new);
             let vault = self.unlocked()?;
             let pin = Pin::new(&pin)?;
             let mut salt = [0u8; 16];
             ferret_core::SecureRng::fill(&mut OsRng, &mut salt);
-            let kek = match &dev {
-                Some(d) => Kek::from_pin_mobile(&pin, &salt, &KekDevPin::from_slice(d)?)?,
-                None => Kek::from_pin_extension(&pin, &salt)?,
-            };
+            let kek = Kek::from_pin_extension(&pin, &salt, PinProfile::P1)?;
             let rec = vault.wrap_for_method(
                 &mut OsRng,
                 &kek,
                 MethodId::from_bytes(arr(&method_id)?),
                 1,
-                ferret_core::Method::Pin { device_salt: salt },
+                ferret_core::Method::Pin {
+                    device_salt: salt,
+                    profile: PinProfile::P1,
+                },
             )?;
             to_js(&WrapDto::of(&rec))
         })

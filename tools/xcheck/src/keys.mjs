@@ -37,20 +37,20 @@ export function kekPrf(credentialId, prfOutput) {
   return hkdf(salt, prfOutput, ascii('ferret/v1/kek/prf'), 32);
 }
 
-// Section 7.2: a PIN is at least 6 ASCII digits.
-export function checkPin(pin) {
-  if (!/^[0-9]*$/.test(pin)) fail('input_forbidden_character');
-  if (pin.length < 6) fail('input_too_short');
+// Section 7.2: the PIN profiles. Profile 1 is 256 MiB, t = 3, p = 1 (the numbers are provisional).
+export const PIN_PROFILES = { 1: { m: 262144, t: 3, p: 1 } };
+export const pinParams = (profile) => (Object.hasOwn(PIN_PROFILES, profile) ? PIN_PROFILES[profile] : undefined);
+
+// `pin` is the NFKD bytes of the PIN. An unknown profile is refused before Argon2id runs.
+export function kekPinExtension(pin, deviceSalt, profile) {
+  const p = pinParams(profile);
+  if (!p) fail('kdf_profile_unknown');
+  return argon2id(pin, deviceSalt, p.m, p.t, p.p, 32);
 }
 
-export function kekPinExtension(pin, deviceSalt) {
-  checkPin(pin);
-  return argon2id(ascii(pin), deviceSalt, 65536, 3, 1, 32);
-}
-
+// Section 7.4: the mobile PIN keeps profile 1 of the sign-in (64 MiB).
 export function kekPinMobile(pin, deviceSalt, kekDevPin) {
-  checkPin(pin);
-  const stretched = argon2id(ascii(pin), deviceSalt, 65536, 3, 1, 32);
+  const stretched = argon2id(pin, deviceSalt, 65536, 3, 1, 32);
   const salt = tlvs(label('ferret/v1/kek/pin'), fBytes(T.device_salt, deviceSalt));
   return hkdf(salt, concat(kekDevPin, stretched), ascii('ferret/v1/kek/pin'), 32);
 }

@@ -1,6 +1,7 @@
 //! The password and PIN readers on arbitrary bytes:
 //! `MasterPassword::new` and `for_unlock`, `ExportPassword::new` and
-//! `for_open`, and `Pin::new`. Never a panic and no error but the input
+//! `for_open`, `Pin::new` and the rule of the server (`pin_meets_rule`).
+//! Never a panic and no error but the input
 //! errors; what is accepted is NFKD, valid UTF-8, inside the limits, made of
 //! allowed characters, and normalizing it again changes nothing. The unlock
 //! readers give the bytes of the creation readers, and a password that
@@ -12,8 +13,8 @@ use ferret_core::testing::text::{
 };
 use ferret_core::text::unicode::{MAX_BYTES, MAX_SCALARS, is_allowed, nfkd};
 use ferret_core::{
-    Error, ExportPassword, InputError, MasterPassword, MpPolicy, PIN_MAX_DIGITS, PIN_MIN_DIGITS,
-    Pin, SecretKey,
+    Error, ExportPassword, InputError, MasterPassword, MpPolicy, PIN_FLOOR, PIN_MAX_BYTES,
+    PIN_MAX_SCALARS, Pin, PinRule, SecretKey, pin_meets_rule,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -95,11 +96,38 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // The PIN.
+    // The PIN: NFKD, valid UTF-8, one to 64 scalars and 256 bytes, allowed
+    // characters, and normalizing it again changes nothing.
     match Pin::new(data) {
-        Ok(_) => {
-            assert!(data.iter().all(u8::is_ascii_digit));
-            assert!((PIN_MIN_DIGITS..=PIN_MAX_DIGITS).contains(&data.len()));
+        Ok(pin) => {
+            let bytes = pin.test_bytes().to_vec();
+            let text = core::str::from_utf8(&bytes).expect("a PIN is UTF-8");
+            assert!(!bytes.is_empty() && bytes.len() <= PIN_MAX_BYTES);
+            assert!((1..=PIN_MAX_SCALARS).contains(&text.chars().count()));
+            assert!(text.chars().all(is_allowed));
+            assert_eq!(nfkd(text).as_bytes(), &bytes[..]);
+            let again = Pin::new(&bytes).expect("a PIN normalizes to a PIN");
+            assert_eq!(again.test_bytes(), &bytes[..]);
+            // The rule: never an error but "too short" or "not allowed", and
+            // a PIN under four scalars never meets any rule.
+            for min_length in [0u8, 3, 4, 6, 64, 255] {
+                for allowed in [true, false] {
+                    let rule = PinRule {
+                        allowed,
+                        after_restart: true,
+                        min_length,
+                    };
+                    match pin_meets_rule(&pin, &rule) {
+                        Ok(()) => {
+                            assert!(allowed);
+                            assert!(text.chars().count() >= usize::from(PIN_FLOOR));
+                        }
+                        Err(Error::PinNotAllowed) => assert!(!allowed),
+                        Err(Error::InvalidInput(InputError::TooShort)) => assert!(allowed),
+                        Err(e) => panic!("unexpected {}", e.code()),
+                    }
+                }
+            }
         }
         Err(e) => assert!(is_input_error(&e), "{}", e.code()),
     }

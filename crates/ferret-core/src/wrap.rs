@@ -8,6 +8,8 @@
 //! aad_wrap = TLV[label="ferret/v1/wrap", suite, account_id, vault_id,
 //!                method_type, method_id, vk_epoch, kek_generation,
 //!                + method-specific]
+//! aad_pin  = TLV[label="ferret/v1/pin", suite, account_id, vault_id,
+//!                method_type=4, method_id, vk_epoch, device_salt, kdf]
 //! ```
 //!
 //! `password` and local `pin` wraps carry a key commitment, 32 bytes at the
@@ -19,8 +21,9 @@ use crate::error::{Error, InputError};
 use crate::ids::MethodId;
 use crate::keys::{UnlockedVault, VaultContext};
 use crate::ksf_profile::KsfProfile;
+use crate::pin_profile::PinProfile;
 use crate::prim::aead::{aead_open, aead_seal};
-use crate::prim::{ct::commit_eq, hkdf::hkdf_sha256};
+use crate::prim::{KdfParams, ct::commit_eq, hkdf::hkdf_sha256};
 use crate::rng::SecureRng;
 use crate::secret::{Kek, VaultKey};
 use crate::tlv::{SUITE, Tlv, tag};
@@ -65,8 +68,24 @@ pub enum Method {
         /// The 32-byte PRF salt of this registration.
         prf_salt: [u8; 32],
     },
-    /// A local PIN (browser extension, step B on mobile). Never uploaded.
+    /// A local PIN of the browser extension. Never uploaded.
+    ///
+    /// The `WrapRecord` that [`wrap_vk`] returns carries this method, so the
+    /// caller reads the 16-byte `device_salt` and the `profile` from
+    /// `record.method` and stores them next to `record.wrap` (104 bytes,
+    /// [`WRAP_WITH_COMMIT_LEN`]); opening needs all three.
     Pin {
+        /// The 16-byte salt of the Argon2id stretching.
+        device_salt: [u8; 16],
+        /// The PIN profile of the stretching. Its parameters are the `kdf`
+        /// field of the AAD, so a wrap cannot be opened as if it had been
+        /// made with another profile.
+        profile: PinProfile,
+    },
+    /// A local PIN on mobile (step B), mixed with the hardware-bound
+    /// `KEK_dev_pin`. Never uploaded. It keeps profile 1 of the sign-in (64
+    /// MiB), and that is what the `kdf` field of its AAD states.
+    PinMobile {
         /// The 16-byte salt of the Argon2id stretching.
         device_salt: [u8; 16],
     },
@@ -81,7 +100,7 @@ impl Method {
             Method::Password { .. } => TYPE_PASSWORD,
             Method::Recovery => TYPE_RECOVERY,
             Method::Prf { .. } => TYPE_PRF,
-            Method::Pin { .. } => TYPE_PIN,
+            Method::Pin { .. } | Method::PinMobile { .. } => TYPE_PIN,
             Method::Device => TYPE_DEVICE,
         }
     }
@@ -89,7 +108,10 @@ impl Method {
     /// Whether wraps of this method end with a key commitment. Spec: Fase 1
     /// § 4.3 (`password` and `pin` only).
     pub const fn has_commit(&self) -> bool {
-        matches!(self, Method::Password { .. } | Method::Pin { .. })
+        matches!(
+            self,
+            Method::Password { .. } | Method::Pin { .. } | Method::PinMobile { .. }
+        )
     }
 
     /// The length of a wrap of this method.
@@ -115,6 +137,18 @@ pub struct WrapRecord {
     pub wrap: Vec<u8>,
 }
 
+/// The 12-byte `kdf` field of an AAD: `m` (KiB), `t` and `p`, each as a
+/// big-endian `u32`.
+fn kdf_bytes(p: KdfParams) -> [u8; 12] {
+    let mut kdf = [0u8; 12];
+    let (m, tp) = kdf.split_at_mut(4);
+    m.copy_from_slice(&p.m_kib.to_be_bytes());
+    let (t, par) = tp.split_at_mut(4);
+    t.copy_from_slice(&p.t.to_be_bytes());
+    par.copy_from_slice(&p.p.to_be_bytes());
+    kdf
+}
+
 /// The AAD of a wrap.
 ///
 /// Spec: Fase 1 § 4.3. The generic AAD has no `version` field (unlike the
@@ -125,7 +159,9 @@ pub struct WrapRecord {
 ///
 /// The `pin` wrap uses the AAD of Fase 1 § 7.2, in the same field order as
 /// `aad_wrap`: `TLV[label="ferret/v1/pin", suite, account_id, vault_id,
-/// method_type=4, method_id, vk_epoch, device_salt]`. It has no
+/// method_type=4, method_id, vk_epoch, device_salt, kdf]`, with `kdf` (12
+/// bytes) the Argon2id parameters the KEK was made with: the PIN profile's
+/// for the extension, profile 1 of the sign-in for mobile. It has no
 /// `kek_generation`: the wrap exists only on this device and is replaced,
 /// never rolled forward.
 pub(crate) fn wrap_aad(
@@ -134,7 +170,15 @@ pub(crate) fn wrap_aad(
     kek_generation: u64,
     method: &Method,
 ) -> Result<Vec<u8>, Error> {
-    if let Method::Pin { device_salt } = method {
+    let pin_kdf = match method {
+        Method::Pin {
+            device_salt,
+            profile,
+        } => Some((device_salt, profile.at_least_min()?.params())),
+        Method::PinMobile { device_salt } => Some((device_salt, KsfProfile::P1.params())),
+        _ => None,
+    };
+    if let Some((device_salt, params)) = pin_kdf {
         return Tlv::new()
             .label(LABEL_PIN)
             .u8(tag::SUITE, SUITE)
@@ -144,6 +188,7 @@ pub(crate) fn wrap_aad(
             .bytes(tag::METHOD_ID, method_id.as_bytes())?
             .u64(tag::VK_EPOCH, ctx.vk_epoch)
             .bytes(tag::DEVICE_SALT, device_salt)?
+            .bytes(tag::KDF, &kdf_bytes(params))?
             .finish();
     }
     let aad = Tlv::new()
@@ -156,16 +201,7 @@ pub(crate) fn wrap_aad(
         .u64(tag::VK_EPOCH, ctx.vk_epoch)
         .u64(tag::KEK_GENERATION, kek_generation);
     match method {
-        Method::Password { ksf } => {
-            let p = ksf.params();
-            let mut kdf = [0u8; 12];
-            let (m, tp) = kdf.split_at_mut(4);
-            m.copy_from_slice(&p.m_kib.to_be_bytes());
-            let (t, par) = tp.split_at_mut(4);
-            t.copy_from_slice(&p.t.to_be_bytes());
-            par.copy_from_slice(&p.p.to_be_bytes());
-            aad.bytes(tag::KDF, &kdf)?.finish()
-        }
+        Method::Password { ksf } => aad.bytes(tag::KDF, &kdf_bytes(ksf.params()))?.finish(),
         Method::Prf {
             credential_id,
             prf_salt,
@@ -181,7 +217,7 @@ pub(crate) fn wrap_aad(
         }
         Method::Recovery | Method::Device => aad.finish(),
         // Handled above; kept explicit so a new method cannot fall through.
-        Method::Pin { .. } => Err(Error::Unsupported),
+        Method::Pin { .. } | Method::PinMobile { .. } => Err(Error::Unsupported),
     }
 }
 

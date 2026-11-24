@@ -424,7 +424,7 @@ test("the_pin_state_is_always_required", () => {
   assert.equal(code(() => job.unlock_password(URL_, CTX, created.wraps[0], pinned(created.pinned))), "invalid_input");
   // The other unlocks take it too.
   const job2 = new wasm.UnlockJob();
-  assert.equal(code(() => job2.pin_unlock(enc.encode("123456"), undefined, created.wraps[0], null)), "invalid_input");
+  assert.equal(code(() => job2.pin_unlock(enc.encode("123456"), undefined, created.wraps[0])), "invalid_input");
   assert.equal(code(() => job2.unlock_recovery(URL_, CTX, "FFR1-", created.wraps[1], undefined)), "invalid_input");
   assert.equal(code(() => job2.recover(URL_, CTX, "x", created.wraps[1], created.manifest, undefined, null)), "invalid_input");
 });
@@ -719,18 +719,39 @@ test("a_rekey_is_signed_by_the_old_vault_and_put_into_force_after", () => {
   assert.equal(code(() => vault.rekey_commit()), "invalid_input", "nothing pending");
 });
 
+test("the_wasm_binding_makes_only_profile_1_pin_wraps", () => {
+  const { vault, created } = newAccount("pin-profile");
+  const pinWrap = vault.wrap_pin(enc.encode("123456"), fill(16, 0x75));
+  assert.equal(pinWrap.method.type, "pin");
+  assert.equal(pinWrap.method.pin_profile, 1);
+  assert.equal(pinWrap.method.device_salt.length, 16);
+  // The device-secret argument is gone: an extra argument changes nothing.
+  assert.equal(wasm.Vault.prototype.wrap_pin.length, 2);
+  assert.equal(wasm.UnlockJob.prototype.pin_unlock.length, 3);
+  // A mobile wrap is neither read nor opened by the binding.
+  const mobile = { ...pinWrap, method: { type: "pin_mobile", device_salt: pinWrap.method.device_salt } };
+  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, mobile)), "invalid_input");
+  // An unknown or missing PIN profile is refused before Argon2id.
+  for (const pin_profile of [0, 2, 255, undefined]) {
+    const odd = { ...pinWrap, method: { ...pinWrap.method, pin_profile } };
+    const c = code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, odd));
+    assert.ok(["kdf_profile_unknown", "invalid_input"].includes(c), `${pin_profile}: ${c}`);
+  }
+  // A PIN below the floor of four is refused when the wrap is made.
+  assert.equal(code(() => vault.wrap_pin(enc.encode("123"), fill(16, 0x75))), "input_too_short");
+});
+
 test("pin_and_passkey_unlock_go_through_the_same_checks", () => {
   const { vault, created } = newAccount("pin-prf");
   // PIN: Argon2id runs in this worker, the record is required.
-  const pinWrap = vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), null);
+  const pinWrap = vault.wrap_pin(enc.encode("123456"), fill(16, 0x75));
   assert.equal(pinWrap.method.type, "pin");
   assert.equal(pinWrap.wrap.length, 104);
   const job = new wasm.UnlockJob();
-  const out = job.pin_unlock(enc.encode("123456"), created.pinned, pinWrap, null);
+  const out = job.pin_unlock(enc.encode("123456"), created.pinned, pinWrap);
   assert.deepEqual(out.vault.auth_public_key(), created.pk_a);
-  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("654321"), created.pinned, pinWrap, null)), "decrypt");
-  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("12ab56"), created.pinned, pinWrap, null)), "input_forbidden_character");
-  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("123456"), created.pinned, pinWrap, fill(32, 1))), "decrypt", "the mobile variant is another key");
+  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("654321"), created.pinned, pinWrap)), "decrypt");
+  assert.equal(code(() => new wasm.UnlockJob().pin_unlock(enc.encode("12\u0009456"), created.pinned, pinWrap)), "input_forbidden_character");
   // Passkey (PRF): the 32 bytes the authenticator gave.
   const prf = fill(32, 0x33);
   const prfWrap = vault.wrap_prf(fill(24, 0x44), fill(32, 0x55), prf.slice(), fill(16, 0x76), 1, fill(16, 0xaa), "no_stored_passkeys");
@@ -1257,7 +1278,6 @@ test("prf_salts_are_fresh_and_all_zero_keys_are_refused_by_the_core", () => {
   assert.equal(code(() => wrap(fill(31, 5), fill(32, 0x33))), "invalid_input", "a salt of another length");
   assert.equal(wrap(a, fill(32, 0x33)).method.type, "prf");
   assert.equal(code(() => new wasm.UnlockJob().unlock_prf(URL_, CTX, new Uint8Array(32), wrap(a, fill(32, 0x33)), pinned(created.pinned))), "input_all_zero");
-  assert.equal(code(() => vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), new Uint8Array(32))), "input_all_zero");
   const id = fill(16, 0x41);
   vault.export_begin([row(id, vault.encrypt_item(id, 1, LOGIN_DRAFT, undefined, NOW))], NOW, undefined, reauthToken(account));
   assert.equal(code(() => vault.export_finish(new Uint8Array(32))), "input_all_zero");

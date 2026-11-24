@@ -12,8 +12,9 @@ use ferret_core::testing::prim::{aead_open_count, aead_seal, hkdf_sha256};
 use ferret_core::testing::vector::{self, Case, Outcome};
 use ferret_core::testing::{ReplayRng, TestRng, hex_encode};
 use ferret_core::{
-    AccountId, Error, ExportKey, Kek, KekDevPin, KsfProfile, Method, MethodId, Pin, PrfOutput,
-    RecoveryKey, UnlockedVault, VaultContext, VaultId, VaultKey, WrapRecord, unwrap_vk, wrap_vk,
+    AccountId, Error, ExportKey, Kek, KekDevPin, KsfProfile, Method, MethodId, Pin, PinProfile,
+    PrfOutput, RecoveryKey, UnlockedVault, VaultContext, VaultId, VaultKey, WrapRecord, unwrap_vk,
+    wrap_vk,
 };
 use serde_json::{Value, json};
 
@@ -35,7 +36,7 @@ fn wrap_password_is_104_bytes_others_72() {
     for method in all_methods() {
         let rec = seal(method.clone(), &c, &kek(9));
         let want = match method {
-            Method::Password { .. } | Method::Pin { .. } => 104,
+            Method::Password { .. } | Method::Pin { .. } | Method::PinMobile { .. } => 104,
             _ => 72,
         };
         assert_eq!(rec.wrap.len(), want, "{method:?}");
@@ -167,7 +168,8 @@ fn wrap_aad_exact_bytes() {
 
     // The PIN AAD of § 7.2 in the order of aad_wrap: TLV[label="ferret/v1/pin",
     // suite, account_id, vault_id, method_type=4, method_id, vk_epoch,
-    // device_salt]. No kek_generation.
+    // device_salt, kdf]. No kek_generation. The kdf is m (KiB), t and p, each
+    // a big-endian u32: 256 MiB, 3, 1 for PIN profile 1.
     let rec = seal(pin_method(), &c, &k);
     assert_eq!(
         wrap_aad(&c, &rec).unwrap(),
@@ -180,9 +182,35 @@ fn wrap_aad_exact_bytes() {
             t(0x13, &[0x33; 16]),
             t(0x20, &1u64.to_be_bytes()),
             t(0x37, &[0xc0; 16]),
+            t(0x30, &[0, 4, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1]),
         ]
         .concat(),
         "pin"
+    );
+
+    // The mobile PIN keeps profile 1 of the sign-in: 64 MiB in the same field.
+    let rec = seal(
+        Method::PinMobile {
+            device_salt: [0xc0; 16],
+        },
+        &c,
+        &k,
+    );
+    assert_eq!(
+        wrap_aad(&c, &rec).unwrap(),
+        [
+            label("ferret/v1/pin"),
+            t(0x03, &[1]),
+            t(0x10, &[0x11; 16]),
+            t(0x11, &[0x22; 16]),
+            t(0x14, &[4]),
+            t(0x13, &[0x33; 16]),
+            t(0x20, &1u64.to_be_bytes()),
+            t(0x37, &[0xc0; 16]),
+            t(0x30, &[0, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1]),
+        ]
+        .concat(),
+        "pin mobile"
     );
 }
 
@@ -212,7 +240,7 @@ fn aad_wrap_has_no_version_field() {
     assert_eq!(tags(Method::Device), generic);
     assert_eq!(
         tags(pin_method()),
-        [0x01, 0x03, 0x10, 0x11, 0x14, 0x13, 0x20, 0x37]
+        [0x01, 0x03, 0x10, 0x11, 0x14, 0x13, 0x20, 0x37, 0x30]
     );
     for method in all_methods() {
         assert!(
@@ -537,10 +565,19 @@ fn unwrap_fails_on_each_aad_field() {
     let r2 = WrapRecord {
         method: Method::Pin {
             device_salt: [0xc1; 16],
+            profile: PinProfile::P1,
         },
         ..rec.clone()
     };
     assert_decrypt(&c, &k, &r2, "pin: device_salt");
+    // The extension wrap does not open as the mobile one: the kdf differs.
+    let r2 = WrapRecord {
+        method: Method::PinMobile {
+            device_salt: [0xc0; 16],
+        },
+        ..rec.clone()
+    };
+    assert_decrypt(&c, &k, &r2, "pin: kdf");
     assert_decrypt(
         &c,
         &k,
@@ -608,6 +645,13 @@ fn method_of(v: &Value) -> Method {
         },
         "pin" => Method::Pin {
             device_salt: hexn(&v["device_salt"]),
+            profile: PinProfile::from_wire(
+                u32::try_from(v["pin_profile"].as_u64().unwrap()).unwrap(),
+            )
+            .unwrap(),
+        },
+        "pin_mobile" => Method::PinMobile {
+            device_salt: hexn(&v["device_salt"]),
         },
         "device" => Method::Device,
         other => panic!("unknown method type {other}"),
@@ -653,9 +697,14 @@ fn run_seal(case: &Case, rng: &mut ReplayRng) -> Result<Outcome, Error> {
         "wrap.seal.pin" => {
             let salt = hexn(&i["device_salt"]);
             let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
+            let profile =
+                PinProfile::from_wire(u32::try_from(i["pin_profile"].as_u64().unwrap()).unwrap())?;
             (
-                Kek::from_pin_extension(&pin, &salt)?,
-                Method::Pin { device_salt: salt },
+                Kek::from_pin_extension(&pin, &salt, profile)?,
+                Method::Pin {
+                    device_salt: salt,
+                    profile,
+                },
             )
         }
         "wrap.seal.pin_mobile" => {
@@ -667,7 +716,7 @@ fn run_seal(case: &Case, rng: &mut ReplayRng) -> Result<Outcome, Error> {
                     &salt,
                     &KekDevPin::from_test_bytes(hexn(&i["kek_dev_pin"])),
                 )?,
-                Method::Pin { device_salt: salt },
+                Method::PinMobile { device_salt: salt },
             )
         }
         "wrap.seal.device" => (Kek::generate(rng), Method::Device),
@@ -678,7 +727,7 @@ fn run_seal(case: &Case, rng: &mut ReplayRng) -> Result<Outcome, Error> {
         "kek": he(&kek_bytes(&kek)),
         "aad": he(&wrap_aad(&c, &rec)?),
     });
-    if matches!(method, Method::Password { .. } | Method::Pin { .. }) {
+    if method.has_commit() {
         intermediate["commit"] = json!(he(&commit_of(&kek)?));
     }
     // Every wrap the vectors seal must also open again.

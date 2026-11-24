@@ -37,18 +37,18 @@ use ferret_core::{
     CurrentManifest, Error, ExistingCredential, ExportItem, ExportKey, ExportPassword, GetRequest,
     ItemBody, ItemId, KdfParams, Kek, KekDevPin, KsfProfile, Manifest, ManifestEntry,
     MasterPassword, Method, MethodId, MethodKey, MpPolicy, MutationOp, PasskeyRecord, Pin,
-    PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey, RecoveryPublicKey, RekeyInput,
-    RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey, ServerMethod, ServerRow,
-    SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome, VaultContext, VaultId,
-    VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods, decode_recovery_key,
-    decode_secret_key, decrypt_item, decrypt_manifest, encode_recovery_key, encode_secret_key,
-    encrypt_item, encrypt_manifest, export_encrypt, export_plain_csv, export_plain_json,
-    import_decrypt, item_tag, make_checkpoint, make_tombstone, manifest_add_method,
-    manifest_remove_method, opaque_login_finish, opaque_login_start, opaque_register_finish,
-    opaque_register_start, parse_export_header, parse_otpauth, passkey_create, passkey_get,
-    prf_output, prf_salt_new, recovery_public_key, recovery_sign, totp_code, totp_seconds_left,
-    unwrap_vk, validate_rp_id, verify_auth_proof, verify_checkpoint, verify_item_tag,
-    verify_recovery_proof, verify_tombstone, wrap_vk,
+    PinProfile, PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey, RecoveryPublicKey,
+    RekeyInput, RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey, ServerMethod,
+    ServerRow, SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome, VaultContext,
+    VaultId, VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods,
+    decode_recovery_key, decode_secret_key, decrypt_item, decrypt_manifest, encode_recovery_key,
+    encode_secret_key, encrypt_item, encrypt_manifest, export_encrypt, export_plain_csv,
+    export_plain_json, import_decrypt, item_tag, make_checkpoint, make_tombstone,
+    manifest_add_method, manifest_remove_method, opaque_login_finish, opaque_login_start,
+    opaque_register_finish, opaque_register_start, parse_export_header, parse_otpauth,
+    passkey_create, passkey_get, prf_output, prf_salt_new, recovery_public_key, recovery_sign,
+    totp_code, totp_seconds_left, unwrap_vk, validate_rp_id, verify_auth_proof, verify_checkpoint,
+    verify_item_tag, verify_recovery_proof, verify_tombstone, wrap_vk,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -150,6 +150,10 @@ fn method_of(v: &Value) -> Method {
         },
         "pin" => Method::Pin {
             device_salt: hn(&v["device_salt"]),
+            profile: PinProfile::from_wire(v["pin_profile"].as_u64().unwrap() as u32).unwrap(),
+        },
+        "pin_mobile" => Method::PinMobile {
+            device_salt: hn(&v["device_salt"]),
         },
         _ => Method::Device,
     }
@@ -238,7 +242,8 @@ fn kdf_ops(method: &str, i: &Value) -> Result<Value, Error> {
         }
         "kek_from_pin_extension" => {
             let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
-            let kek = Kek::from_pin_extension(&pin, &hn(&i["device_salt"]))?;
+            let profile = PinProfile::from_wire(i["pin_profile"].as_u64().unwrap() as u32)?;
+            let kek = Kek::from_pin_extension(&pin, &hn(&i["device_salt"]), profile)?;
             json!({ "kek": he(&kek_bytes(&kek)) })
         }
         "kek_from_pin_mobile" => {
@@ -356,9 +361,13 @@ fn wrap_ops(method: &str, op: &str, i: &Value, rng: &mut ReplayRng) -> Result<Va
         "wrap.seal.pin" => {
             let salt = hn(&i["device_salt"]);
             let pin = Pin::new(i["pin"].as_str().unwrap().as_bytes())?;
+            let profile = PinProfile::from_wire(i["pin_profile"].as_u64().unwrap() as u32)?;
             (
-                Kek::from_pin_extension(&pin, &salt)?,
-                Method::Pin { device_salt: salt },
+                Kek::from_pin_extension(&pin, &salt, profile)?,
+                Method::Pin {
+                    device_salt: salt,
+                    profile,
+                },
             )
         }
         "wrap.seal.pin_mobile" => {
@@ -367,7 +376,7 @@ fn wrap_ops(method: &str, op: &str, i: &Value, rng: &mut ReplayRng) -> Result<Va
             let dev = KekDevPin::from_test_bytes(hn(&i["kek_dev_pin"]));
             (
                 Kek::from_pin_mobile(&pin, &salt, &dev)?,
-                Method::Pin { device_salt: salt },
+                Method::PinMobile { device_salt: salt },
             )
         }
         "wrap.seal.device" => (Kek::generate(rng), Method::Device),

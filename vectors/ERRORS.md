@@ -85,6 +85,7 @@ share the single code `decrypt`, with no cause.
 | `folder_too_many` | More than 20 folder names for one item. |
 | `folder_duplicate` | Two folder names of one item that are equal when case is ignored. |
 | `generator_options` | Options of the password or passphrase generator out of range: a password length outside 4 to 128, no character class, `min_each` above 8, or more required characters than the length holds (`min_each` times the number of classes above the length); a passphrase with fewer than 3 or more than 20 words, or a separator other than `-`, `.`, `_` and the space. |
+| `pin_not_allowed` | The server's rule does not allow a PIN at all, so no PIN is accepted. |
 
 ## Server codes
 
