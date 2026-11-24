@@ -217,12 +217,16 @@ proptest! {
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 2, ..ProptestConfig::default() })]
-
-    /// With the real KEK of the PIN profile (Argon2id, 256 MiB): a few cases.
-    #[test]
-    fn real_kek_round_trip(text in plain_text(), salt in any::<[u8; 16]>(), vk in any::<[u8; 32]>()) {
+/// With the real KEK of the PIN profile (Argon2id, 256 MiB). A plain test over
+/// a few fixed inputs: `PROPTEST_CASES` would turn a property into thousands
+/// of runs of a 256 MiB hash.
+#[test]
+fn real_kek_round_trip() {
+    for (text, salt, vk) in [
+        ("123456", [1u8; 16], [2u8; 32]),
+        ("correct horse battery", [3u8; 16], [4u8; 32]),
+        ("caf\u{e9} \u{ff11}\u{ff12}", [5u8; 16], [6u8; 32]),
+    ] {
         let pin = Pin::new(text.as_bytes()).unwrap();
         let kek = Kek::from_pin_extension(&pin, &salt, PinProfile::P1).unwrap();
         let ctx = context([1; 16], [2; 16], 1);
@@ -234,11 +238,17 @@ proptest! {
             &kek,
             MethodId::from_bytes([3; 16]),
             1,
-            Method::Pin { device_salt: salt, profile: PinProfile::P1 },
+            Method::Pin {
+                device_salt: salt,
+                profile: PinProfile::P1,
+            },
         )
         .unwrap();
         let again = Kek::from_pin_extension(&pin, &salt, PinProfile::P1).unwrap();
         let vault = unwrap_vk(&ctx, &again, &rec).unwrap();
-        prop_assert_eq!(ferret_core::testing::keys::unlocked_vault_keys(&vault)[0], vk);
+        assert_eq!(
+            ferret_core::testing::keys::unlocked_vault_keys(&vault)[0],
+            vk
+        );
     }
 }
