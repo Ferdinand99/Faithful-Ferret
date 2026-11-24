@@ -716,27 +716,21 @@ reason = "ACCEPTED RESIDUAL RISK (TRIAGE.md R3). Reading the text of an otpauth 
 
 [[allow]]
 function = "^ferret_core::wrap::unwrap_vk$"
-instruction = "br_table"
+instruction = "i32\\.load\\(static-table\\)"
 max = 1
-reason = "Opening a wrap: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit, before the AEAD is opened."
+reason = "APPROVED: The byte load reads the length of a wrap (72 or 104) from a small constant table indexed by the unlock method tag of the record, which is public (the extension PIN and the mobile PIN are two more tags than before); the key commitment is compared by commit_eq, which has no hit, and no byte of a key is used as an address."
 
 [[allow]]
 function = "^ferret_core::wrap::wrap_aad$"
 instruction = "br_table"
-max = 1
-reason = "Building the AAD of a wrap: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call."
+max = 2
+reason = "APPROVED: The two table jumps are matches on the unlock method of the record (password, recovery key, passkey, extension PIN, mobile PIN, device): one picks the layout of the PIN AAD and its kdf field, the other the layout of the generic AAD. The method is a public tag of the call; the PIN, the KEK and the vault key are not read here."
 
 [[allow]]
 function = "^ferret_core::wrap::wrap_aad$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
 reason = "APPROVED: Checking that the 32 public bytes of the PRF salt are not all zero: a loop over a fixed length whose index is a public counter. The salt is public data stored with the wrap, and the loop stops on the first set byte, which tells nothing that the wrap does not already show."
-
-[[allow]]
-function = "^ferret_core::wrap::wrap_vk$"
-instruction = "br_table"
-max = 1
-reason = "Wrapping the vault key: a match on the unlock method (password, recovery key, passkey, PIN, device), a public tag of the call; the key commitment is compared by commit_eq, which has no hit."
 
 [[allow]]
 function = "^generate_passphrase externref shim multivalue shim$"
@@ -797,6 +791,12 @@ function = "^unlockjob_login_start multivalue shim$"
 instruction = "br_table"
 max = 1
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+
+[[allow]]
+function = "^unlockjob_pin_unlock externref shim multivalue shim$"
+instruction = "br_table"
+max = 1
+reason = "APPROVED: The table jump is the match on the unlock method of the stored wrap (extension PIN or mobile PIN) and on whether a device secret was handed in, inlined into the shim: public tags of the call and of the record. The PIN bytes are only passed on to the key derivation, and no byte of the PIN or of a key decides a branch or an address here."
 
 [[allow]]
 function = "^unlockjob_recover externref shim multivalue shim$"
