@@ -529,7 +529,7 @@ async function leakRun() {
 
   // ---- the wraps of a PIN and of a passkey method
   const pinWrap = await client.vault.wrap_pin(enc.encode("123456"), fill(16, 0x75), null);
-  const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt) }).kek;
+  const kekPin = op(wasm, "kek_from_pin_extension", "kdf.kek.pin_extension", { pin: "123456", device_salt: hex(pinWrap.method.device_salt), pin_profile: pinWrap.method.pin_profile }).kek;
   add("KEK_pin", kekPin);
   anchorWrap("KEK_pin", pinWrap, kekPin, vk1, 1);
   const prfOutput = crypto.getRandomValues(new Uint8Array(32));
