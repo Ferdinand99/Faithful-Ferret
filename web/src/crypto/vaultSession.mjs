@@ -13,6 +13,7 @@ import { register } from "../flows/register.mjs";
 import { renewRecoveryKey } from "../flows/renewRecovery.mjs";
 import { findRemembered, forgetRememberedAccount, rememberAccount, rememberedAccountId } from "../flows/rememberedAccount.mjs";
 import { accessSheet, showSecretKey } from "../flows/showSecretKey.mjs";
+import { beginAddPasskey, listPasskeys, passkeysOffered, removePasskeyMethod } from "../flows/unlockMethods.mjs";
 import { createSessionCore } from "./session.mjs";
 import { AccountError } from "./errors.mjs";
 
@@ -236,6 +237,36 @@ export function createVaultSession(options) {
     async reapplyMethods(args) {
       if (inner.current() === null) throw new AccountError("session_ended");
       return reapplyMethods(env, args);
+    },
+
+    /** Whether the server offers passkeys as unlock methods (`GET /api/vault/policy`); false when it cannot be told. */
+    passkeysOffered: () => passkeysOffered(env.api),
+
+    /** The passkeys that unlock the open vault, for the list (see `flows/unlockMethods.mjs`). */
+    async listPasskeys() {
+      if (inner.current() === null) throw new AccountError("session_ended");
+      return listPasskeys(env);
+    },
+
+    /**
+     * The first part of adding a passkey as an unlock method (see `flows/unlockMethods.mjs`): the password check and
+     * the checks of the server's list. The page then makes the two WebAuthn calls, each from a click.
+     * @param {Omit<Parameters<typeof beginAddPasskey>[1], "scope">} args
+     */
+    async beginAddPasskey(args) {
+      const current = inner.current();
+      if (current === null) throw new AccountError("session_ended");
+      const { accountId, vaultId, vkEpoch } = current;
+      return beginAddPasskey(env, { ...args, scope: { accountId, vaultId, vkEpoch } });
+    },
+
+    /**
+     * Removes a passkey from the unlock methods of the open vault, after the password check.
+     * @param {Parameters<typeof removePasskeyMethod>[1]} args
+     */
+    async removePasskey(args) {
+      if (inner.current() === null) throw new AccountError("session_ended");
+      return removePasskeyMethod(env, args);
     },
 
     /**

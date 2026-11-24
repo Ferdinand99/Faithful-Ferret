@@ -64,6 +64,7 @@ const RECOVERY_TYPE = 2;
  * @property {Record<string, any>} manifest the manifest row, for the core
  * @property {Record<string, any>} recovery the server's recovery wrap (wire form)
  * @property {Record<string, any>} password the server's password wrap (wire form)
+ * @property {Array<Record<string, any>>} all every method the server lists (wire form), passkeys included
  */
 
 /**
@@ -126,7 +127,7 @@ export async function readMethods(env, record) {
     await Promise.resolve(env.lock()).catch(() => undefined);
     throw error;
   }
-  return { seeded, manifest, recovery: recovery[0], password: password[0] };
+  return { seeded, manifest, recovery: recovery[0], password: password[0], all: methods.methods };
 }
 
 /**

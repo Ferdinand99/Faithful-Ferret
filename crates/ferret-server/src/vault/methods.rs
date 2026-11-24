@@ -81,6 +81,11 @@ fn wrap_json(row: MethodRow) -> Result<WrapJson, ApiError> {
             .map(<[u8; 16]>::try_from)
             .transpose()
             .map_err(|_| inconsistent("an AAGUID is not 16 bytes"))?,
+        // Only a passkey says when it was added; the other two methods are made with the account.
+        created_at: row
+            .created_at
+            .filter(|_| row.method_type == 3)
+            .and_then(|at| u64::try_from(at).ok()),
     })
 }
 

@@ -1,0 +1,77 @@
+/* The page "Unlock methods": the list of passkeys that open the vault, and the steps that add one.
+   Colours and components come from base.css. */
+
+.methods-page > h2,
+.methods-add > h2,
+.methods-note > h2 {
+  margin-top: var(--sp-5);
+  font-size: 1.0625rem;
+}
+
+.methods-note {
+  margin-block: var(--sp-4);
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.methods-note > h2 {
+  margin-top: 0;
+}
+
+.methods-list {
+  list-style: none;
+  margin: var(--sp-4) 0;
+  padding: 0;
+}
+
+.methods-row {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.methods-row:last-child {
+  border-bottom: 0;
+}
+
+.methods-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+  /* A long name breaks instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.methods-aaguid {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.methods-row > .actions {
+  margin-top: var(--sp-1);
+}
+
+/* "Synced passkey" is tinted as a notice and "This device only" as information; the label says it too, never colour alone. */
+.methods-pill[data-kind="synced"] {
+  --status: var(--warn);
+  --status-text: var(--warn-text);
+  --status-fill: var(--warn-fill);
+}
+
+.methods-pill[data-kind="device"] {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+}
+
+.methods-form {
+  max-width: 36rem;
+}
+
+.methods-form > h3 {
+  margin: 0;
+  font-size: 1rem;
+}

@@ -108,6 +108,7 @@ pub fn rows(user_id: i64, n: u8, now: i64) -> NewAccountRows {
                 credential_id: None,
                 prf_salt: None,
                 aaguid: None,
+                created_at: None,
             },
             MethodRow {
                 method_id: MethodId::from_bytes(id16(0xc2, n)),
@@ -117,6 +118,7 @@ pub fn rows(user_id: i64, n: u8, now: i64) -> NewAccountRows {
                 credential_id: None,
                 prf_salt: None,
                 aaguid: None,
+                created_at: None,
             },
         ],
         manifest: ManifestIn {
@@ -267,6 +269,7 @@ pub async fn client_account(app: &TestApp, n: u8) -> Client {
             credential_id: None,
             prf_salt: None,
             aaguid: None,
+            created_at: None,
         })
         .collect();
     let now = i64::try_from(app.clock.now_unix()).expect("a time");

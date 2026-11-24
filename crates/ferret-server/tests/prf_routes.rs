@@ -421,6 +421,18 @@ mod with_routes {
             .expect("the passkey");
         assert_eq!(passkey["method_id"], json!(hex16::encode(&pk.method_id)));
         assert_eq!(passkey["aaguid"], json!(hex16::encode(&pk.aaguid)));
+        // It says when the passkey was added, in seconds; the other methods do not.
+        let added = passkey["created_at"].as_u64().expect("a time");
+        assert!(added > 0 && added <= app.clock.now_unix(), "{added}");
+        assert_eq!(
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|m| m.get("created_at").is_some())
+                .count(),
+            1
+        );
         assert_eq!(
             passkey["credential_id"],
             json!(b64url::encode(&pk.credential_id))

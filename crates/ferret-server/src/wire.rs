@@ -806,6 +806,12 @@ pub struct WrapJson {
         with = "serde_hex16_opt"
     )]
     pub aaguid: Option<[u8; 16]>,
+    /// When the passkey method was added, in seconds since 1970, for a passkey.
+    /// Display data for the list ("added"): the server could say anything, as
+    /// it could with the AAGUID, and nothing relies on it. A request never has
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
 }
 
 /// A checkpoint as it is uploaded with the first row of a vault.

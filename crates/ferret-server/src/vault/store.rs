@@ -929,6 +929,9 @@ pub struct MethodRow {
     pub prf_salt: Option<Vec<u8>>,
     /// The authenticator model, for a passkey.
     pub aaguid: Option<Vec<u8>>,
+    /// When it was added (seconds since 1970), read from the table; a new row
+    /// takes the time of its insertion, so this is left out (`None`) there.
+    pub created_at: Option<i64>,
 }
 
 impl std::fmt::Debug for MethodRow {
@@ -1170,7 +1173,7 @@ pub fn methods_view(conn: &Connection, account: &AccountId) -> Result<MethodsVie
         )
         .map_err(missing)?;
     let mut stmt = tx.prepare(
-        "SELECT method_id, method_type, wrap, kek_generation, credential_id, prf_salt, aaguid \
+        "SELECT method_id, method_type, wrap, kek_generation, credential_id, prf_salt, aaguid, created_at \
          FROM ferret_unlock_methods WHERE account_id = ?1 ORDER BY created_at, method_id",
     )?;
     let methods = stmt
@@ -1185,6 +1188,7 @@ pub fn methods_view(conn: &Connection, account: &AccountId) -> Result<MethodsVie
                 credential_id: row.get(4)?,
                 prf_salt: row.get(5)?,
                 aaguid: row.get(6)?,
+                created_at: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1375,6 +1379,7 @@ mod tests {
                 credential_id: None,
                 prf_salt: None,
                 aaguid: None,
+                created_at: None,
             }],
             manifest: ManifestIn {
                 rev: 1,
