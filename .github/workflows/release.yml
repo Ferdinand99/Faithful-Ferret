@@ -21,7 +21,10 @@
 # keyless cosign (the same identity as the packages: this workflow). Its labels carry
 # the version and the commit of the tag; scripts/ferret-home.sh checks both, and the
 # signature, before it starts a stack with real data. Nothing is tagged before the
-# protected environment "release" approves the publish job.
+# protected environment "release" approves the publish job. The web vault inside the image
+# is built with the WebAssembly package of this same run (the image jobs wait for the build job
+# and take its files), and the image says that package's SHA-256, which is its entry in the
+# signed SHA256SUMS.
 #
 # The package build job has read access only. The publish job gets the write access
 # and the OIDC token, and it runs no code from the repository: it only handles

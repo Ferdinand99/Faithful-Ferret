@@ -85,7 +85,8 @@ fn the_binary_says_where_its_web_vault_wasm_came_from() {
 
 #[test]
 fn the_release_server_image_refuses_a_tree_built_web_vault() {
-    let record = |source: &str| format!("{{\n  \"source\": \"{source}\",\n  \"sha256\": \"{SHA}\"\n}}\n");
+    let record =
+        |source: &str| format!("{{\n  \"source\": \"{source}\",\n  \"sha256\": \"{SHA}\"\n}}\n");
     // What the web build writes for each source is read as it is.
     let lock = wasm_source::parse(&format!(
         "{{\n  \"source\": \"lock\",\n  \"version\": \"0.8.0\",\n  \"sha256\": \"{SHA}\"\n}}\n"
@@ -111,7 +112,10 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
         record("Tree"),
         record(""),
         "{}".to_string(),
-        format!("{{\"source\": \"lock\", \"sha256\": \"{}\"}}", SHA.to_uppercase()),
+        format!(
+            "{{\"source\": \"lock\", \"sha256\": \"{}\"}}",
+            SHA.to_uppercase()
+        ),
         format!("{{\"source\": \"lock\", \"sha256\": \"{}\"}}", &SHA[1..]),
         "{\"source\": \"lock\"}".to_string(),
     ] {
@@ -122,8 +126,12 @@ fn the_release_server_image_refuses_a_tree_built_web_vault() {
     // Dockerfile makes every build that gets a revision one.
     let manifest = env!("CARGO_MANIFEST_DIR");
     let build_rs = std::fs::read_to_string(format!("{manifest}/build.rs")).unwrap();
-    assert!(build_rs.contains("FERRET_RELEASE_BUILD") && build_rs.contains("wasm_source::check_release"));
-    let dockerfile = std::fs::read_to_string(format!("{manifest}/../../docker/server.Dockerfile")).unwrap();
+    assert!(
+        build_rs.contains("FERRET_RELEASE_BUILD")
+            && build_rs.contains("wasm_source::check_release")
+    );
+    let dockerfile =
+        std::fs::read_to_string(format!("{manifest}/../../docker/server.Dockerfile")).unwrap();
     assert!(dockerfile.contains("FERRET_RELEASE_BUILD=${REVISION:+1}"));
 }
 

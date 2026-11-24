@@ -868,7 +868,7 @@ grep -qF 'wasm_of() {' scripts/lanbox-ferret-test.sh || fail "lanbox-ferret-test
 grep -qF 'echo "  wasm   $(wasm_of "$e2e_app")' scripts/lanbox-ferret-test.sh || fail "e2e-up must print which WebAssembly package the stack runs"
 grep -qF 'echo "wasm: $(wasm_of "$container")"' scripts/lanbox-ferret-test.sh || fail "status must print which WebAssembly package the stack runs"
 grep -qx 'COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES /usr/share/doc/ferret/' "$dockerfile" || fail "the image must carry LICENSE and THIRD-PARTY-NOTICES in /usr/share/doc/ferret/"
-grep -qx '      lock) node scripts/build.mjs ;; \' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock, for the lock source"
+grep -qxF '      lock) node scripts/build.mjs ;; \' "$dockerfile" || fail "the web stage must run node scripts/build.mjs, which checks the lock, for the lock source"
 if grep -rIlE 'WASM_LOCAL|wasm[.]local' .github docker; then fail "no workflow or compose file may use a local WebAssembly package"; fi
 if grep -qiE 'setcap|^USER root' "$dockerfile"; then fail "$dockerfile must not use setcap or USER root"; fi
 if grep -E 'type=cache' "$dockerfile" | grep -v 'id=ferret-'; then fail "every cache mount needs an id starting with ferret-"; fi
