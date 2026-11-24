@@ -16,7 +16,7 @@
 import { clear, el, mount } from "../dom.mjs";
 import { codeOf } from "../crypto/errors.mjs";
 import { MAX_NAME_CHARS, MAX_PASSKEYS } from "../flows/unlockMethods.mjs";
-import { askConfirm } from "./common.mjs";
+import { askConfirm, formatMoment } from "./common.mjs";
 import { field, setText } from "./form.mjs";
 import { securityErrorText } from "./securityError.mjs";
 
@@ -60,6 +60,7 @@ export function formatAaguid(hex) {
  * @param {{
  *   t: Translate,
  *   site: string,
+ *   locale?: string,
  *   load: () => Promise<PasskeyMethod[]>,
  *   begin: () => Promise<AddingPasskey>,
  *   remove: (id: string) => Promise<unknown>,
@@ -72,7 +73,7 @@ export function formatAaguid(hex) {
  * `host` is where the dialog of a removal sits (the page by default).
  * @returns {HTMLElement}
  */
-export function unlockMethodsView({ t, site, load, begin, remove, scope, win = globalThis, host }) {
+export function unlockMethodsView({ t, site, locale, load, begin, remove, scope, win = globalThis, host }) {
   const root = el("section", { class: "card methods-page", "data-role": "methods-page" });
   const dialogHost = host ?? root;
   const status = el("p", { class: "status", role: "status", "data-role": "methods-status" });
@@ -254,6 +255,7 @@ export function unlockMethodsView({ t, site, load, begin, remove, scope, win = g
   function rowView(method) {
     const label = method.name ?? t("methods.list.unnamed");
     const kind = t(method.synced ? "methods.kind.synced" : "methods.kind.device");
+    const added = method.addedAt === null ? null : formatMoment(method.addedAt, locale);
     const button = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary", "data-role": "methods-remove" }, t("methods.remove.button")));
     button.setAttribute("aria-label", t("methods.remove.label", { name: label }));
     button.addEventListener("click", async () => {
@@ -289,6 +291,7 @@ export function unlockMethodsView({ t, site, load, begin, remove, scope, win = g
         el("span", { class: "pill methods-pill", "data-role": "methods-kind", "data-kind": method.synced ? "synced" : "device" }, kind)),
       el("p", { class: "methods-aaguid help", "data-role": "methods-aaguid" },
         method.aaguid === null ? t("methods.aaguid_unknown") : t("methods.aaguid", { aaguid: formatAaguid(method.aaguid) })),
+      el("p", { class: "methods-added help", "data-role": "methods-added" }, added === null ? t("methods.added_unknown") : t("methods.added", { time: added })),
       el("div", { class: "actions" }, button));
   }
 

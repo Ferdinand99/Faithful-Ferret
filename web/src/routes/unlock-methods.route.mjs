@@ -31,6 +31,7 @@ export default {
     return vault.page(unlockMethodsView({
       t,
       site,
+      locale: ctx.i18n.lang,
       load: () => session.listPasskeys(),
       begin: () => session.beginAddPasskey(site === "" ? { reauth } : { reauth, rpId: site }),
       remove: (id) => session.removePasskey({ id, reauth }),

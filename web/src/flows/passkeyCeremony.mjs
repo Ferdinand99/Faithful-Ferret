@@ -156,6 +156,9 @@ async function checkedAuthData(raw, rpId, deps) {
 function firstResultOf(results) {
   if (results === undefined || results === null) return null;
   const first = bytesOf(results.first);
+  // The browser's own buffer is wiped as far as script can: the copy is the one that goes on.
+  if (results.first instanceof ArrayBuffer) new Uint8Array(results.first).fill(0);
+  else if (ArrayBuffer.isView(results.first)) new Uint8Array(results.first.buffer, results.first.byteOffset, results.first.byteLength).fill(0);
   if (first === null) throw new AccountError("passkey_bad_output");
   if (first.length !== PRF_OUTPUT_LENGTH) {
     first.fill(0);
@@ -235,11 +238,12 @@ export async function createPasskey({ rpId, rpName, userName, salt, exclude }, d
 
 /**
  * Evaluates the PRF of a credential for a salt: the one call whose result becomes the key of the unlock method.
- * @param {{ rpId: string, credentialId: Uint8Array, salt: Uint8Array }} request
+ * @param {{ rpId: string, credentialId: Uint8Array, salt: Uint8Array, be?: boolean }} request `be` is the BE flag of the
+ * registration: it is fixed for the life of a credential, so an answer that says otherwise is not from it.
  * @param {CeremonyDeps} deps
  * @returns {Promise<Uint8Array>} the 32 bytes of the result; the caller hands them on and wipes them
  */
-export async function evaluatePasskey({ rpId, credentialId, salt }, deps) {
+export async function evaluatePasskey({ rpId, credentialId, salt, be }, deps) {
   const credentials = deps.credentials;
   if (!credentials || typeof credentials.get !== "function") throw new AccountError("passkey_unsupported");
   if (typeof rpId !== "string" || rpId === "" || salt.length !== PRF_OUTPUT_LENGTH) throw new TypeError("a passkey needs the host and a 32-byte salt");
@@ -270,7 +274,8 @@ export async function evaluatePasskey({ rpId, credentialId, salt }, deps) {
     const answered = bytesOf(assertion.rawId);
     if (answered === null || !sameBytes(answered, credentialId)) throw new AccountError("passkey_other_credential");
     checkClientData(assertion.response?.clientDataJSON, { type: "webauthn.get", challenge, origin: deps.origin });
-    await checkedAuthData(assertion.response?.authenticatorData, rpId, deps);
+    const data = await checkedAuthData(assertion.response?.authenticatorData, rpId, deps);
+    if (be !== undefined && ((data[32] & BE) !== 0) !== be) throw new AccountError("passkey_bad_answer");
     output = firstResultOf(extensions?.prf?.results);
     if (output === null) throw new AccountError("passkey_no_output");
     const out = output;

@@ -7,14 +7,15 @@
 //   reauth                  the master password again (the page's dialog; skipped while the check is fresh)
 //   GET session             who the session is; this device's pinned record of the account
 //   GET unlock-methods      the server's list, checked against the manifest and the pinned record as at an unlock
-//   (the vault's passkeys)  the credential ids of the passkey items of the vault, so that one Ferret stores itself is
-//                           never made an unlock method (it would live in the vault it has to open, § 9.4)
 //   prf_salt_new            a new 32-byte salt; a method id from the random source (never from public data)
 //   -- the page waits for a click --
 //   create                  WebAuthn create on this site's exact host, user verification required, PRF asked for
 //   -- the page waits for a click: a browser lets a page make one WebAuthn call for each click --
 //   get                     the one evaluation that is used: the same credential and salt; the user was verified and the
 //                           result is exactly 32 bytes; when the registration gave a result too, the two are the same
+//   (the vault's passkeys)  the credential ids of the passkey items of the vault, read now, after the passkey exists, so
+//                           that one Ferret stores itself is never made an unlock method (it would live in the vault it
+//                           has to open, § 9.4)
 //   wrap_prf                core: the key of the method from the result (the result is wiped by the call)
 //   GET unlock-methods      the manifest as it is now (the methods may have changed while the user used the passkey)
 //   manifest_add_method     core: the new manifest, with the name and the BE and BS flags inside it, and the body
@@ -106,6 +107,7 @@ function sameBytes(a, b) {
  * @property {string | null} name the name the user gave it, or null when it has none
  * @property {boolean} synced the registration said the passkey can be synced (BE): "synced passkey" instead of "this device only"
  * @property {string | null} aaguid the AAGUID as the server shows it (32 hex characters), or null when it is not known (none, or all zero)
+ * @property {number | null} addedAt when it was added, in milliseconds since 1970, or null when the server does not say
  */
 
 /**
@@ -116,6 +118,16 @@ function sameBytes(a, b) {
 function shownAaguid(hex) {
   if (typeof hex !== "string" || !hex16.is(hex) || /^0+$/.test(hex)) return null;
   return hex;
+}
+
+/**
+ * The time a method was added, for display: milliseconds, or null when the server gave none. Display data like the AAGUID:
+ * the server could say anything, and nothing relies on it.
+ * @param {unknown} seconds
+ * @returns {number | null}
+ */
+function shownTime(seconds) {
+  return typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds > 0 && seconds < 4e10 ? seconds * 1000 : null;
 }
 
 /**
@@ -137,14 +149,16 @@ export async function listPasskeys(env) {
  * @returns {PasskeyMethod[]}
  */
 function passkeysOf(fromManifest, fromServer) {
-  const aaguids = new Map(fromServer.filter((m) => m.method_type === PRF_TYPE).map((m) => [m.method_id, m.aaguid]));
+  const shown = new Map(fromServer.filter((m) => m.method_type === PRF_TYPE).map((m) => [m.method_id, m]));
   return fromManifest.map((m) => {
     const id = hex16.encode(m.method_id);
+    const row = shown.get(id);
     return {
       id,
       name: typeof m.name === "string" && m.name !== "" ? m.name : null,
       synced: m.synced === true,
-      aaguid: shownAaguid(aaguids.get(id)),
+      aaguid: shownAaguid(row?.aaguid),
+      addedAt: shownTime(row?.created_at),
     };
   });
 }
@@ -220,9 +234,10 @@ async function writeChange(env, change, reauth) {
  * Checks the change the core made against what this device knows: it is signed for the key this device has pinned.
  * @param {Record<string, any>} change
  * @param {Record<string, any>} seeded the pinned record with the floors of the manifest
+ * @param {"unlock-method.add" | "unlock-method.remove"} op the operation the change has to be signed as
  */
-function checkChange(change, seeded) {
-  if (change === null || typeof change !== "object" || !(change.body instanceof Uint8Array) || typeof change.op !== "string") throw new AccountError("bad_response");
+function checkChange(change, seeded, op) {
+  if (change === null || typeof change !== "object" || !(change.body instanceof Uint8Array) || change.op !== op) throw new AccountError("bad_response");
   if (!sameBytes(change.pk_a, seeded.pk_a)) throw new AccountError("pinned_auth_key");
 }
 
@@ -259,7 +274,6 @@ export async function beginAddPasskey(env, { reauth, scope, rpId, deps = browser
   const listed = methods.all.filter((m) => m.method_type === PRF_TYPE);
   if (listed.length >= MAX_PASSKEYS) throw new AccountError("too_many_passkeys");
   const exclude = listed.map((m) => b64u.decode(m.credential_id));
-  const stored = await storedPasskeyIds(env, scope);
 
   const salt = await client.vault.prf_salt_new();
   if (!(salt instanceof Uint8Array) || salt.length !== 32) throw new AccountError("bad_response");
@@ -285,6 +299,11 @@ export async function beginAddPasskey(env, { reauth, scope, rpId, deps = browser
       const label = checkName(name);
       // The first thing after the click is the WebAuthn call itself.
       const registration = await createPasskey({ rpId: host, rpName: RP_NAME, userName: label.trim(), salt, exclude }, deps);
+      // The page was locked or left while the prompt was open: the result of the registration goes, and nothing is kept.
+      if (ended) {
+        registration.firstResult?.fill(0);
+        throw new AccountError("cancelled");
+      }
       made = { registration, label };
       return { synced: registration.be };
     },
@@ -296,16 +315,21 @@ export async function beginAddPasskey(env, { reauth, scope, rpId, deps = browser
       let output = null;
       try {
         try {
-          output = await evaluatePasskey({ rpId: host, credentialId: registration.credentialId, salt }, deps);
+          output = await evaluatePasskey({ rpId: host, credentialId: registration.credentialId, salt, be: registration.be }, deps);
         } catch (error) {
           // The user said no, or the system did, before anything was made of the passkey: the click can be made again.
           const code = /** @type {any} */ (error)?.code;
           if (code === "passkey_cancelled" || code === "passkey_blocked") retry = true;
           throw error;
         }
+        // The page was locked or left while the prompt was open: nothing is made of the result and nothing is written.
+        if (ended) throw new AccountError("cancelled");
         // A passkey that gives another result the second time is no stable key: a method made from it would lock the user out.
         if (!sameOutput(registration.firstResult, output)) throw new AccountError("passkey_unstable");
         registration.firstResult?.fill(0);
+        // The passkeys the vault stores, read now that the new credential exists: one that Ferret's own provider saved
+        // into the vault while the passkey was made is seen too (§ 9.4).
+        const stored = await storedPasskeyIds(env, scope);
         /** @type {Record<string, any>} */
         let wrap;
         try {
@@ -332,9 +356,10 @@ export async function beginAddPasskey(env, { reauth, scope, rpId, deps = browser
           if (/** @type {any} */ (error)?.code === "invalid_state") throw new AccountError("passkey_stored_here");
           throw error;
         }
-        checkChange(change, fresh.seeded);
+        checkChange(change, fresh.seeded, "unlock-method.add");
+        if (ended) throw new AccountError("cancelled");
         await writeChange(env, { op: change.op, method: "POST", path: METHODS_PATH, bytes: change.body }, reauth);
-        return { id: hex16.encode(methodId), name: label.normalize("NFC").trim(), synced: registration.be, aaguid: shownAaguid(hex16.encode(registration.aaguid)) };
+        return { id: hex16.encode(methodId), name: label.normalize("NFC").trim(), synced: registration.be, aaguid: shownAaguid(hex16.encode(registration.aaguid)), addedAt: null };
       } finally {
         /** @type {Uint8Array | null} */ (output)?.fill(0);
         if (retry) {
@@ -372,7 +397,7 @@ export async function removePasskeyMethod(env, { id, reauth }) {
   if (target === undefined) throw new AccountError("method_not_found");
   if (target.method_type !== PRF_TYPE) throw new AccountError("not_a_passkey");
   const change = await client.vault.manifest_remove_method(methods.manifest, hex16.decode(id));
-  checkChange(change, methods.seeded);
+  checkChange(change, methods.seeded, "unlock-method.remove");
   await writeChange(env, { op: change.op, method: "DELETE", path: `${METHODS_PATH}/${id}`, bytes: change.body }, reauth);
   return { remaining: methods.all.filter((m) => m.method_type === PRF_TYPE).length - 1 };
 }

@@ -225,6 +225,8 @@ const wrap = [
   ["prf_salt", b32, true],
   // The AAGUID of a passkey method as 32 lower-case hex characters, for display only: the list gives it, a request never does.
   ["aaguid", id, true],
+  // When a passkey method was added, in seconds since 1970, for display only (the server could say anything; nothing relies on it).
+  ["created_at", int(), true],
 ];
 /** @type {Spec} */
 const sealedRow = [["rev", int()], ["envelope", b], ["tag", b32]];
@@ -605,6 +607,7 @@ export function checkStep(kind, value) {
     if (
       value.wrap.method_type !== 2 || b64u.decode(value.wrap.wrap).length !== RECOVERY_WRAP_LEN
       || present(value.wrap, "credential_id") || present(value.wrap, "prf_salt")
+      || present(value.wrap, "aaguid") || present(value.wrap, "created_at")
     ) {
       refuse("the wrap of a recovery answer is the recovery method with 72 bytes and no passkey field");
     }

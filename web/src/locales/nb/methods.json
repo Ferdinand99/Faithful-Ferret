@@ -1,4 +1,6 @@
 {
+  "methods.added": "Lagt til {time}",
+  "methods.added_unknown": "Lagt til: ukjent dato",
   "methods.add.button": "Legg til en passkey",
   "methods.add.cancel": "Avbryt",
   "methods.add.confirm": "Bruk passkeyen",

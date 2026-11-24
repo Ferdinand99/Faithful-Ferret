@@ -13,9 +13,11 @@ import { signedCall } from "../../src/flows/signedCall.mjs";
 import accountRoute from "../../src/routes/account.route.mjs";
 import unlockMethodsRoute from "../../src/routes/unlock-methods.route.mjs";
 import { autoLockFor } from "../../src/lock.mjs";
-import { SHAPES, readWire } from "../../src/wire.mjs";
+import { SHAPES, checkStep, readWire } from "../../src/wire.mjs";
 import { offeredRoutes } from "../../src/views/account.mjs";
 import { METHODS_ERRORS, formatAaguid, methodsErrorText, unlockMethodsView } from "../../src/views/unlockMethods.mjs";
+import { formatMoment } from "../../src/views/common.mjs";
+import { cache } from "../../src/store/cache.mjs";
 import { byRole, dumpDatabase, filled, fire, settle, textOf, walk } from "./accountHelpers.mjs";
 import { accountDocument } from "./accountHelpers.mjs";
 import * as vaultHelpers from "./vaultHelpers.mjs";
@@ -24,7 +26,7 @@ import { web } from "./helpers.mjs";
 
 const hex = (bytes) => Buffer.from(bytes).toString("hex");
 const writes = (world) => world.requests.filter((r) => r.method !== "GET");
-const MAC = Object.freeze({ id: "6b".repeat(16), credential: Uint8Array.from({ length: 20 }, (_, i) => i + 1), salt: SALT, aaguid: "fbfc3007154e4ecc8c0b6e020557d7bd", name: "Mac", synced: true });
+const MAC = Object.freeze({ id: "6b".repeat(16), credential: Uint8Array.from({ length: 20 }, (_, i) => i + 1), salt: SALT, aaguid: "fbfc3007154e4ecc8c0b6e020557d7bd", name: "Mac", synced: true, createdAt: 1_750_000_000 });
 const UNNAMED = Object.freeze({ id: "7c".repeat(16), credential: Uint8Array.from({ length: 20 }, (_, i) => i + 40), salt: SALT, aaguid: "00".repeat(16), name: null, synced: false });
 
 const read = (lang) => {
@@ -88,7 +90,7 @@ test("add_needs_reauth_and_sends_a_signed_body_with_aaguid", async () => {
     "vault.auth_sign",
     "POST /api/vault/unlock-methods",
   ]);
-  assert.deepEqual(added, { id: hex(METHOD_ID), name: "Phone", synced: true, aaguid: hex(AAGUID) });
+  assert.deepEqual(added, { id: hex(METHOD_ID), name: "Phone", synced: true, aaguid: hex(AAGUID), addedAt: null });
 
   // The core was given what the registration told, and the manifest the server holds: the name and the flags go inside the sealed manifest.
   assert.equal(world.adds.length, 1);
@@ -173,6 +175,7 @@ test("a_result_that_is_not_32_bytes_or_lacks_uv_is_refused_and_nothing_is_sent",
     ["an authenticator without the PRF", { enabled: false }, "passkey_no_prf", "create"],
     ["no result at the evaluation", { atCreate: false, output: null }, "passkey_no_output", "confirm"],
     ["another credential at the evaluation", { otherId: true }, "passkey_other_credential", "confirm"],
+    ["another BE flag at the evaluation", { be: false, getBe: true }, "passkey_bad_answer", "confirm"],
     ["another relying party", { host: "other.example.test" }, "passkey_bad_answer", "create"],
   ];
   for (const [what, options, code, where] of cases) {
@@ -314,15 +317,72 @@ test("a_get_that_was_closed_can_be_tried_again_from_the_next_click", async () =>
   assert.equal(credentials.calls.create.length, 1, "the passkey is made once");
 });
 
+test("the_passkeys_the_vault_stores_are_read_after_the_new_credential_exists", async () => {
+  const world = await passkeyWorld();
+  const credentials = fakeCredentials();
+  const original = credentials.create.bind(credentials);
+  credentials.create = async (options) => {
+    const made = await original(options);
+    // A provider of Ferret's own saves the new passkey into the vault while it is being made: the row arrives after the
+    // click, so a list read before the click would not have it.
+    const id = "d4".repeat(16);
+    world.stored.set(id, CREDENTIAL);
+    await cache.putRows(await world.store.open(), world.scope, [{ itemId: id, rev: 1, seq: 9, deleted: false, envelope: filled(40, 1), tag: filled(32, 2) }]);
+    return made;
+  };
+  const adding = await world.session.beginAddPasskey({ reauth: reauthWith(world), deps: ceremonyDeps(credentials), rpId: HOST });
+  await adding.create("Phone");
+  await assert.rejects(adding.confirm(), { code: "passkey_stored_here" });
+  assert.equal(world.wraps.length, 1);
+  assert.deepEqual(world.wraps[0].storedIds.map(hex), [hex(CREDENTIAL)]);
+  assert.equal(writes(world).length, 0);
+});
+
+test("a_cancel_while_a_passkey_prompt_is_open_writes_nothing_and_keeps_nothing", async () => {
+  for (const call of ["create", "get"]) {
+    const world = await passkeyWorld();
+    const credentials = fakeCredentials();
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const original = credentials[call].bind(credentials);
+    credentials[call] = async (options) => {
+      const answered = await original(options);
+      await gate;
+      return answered;
+    };
+    const adding = await world.session.beginAddPasskey({ reauth: reauthWith(world), deps: ceremonyDeps(credentials), rpId: HOST });
+    if (call === "create") {
+      // The page is locked or left while the browser's prompt is open.
+      const pending = adding.create("Phone");
+      adding.cancel();
+      release();
+      await assert.rejects(pending, { code: "cancelled" });
+      await assert.rejects(adding.confirm(), { code: "passkey_sequence" });
+      assert.equal(credentials.calls.get.length, 0, "no second call");
+    } else {
+      await adding.create("Phone");
+      const pending = adding.confirm();
+      adding.cancel();
+      release();
+      await assert.rejects(pending, { code: "cancelled" });
+      assert.equal(world.wraps.length, 0, "no key is made");
+    }
+    assert.equal(writes(world).length, 0, call);
+    assert.equal(world.adds.length, 0, call);
+  }
+});
+
 // ------------------------------------------------------------------------------------------------ the list
 
 test("the_list_shows_synced_or_this_device_only", async () => {
   const world = await passkeyWorld({ passkeys: [OLD, MAC, UNNAMED] });
   const rows = await world.session.listPasskeys();
   assert.deepEqual(rows, [
-    { id: OLD.id, name: "Old laptop", synced: false, aaguid: null },
-    { id: MAC.id, name: "Mac", synced: true, aaguid: MAC.aaguid },
-    { id: UNNAMED.id, name: null, synced: false, aaguid: null },
+    { id: OLD.id, name: "Old laptop", synced: false, aaguid: null, addedAt: 1_700_000_000_000 },
+    { id: MAC.id, name: "Mac", synced: true, aaguid: MAC.aaguid, addedAt: 1_750_000_000_000 },
+    { id: UNNAMED.id, name: null, synced: false, aaguid: null, addedAt: null },
   ]);
   assert.deepEqual(world.log.slice(0, 4), ["GET /api/auth/session", "GET /api/vault/unlock-methods", "vault.seed_pinned", "vault.check_server_methods"]);
 
@@ -342,6 +402,11 @@ test("the_list_shows_synced_or_this_device_only", async () => {
     assert.equal(textOf(byRole(old, "methods-aaguid")).trim(), texts["methods.aaguid_unknown"]);
     assert.equal(textOf(byRole(unnamed, "methods-aaguid")).trim(), texts["methods.aaguid_unknown"]);
     assert.equal(textOf(byRole(unnamed, "methods-row-name")).trim(), texts["methods.list.unnamed"]);
+    // When it was added, in the reader's date format; "unknown" when the server does not say.
+    const when = (ms) => formatMoment(ms, lang);
+    assert.equal(textOf(byRole(old, "methods-added")).trim(), texts["methods.added"].replace("{time}", when(1_700_000_000_000)));
+    assert.equal(textOf(byRole(mac, "methods-added")).trim(), texts["methods.added"].replace("{time}", when(1_750_000_000_000)));
+    assert.equal(textOf(byRole(unnamed, "methods-added")).trim(), texts["methods.added_unknown"]);
     page.done();
   }
   assert.equal(formatAaguid(MAC.aaguid), "fbfc3007-154e-4ecc-8c0b-6e020557d7bd");
@@ -434,6 +499,7 @@ async function withPage(world, { credentials = fakeCredentials(), lang = "en", w
   const root = unlockMethodsView({
     t: i18n(lang).t,
     site: HOST,
+    locale: lang,
     load: () => world.session.listPasskeys(),
     begin: () => world.session.beginAddPasskey({ reauth, deps, rpId: HOST }),
     remove: (id) => world.session.removePasskey({ id, reauth }),
@@ -687,6 +753,14 @@ test("the_prf_output_is_never_in_storage_console_or_a_request", async () => {
   const kinds = ["log", "info", "warn", "error", "debug", "trace"];
   const saved = Object.fromEntries(kinds.map((kind) => [kind, console[kind]]));
   for (const kind of kinds) console[kind] = (...args) => consoleLines.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, (_, v) => (v instanceof Uint8Array ? [...v] : v)))).join(" "));
+  // The web storage of the page is recorded too: the vault keeps small preferences there, and the PRF result must not be among them.
+  const webStorage = () => {
+    const data = new Map();
+    return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(String(k), String(v)), removeItem: (k) => void data.delete(k), clear: () => data.clear() };
+  };
+  const stubs = { localStorage: webStorage(), sessionStorage: webStorage() };
+  const hadStorage = Object.fromEntries(Object.keys(stubs).map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  for (const [name, stub] of Object.entries(stubs)) Object.defineProperty(globalThis, name, { value: stub, configurable: true, writable: true });
   const world = await passkeyWorld({ passkeys: [OLD] });
   let page = null;
   try {
@@ -702,6 +776,10 @@ test("the_prf_output_is_never_in_storage_console_or_a_request", async () => {
     assert.equal(world.posts.length, 1, "the passkey was added");
   } finally {
     for (const kind of kinds) console[kind] = saved[kind];
+    for (const name of Object.keys(stubs)) {
+      if (hadStorage[name]) Object.defineProperty(globalThis, name, hadStorage[name]);
+      else delete globalThis[name];
+    }
   }
   // The core got the result exactly once, and the array it was given was wiped by the call.
   assert.equal(world.wraps.length, 1);
@@ -716,7 +794,12 @@ test("the_prf_output_is_never_in_storage_console_or_a_request", async () => {
   const signed = world.signed.map((s) => Buffer.from(s.bytes).toString("latin1")).join("\n");
   const stored = await dumpDatabase(world.db.store);
   const shown = textOf(page.root) + JSON.stringify([...walk(page.root)].map((n) => [...(n.attributes?.entries?.() ?? [])]));
-  const where = { requests, log, console: consoleLines.join("\n"), coreCalls, signed, stored, shown };
+  // A control: what the stubs hold is searched, so a value written there would be found.
+  stubs.localStorage.setItem("control", forms[0]);
+  assert.deepEqual(found(JSON.stringify([...stubs.localStorage.data])), [forms[0]]);
+  stubs.localStorage.removeItem("control");
+  const webStorageText = JSON.stringify([...stubs.localStorage.data, ...stubs.sessionStorage.data]);
+  const where = { webStorage: webStorageText, requests, log, console: consoleLines.join("\n"), coreCalls, signed, stored, shown };
   for (const [name, text] of Object.entries(where)) assert.deepEqual(found(text), [], `the PRF result is not in ${name}`);
   page.done();
 });
@@ -735,6 +818,14 @@ test("the_servers_list_gives_the_aaguid_as_hex_and_the_web_reads_it", () => {
     assert.throws(() => readWire("methods_res", row({ aaguid: bad })), /./, String(bad));
   }
   assert.ok("methods_res" in SHAPES);
+  // The time a method was added is a whole number of seconds, optional; the recovery answer has neither it nor an AAGUID.
+  assert.equal(readWire("methods_res", row({ created_at: 1_700_000_000 })).methods[0].created_at, 1_700_000_000);
+  for (const bad of ["1700000000", -1, 1.5]) assert.throws(() => readWire("methods_res", row({ created_at: bad })), /./, String(bad));
+  const answer = readWire("recovery_res", readFileSync(join(web, "..", "crates/ferret-server/tests/fixtures/wire/recovery_res.json"), "utf8"));
+  for (const [field, value] of [["aaguid", "ab".repeat(16)], ["created_at", 5]]) {
+    const passkey = { ...answer, wrap: { ...answer.wrap, [field]: value } };
+    assert.throws(() => checkStep("recovery_res", passkey), /./, field);
+  }
 });
 
 test("a_signed_call_with_bytes_signs_and_sends_those_bytes_and_a_delete_is_one", async () => {

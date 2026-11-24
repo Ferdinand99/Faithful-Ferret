@@ -431,7 +431,7 @@ Without the proof, an attacker with only a session cannot even delete a wrap. Pa
 
 | Method | Path | Proof | Body |
 |---|---|---|---|
-| `GET` | `/api/vault/unlock-methods` | full session | list of wraps (a passkey also has its `aaguid`, display data), `pk_a`, `kek_generation`, `vk_epoch` |
+| `GET` | `/api/vault/unlock-methods` | full session | list of wraps (a passkey also has its `aaguid` and `created_at` in seconds, display data), `pk_a`, `kek_generation`, `vk_epoch` |
 | `GET` | `/api/vault/policy` | full session or device token | `{pin: {allowed, after_restart, min_length}, prf: {enabled}}` (§ 11) |
 | `POST` | `/api/vault/unlock-methods` | sensitive + `sk_a` | `{method_type: 3, method_id, wrap, kek_generation: 1, credential_id, prf_salt, aaguid?, manifest}`: the binary fields are lower-case hexadecimal, exactly as the core writes them. The server refuses a method id or a credential id that is listed (`409 conflict`), the eleventh passkey method (`413 quota_exceeded`), an all-zero `prf_salt`, an `aaguid` that is not 16 bytes or is Ferret's own, and a manifest that is not the next revision (`409 write_conflict`). All zero is a valid `aaguid`, and so is none |
 | `DELETE` | `/api/vault/unlock-methods/{method_id}` | sensitive + `sk_a` | `{method_id, manifest}` (the server checks that `method_id` equals the one in the URL; the proof covers the body, so the id has to be in it; `404` for a method the account does not have, `400` for the password or the recovery wrap) |

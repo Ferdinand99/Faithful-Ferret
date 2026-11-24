@@ -33,6 +33,7 @@ export const OLD = Object.freeze({
   aaguid: "00".repeat(16),
   name: "Old laptop",
   synced: false,
+  createdAt: 1_700_000_000,
 });
 
 const hex = (bytes) => Buffer.from(bytes).toString("hex");
@@ -68,11 +69,11 @@ export function ceremonyDeps(credentials, { origin = ORIGIN, clock = { at: 0 } }
  */
 export function fakeCredentials({
   uv = true, be = false, bs = false, atCreate = true, output = PRF_RESULT, enabled = true, aaguid = AAGUID, host = HOST, fail = {}, otherId = false,
-  getUv = uv, clock = null, failAfter = 0, credential = CREDENTIAL, failTimes = Infinity,
+  getUv = uv, getBe = be, clock = null, failAfter = 0, credential = CREDENTIAL, failTimes = Infinity,
 } = {}) {
   const calls = { create: [], get: [] };
   const clientData = (type, challenge) => buffer(new TextEncoder().encode(JSON.stringify({ type, challenge: b64u.encode(new Uint8Array(challenge)), origin: ORIGIN, crossOrigin: false })));
-  const flags = (verified, extra) => 0x01 | (verified ? 0x04 : 0) | (be ? 0x08 : 0) | (bs ? 0x10 : 0) | extra;
+  const flags = (verified, extra, eligible = be) => 0x01 | (verified ? 0x04 : 0) | (eligible ? 0x08 : 0) | (bs ? 0x10 : 0) | extra;
   let failing = failTimes;
   const reject = (name) => {
     failing -= 1;
@@ -99,7 +100,7 @@ export function fakeCredentials({
     async get(options) {
       calls.get.push(options);
       if (fail.get && failing > 0) return reject(fail.get);
-      const data = new Uint8Array([...sha256(new TextEncoder().encode(host)), flags(getUv, 0), 0, 0, 0, 2]);
+      const data = new Uint8Array([...sha256(new TextEncoder().encode(host)), flags(getUv, 0, getBe), 0, 0, 0, 2]);
       return {
         type: "public-key",
         rawId: buffer(otherId ? filled(24, 0x99) : credential),
@@ -119,6 +120,7 @@ const wireOf = (p) => ({
   credential_id: b64u.encode(p.credential),
   prf_salt: b64u.encode(p.salt),
   ...(p.aaguid === undefined ? {} : { aaguid: p.aaguid }),
+  ...(p.createdAt === undefined ? {} : { created_at: p.createdAt }),
 });
 
 /**

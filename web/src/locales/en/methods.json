@@ -1,4 +1,6 @@
 {
+  "methods.added": "Added {time}",
+  "methods.added_unknown": "Added: date unknown",
   "methods.add.button": "Add a passkey",
   "methods.add.cancel": "Cancel",
   "methods.add.confirm": "Use the passkey",

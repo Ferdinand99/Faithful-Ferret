@@ -524,6 +524,7 @@ fn method_row(wrap: &WrapJson, wrap_len: usize, pending: &Pending) -> Result<Met
         || wrap.credential_id.is_some()
         || wrap.prf_salt.is_some()
         || wrap.aaguid.is_some()
+        || wrap.created_at.is_some()
     {
         return Err(ApiError::coded("bad_request"));
     }
@@ -535,6 +536,7 @@ fn method_row(wrap: &WrapJson, wrap_len: usize, pending: &Pending) -> Result<Met
         credential_id: None,
         prf_salt: None,
         aaguid: None,
+        created_at: None,
     })
 }
 
