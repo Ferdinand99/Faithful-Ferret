@@ -14,14 +14,28 @@
 // carries their dates only. Each value is hidden like any secret field, is fetched on its own click with
 // `reveal_password_history(handle, index)` (after checking that the entry still has the same date), shows one at a
 // time together with every other secret on the page, and goes with the same wipes: a lock, leaving the page, a rebuild.
+//
+// An item with a one-time password shows its current code in a card of its own (always on the page, like a code on a phone: it
+// is good for seconds only). The code is made in the worker by `totp_code` from the page's clock, once when the page is drawn
+// and again each time it runs out (totpTicker.mjs); the seconds left count down on the page between. The code element is the only
+// live region: a screen reader hears a new code when there is one, and the countdown is plain text that is read on request, so
+// nothing is announced every second. "Copy" asks for a fresh code and hands it to the clipboard helper (cleared after 30 seconds).
 import { el, mount } from "../dom.mjs";
 import { secretClipboardFor } from "../secretClipboard.mjs";
 import { askConfirm, canChange, describeError, formatMoment, listenWhileShown, markBadges } from "./common.mjs";
 import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, historyEntries, tileLetter, tileType } from "./itemModel.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
+import { groupCode } from "./totpModel.mjs";
+import { codeTicker, realClock } from "./totpTicker.mjs";
 
 /** What a hidden value looks like. */
 const DOTS = "••••••••";
+
+/** What the code looks like until the worker has made it. */
+const CODE_DOTS = "••• •••";
+
+/** From this many seconds left the countdown is marked, so it can be drawn in another colour (the number says it too). */
+const LOW_SECONDS = 5;
 
 /** The name of an item type; a type this version does not know shows as it is written. @param {import("./common.mjs").Translate} t @param {unknown} type */
 export function typeLabel(t, type) {
@@ -45,13 +59,15 @@ const isNotFound = (error) => /** @type {any} */ (error)?.code === "not_found";
  *   moveToFolder?: (id: string, where: { host: HTMLElement, say: (text: string) => void }) => void,
  *   folderChip?: (label: string) => Node,
  *   locale?: string,
- * }} options `moveToFolder` and `folderChip` are the folder task's way in: with `moveToFolder` the ⋮ menu has "Move to folder",
+ *   clock?: import("./totpTicker.mjs").Clock,
+ * }} options `clock` is the page's clock (the one-time code is made for the time it tells; tests give their own);
+ *   `moveToFolder` and `folderChip` are the folder task's way in: with `moveToFolder` the ⋮ menu has "Move to folder",
  *   without it the entry is not there; `folderChip` makes the chip of one folder label (a plain label by default)
  * @returns {Promise<HTMLElement>}
  */
 export async function itemView({
   engine, sync, client, id, t, go = () => {}, touch = () => true, scope,
-  clipboard = globalThis.navigator?.clipboard ?? null, moveToFolder, folderChip, locale,
+  clipboard = globalThis.navigator?.clipboard ?? null, moveToFolder, folderChip, locale, clock = realClock,
 }) {
   const root = el("section", { class: "item-view", "data-role": "item" });
   const message = el("p", { class: "message", role: "status", "data-role": "message" });
@@ -66,6 +82,8 @@ export async function itemView({
   /** The ⋮ button of the page as built last, and whether the next build should give it the focus (the favourite switch rebuilds the header). @type {HTMLElement | null} */
   let moreButton = null;
   let refocusMore = false;
+  /** The ticker of the one-time code on the page, when the item has one. @type {ReturnType<typeof codeTicker> | null} */
+  let totpTicker = null;
 
   /** @param {string} text */
   function say(text) {
@@ -96,6 +114,8 @@ export async function itemView({
   scope?.add(() => {
     doc?.removeEventListener?.("pointerdown", pointerOutside);
     moreMenu = null;
+    totpTicker?.stop();
+    totpTicker = null;
     hideAll();
     slots.clear();
     mount(root);
@@ -215,8 +235,73 @@ export async function itemView({
       ...(heading === null ? [] : [el("h2", null, heading)]), ...rows);
   }
 
+  /** Whether the page has been on the screen, so that one that has left it is told apart from one that is not on it yet. */
+  let shownOnce = false;
+
+  /**
+   * The card of the one-time password: the code in two groups, the seconds it still holds, and Copy. The ticker is started by
+   * `load` once the page is on the screen.
+   * @returns {HTMLElement}
+   */
+  function totpCard() {
+    const label = t("vault.item.totp_label");
+    const code = el("span", {
+      class: "totp-code", "data-role": "totp-code", "aria-live": "polite", "aria-atomic": "true",
+    }, CODE_DOTS);
+    const left = el("span", { class: "totp-left", "data-role": "totp-left" });
+    const copy = el("button", {
+      type: "button", class: "btn btn-secondary btn-sm i-copy", "aria-label": t("vault.item.copy_label", { label }), "data-role": "copy", "data-key": "totp",
+    }, t("vault.item.copy"));
+    /** @param {number} seconds */
+    const showLeft = (seconds) => {
+      mount(left, document.createTextNode(t("vault.item.totp_left", { seconds })));
+      left.setAttribute("data-state", seconds <= LOW_SECONDS ? "low" : "ok");
+    };
+    /** @param {number} seconds */
+    const makeCode = (seconds) => withOpen(({ handle }) => client.vault.totp_code(handle, seconds));
+    totpTicker?.stop();
+    totpTicker = codeTicker({
+      clock,
+      load: makeCode,
+      onCode: (value, seconds) => {
+        mount(code, document.createTextNode(groupCode(value)));
+        showLeft(seconds);
+      },
+      onLeft: showLeft,
+      onError: () => {
+        mount(code, document.createTextNode(CODE_DOTS));
+        mount(left, document.createTextNode(t("vault.item.totp_error")));
+        left.setAttribute("data-state", "error");
+      },
+      active: () => {
+        const connected = /** @type {any} */ (root).isConnected;
+        if (connected === true) shownOnce = true;
+        return !(shownOnce && connected === false);
+      },
+    });
+    copy.addEventListener("click", async () => {
+      if (!touch()) return;
+      try {
+        // A new code for this moment, not the one on the page: that may be about to run out.
+        const fresh = await makeCode(Math.floor(clock.now() / 1000));
+        await toClipboard(String(fresh.code), true);
+        say(t("vault.item.copied_secret", { label }));
+      } catch (error) {
+        say(describeError(t, error));
+      }
+    });
+    return el("section", { class: "card item-section", "data-role": "item-card", "data-card": "totp" },
+      el("h2", null, t("vault.item.totp_heading")),
+      el("div", { class: "field-row totp-row", "data-role": "totp-row" },
+        el("span", { class: "label" }, label),
+        el("span", { class: "totp-value" }, code, left),
+        el("span", { class: "actions" }, copy)));
+  }
+
   /** Reads the item and builds the screen again. */
   async function load() {
+    totpTicker?.stop();
+    totpTicker = null;
     hideAll();
     slots.clear();
     /** @type {any} */
@@ -297,6 +382,7 @@ export async function itemView({
     /** @type {HTMLElement[]} */
     const cards = [];
     if (groups.login.length > 0) cards.push(card(t("vault.item.card_login"), "login", groups.login.map(fieldRow)));
+    if (view.has_totp === true) cards.push(totpCard());
     // The passwords the item had before, newest first; a card is drawn only for an item that has some.
     const earlier = historyEntries(view);
     if (earlier.length > 0) {
@@ -430,8 +516,9 @@ export async function itemView({
       ...notices,
       message,
       host,
-      ...cards,
-      view.has_totp ? el("p", { class: "aside", "data-role": "totp-note" }, t("vault.item.totp_note")) : null].filter((node) => node !== null));
+      ...cards].filter((node) => node !== null));
+    // The code is asked for once the page is built, so its first value has a place to go.
+    void /** @type {ReturnType<typeof codeTicker> | null} */ (totpTicker)?.start();
     if (refocusMore) {
       refocusMore = false;
       // The button that had the focus was in the header that is gone: the new one takes it, so a keyboard user keeps their place.

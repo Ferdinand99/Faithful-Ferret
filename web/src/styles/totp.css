@@ -1,0 +1,87 @@
+/* The one-time password: its card on the item page and the field, the facts and the preview in the edit form. Colours and sizes come
+   from the tokens in base.css, so both themes follow. No inline style is used anywhere: the seconds left are told in words, and
+   the low-time mark only changes the colour of a number that is also written out. */
+
+.vault-ui .totp-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-4);
+  min-width: 0;
+}
+
+.vault-ui .totp-code {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  user-select: all;
+}
+
+.vault-ui .totp-left {
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-ui .totp-left[data-state="low"] {
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+.vault-ui .totp-left[data-state="error"] {
+  color: var(--bad-text);
+}
+
+/* The edit form: what the core read from the field, the code it makes now, and the warnings. */
+.vault-ui .totp-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.vault-ui .totp-info:empty {
+  display: none;
+}
+
+.vault-ui .totp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.vault-ui .totp-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+}
+
+.vault-ui .totp-preview .label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.vault-ui .totp-preview .totp-code {
+  font-size: 1.25rem;
+}
+
+.vault-ui .totp-remove {
+  align-items: center;
+  margin-top: var(--sp-2);
+}
+
+@media (forced-colors: active) {
+  .vault-ui .totp-left[data-state="low"],
+  .vault-ui .totp-left[data-state="error"] {
+    color: CanvasText;
+  }
+}

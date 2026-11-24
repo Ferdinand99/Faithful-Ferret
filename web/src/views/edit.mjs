@@ -19,19 +19,38 @@
 // with the password that the generator page left for it (`initialPassword`, taken once by the route); it starts hidden.
 // Either way the value is in the password input and nowhere else, and the wipes above take it.
 //
+// The one-time password (TOTP) of a login has a field of its own. It takes an otpauth://totp/... address or a bare Base32 secret
+// (spaces, lower case and the = fill are fine). What is typed is checked by the core (`totp_parse`) as it is typed: the form shows
+// the issuer, the digits and the period it read, and a live code made in the worker (a throwaway item is sealed and opened for
+// the purpose and never stored or sent), so the user sees that it works before saving. A bare secret becomes an address with the
+// defaults (SHA-1, 6 digits, 30 seconds) and the name of the item as its label, when the item is saved. Like the password, the
+// stored secret is never put in the form: the field starts empty and an empty field keeps what is stored; "Show" asks for the
+// stored address (`reveal_totp_secret`) on the click, and hiding it again takes it off the page. "Remove one-time password"
+// asks first and takes effect when the item is saved. A refused address (not a time-based one, like HOTP or steam://) is one plain
+// error and nothing is saved. An address that names this server's own host gets a warning, not a stop.
+//
 // Changes that are not saved live in the form and nowhere else: never in a store, a URL or a message. When
 // the vault moves to another tab (`tracker`), the form is kept on screen read-only (`freeze`) and goes on
 // when the vault comes back (`thaw`); a lock wipes it as it wipes every screen. The form tells whether it
 // has edits (`dirty`) by comparing with what it started with, without holding a copy of any secret.
 import { el, mount } from "../dom.mjs";
 import { folderIndex } from "../folders.mjs";
-import { canChange, codeOf, describeError, listenWhileShown, markBadges } from "./common.mjs";
+import { askConfirm, canChange, codeOf, describeError, listenWhileShown, markBadges } from "./common.mjs";
 import { FOLDER_ERRORS, folderPicker } from "./folderPicker.mjs";
 import { createOptionsStore } from "../generatorPrefs.mjs";
 import { ERROR_CODES as GENERATOR_ERRORS, makeValue } from "./generatorModel.mjs";
 import { typeLabel } from "./item.mjs";
+import { groupCode, namesOwnHost, readInput, uriFromSecret } from "./totpModel.mjs";
+import { canPreview, previewCode } from "./totpPreview.mjs";
+import { codeTicker, realClock } from "./totpTicker.mjs";
 
 const TYPES = Object.freeze(["login", "note"]);
+
+/** What a code looks like until the worker has made it. */
+const CODE_DOTS = "••• •••";
+
+/** The refusals of the core for an address that is not a time-based one-time password: all of them are one error for the user. */
+const TOTP_REFUSALS = new Set(["malformed_otpauth", "too_large", "invalid_input"]);
 
 /**
  * @typedef {object} UnsavedForm what the sync service holds about a form with edits that are not saved
@@ -49,7 +68,7 @@ const TYPES = Object.freeze(["login", "note"]);
  * @typedef {{
  *   item_type?: string, name: string, favorite: boolean, fields?: FieldDraft[],
  *   urls?: { url: string, matching: string }[], notes?: string, remove_notes?: boolean, folders?: string[],
- *   keep_password_history?: boolean,
+ *   keep_password_history?: boolean, totp?: { uri: string }, remove_totp?: boolean,
  * }} Draft
  */
 
@@ -58,6 +77,7 @@ function scrub(draft) {
   for (const field of draft.fields ?? []) if (typeof field.value === "string") field.value = "";
   if (typeof draft.notes === "string") draft.notes = "";
   if (Array.isArray(draft.folders)) draft.folders.length = 0;
+  if (draft.totp) draft.totp.uri = "";
   draft.name = "";
 }
 
@@ -74,12 +94,17 @@ function scrub(draft) {
  *   locale?: string,
  *   initialPassword?: string | null,
  *   generatorStore?: ReturnType<typeof createOptionsStore>,
+ *   clock?: import("./totpTicker.mjs").Clock,
+ *   hosts?: string[],
  * }} options `id` is null for a new item; `tracker` is told about the form's unsaved edits (the sync service);
- *   `initialPassword` is a password the generator page left for a new item; `generatorStore` holds the generator's options
+ *   `initialPassword` is a password the generator page left for a new item; `generatorStore` holds the generator's options;
+ *   `clock` is the page's clock (the preview code is made for its time); `hosts` are the names of this server's host (the page's
+ *   own by default), for the warning about keeping Ferret's own one-time password here
  * @returns {Promise<HTMLElement>}
  */
 export async function editView({
   engine, client, id, t, go = () => {}, touch = () => true, scope, tracker, locale, initialPassword = null, generatorStore = createOptionsStore(),
+  clock = realClock, hosts = [globalThis.location?.hostname ?? "", globalThis.location?.host ?? ""],
 }) {
   const root = el("section", { class: "edit-view", "data-role": "edit" });
 
@@ -140,7 +165,7 @@ export async function editView({
     const row = el("div", { class: "field", "data-field": role },
       el("label", { for: fieldId }, label),
       toggle ? el("div", { class: "secret-input", "data-role": `${role}-box` }, input, toggle) : input,
-      help ? el("small", { class: "help" }, help) : null);
+      help ? el("small", { class: "help", id: `${fieldId}-help` }, help) : null);
     return { row, input };
   }
 
@@ -160,6 +185,217 @@ export async function editView({
   const generate = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "password-generate" }, t("vault.edit.generate")));
   if (canGenerate) password.row.appendChild(el("div", { class: "actions gen-fill" }, generate));
   const url = field({ id: "edit-url", label: t("vault.edit.url"), role: "url" });
+
+  // ---- the one-time password
+  const hasStoredTotp = id !== null && view?.has_totp === true;
+  const totpToggle = /** @type {HTMLButtonElement} */ (el("button", {
+    type: "button", class: "reveal-toggle", "aria-pressed": "false", "aria-label": t("vault.edit.totp_show"), "data-role": "totp-toggle",
+  }, el("span", { class: "icon", "data-icon": "eye", "aria-hidden": "true" })));
+  const totpIcon = /** @type {HTMLElement} */ (totpToggle.firstChild);
+  const totp = field({
+    id: "edit-totp", label: t("vault.edit.totp"), type: "password", autocomplete: "off", role: "totp", toggle: totpToggle,
+    help: t(hasStoredTotp ? "vault.edit.totp_help_keep" : "vault.edit.totp_help"),
+  });
+  totp.input.value = "";
+  totp.input.setAttribute("aria-describedby", "edit-totp-help edit-totp-info");
+  const totpInfo = el("div", { class: "totp-info", id: "edit-totp-info", "data-role": "totp-info" });
+  totp.row.appendChild(totpInfo);
+  const previewCodeText = el("span", { class: "totp-code", "data-role": "totp-preview-code" }, CODE_DOTS);
+  const previewLeft = el("span", { class: "totp-left", "data-role": "totp-preview-left" });
+  const previewLine = el("p", { class: "totp-preview", "data-role": "totp-preview" },
+    el("span", { class: "label" }, t("vault.edit.totp_preview")), previewCodeText, previewLeft);
+  /** The address whose code the preview shows; null when there is no preview. @type {string | null} */
+  let previewUri = null;
+  /** The address the form sends with the save, worked out when the form is submitted. @type {string | null} */
+  let pendingTotp = null;
+  /** The stored address, while it is on the page (the field then holds it). @type {string | null} */
+  let revealedTotp = null;
+  /** The stored one-time password is to be removed when the item is saved. */
+  let removeTotp = false;
+  /** Whether the field shows its text. */
+  let totpShown = false;
+  /** Counts the checks of the field: a reply that is not the newest, or comes after the form was saved or wiped, is dropped. */
+  let totpChecks = 0;
+
+  /**
+   * The code of the address being previewed, made by the worker (totpPreview.mjs).
+   * @param {number} seconds
+   */
+  async function previewNow(seconds) {
+    const uri = previewUri;
+    if (uri === null) throw Object.assign(new Error("stopped"), { code: "stopped" });
+    return previewCode(client, uri, seconds, clock.now());
+  }
+  const previewTicker = codeTicker({
+    clock,
+    load: previewNow,
+    onCode: (code, seconds) => {
+      mount(previewCodeText, document.createTextNode(groupCode(code)));
+      mount(previewLeft, document.createTextNode(t("vault.item.totp_left", { seconds })));
+    },
+    onLeft: (seconds) => mount(previewLeft, document.createTextNode(t("vault.item.totp_left", { seconds }))),
+    onError: () => {
+      mount(previewCodeText, document.createTextNode(CODE_DOTS));
+      mount(previewLeft, document.createTextNode(t("vault.item.totp_error")));
+    },
+    active: () => /** @type {any} */ (root).isConnected !== false,
+  });
+
+  /** Takes the facts, the preview and the error off the form, and stops the preview. */
+  function clearTotpInfo() {
+    previewTicker.stop();
+    previewUri = null;
+    mount(previewCodeText, document.createTextNode(CODE_DOTS));
+    mount(previewLeft);
+    mount(totpInfo);
+    totp.input.setAttribute("aria-invalid", "false");
+  }
+
+  /** @param {boolean} on Whether the field's text shows (`true`) or dots. The button has one name; `aria-pressed` says which. */
+  function showTotp(on) {
+    totpShown = on;
+    totp.input.setAttribute("type", on ? "text" : "password");
+    totpToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    totpIcon.setAttribute("data-icon", on ? "eye-off" : "eye");
+  }
+
+  /** Hides the field's text. A stored address that was fetched for showing leaves the page; what the user typed stays. */
+  function hideTotp() {
+    showTotp(false);
+    if (revealedTotp !== null && totp.input.value === revealedTotp) {
+      totp.input.value = "";
+      totpChecks += 1;
+      clearTotpInfo();
+    }
+    revealedTotp = null;
+  }
+
+  /** What the address of the field would be: a bare secret gets the defaults and the item's name. @returns {string | null} */
+  function totpUriOf() {
+    const read = readInput(totp.input.value);
+    if (read.kind === "empty") return null;
+    return read.kind === "secret" ? uriFromSecret(read.secret, name.input.value) : read.uri;
+  }
+
+  /** Reads the field through the core and shows what it found, or the one error. */
+  async function refreshTotp() {
+    totpChecks += 1;
+    const mine = totpChecks;
+    clearTotpInfo();
+    if (frozen || settled || removeTotp) return;
+    const uri = totpUriOf();
+    if (uri === null || typeof client?.vault?.totp_parse !== "function") return;
+    try {
+      const info = await client.vault.totp_parse(uri);
+      if (mine !== totpChecks || frozen || settled || removeTotp) return;
+      /** @type {[string, string][]} */
+      const facts = [];
+      if (typeof info?.issuer === "string" && info.issuer !== "") facts.push(["issuer", t("vault.edit.totp_issuer", { value: info.issuer })]);
+      if (typeof info?.label === "string" && info.label !== "") facts.push(["account", t("vault.edit.totp_account", { value: info.label })]);
+      facts.push(["digits", t("vault.edit.totp_digits", { count: info?.digits })]);
+      facts.push(["period", t("vault.edit.totp_period", { count: info?.period })]);
+      if (info?.algorithm !== "SHA1") facts.push(["algorithm", t("vault.edit.totp_algorithm", { value: String(info?.algorithm) })]);
+      const own = namesOwnHost(info, ...hosts);
+      mount(totpInfo,
+        el("ul", { class: "totp-facts", "data-role": "totp-facts" }, ...facts.map(([key, text]) => el("li", { "data-role": "totp-fact", "data-key": key }, text))),
+        ...(canPreview(client) ? [previewLine] : []),
+        ...(own ? [el("p", { class: "notice notice-warning totp-warning", role: "note", "data-role": "totp-own-host" }, t("vault.edit.totp_own_host"))] : []));
+      if (canPreview(client)) {
+        previewUri = uri;
+        void previewTicker.start();
+      }
+    } catch {
+      if (mine !== totpChecks || settled) return;
+      totp.input.setAttribute("aria-invalid", "true");
+      mount(totpInfo, el("p", { class: "error", "data-role": "totp-error" }, t("vault.error.malformed_otpauth")));
+    }
+  }
+  totp.input.addEventListener("input", () => {
+    if (!frozen && !settled) void refreshTotp();
+  });
+
+  totpToggle.addEventListener("click", async () => {
+    if (frozen || settled || removeTotp || !touch()) return;
+    if (totpShown) {
+      hideTotp();
+      return;
+    }
+    if (hasStoredTotp && totp.input.value === "") {
+      // The stored address is asked for now, on the click; it goes back off the page when the field is hidden.
+      try {
+        const opened = await engine.open(/** @type {string} */ (id));
+        /** @type {string} */
+        let stored;
+        try {
+          stored = await client.vault.reveal_totp_secret(opened.handle);
+        } finally {
+          await opened.close();
+        }
+        if (frozen || settled || removeTotp || totp.input.value !== "") return;
+        revealedTotp = stored;
+        totp.input.value = stored;
+        showTotp(true);
+        void refreshTotp();
+      } catch (error) {
+        showError(describeError(t, error));
+      }
+      return;
+    }
+    showTotp(true);
+  });
+
+  // "Remove one-time password": asks first; the removal happens when the item is saved, and can be taken back until then.
+  const removeButton = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "totp-remove" }, t("vault.edit.totp_remove"));
+  const keepButton = el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-role": "totp-keep" }, t("vault.edit.totp_keep"));
+  const removedNote = el("small", { class: "help", "data-role": "totp-removed" }, t("vault.edit.totp_removed"));
+  keepButton.hidden = true;
+  removedNote.hidden = true;
+  const removeBar = el("div", { class: "actions totp-remove", "data-role": "totp-remove-bar" }, removeButton, removedNote, keepButton);
+  if (hasStoredTotp) totp.row.appendChild(removeBar);
+  /** @param {boolean} on */
+  function setRemoved(on) {
+    removeTotp = on;
+    if (on) {
+      hideTotp();
+      totp.input.value = "";
+      clearTotpInfo();
+    }
+    totp.input.disabled = on;
+    totpToggle.disabled = on || frozen;
+    removeButton.hidden = on;
+    removedNote.hidden = !on;
+    keepButton.hidden = !on;
+  }
+  const dialogHost = el("div", { class: "dialog-host", "data-role": "dialog-host" });
+  removeButton.addEventListener("click", async () => {
+    if (frozen || settled || !touch()) return;
+    const yes = await askConfirm({
+      t, host: dialogHost, title: "vault.edit.totp_remove_title", body: "vault.edit.totp_remove_body", confirm: "vault.edit.totp_remove_confirm",
+    });
+    if (!yes || frozen || settled) return;
+    setRemoved(true);
+    mount(status, document.createTextNode(t("vault.edit.totp_removed")));
+  });
+  keepButton.addEventListener("click", () => {
+    if (frozen || settled) return;
+    setRemoved(false);
+    mount(status);
+  });
+
+  /**
+   * The address to send with the save, or null when the one-time password is left as it is. What is typed is checked by the core
+   * once more, whatever the preview said: a refusal throws and nothing is saved.
+   * @returns {Promise<string | null>}
+   */
+  async function prepareTotp() {
+    if (!showsLogin() || removeTotp) return null;
+    const text = totp.input.value;
+    if (text === "" || text === revealedTotp) return null;
+    const uri = totpUriOf();
+    if (uri === null) return null;
+    if (typeof client?.vault?.totp_parse === "function") await client.vault.totp_parse(uri);
+    return uri;
+  }
   const notes = field({ id: "edit-notes", label: t("vault.edit.notes"), role: "notes", rows: 6 });
   const favorite = /** @type {HTMLInputElement} */ (el("input", { id: "edit-favorite", type: "checkbox", "data-role": "favorite" }));
   const typeSelect = /** @type {HTMLSelectElement} */ (el("select", { id: "edit-type", name: "type", "data-role": "type" },
@@ -230,7 +466,7 @@ export async function editView({
   }
 
   const loginRows = el("section", { class: "card item-section stack", "data-role": "login-fields" },
-    el("h2", null, t("vault.item.card_login")), username.row, password.row, url.row);
+    el("h2", null, t("vault.item.card_login")), username.row, password.row, url.row, totp.row);
   const showsLogin = () => (id === null ? typeSelect.value === "login" : kind === "login" || oldUsername !== undefined || oldPassword !== undefined);
   const syncRows = () => {
     loginRows.hidden = !showsLogin();
@@ -286,6 +522,14 @@ export async function editView({
     for (const input of [name.input, username.input, password.input, url.input, notes.input]) input.value = "";
     favorite.checked = false;
     showPassword(false);
+    totpChecks += 1;
+    removeTotp = false;
+    revealedTotp = null;
+    pendingTotp = null;
+    totp.input.value = "";
+    totp.input.disabled = false;
+    showTotp(false);
+    clearTotpInfo();
     picker.wipe();
     notesLoaded = false;
     settled = true;
@@ -298,6 +542,7 @@ export async function editView({
     if (settled || /** @type {any} */ (root).isConnected === false) return false;
     if (name.input.value !== start.name || username.input.value !== start.username || url.input.value !== start.url) return true;
     if (favorite.checked !== start.favorite || password.input.value !== "") return true;
+    if (removeTotp || (totp.input.value !== "" && totp.input.value !== revealedTotp)) return true;
     if (picker.changed() || picker.typed()) return true;
     if (id === null && typeSelect.value !== "login") return true;
     return notesLoaded && (view?.has_notes === true ? notesTouched : notes.input.value !== "");
@@ -306,15 +551,20 @@ export async function editView({
   /** @param {boolean} on */
   function setReadOnly(on) {
     frozen = on;
-    for (const input of [name.input, username.input, password.input, url.input, notes.input]) {
+    for (const input of [name.input, username.input, password.input, url.input, notes.input, totp.input]) {
       input.readOnly = on;
       if (on) input.setAttribute("readonly", "");
       else input.removeAttribute?.("readonly");
     }
-    if (on) showPassword(false);
-    for (const control of [favorite, typeSelect, save, loadNotes, reveal, generate]) {
+    if (on) {
+      showPassword(false);
+      totpChecks += 1;
+      clearTotpInfo();
+    }
+    for (const control of [favorite, typeSelect, save, loadNotes, reveal, generate, removeButton, keepButton]) {
       /** @type {any} */ (control).disabled = on;
     }
+    totpToggle.disabled = on || removeTotp;
     picker.setReadOnly(on);
     root.setAttribute("data-state", on ? "frozen" : "open");
     if (on) mount(status);
@@ -346,6 +596,8 @@ export async function editView({
         if (id !== null) draft.keep_password_history = true;
       }
       if (fields.length > 0) draft.fields = fields;
+      if (removeTotp) draft.remove_totp = true;
+      else if (pendingTotp !== null) draft.totp = { uri: pendingTotp };
       const first = url.input.value.trim();
       const urls = [
         ...(first === "" ? [] : [{ url: first, matching: String(oldUrls[0]?.matching ?? "host") }]),
@@ -365,7 +617,10 @@ export async function editView({
   const save = /** @type {HTMLButtonElement} */ (el("button", { type: "submit", class: "btn btn-primary", "data-role": "save" }, t("vault.edit.save")));
   const cancel = el("a", { class: "btn btn-secondary", href: id === null ? "#/items" : `#/items/${id}`, "data-role": "cancel" }, t("vault.edit.cancel"));
 
-  cancel.addEventListener("click", () => showPassword(false));
+  cancel.addEventListener("click", () => {
+    showPassword(false);
+    hideTotp();
+  });
 
   const form = el("form", {
     class: "stack",
@@ -395,10 +650,26 @@ export async function editView({
           return;
         }
       }
+      /** @type {string | null} */
+      let totpUri = null;
+      try {
+        totpUri = await prepareTotp();
+      } catch (error) {
+        if (frozen || settled) return;
+        const refused = TOTP_REFUSALS.has(codeOf(error));
+        showError(refused ? t("vault.error.malformed_otpauth") : describeError(t, error));
+        if (refused) totp.input.setAttribute("aria-invalid", "true");
+        /** @type {any} */ (totp.input).focus?.();
+        return;
+      }
+      if (frozen || settled) return;
+      pendingTotp = totpUri;
       save.disabled = true;
       showPassword(false);
+      hideTotp();
       mount(status, document.createTextNode(t("vault.edit.saving")));
       const draft = buildDraft();
+      pendingTotp = null;
       try {
         const target = id === null ? await engine.create(draft) : (await engine.update(id, draft, baseRev), id);
         scrub(draft);
@@ -422,6 +693,7 @@ export async function editView({
     el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
     folderSlot),
   loginRows,
+  dialogHost,
   notesSlot,
   status,
   errorBox,
@@ -465,6 +737,7 @@ export async function editView({
       setReadOnly(false);
       save.disabled = false;
       mount(status);
+      if (totp.input.value !== "") void refreshTotp();
       watchCopies();
       wipeWith(next.scope);
       trackWith(next.tracker);
