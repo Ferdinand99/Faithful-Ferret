@@ -27,7 +27,7 @@ async function ready(page) {
 /**
  * Builds one screen in the real frame, in #app. `which`: item, edit, new, trash-empty, trash-full, devices-empty, list-empty,
  * list-favourites-empty, list-populated (two rows, the Favourites chip on). `opts.name` and `opts.url` make long values;
- * `opts.history` (a number) gives the item that many earlier passwords, "old-password-<n>", newest first. `opts.passkey` (an object
+ * `opts.history` (a number) gives the item that many earlier passwords, "old-password-<n>", newest first. `opts.firstRevision: false` makes the trash entry of a passkey a later version. `opts.passkey` (an object
  * whose keys replace the defaults) gives the item a passkey the way the core's view shows it, and the list and trash entries its site.
  */
 async function scene(page, which, opts = {}) {
@@ -69,7 +69,7 @@ async function scene(page, which, opts = {}) {
       },
       create: async (draft) => { window.__calls.creates.push(structuredClone(draft)); return "b2".repeat(16); },
       remove: async (id) => { window.__calls.removes.push(id); },
-      trash: async () => (which === "trash-full" ? [{ id: "c3".repeat(16), name: "Old router", deletedAt: Date.now() - 86_400_000, ...(passkey ? { passkeySite: passkey.rp_id } : {}) }] : []),
+      trash: async () => (which === "trash-full" ? [{ id: "c3".repeat(16), name: "Old router", deletedAt: Date.now() - 86_400_000, ...(passkey ? { passkeySite: passkey.rp_id, firstRevision: opts.firstRevision !== false } : {}) }] : []),
       restoreFromTrash: async () => {}, removeFromTrash: async () => {},
     };
     const client = { vault: {
@@ -515,14 +515,14 @@ test.describe("a passkey in the web vault", () => {
   test("removing_the_passkey_asks_first_and_names_the_site", async ({ page }) => {
     await ready(page);
     await scene(page, "item", { passkey: {} });
-    await page.getByRole("button", { name: "Remove the passkey for github.com" }).click();
+    await page.getByRole("button", { name: "Remove passkey for github.com" }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("Remove the passkey for github.com?");
     await expect(dialog).toContainText("github.com still has the public key");
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     expect(await page.evaluate(() => window.__calls.updates)).toEqual([]);
-    await page.getByRole("button", { name: "Remove the passkey for github.com" }).click();
+    await page.getByRole("button", { name: "Remove passkey for github.com" }).click();
     await dialog.getByRole("button", { name: "Remove passkey" }).click();
     await expect(page.locator('[data-role="message"]')).toContainText("The passkey for github.com was removed from the item.");
     expect(await page.evaluate(() => window.__calls.updates.map(([id, draft]) => [id, draft]))).toEqual([[PASSKEY_ITEM_ID, { remove_passkey: true }]]);
@@ -555,7 +555,12 @@ test.describe("a passkey in the web vault", () => {
   test("the_trash_says_which_site_a_passkey_belongs_to", async ({ page }) => {
     await ready(page);
     await scene(page, "trash-full", { passkey: {} });
+    await expect(page.locator('[data-role="trash-passkey"]')).toContainText("Holds a passkey for github.com");
     await expect(page.locator('[data-role="trash-passkey"]')).toContainText("not registered at github.com");
+    // An item that was changed after it was made cannot be one that Ferret moved here for an unfinished save: no such sentence.
+    await scene(page, "trash-full", { passkey: {}, firstRevision: false });
+    await expect(page.locator('[data-role="trash-passkey"]')).toContainText("Holds a passkey for github.com");
+    await expect(page.locator('[data-role="trash-passkey"]')).not.toContainText("not registered");
     expect(await noSidewaysScroll(page)).toBe(true);
   });
 

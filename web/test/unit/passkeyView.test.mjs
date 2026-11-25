@@ -21,6 +21,7 @@ import { all, click, fakeClient, fakeEngine, find, fire, settle, submit, t, text
 
 const ID = "11".repeat(16);
 const ID_B = "22".repeat(16);
+const ID_C = "33".repeat(16);
 const CREATED = Date.UTC(2026, 10, 20, 12, 0);
 const SECRET_KEY = "PRIVATE-KEY-SENTINEL";
 const SECRET_SEED = "PRF-SEED-SENTINEL";
@@ -216,7 +217,7 @@ test("delete_and_restore_from_the_trash_keep_the_passkey_working", async () => {
   model.set(ID, { rev: 1, ...client.wireRow(ID, 1, { item_type: "login", name: "GitHub passkey", fields: [], passkey: { rp_id: "github.com", user_name: "ada", cred_id: "c1", user_handle: "u1", priv: SECRET_KEY, created: CREATED } }) });
   const d = await syncDevice({ model, client });
   await d.engine.start();
-  await d.engine.update(ID, { name: "GitHub passkey" }, currentRev(d.engine, ID)); // revision 2, so a deletion has a version below it
+  await d.engine.update(ID, { favorite: true }, currentRev(d.engine, ID));
   await d.engine.remove(ID);
   await until(() => d.model.items.get(ID).deleted === true, "the deletion is on the server");
   await until(async () => (await d.engine.trash()).length === 1, "and in the trash");
@@ -240,8 +241,9 @@ test("delete_and_restore_from_the_trash_keep_the_passkey_working", async () => {
 test("the_not_registered_note_is_shown_in_the_trash", async () => {
   await withDom(async () => {
     const entries = [
-      { id: ID, name: "GitHub passkey", deletedAt: 1_700_000_000_000, passkeySite: "github.com" },
+      { id: ID, name: "GitHub passkey", deletedAt: 1_700_000_000_000, passkeySite: "github.com", firstRevision: true },
       { id: ID_B, name: "Plain login", deletedAt: 1_699_000_000_000 },
+      { id: ID_C, name: "Changed later", deletedAt: 1_698_000_000_000, passkeySite: "google.com", firstRevision: false },
     ];
     const root = await trashView({ engine: fakeConflictEngine({ trash: entries }), t, locale: "en", scope: createWipeScope() });
     const items = all(root, "trash-item");
@@ -250,11 +252,16 @@ test("the_not_registered_note_is_shown_in_the_trash", async () => {
     const note = find(withKey, "trash-passkey");
     assert.ok(note, "an item with a passkey has the note");
     assert.ok(textOf(note).includes("passkey.trash_note") && textOf(note).includes("github.com"), "it names the site");
+    assert.ok(textOf(note).includes("passkey.trash_unregistered"), "an item deleted at its first version says what it means if Ferret did it");
+    const later = find(items.find((n) => n.getAttribute("data-id") === ID_C), "trash-passkey");
+    assert.ok(textOf(later).includes("passkey.trash_note") && textOf(later).includes("google.com"));
+    assert.ok(!textOf(later).includes("passkey.trash_unregistered"), "a version that was changed later has no such sentence");
     assert.equal(note.getAttribute("role"), "note");
     assert.equal(find(without, "trash-passkey"), null, "an item without one has none");
     // The English text says it plainly.
     const en = JSON.parse(readFileSync(join(web, "src", "locales", "en", "passkey.json"), "utf8"));
-    assert.ok(/not registered at \{site\}/.test(en["passkey.trash_note"]));
+    assert.ok(/not registered at \{site\}/.test(en["passkey.trash_unregistered"]));
+    assert.ok(/^If Ferret moved this item here itself/.test(en["passkey.trash_unregistered"]), "worded as a possibility");
   });
 });
 
@@ -382,4 +389,38 @@ test("texts_exist_in_en_and_nb", () => {
   for (const file of walkDir(root)) for (const m of readFileSync(file, "utf8").matchAll(/["'`](passkey\.[a-z_]+)["'`]/g)) used.add(m[1]);
   for (const key of used) assert.ok(key in en, `${key} is used but has no text`);
   for (const key of Object.keys(en)) assert.ok(used.has(key), `${key} is not used`);
+});
+
+test("an_empty_user_name_has_no_row", async () => {
+  await withDom(async () => {
+    const { root } = await openItem({ view: { passkey: passkeyView({ user_name: "" }) } });
+    const card = all(root, "item-card").find((c) => c.getAttribute("data-card") === "passkey");
+    assert.equal(find(card, "passkey-value", "user"), null);
+    assert.equal(textOf(row(card, "site")).trim(), "github.com");
+  });
+});
+
+test("the_remove_button_name_contains_its_visible_text", async () => {
+  await withDom(async () => {
+    const { root } = await openItem();
+    const button = find(root, "remove-passkey");
+    const en = JSON.parse(readFileSync(join(web, "src", "locales", "en", "passkey.json"), "utf8"));
+    // The name a screen reader or voice control uses holds the words on the button.
+    assert.ok(en["passkey.remove_label"].startsWith(en["passkey.remove"]));
+    assert.ok(button.getAttribute("aria-label").startsWith("passkey.remove_label"));
+  });
+});
+
+test("an_item_deleted_before_it_was_ever_changed_is_a_first_version_in_the_trash", async () => {
+  const model = new Model();
+  const client = createFakeClient();
+  model.set(ID, { rev: 1, ...client.wireRow(ID, 1, { item_type: "login", name: "New passkey", fields: [], passkey: { rp_id: "github.com", user_name: "ada", cred_id: "c1", user_handle: "u1", priv: SECRET_KEY, created: CREATED } }) });
+  const d = await syncDevice({ model, client });
+  await d.engine.start();
+  await d.engine.remove(ID);
+  await until(() => d.model.items.get(ID).deleted === true, "the deletion is on the server");
+  await until(async () => (await d.engine.trash()).length === 1, "and in the trash");
+  const [entry] = await d.engine.trash();
+  assert.deepEqual([entry.passkeySite, entry.firstRevision], ["github.com", true]);
+  d.engine.stop();
 });

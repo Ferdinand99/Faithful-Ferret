@@ -321,7 +321,7 @@ export async function itemView({
     const when = pk.created === null ? null : formatMoment(pk.created, locale);
     const rows = [
       row(t("passkey.site"), "site", pk.site),
-      row(t("passkey.user"), "user", pk.user),
+      ...(pk.user === "" ? [] : [row(t("passkey.user"), "user", pk.user)]),
       ...(pk.siteName === null ? [] : [row(t("passkey.site_name"), "site_name", pk.siteName)]),
       ...(pk.displayName === null ? [] : [row(t("passkey.display_name"), "display_name", pk.displayName)]),
       ...(when === null ? [] : [row(t("passkey.created"), "created", when)]),

@@ -1,7 +1,7 @@
 {
   "passkey.created": "Opprettet",
-  "passkey.delete_body": "Dette elementet har en passkey for {site}. {site} har fortsatt den offentlige nøkkelen til passkeyen, så fjern passkeyen hos {site} også. Her blir elementet og passkeyen liggende i papirkurven i 30 dager: å gjenopprette elementet gir passkeyen tilbake, og den virker som før. Slettingen når alle enheter.",
-  "passkey.delete_many_body": "{passkeys} av disse elementene har en passkey, for: {sites}. Disse nettstedene har fortsatt de offentlige nøklene til passkeyene, så fjern passkeyene hos nettstedene også. Her blir elementene og passkeyene liggende i papirkurven i 30 dager: å gjenopprette et element gir passkeyen tilbake. Slettingen når alle enheter.",
+  "passkey.delete_body": "Dette elementet har en passkey for {site}. {site} har fortsatt den offentlige nøkkelen til passkeyen: når du ikke trenger den lenger, fjern den hos {site} også. Denne enheten beholder elementet og passkeyen i papirkurven i 30 dager, og å gjenopprette elementet gir passkeyen tilbake; den logger deg bare inn igjen så lenge {site} fortsatt har den offentlige nøkkelen. Slettingen når alle enheter.",
+  "passkey.delete_many_body": "Passkeys blant disse elementene: {passkeys}, for {sites}. Disse nettstedene har fortsatt de offentlige nøklene: når du ikke trenger en passkey lenger, fjern den hos nettstedet også. Denne enheten beholder elementene og passkeyene i papirkurven i 30 dager, og å gjenopprette et element gir passkeyen tilbake; den logger deg bare inn igjen så lenge nettstedet fortsatt har den offentlige nøkkelen. Slettingen når alle enheter.",
   "passkey.display_name": "Navn fra nettstedet",
   "passkey.edit_note": "Dette elementet har en passkey for {site}. Den beholdes når du lagrer. Vil du fjerne den, bruk Fjern passkey på elementsiden.",
   "passkey.filter": "Passkeys",
@@ -13,11 +13,12 @@
   "passkey.remove": "Fjern passkey",
   "passkey.remove_body": "Elementet beholdes, men passkeyen slettes fra hvelvet ditt og kan ikke lenger logge deg inn på {site} med Ferret. {site} har fortsatt den offentlige nøkkelen til passkeyen. Fjern passkeyen hos {site} også, i kontoen din der, så den ikke blir stående som en innloggingsmåte ingen kan bruke.",
   "passkey.remove_confirm": "Fjern passkey",
-  "passkey.remove_label": "Fjern passkeyen for {site}",
+  "passkey.remove_label": "Fjern passkey for {site}",
   "passkey.remove_title": "Fjerne passkeyen for {site}?",
   "passkey.removed": "Passkeyen for {site} ble fjernet fra elementet.",
   "passkey.site": "Nettsted",
   "passkey.site_name": "Nettstedet kaller seg",
-  "passkey.trash_note": "Har en passkey for {site}. En passkey som Ferret ikke fikk lagret ferdig, er ikke registrert hos {site}: nettstedet fikk aldri nøkkelen. Å gjenopprette elementet gir passkeyen tilbake som den var.",
+  "passkey.trash_note": "Har en passkey for {site}. Å gjenopprette elementet gir passkeyen tilbake som den var.",
+  "passkey.trash_unregistered": "Hvis Ferret selv flyttet elementet hit fordi lagringen av passkeyen ikke ble ferdig, er passkeyen ikke registrert hos {site} og kan ikke logge deg inn der.",
   "passkey.user": "Brukernavn fra nettstedet"
 }

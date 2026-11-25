@@ -4012,8 +4012,9 @@ export function createSyncEngine({
      * What the local trash holds: the items a verified deletion took away in the last 30 days, the most recent first. The names are
      * read out of the sealed items now and kept nowhere. An item that cannot be opened is listed with an empty name (it can still
      * be removed). An entry of an item that is not deleted any more is dropped.
-     * An item that holds a passkey also carries the site of it (`passkeySite`), so the trash can say which site the key belongs to.
-     * @returns {Promise<Array<{ id: string, name: string, deletedAt: number, passkeySite?: string }>>}
+     * An item that holds a passkey also carries the site of it (`passkeySite`), so the trash can say which site the key belongs to,
+     * and `firstRevision` (the version kept is the first one: an item deleted before it was ever changed).
+     * @returns {Promise<Array<{ id: string, name: string, deletedAt: number, passkeySite?: string, firstRevision?: boolean }>>}
      */
     async trash() {
       if (stopped) throw new SyncError("stopped");
@@ -4025,7 +4026,7 @@ export function createSyncEngine({
       // What the store holds decides whether an item is alive again (another tab may have written rows this tab has not read).
       const stored = entries.length > 0 ? new Map(/** @type {CachedRow[]} */ (await store.cache.getRows(db, scope)).map((row) => [row.itemId, row])) : new Map();
       alive();
-      /** @type {Array<{ id: string, name: string, deletedAt: number, passkeySite?: string }>} */
+      /** @type {Array<{ id: string, name: string, deletedAt: number, passkeySite?: string, firstRevision?: boolean }>} */
       const out = [];
       for (const entry of entries) {
         const row = stored.get(entry.itemId);
@@ -4047,7 +4048,7 @@ export function createSyncEngine({
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
         }
-        out.push({ id: entry.itemId, name, deletedAt: entry.deletedAt, ...(site === null ? {} : { passkeySite: site }) });
+        out.push({ id: entry.itemId, name, deletedAt: entry.deletedAt, ...(site === null ? {} : { passkeySite: site, firstRevision: entry.rev === 1 }) });
         alive();
       }
       return out;
