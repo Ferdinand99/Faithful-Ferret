@@ -17,17 +17,21 @@
 // Not read: an encrypted export (`encrypted: true`, an account export, or `passwordProtected: true`, an
 // export password): `import_encrypted_export`, Ferret has no way to open another product's
 // cryptography. The folder of an item and the names of its collections become its folders (map.mjs
-// `addFolders`). Counted and left out: passkeys, linked custom fields, keys that
+// `addFolders`). The passkeys of a login are read when the import of them is on (passkeys.mjs). Counted and left out:
+// passkeys otherwise, linked custom fields, keys that
 // this reader does not know, and item types other than login, note, card and identity (SSH keys and
 // the newer bank account, driver's licence and passport items).
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
+import { bitwardenPasskeys, wipeInput } from "./passkeys.mjs";
 import { addFolders, cardDraft, createReport, identityDraft, loginDraft, noteDraft, resolveLabels, scalar, warn } from "./map.mjs";
 
 /**
  * @typedef {import("./map.mjs").ImportReport} ImportReport
  * @typedef {import("./map.mjs").ItemDraft} ItemDraft
- * @typedef {{ labels?: unknown }} ReadOptions
+ * @typedef {import("./passkeys.mjs").PasskeyTask} PasskeyTask
+ * @typedef {{ labels?: unknown, passkeys?: boolean, now?: number }} ReadOptions `passkeys`: read the passkeys of the logins (the vault
+ *   has them imported; `now` is the time a passkey without a date is given); without it they are counted and left out
  */
 
 const KNOWN_TOP = new Set(["encrypted", "folders", "items", "collections"]);
@@ -84,7 +88,7 @@ function unknownKeys(object, known) {
  * Reads an unencrypted Bitwarden JSON export.
  * @param {unknown} data the result of `safeJsonParse`
  * @param {ReadOptions} [options]
- * @returns {{ drafts: ItemDraft[], report: ImportReport }}
+ * @returns {{ drafts: ItemDraft[], report: ImportReport, passkeys: PasskeyTask[] }}
  * @throws {ImportError} `import_encrypted_export` for an encrypted export (account or password), `import_bad_format`
  *   for anything that is not an export, `import_empty` for an export with no items, `import_too_many`
  */
@@ -105,6 +109,10 @@ export function fromBitwardenJson(data, options = {}) {
 
   /** @type {ItemDraft[]} */
   const drafts = [];
+  /** @type {PasskeyTask[]} */
+  const passkeys = [];
+  const now = Number.isSafeInteger(options.now) ? /** @type {number} */ (options.now) : Date.now();
+  try {
   root.items.forEach((entry, index) => {
     const item = asObject(entry);
     if (item === null) throw new ImportError("import_bad_format");
@@ -153,10 +161,14 @@ export function fromBitwardenJson(data, options = {}) {
       case 1: {
         const login = asObject(item.login) ?? Object.create(null);
         report.skipped.unknownKeys += unknownKeys(login, KNOWN_LOGIN);
-        const passkeys = asArray(login.fido2Credentials).length;
-        if (passkeys > 0) {
-          report.skipped.passkeys += passkeys;
-          warn(report, "passkey_skipped", index);
+        const credentials = asArray(login.fido2Credentials);
+        if (credentials.length > 0) {
+          if (options.passkeys === true) {
+            passkeys.push(...bitwardenPasskeys(credentials, { report, index, now }, drafts.length));
+          } else {
+            report.skipped.passkeys += credentials.length;
+            warn(report, "passkey_skipped", index);
+          }
         }
         const uris = asArray(login.uris).map(asObject).filter((u) => u !== null);
         for (const u of uris) report.skipped.unknownKeys += unknownKeys(u, KNOWN_URI);
@@ -180,7 +192,12 @@ export function fromBitwardenJson(data, options = {}) {
       }
     }
   });
-  return { drafts, report };
+  } catch (error) {
+    // A later item that does not read: the keys decoded so far are wiped before the error goes on.
+    for (const task of passkeys) wipeInput(task.input);
+    throw error;
+  }
+  return { drafts, report, passkeys };
 }
 
 /**

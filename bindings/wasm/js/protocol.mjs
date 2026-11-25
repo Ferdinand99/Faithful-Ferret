@@ -18,9 +18,13 @@
 // other end on to an import worker, which sends
 // `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
 // and gets `{ id, ok: true, value: { rev, envelope, tag } }` or
-// `{ id, ok: false, code }`. Nothing else goes through it: no other method, no
-// other revision, no existing item, no passkey, so the port can seal new items
-// and do nothing more. It belongs to the vault that was open when it came: when
+// `{ id, ok: false, code }`. The one other message is the import of a passkey
+// of another program into a new login:
+// `{ id, method: "passkey_import", args: [itemId, 1, draft, passkey, nowMs] }`
+// (the reply is `{ item: { rev, envelope, tag }, rp_id, notes }`; the key and
+// the seeds of `passkey` are wiped here when the call ends). Nothing else goes
+// through it: no other method, no other revision, no existing item, no passkey
+// in a draft, so the port can seal new items and do nothing more. It belongs to the vault that was open when it came: when
 // that vault is locked or replaced, the port is closed, after a last message
 // `{ closed: true }`. Ending the vault worker (`client.lock()`) closes it too.
 
@@ -106,28 +110,103 @@ export const IMPORT_PORT = "import_port";
 const ITEM_ID_LENGTH = 16;
 
 /**
- * The arguments of `encrypt_item` for one request that came over an import
- * port, or `invalid_input`. The request must be exactly
- * `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`:
- * a new item (16 bytes, not the manifest id of zeros) at revision 1, a draft
- * object without a passkey, and `NO_EXISTING` where an existing item would be
- * named. The time is checked with the other arguments of `encrypt_item`.
+ * The call for one request that came over an import port, or `invalid_input`.
+ * The request must be exactly
+ * `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
+ * or
+ * `{ id, method: "passkey_import", args: [itemId, 1, draft, passkey, nowMs] }`:
+ * a new item (16 bytes, not the manifest id of zeros) at revision 1 and a draft
+ * object without a passkey, then `NO_EXISTING` where an existing item would be
+ * named, or the passkey of another program, a plain object that has only the
+ * fields of `IMPORT_PASSKEY_FIELDS`. The time is checked with the other
+ * arguments of the method.
+ * @returns {{ method: string, args: any[] }}
  */
-export function importArgs(request) {
+export function importCall(request) {
   const bad = () => new FerretError("invalid_input");
   if (request === null || typeof request !== "object") throw bad();
-  if (request.method !== "encrypt_item" || !Array.isArray(request.args) || request.args.length !== 5) throw bad();
-  const [itemId, rev, draft, existing, nowMs] = request.args;
+  const method = request.method;
+  if ((method !== "encrypt_item" && method !== "passkey_import") || !Array.isArray(request.args) || request.args.length !== 5) throw bad();
+  const [itemId, rev, draft, third, nowMs] = request.args;
   if (!(itemId instanceof Uint8Array) || itemId.length !== ITEM_ID_LENGTH || itemId.every((b) => b === 0)) {
     throw bad();
   }
-  if (rev !== 1 || existing !== NO_EXISTING) throw bad();
+  if (rev !== 1) throw bad();
   if (draft === null || typeof draft !== "object" || Array.isArray(draft) || ArrayBuffer.isView(draft)) throw bad();
   if (Object.hasOwn(draft, "passkey") && draft.passkey !== undefined && draft.passkey !== null) throw bad();
   assertWellFormed(draft);
-  const args = [itemId, 1, draft, undefined, nowMs];
-  assertArgTypes("encrypt_item", args);
-  return args;
+  if (method === "encrypt_item") {
+    if (third !== NO_EXISTING) throw bad();
+    const args = [itemId, 1, draft, undefined, nowMs];
+    assertArgTypes("encrypt_item", args);
+    return { method, args };
+  }
+  assertImportPasskey(third);
+  const args = [itemId, 1, draft, third, nowMs];
+  assertArgTypes("passkey_import", args);
+  return { method, args };
+}
+
+/** The arguments of `encrypt_item` for a request over an import port (see {@link importCall}). */
+export function importArgs(request) {
+  if (request?.method !== "encrypt_item") throw new FerretError("invalid_input");
+  return importCall(request).args;
+}
+
+/**
+ * The fields of the `passkey` argument of `passkey_import`, by the type they must have: `bytes` a
+ * `Uint8Array`, `text` a well-formed string, `number` a finite number. `IMPORT_PASSKEY_REQUIRED` must be there; of
+ * the key exactly one form is given, and the two seeds come together or not at all.
+ */
+export const IMPORT_PASSKEY_FIELDS = Object.freeze({
+  cred_id: "bytes",
+  rp_id: "text",
+  user_handle: "bytes",
+  user_name: "text",
+  rp_name: "text",
+  user_display_name: "text",
+  created: "number",
+  counter: "number",
+  key_pkcs8: "bytes",
+  key_jwk: "text",
+  prf_seed_uv: "bytes",
+  prf_seed_nouv: "bytes",
+});
+
+const IMPORT_PASSKEY_REQUIRED = ["cred_id", "rp_id", "user_handle", "user_name", "created"];
+
+/** The byte arguments of an import `passkey` that are wiped when the call ends. */
+const IMPORT_PASSKEY_SECRET = ["key_pkcs8", "prf_seed_uv", "prf_seed_nouv"];
+
+/** Throws `invalid_input` unless `passkey` is the plain object `passkey_import` takes. */
+function assertImportPasskey(passkey) {
+  const bad = () => new FerretError("invalid_input");
+  if (passkey === null || typeof passkey !== "object" || Array.isArray(passkey) || ArrayBuffer.isView(passkey)) throw bad();
+  const proto = Object.getPrototypeOf(passkey);
+  if (proto !== Object.prototype && proto !== null) throw bad();
+  for (const key of Object.keys(passkey)) {
+    if (!Object.hasOwn(IMPORT_PASSKEY_FIELDS, key)) throw bad();
+  }
+  for (const key of IMPORT_PASSKEY_REQUIRED) {
+    if (passkey[key] === undefined) throw bad();
+  }
+  for (const [key, kind] of Object.entries(IMPORT_PASSKEY_FIELDS)) {
+    const v = passkey[key];
+    if (v === undefined) continue;
+    const ok = kind === "bytes" ? v instanceof Uint8Array : kind === "text" ? typeof v === "string" && isWellFormed(v) : typeof v === "number" && Number.isFinite(v);
+    if (!ok) throw bad();
+  }
+  const forms = (passkey.key_pkcs8 === undefined ? 0 : 1) + (passkey.key_jwk === undefined ? 0 : 1);
+  if (forms !== 1) throw bad();
+  if ((passkey.prf_seed_uv === undefined) !== (passkey.prf_seed_nouv === undefined)) throw bad();
+}
+
+/** Wipes the key and the seeds of an import `passkey` that this side owns. */
+function wipeImportPasskey(passkey) {
+  if (passkey === null || typeof passkey !== "object") return;
+  for (const key of IMPORT_PASSKEY_SECRET) {
+    if (passkey[key] instanceof Uint8Array) passkey[key].fill(0);
+  }
 }
 
 /** The functions of the job worker: the slow Argon2id steps, one call per worker. */
@@ -575,15 +654,18 @@ export function createDispatcher(wasm) {
     }
   };
 
-  // One request over an import port: `encrypt_item` of a new item, nothing else.
+  // One request over an import port: `encrypt_item` or `passkey_import` of a new item, nothing else.
   function importDispatch(request) {
     const id = request?.id;
     try {
-      const args = importArgs(request);
-      const value = requireVault(vault).encrypt_item(...args);
+      const { method, args } = importCall(request);
+      const value = requireVault(vault)[method](...args);
       return { reply: { id, ok: true, value }, transfer: transferables(value) };
     } catch (e) {
       return { reply: { id, ok: false, code: codeOf(e) }, transfer: [] };
+    } finally {
+      // The key and the seeds that came over the port are wiped whatever the call returned (a refused request too).
+      if (request?.method === "passkey_import" && Array.isArray(request.args)) wipeImportPasskey(request.args[3]);
     }
   }
 

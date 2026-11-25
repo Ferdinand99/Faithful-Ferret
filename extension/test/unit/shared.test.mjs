@@ -71,6 +71,7 @@ const EXPECTED_LIST = [
   "sync/memory.mjs",
   "sync/outbox.mjs",
   "sync/owner.mjs",
+  "sync/passkeyKey.mjs",
   "sync/restore.mjs",
   "tabId.mjs",
   "tt.mjs",

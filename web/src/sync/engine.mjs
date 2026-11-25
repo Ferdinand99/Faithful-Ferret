@@ -92,6 +92,7 @@ import { b64u, hex16 } from "../b64.mjs";
 import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
+import { passkeyKey } from "./passkeyKey.mjs";
 import {
   checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, entryMap, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
   UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
@@ -114,6 +115,7 @@ export { SyncError };
  * @property {string} username the plain user name field, for the list and its search ("" when the item has none)
  * @property {boolean} hasTotp the item holds a one-time code (only that it does, never the code)
  * @property {string | null} passkeySite the relying party id of the item's passkey (the site it belongs to), or null for an item without one
+ * @property {string | null} [passkeyKey] the site and credential id of the item's passkey, for the import's dedupe (`passkeyKeys`); never in the list
  * @property {boolean} [hasPasskey] the item holds a passkey (the key itself is never in the view); set by `list`, derived from `passkeySite`
  * @property {number} modified
  * @property {boolean} pending a write of this item is waiting for the server
@@ -469,10 +471,21 @@ export function createSyncEngine({
     return typeof site === "string" && site !== "" ? site : null;
   }
 
+  /**
+   * The identity of the item's passkey for the import's dedupe (its site and credential id), or null. Kept in the summary only: `list` does not
+   * show it, and it is no secret (the credential id is public to the site).
+   * @param {any} view
+   */
+  function passkeyKeyOf(view) {
+    const pk = view?.passkey;
+    return typeof pk?.rp_id === "string" && pk.rp_id !== "" && pk.cred_id instanceof Uint8Array && pk.cred_id.length > 0 ? passkeyKey(pk.rp_id, pk.cred_id) : null;
+  }
+
   /** @param {any} view @param {number} rev */
   function summaryOf(view, rev) {
     return {
       rev,
+      passkeyKey: passkeyKeyOf(view),
       type: String(view.item_type ?? ""),
       name: String(view.name ?? ""),
       favorite: view.favorite === true,
@@ -3640,6 +3653,37 @@ export function createSyncEngine({
       await syncNow(); // the runner is let go by that pass, if it ends well
       if (stopped || halted !== null) return;
       schedule();
+    },
+
+    /**
+     * The passkeys the vault holds, as `passkeyKey`s (site and credential id): in the items it shows and in the local trash (a passkey in the
+     * trash comes back with its item, so an import must not make a second one). The import uses it to leave out a passkey that is here already.
+     * An item that cannot be opened has none to give. Nothing in it is a secret.
+     * @returns {Promise<string[]>}
+     */
+    async passkeyKeys() {
+      if (stopped) throw new SyncError("stopped");
+      /** @type {Set<string>} */
+      const keys = new Set();
+      for (const s of index.values()) if (s.passkeyKey !== null && s.passkeyKey !== undefined) keys.add(s.passkeyKey);
+      const db = await store.open();
+      const entries = await store.trash.all(db, scope);
+      alive();
+      for (const entry of entries) {
+        try {
+          const handle = await client.vault.open_item(hex16.decode(entry.itemId), entry.rev, entry.envelope, entry.tag);
+          try {
+            const key = passkeyKeyOf(await client.vault.item_view(handle));
+            if (key !== null) keys.add(key);
+          } finally {
+            await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
+          }
+        } catch (error) {
+          if (stopped || isFatal(error)) throw error;
+        }
+        alive();
+      }
+      return [...keys];
     },
 
     /** @returns {ItemSummary[]} */
