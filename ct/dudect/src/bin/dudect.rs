@@ -79,6 +79,9 @@ fn crockford_decode(r: &mut CtRunner, rng: &mut BenchRng) {
 fn unpad_ct(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "unpad_ct");
 }
+fn base64url_decode(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "base64url_decode");
+}
 fn base32_decode(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "base32_decode");
 }
@@ -174,6 +177,7 @@ ctbench_main!(
     key_eq,
     crockford_decode,
     unpad_ct,
+    base64url_decode,
     base32_decode,
     kek_pw_commit_path,
     info_unwrap_valid_vs_bad_commit,

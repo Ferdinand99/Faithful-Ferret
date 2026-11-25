@@ -49,6 +49,9 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * the vault key, so it is checked like every other message.
  * `passkey_request`, `passkey_abort`, `passkey_foreign` and `passkey_ping` are the passkey bridge's reports of a page:
  * taken while the vault is locked (Ferret's own window opens it), and a page's activity never moves the deadline.
+ * `passkey_pending`, `passkey_cancel` and `passkey_browser` are Ferret's chooser window for such a request: it shows the
+ * request, cancels it or hands it to the browser while the vault is locked (it is where the vault is opened), and none of
+ * them uses a key. `passkey_site` asks the core, so it needs the open vault.
  */
 export const LOCK_EXEMPT = Object.freeze([
   "sign_in",
@@ -74,6 +77,9 @@ export const LOCK_EXEMPT = Object.freeze([
   "passkey_abort",
   "passkey_foreign",
   "passkey_ping",
+  "passkey_pending",
+  "passkey_cancel",
+  "passkey_browser",
 ]);
 
 export const LOCK_AT_KEY = "lock_at";

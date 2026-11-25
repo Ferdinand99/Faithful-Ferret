@@ -28,6 +28,7 @@
   "passkeys.error.security_error": "The website asked for a passkey for an address it may not use. Stopped.",
   "passkeys.error.signed_out": "Ferret is signed out.",
   "passkeys.error.site_refused": "Ferret cannot use a passkey for this website. Stopped.",
+  "passkeys.error.type_error": "The website sent options Ferret cannot use. Stopped.",
   "passkeys.error.unknown": "Something went wrong. Nothing was changed.",
   "passkeys.error.vault_locked": "Ferret is locked.",
   "passkeys.error.verification_needed": "Ferret has to check that it is you first.",

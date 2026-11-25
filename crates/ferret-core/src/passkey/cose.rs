@@ -51,7 +51,9 @@ impl PasskeyPrivateKey {
         Err(Error::Unsupported)
     }
 
-    fn from_signing_key(key: &SigningKey) -> Result<Self, Error> {
+    /// The key in the one PKCS#8 form the core writes (`to_pkcs8_der` of the
+    /// `p256` crate, with the public key), whatever form it was read from.
+    pub(crate) fn from_signing_key(key: &SigningKey) -> Result<Self, Error> {
         let doc = key.to_pkcs8_der().map_err(|_| bad_key())?;
         Ok(Self {
             der: Zeroizing::new(doc.as_bytes().to_vec()),

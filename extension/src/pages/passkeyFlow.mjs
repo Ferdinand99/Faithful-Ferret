@@ -39,6 +39,7 @@ export const SITE_TEXT_MAX = 128;
 export const CHOOSER_ERRORS = Object.freeze([
   "request_gone",
   "security_error",
+  "type_error",
   "site_refused",
   "vault_locked",
   "network",
@@ -58,7 +59,7 @@ export const CHOOSER_ERRORS = Object.freeze([
 ]);
 
 /** The reasons that mean the request is over: the window says so and closes. */
-export const GONE_REASONS = Object.freeze(["request_gone", "security_error", "site_refused", "signed_out", "disconnected"]);
+export const GONE_REASONS = Object.freeze(["request_gone", "security_error", "type_error", "site_refused", "signed_out", "disconnected"]);
 
 /** The reasons of the broker's contract, by the names the window uses (`gone`: ended, unknown, or owned by another window). */
 const REASON_OF = Object.freeze({ gone: "request_gone", not_allowed: "site_refused" });

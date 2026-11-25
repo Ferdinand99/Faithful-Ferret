@@ -394,6 +394,7 @@ export const F64_ARGS = {
   totp_code: [[1, "seconds"]],
   wrap_prf: [[4, "u64"]],
   passkey_create: [[1, "u64"], [7, "millis"]],
+  passkey_import: [[1, "u64"], [4, "millis"]],
   reveal_plain_export: [[4, "millis"]],
   reauth_grant: [[1, "millis"]],
   export_begin: [[1, "millis"]],

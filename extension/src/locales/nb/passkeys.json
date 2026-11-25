@@ -28,6 +28,7 @@
   "passkeys.error.security_error": "Nettstedet ba om en passkey for en adresse det ikke kan bruke. Stoppet.",
   "passkeys.error.signed_out": "Ferret er logget ut.",
   "passkeys.error.site_refused": "Ferret kan ikke bruke en passkey for dette nettstedet. Stoppet.",
+  "passkeys.error.type_error": "Nettstedet sendte valg Ferret ikke kan bruke. Stoppet.",
   "passkeys.error.unknown": "Noe gikk galt. Ingenting ble endret.",
   "passkeys.error.vault_locked": "Ferret er låst.",
   "passkeys.error.verification_needed": "Ferret må sjekke at det er deg først.",

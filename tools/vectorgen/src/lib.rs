@@ -19,6 +19,7 @@ mod key_groups;
 mod opaque_groups;
 mod origin_groups;
 mod passkey_groups;
+mod passkey_import_groups;
 mod pin_groups;
 mod server_groups;
 mod text_groups;
@@ -77,6 +78,10 @@ const GROUPS: &[Group] = &[
     ("internal/totp.json", totp_groups::totp),
     ("internal/origin.json", origin_groups::origin),
     ("internal/passkey.json", passkey_groups::passkey),
+    (
+        "internal/passkey_import.json",
+        passkey_import_groups::passkey_import,
+    ),
     ("internal/account.json", account_groups::account),
     ("internal/sheet.json", account_groups::sheet),
     (

@@ -29,6 +29,7 @@
 //! | `crockford_decode` | `decode_symbols`, 52 letters | all `0` | random letters, mixed case and look-alikes |
 //! | `unpad_ct` | `unpad_scan`, 1024 bytes | marker last | marker first |
 //! | `base32_decode` | `decode_letters`, 32 letters | all `A` | random letters, mixed case |
+//! | `base64url_decode` | `decode`, 43 symbols (a JWK scalar) | all `A` | random symbols |
 //! | `kek_pw_commit_path` | `unwrap_vk`, whole path | commit: first byte wrong | commit: last byte wrong |
 //! | `info_unwrap_valid_vs_bad_commit` | `unwrap_vk` | intact (AEAD runs) | commit wrong (AEAD skipped) |
 //! | `kek_pin_commit_path` | `unwrap_vk` of a PIN wrap, whole path | commit: first byte wrong | commit: last byte wrong |
@@ -71,6 +72,9 @@ pub mod harness {
     }
     pub mod unpad {
         include!("../../harness/unpad.rs");
+    }
+    pub mod base64url {
+        include!("../../harness/base64url.rs");
     }
     pub mod base32 {
         include!("../../harness/base32.rs");
@@ -469,6 +473,56 @@ fn base32_target(mix: &mut Mix, name: &'static str) -> Base32 {
     }
 }
 
+// ------------------------------------------------------- base64url
+
+const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// A JWK scalar: 43 base64url symbols.
+fn random_base64url(m: &mut Mix) -> [u8; 43] {
+    let mut s = [0u8; 43];
+    for slot in s.iter_mut() {
+        *slot = BASE64URL[m.below(64)];
+    }
+    s
+}
+
+struct Base64url {
+    pools: Pools<[u8; 43]>,
+    cell: [u8; 43],
+}
+
+impl Target for Base64url {
+    fn name(&self) -> &'static str {
+        "base64url_decode"
+    }
+    fn reps(&self) -> u32 {
+        1
+    }
+    fn prepare(&mut self, class: Class, i: usize) {
+        self.cell = *self.pools.get(class, i);
+    }
+    fn run(&self, reps: u32) -> u64 {
+        let mut acc = 0u64;
+        for _ in 0..reps {
+            let mut out = [0u8; 32];
+            let d = harness::base64url::decode(black_box(&self.cell), &mut out);
+            acc = acc
+                .wrapping_add(u64::from(d.all_valid))
+                .wrapping_add(u64::from(d.spare))
+                .wrapping_add(u64::from(black_box(out)[0]));
+        }
+        black_box(acc)
+    }
+}
+
+/// `base64url_decode`: 43 times `A` (the scalar 0) against random symbols.
+fn base64url_decode(mix: &mut Mix) -> Base64url {
+    Base64url {
+        pools: Pools::new(mix, |m| ([b'A'; 43], random_base64url(m))),
+        cell: [b'A'; 43],
+    }
+}
+
 // -------------------------------------------------------------- padding
 
 const PADDED: usize = 1024;
@@ -716,6 +770,7 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
         Box::new(mac_verify(&mut mix)),
         Box::new(key_eq(&mut mix)),
         Box::new(crockford_decode(&mut mix)),
+        Box::new(base64url_decode(&mut mix)),
         Box::new(unpad_target(
             &mut mix,
             "unpad_ct",

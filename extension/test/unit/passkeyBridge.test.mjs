@@ -40,7 +40,7 @@ test("both_scripts_join_and_the_main_script_stays_within_its_budget", () => {
   // The bridge runs in every https frame: it has a budget too (the build refuses a bigger one).
   assert.ok(Buffer.byteLength(bridge) <= PASSKEY_BRIDGE_MAX_BYTES, `${Buffer.byteLength(bridge)} bytes`);
   // The page's script is built from its own file only: no protocol, no shared module.
-  assert.match(main, /^\/\/ Files: content\/passkey\.main\.entry\.mjs$/m);
+  assert.match(main, /^\/\/ Files: content\/passkeyResponse\.mjs, content\/passkey\.main\.entry\.mjs$/m);
   assert.match(bridge, /^\/\/ Files: .*shared\/webauthnWire\.mjs.*content\/passkey\.bridge\.entry\.mjs$/m);
 });
 
@@ -289,7 +289,7 @@ test("answers_end_the_call_as_the_browser_would", async () => {
   await page.push("passkey_handover", { request_id: /** @type {any} */ (lastRequest(page)).body.request_id, once: true });
   assert.equal(page.page("out.error"), "NotAllowedError");
   assert.equal(page.nativeCalls.length, 0);
-  // A result: until the answer objects exist, the call ends with NotAllowedError, never with something that looks like a credential.
+  // A result is the credential (passkeyResponse.test.mjs looks at it); the browser is not called for it.
   page.page(GET());
   await page.flush();
   const response = responseToWire("get", {
@@ -297,7 +297,9 @@ test("answers_end_the_call_as_the_browser_would", async () => {
     signature: new Uint8Array(70), user_handle: new Uint8Array(3),
   });
   await page.push("passkey_result", { request_id: /** @type {any} */ (lastRequest(page)).body.request_id, response });
-  assert.equal(page.page("out.error"), "NotAllowedError");
+  assert.equal(page.page("out.error"), undefined);
+  assert.equal(page.page("out.value instanceof PublicKeyCredential"), true);
+  assert.equal(page.nativeCalls.length, 0);
 });
 
 test("the_page_abort_and_a_modal_request_end_a_waiting_one", async () => {

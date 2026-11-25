@@ -105,6 +105,59 @@ const REALM_DOM = String.raw`
     const native = new Proxy(target, { apply: (_t, self, args) => host.native(kind, self, args, globalThis) });
     Object.defineProperty(CredentialsContainer.prototype, kind, { value: native, writable: true, enumerable: true, configurable: true });
   }
+  // The browser's own WebAuthn objects, as Firefox has them: members on the prototypes (accessors and methods, enumerable,
+  // methods first), no own property, a brand check in each, and the static methods of PublicKeyCredential as own properties.
+  const nativeState = new WeakMap();
+  const state = (self, proto, name) => {
+    const s = nativeState.get(self);
+    if (s === undefined || !(self instanceof proto.constructor)) throw new TypeError("'" + name + "' called on an object that does not implement the interface");
+    return s;
+  };
+  const members = (cls, methods, getters) => {
+    for (const [name, fn] of Object.entries(methods)) Object.defineProperty(cls.prototype, name, { value: function () { return fn(state(this, cls.prototype, name)); }, writable: true, enumerable: true, configurable: true });
+    for (const [name, fn] of Object.entries(getters)) Object.defineProperty(cls.prototype, name, { get: { [name]: function () { return fn(state(this, cls.prototype, name)); } }[name], set: undefined, enumerable: true, configurable: true });
+    Object.defineProperty(cls.prototype, Symbol.toStringTag, { value: cls.name, configurable: true });
+  };
+  const copyOf = (b) => { const out = new ArrayBuffer(b.byteLength); new Uint8Array(out).set(new Uint8Array(b)); return out; };
+  class Credential {}
+  members(Credential, {}, { id: (s) => host.b64u(s.rawId), type: () => "public-key" });
+  class PublicKeyCredential extends Credential {}
+  members(PublicKeyCredential, {
+    getClientExtensionResults: (s) => JSON.parse(JSON.stringify(s.ext)),
+    toJSON: (s) => JSON.parse(s.json),
+  }, { rawId: (s) => s.rawId, response: (s) => s.response, authenticatorAttachment: (s) => s.attachment });
+  class AuthenticatorResponse {}
+  members(AuthenticatorResponse, {}, { clientDataJSON: (s) => s.clientDataJSON });
+  class AuthenticatorAttestationResponse extends AuthenticatorResponse {}
+  members(AuthenticatorAttestationResponse, {
+    getTransports: (s) => [...s.transports], getAuthenticatorData: (s) => copyOf(s.authenticatorData), getPublicKey: (s) => (s.publicKey ? copyOf(s.publicKey) : null), getPublicKeyAlgorithm: (s) => s.alg,
+  }, { attestationObject: (s) => s.attestationObject });
+  class AuthenticatorAssertionResponse extends AuthenticatorResponse {}
+  members(AuthenticatorAssertionResponse, {}, { authenticatorData: (s) => s.authenticatorData, signature: (s) => s.signature, userHandle: (s) => s.userHandle });
+  // Statics: each answers with a marker, so a test sees that it was the browser's own that answered.
+  for (const [name, answer] of Object.entries({
+    isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(false),
+    isConditionalMediationAvailable: () => Promise.resolve(false),
+    getClientCapabilities: () => Promise.resolve({ hybridTransport: true, "extension:prf": false, conditionalGet: false }),
+    parseCreationOptionsFromJSON: () => "browser-parse-creation",
+    parseRequestOptionsFromJSON: () => "browser-parse-request",
+    signalUnknownCredential: () => Promise.resolve("browser-signal"),
+    signalAllAcceptedCredentials: () => Promise.resolve("browser-signal"),
+    signalCurrentUserDetails: () => Promise.resolve("browser-signal"),
+  })) {
+    const fn = { [name]() { return answer(); } }[name];
+    fn.browsers = true;
+    Object.defineProperty(PublicKeyCredential, name, { value: fn, writable: true, enumerable: true, configurable: true });
+  }
+  // A credential of the browser's own, built from the same fields the page's script gets (for the comparison).
+  globalThis.__browserCredential = (kind, f, json) => {
+    const response = Object.create(kind === "create" ? AuthenticatorAttestationResponse.prototype : AuthenticatorAssertionResponse.prototype);
+    nativeState.set(response, { clientDataJSON: f.clientDataJSON, authenticatorData: f.authenticatorData, attestationObject: f.attestationObject, publicKey: f.publicKey, alg: f.publicKeyAlgorithm, transports: f.transports, signature: f.signature, userHandle: f.userHandle });
+    const cred = Object.create(PublicKeyCredential.prototype);
+    nativeState.set(cred, { rawId: f.id, response, attachment: f.authenticatorAttachment, ext: f.clientExtensionResults, json });
+    return cred;
+  };
+  Object.assign(globalThis, { Credential, PublicKeyCredential, AuthenticatorResponse, AuthenticatorAttestationResponse, AuthenticatorAssertionResponse });
   const wrappers = new WeakMap();
   const PROTOS = { port: MessagePort.prototype, signal: AbortSignal.prototype, target: EventTarget.prototype, event: MessageEvent.prototype };
   function wrap(kind, core) {
@@ -198,6 +251,7 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     origin,
     secure,
     activation: () => active,
+    b64u: (/** @type {ArrayBuffer} */ b) => Buffer.from(b).toString("base64url"),
     register: (/** @type {any} */ r) => {
       currentRealm = r;
       currentRealm.name = name;

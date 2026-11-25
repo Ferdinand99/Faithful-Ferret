@@ -568,7 +568,7 @@ export function createChooser({
    * closes. @param {string} reason
    */
   function finished(reason) {
-    ended(reason === "security_error" || reason === "site_refused" ? chooserErrorKey(reason) : "passkeys.gone");
+    ended(reason === "security_error" || reason === "type_error" || reason === "site_refused" ? chooserErrorKey(reason) : "passkeys.gone");
   }
 
   /**
