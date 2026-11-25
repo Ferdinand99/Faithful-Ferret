@@ -25,6 +25,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends openssl libssl3 \
     && rm -rf /var/lib/apt/lists/*
+# /work is a volume of the container (the CA and the certificate, so that a restart keeps the CA a test browser trusts).
+RUN mkdir /work && chown 10001:10001 /work
 WORKDIR /app/server
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force

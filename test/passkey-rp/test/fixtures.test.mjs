@@ -171,7 +171,7 @@ for (const lib of /** @type {const} */ (["rs", "swa"])) {
 describe("the API of the fixture", () => {
   test("takes only the origins of the fixture", async () => {
     const body = { sid: sidOf(), rpId: HOST, user: USER };
-    for (const origin of ["https://evil.example", "null", "http://rp-a.test", "https://rp-a.test:8443", "none"]) {
+    for (const origin of ["https://evil.example", "http://rp-a.test", "https://rp-a.test:8443", "none"]) {
       for (const lib of ["rs", "swa"]) {
         const r = /** @type {any} */ (await post(`/api/${lib}/register/start`, body, origin));
         assert.equal(r.status, 403, `${lib} with Origin ${origin}: ${JSON.stringify(r.json)}`);
@@ -179,9 +179,25 @@ describe("the API of the fixture", () => {
     }
     const ok = /** @type {any} */ (await post("/api/rs/register/start", body, "https://login.rp-a.test"));
     assert.equal(ok.json.ok, true, JSON.stringify(ok.json));
+    // A trailing dot names the same host.
+    const dotted = /** @type {any} */ (await post("/api/rs/register/start", body, "https://rp-a.test."));
+    assert.equal(dotted.json.ok, true, JSON.stringify(dotted.json));
   });
 
-  test("serves the test pages on every listed host and refuses an unlisted one", async () => {
+  test("an opaque origin (a sandboxed frame) may fetch options for a fixture RP ID and never finish", async () => {
+    for (const lib of ["rs", "swa"]) {
+      const sid = sidOf();
+      const start = /** @type {any} */ (await post(`/api/${lib}/register/start`, { sid, rpId: HOST, user: USER }, "null"));
+      assert.equal(start.json.ok, true, `${lib}: ${JSON.stringify(start.json)}`);
+      const named = /** @type {any} */ (await post(`/api/${lib}/register/start`, { sid, rpId: "evil.example", user: USER }, "null"));
+      assert.equal(named.status, 403, `${lib}: an RP ID that is not the fixture's`);
+      const auth = new SoftAuthenticator();
+      const finish = /** @type {any} */ (await post(`/api/${lib}/register/finish`, { sid, credential: auth.create(start.json.options, "null") }, "null"));
+      assert.equal(finish.status, 403, `${lib}: finish with an opaque origin`);
+    }
+  });
+
+  test("serves the test pages on every listed host", async () => {
     for (const host of ["rp-a.test", "login.rp-a.test", "rp-b.test", "attacker.test", "vault-fixture.test", "user.github.io", "evil.github.io", "xn--rp--8cd.test"]) {
       const res = await fetch(`https://${host}/ceremony.html`);
       assert.equal(res.status, 200, host);

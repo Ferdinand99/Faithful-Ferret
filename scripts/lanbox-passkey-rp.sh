@@ -5,7 +5,7 @@
 #
 #   scripts/lanbox-passkey-rp.sh up       build the image (once per content), make the test network and
 #                                         start the container (a second `up` replaces it)
-#   scripts/lanbox-passkey-rp.sh down     remove the container and the test network
+#   scripts/lanbox-passkey-rp.sh down [--purge]  remove the container and the test network (--purge: and the volume with the CA)
 #   scripts/lanbox-passkey-rp.sh status   one line: running or not, and the image
 #   scripts/lanbox-passkey-rp.sh ca       print the test CA (PEM): the profile of the test browser trusts it, nothing else does
 #   scripts/lanbox-passkey-rp.sh network  print the name of the test network
@@ -14,6 +14,8 @@
 #                                         must refuse a tampered signature, RP ID hash, origin, crossOrigin
 #                                         and flags, and accept the untampered response
 #
+# The test CA lives in the volume ferret-u4-passkey-rp-state (30 days, made once and kept over restarts of the container, so a
+# test browser that trusts it keeps working; down --purge removes it).
 # The container is named ferret-u4-passkey-rp and carries the labels owner=ferret and dev.run (a long-lived
 # environment, dev.kind=env). It sits on the network ferret-u4-passkey-rp-net, which is created with
 # --internal: it has no route to anywhere. Every host name of hosts.json is a network alias of the
@@ -56,6 +58,7 @@ case "$cmd" in
   *) usage ;;
 esac
 
+volume="$container-state"
 running() { [ "$(docker "${docker_args[@]}" inspect -f '{{.State.Running}}' "$container" 2> /dev/null || true)" = true ]; }
 
 case "$cmd" in
@@ -85,6 +88,9 @@ case "$cmd" in
     if [ "$(docker "${docker_args[@]}" network inspect -f '{{index .Labels "owner"}}' "$network" 2> /dev/null || true)" = ferret ]; then
       docker "${docker_args[@]}" network rm "$network" > /dev/null 2>&1 || echo "lanbox-passkey-rp.sh: the network $network still has a container on it; it stays" >&2
     fi
+    if [ "${2:-}" = --purge ] && [ "$(docker "${docker_args[@]}" volume inspect -f '{{index .Labels "owner"}}' "$volume" 2> /dev/null || true)" = ferret ]; then
+      docker "${docker_args[@]}" volume rm "$volume" > /dev/null
+    fi
     echo "lanbox-passkey-rp.sh: down"
     ;;
   up)
@@ -109,6 +115,9 @@ case "$cmd" in
     fi
     aliases=()
     for h in "${hosts[@]}"; do aliases+=(--network-alias "$h"); done
+    if ! docker "${docker_args[@]}" volume inspect "$volume" > /dev/null 2>&1; then
+      docker "${docker_args[@]}" volume create --label owner=ferret "$volume" > /dev/null
+    fi
     docker "${docker_args[@]}" run -d --init --name "$container" \
       --label owner=ferret \
       --label dev.run="$container" \
@@ -120,7 +129,7 @@ case "$cmd" in
       --security-opt no-new-privileges:true \
       --sysctl net.ipv4.ip_unprivileged_port_start=0 \
       --read-only \
-      --tmpfs /work:uid=10001,gid=10001,size=16m \
+      -v "$volume":/work \
       --tmpfs /tmp:size=16m \
       "$tag" > /dev/null
     for _ in $(seq 1 60); do
