@@ -2,7 +2,7 @@
   "id": "adv-request-flood",
   "set": "adversarial",
   "category": "adv-window",
-  "title": "a thousand get requests at once: the browser's own concurrent-request errors, never more than one window, and an ordinary ceremony still works afterwards",
+  "title": "a thousand get requests at once: the browser's own concurrent-request errors, never more than one window, and the calm period follows",
   "rp": {
     "lib": "rs",
     "client": "manual"
@@ -34,8 +34,8 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "ok",
-    "route": "browser",
+    "ceremony": "none",
+    "route": "ferret",
     "maxWindows": 1,
     "adv": [
       {
@@ -44,7 +44,10 @@
           "AbortError"
         ]
       }
-    ]
+    ],
+    "stub": {
+      "ceremony": "ok"
+    }
   },
   "unsafe": [
     {
@@ -56,5 +59,6 @@
       "definition": "a window or an answer for any frame or origin other than the one that asked"
     }
   ],
-  "waitMs": 40000
+  "waitMs": 40000,
+  "note": "Ferret opens its one window for the first request; the thousand aborted requests start the calm period (UK129), so the ordinary ceremony after them gets only a badge and a card and does not complete. The stub path (the browser alone) completes it."
 }

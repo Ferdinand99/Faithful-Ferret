@@ -28,13 +28,15 @@
     },
     "get": {
       "userVerification": "required",
-      "allow": "all"
+      "allow": "all",
+      "timeout": 3000
     }
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "ok",
-    "route": "browser"
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError"
   },
   "unsafe": [
     {
@@ -47,6 +49,7 @@
     }
   ],
   "needs": "provider",
+  "waitMs": 10000,
   "actions": [
     {
       "do": "create-online"
@@ -61,5 +64,6 @@
     {
       "do": "start-get"
     }
-  ]
+  ],
+  "note": "The passkey was made by Ferret, so the browser has none for the site and ends the request."
 }
