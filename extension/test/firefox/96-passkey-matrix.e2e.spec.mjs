@@ -5,6 +5,11 @@
 //   test CA (and has no way out of the test network), a virtual authenticator answers, and both relying parties (webauthn-rs
 //   and SimpleWebAuthn) accept a create and a sign-in from the three client codes, on rp-a.test and on localhost (http and
 //   https). If this fails nothing else means anything, and the matrix test is skipped.
+// - simplewebauthn_browser_and_manual_conversion_both_accept_the_answer: the answer objects of the passkey script
+//   (src/content/passkeyResponse.mjs), built from what the virtual authenticator made, are what the three client codes get from
+//   create and get, and both relying parties (webauthn-rs, strict, and SimpleWebAuthn) accept the registration and the sign-in:
+//   @simplewebauthn/browser (the toJSON-free path of that library), the hand-written conversion of the sites, and the one
+//   that reads getPublicKey() and the other methods of the response. Run after the self-test, in both channels.
 // - passkey_matrix_runs_every_selected_case_and_writes_the_report: every case of FERRET_PASSKEY_SET (fixtures, adversarial,
 //   holdout or demo) whose id contains FERRET_PASSKEY_GREP, with the provider FERRET_PASSKEY_PROVIDER (stub by default), in each
 //   channel. It writes <set>-<channel>-<manifest>.json and .md to FERRET_PASSKEY_OUT and asserts: there are cases, every one has
@@ -19,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { channels, defaultManifest } from "./harness.mjs";
+import { builderScript, SHIM_SCRIPT } from "./passkeyAnswer.mjs";
 import { caseAddress, specOf } from "./passkeyCases.mjs";
 import { fetchReports, launchMatrixBrowser, runSet } from "./passkeyMatrix.mjs";
 
@@ -80,6 +86,54 @@ test("virtual_authenticator_and_fixture_tls_work_in_both_channels", async () => 
     }
   }
   selfTestPassed = true;
+});
+
+test("simplewebauthn_browser_and_manual_conversion_both_accept_the_answer", async (t) => {
+  if (!selfTestPassed) {
+    t.skip("the self-test did not pass, so the answer objects are not run");
+    return;
+  }
+  const script = builderScript();
+  for (const channel of channels()) {
+    const session = await launchMatrixBrowser({ channel });
+    try {
+      for (const lib of /** @type {const} */ (["rs", "swa"])) {
+        for (const client of /** @type {const} */ (["swa", "manual", "pubkey"])) {
+          const c = { rp: { lib, client }, page: { chain: ["rp-a.test"] }, spec: { steps: ["create", "get"], user: { name: "alice", displayName: "Alice" } } };
+          const run = `answers-${Math.random().toString(16).slice(2, 10)}`;
+          const address = caseAddress(c, { spec: specOf(c, run), auto: false });
+          await session.navigate(address.url);
+          await session.waitFor(() => session.content(() => document.documentElement.dataset.ready === "1"), 20_000, `the page ${address.url}`);
+          // The answer is built from what the virtual authenticator made, by the script's own builder, before the page's code runs.
+          await session.content((/** @type {string} */ builder, /** @type {string} */ shim) => {
+            for (const text of [builder, shim]) {
+              const element = document.createElement("script");
+              element.textContent = text;
+              document.head.append(element);
+            }
+          }, script, SHIM_SCRIPT);
+          const [go] = await session.findAll("#go");
+          assert.ok(go, `#go on ${address.url}`);
+          await session.click(go);
+          const done = await session.waitFor(async () => (await fetchReports(run)).find((r) => r.kind === "done"), 30_000, `the report of ${address.url}`);
+          const label = `${channel}: ${lib} with ${client}`;
+          assert.equal(done.ok, true, `${label}: ${JSON.stringify(done.steps?.map((/** @type {any} */ s) => ({ step: s.step, stage: s.stage, error: s.error })))}`);
+          assert.equal(done.steps.length, 2, `${label}: create and sign-in both ran`);
+          assert.equal(await session.content(() => /** @type {any} */ (window).__answered), 2, `${label}: both answers were the script's objects`);
+          if (client === "pubkey") {
+            const extras = done.steps[0].extras;
+            assert.ok(extras.getPublicKey, `${label}: getPublicKey()`);
+            assert.equal(extras.getPublicKeyAlgorithm, -7, `${label}: getPublicKeyAlgorithm()`);
+            assert.ok(extras.getAuthenticatorData, `${label}: getAuthenticatorData()`);
+            assert.ok(Array.isArray(extras.getTransports), `${label}: getTransports()`);
+            assert.equal(extras.toJSON, true, `${label}: toJSON()`);
+          }
+        }
+      }
+    } finally {
+      await session.quit();
+    }
+  }
 });
 
 test("passkey_matrix_runs_every_selected_case_and_writes_the_report", async (t) => {

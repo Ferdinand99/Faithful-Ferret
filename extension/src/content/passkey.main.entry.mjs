@@ -24,11 +24,19 @@
 //   conditional one goes to the browser, whose own list then works as before).
 // - It tells the bridge when create or get were not the browser's own at install (another extension came first), or
 //   when Ferret's own were replaced later.
+// - It builds the answer objects of Ferret's credentials (content/passkeyResponse.mjs) and answers the three static
+//   methods of PublicKeyCredential that sites read for their choice to offer a passkey: isUserVerifyingPlatformAuthenticatorAvailable
+//   (true where Ferret answers), isConditionalMediationAvailable (true where Ferret answers) and getClientCapabilities
+//   (the browser's answer with Ferret's entries on top). Where the bridge is not connected (Ferret does not answer on the
+//   page) all three give the browser's own answer. parseCreationOptionsFromJSON, parseRequestOptionsFromJSON and the signal
+//   methods are not touched.
 //
 // Nothing this script receives is resolved into one of its own promises as an object: a page that defines
 // `Object.prototype.then` would step into it. The page's promise is settled directly from the port's answer.
 // Objects it builds have no prototype (or are made by literals), and property descriptors have no prototype, so a
 // setter or a getter the page puts on `Object.prototype` or `Array.prototype` never runs with our values.
+
+import { credentialFrom } from "./passkeyResponse.mjs";
 
 /** How long a request waits for the bridge's "taken" before the browser gets it. */
 const TAKEN_MS = 3_000;
@@ -44,16 +52,6 @@ const MAX_LIST = 200;
 const MAX_BYTES = 65_536;
 /** What Firefox says with a NotAllowedError of WebAuthn. */
 const NOT_ALLOWED_TEXT = "The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.";
-
-/**
- * The answer object for the page, from the bytes of the core (U4-4b builds the PublicKeyCredential here). Until it
- * exists, an answer of Ferret ends the call with NotAllowedError: never an object the page could take for a credential.
- * @param {"create" | "get"} _kind @param {unknown} _response
- * @returns {unknown}
- */
-function credentialFrom(_kind, _response) {
-  return null;
-}
 
 function install() {
   const W = window;
@@ -250,6 +248,7 @@ function install() {
       // The browser answers, with the page's own arguments.
       toBrowser(entry);
     } else if (outcome === "result") {
+      // The credential has a `then` of its own, so a `then` of the page's Object.prototype is not reached by the resolution.
       const credential = credentialFrom(entry.kind, own(data, "response"));
       if (credential === null || credential === undefined) entry.reject(notAllowed());
       else entry.resolve(credential);
@@ -604,6 +603,77 @@ function install() {
     d.enumerable = true;
     d.configurable = true;
     ODP(CCP, kind, d);
+  }
+  installStatics();
+
+  // ---- the static methods of PublicKeyCredential: where Ferret answers (the bridge is connected) Ferret's answer, else the browser's
+  function installStatics() {
+    const PKC = /** @type {any} */ (W).PublicKeyCredential;
+    if (typeof PKC !== "function") return;
+    const pThen = P.prototype.then;
+    /** What Ferret's provider can do, for getClientCapabilities (design § 9.5). */
+    const CAPABILITIES = /** @type {const} */ ([
+      ["conditionalCreate", false], ["conditionalGet", true], ["passkeyPlatformAuthenticator", true], ["userVerifyingPlatformAuthenticator", true],
+      ["extension:prf", true], ["extension:credProps", true],
+    ]);
+    const original = (/** @type {string} */ name) => (typeof PKC[name] === "function" ? PKC[name] : null);
+    const uvpaa = original("isUserVerifyingPlatformAuthenticatorAvailable");
+    const conditional = original("isConditionalMediationAvailable");
+    const capabilities = original("getClientCapabilities");
+    /** @param {string} name @param {Function} value */
+    const redefine = (name, value) => {
+      const held = OGOPD(PKC, name);
+      const d = rec();
+      d.value = value;
+      d.writable = own(held, "writable") !== false;
+      d.enumerable = own(held, "enumerable") !== false;
+      d.configurable = own(held, "configurable") !== false;
+      ODP(PKC, name, d);
+    };
+    const answers = {
+      /** @param {any[]} args */
+      isUserVerifyingPlatformAuthenticatorAvailable(...args) {
+        // @ts-ignore the browser's own function, called with the page's `this`
+        return port !== null ? new P((resolve) => resolve(true)) : R(/** @type {Function} */ (uvpaa), this, args);
+      },
+      /** @param {any[]} args */
+      isConditionalMediationAvailable(...args) {
+        // @ts-ignore as above
+        return port !== null ? new P((resolve) => resolve(true)) : R(/** @type {Function} */ (conditional), this, args);
+      },
+      /** @param {any[]} args */
+      getClientCapabilities(...args) {
+        // @ts-ignore as above
+        const given = R(/** @type {Function} */ (capabilities), this, args);
+        if (port === null) return given;
+        return new P((resolve, reject) => {
+          R(pThen, given, [
+            (/** @type {any} */ value) => {
+              try {
+                const out = {};
+                const keys = typeof value === "object" && value !== null ? OK(value) : [];
+                for (let i = 0; i < keys.length; i += 1) put(out, keys[i], value[keys[i]]);
+                for (let i = 0; i < CAPABILITIES.length; i += 1) put(out, CAPABILITIES[i][0], CAPABILITIES[i][1]);
+                // A record of the page's world with a `then` of its own: not in the list of its keys.
+                const d = rec();
+                d.value = undefined;
+                d.writable = false;
+                d.enumerable = false;
+                d.configurable = true;
+                ODP(out, "then", d);
+                resolve(out);
+              } catch (error) {
+                reject(error);
+              }
+            },
+            reject,
+          ]);
+        });
+      },
+    };
+    if (uvpaa !== null) redefine("isUserVerifyingPlatformAuthenticatorAvailable", answers.isUserVerifyingPlatformAuthenticatorAvailable);
+    if (conditional !== null) redefine("isConditionalMediationAvailable", answers.isConditionalMediationAvailable);
+    if (capabilities !== null) redefine("getClientCapabilities", answers.getClientCapabilities);
   }
 }
 
