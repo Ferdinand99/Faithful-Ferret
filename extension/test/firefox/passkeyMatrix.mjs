@@ -12,7 +12,8 @@
 //           This is what U4-3 can do, and it proves the fixtures, the pages, the runner and the report.
 //   ferret  the extension answers: it is signed in to the end-to-end stack of the run (scripts/lanbox-ext.sh passkey-matrix
 //           --provider ferret joins both networks), with passkeys on, and the runner presses in Ferret's window what a person
-//           would: "Save in Ferret" for a new passkey, the first passkey of a sign-in (or "Cancel" when Ferret offers none).
+//           would: "Save in Ferret" for a new passkey, the first passkey of a sign-in (or "Use the browser" when Ferret offers
+//           none: a cancel would count toward the tab's calm period and keep the next cases' windows from opening).
 //           The cases that need a driver step of their own (a lock, a navigation, the network going away while a request
 //           waits) are reported as not run.
 //
@@ -184,7 +185,7 @@ export async function turnOnFerret(session, channel) {
 
 /**
  * Presses in every chooser window of Ferret that is ready what a person would: "Save in Ferret" for a new passkey; for a sign-in
- * the first passkey Ferret offers, or "Cancel" when it offers none. Windows already pressed in (`pressed`) and the ones that were
+ * the first passkey Ferret offers, or "Use the browser" when it offers none. Windows already pressed in (`pressed`) and the ones that were
  * there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window.
  * @param {import("./driver.mjs").Session} session @param {Set<string>} baseline @param {Set<string>} pressed @param {string} main
  * @returns {Promise<Array<{ kind: string, role: string }>>}
@@ -208,7 +209,7 @@ export async function pressInChooser(session, baseline, pressed, main) {
       // The window's guard: a click counts only 400 ms after its content was built.
       await sleep(900);
       const candidates = await session.findAll('[data-role="passkey-candidate"]');
-      const role = shown.kind === "create" ? "passkey-create-new" : candidates.length > 0 ? "passkey-candidate" : "passkey-cancel";
+      const role = shown.kind === "create" ? "passkey-create-new" : candidates.length > 0 ? "passkey-candidate" : "passkey-browser";
       const [button] = role === "passkey-candidate" ? candidates : await session.findAll(`[data-role="${role}"]`);
       if (!button) continue;
       await session.click(button);
