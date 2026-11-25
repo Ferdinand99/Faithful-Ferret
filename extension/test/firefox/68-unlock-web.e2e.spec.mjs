@@ -14,7 +14,7 @@
 // The stack must be fresh (`e2e-up`), as for the other end-to-end specs; the account is the one the first channel made.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { POPUP_URL, SLOW, VAULT_URL, extensionSignIn, helpers, pace, webVaultAccount } from "./e2e.mjs";
+import { KEEP_BACKGROUND, POPUP_URL, SLOW, VAULT_URL, extensionSignIn, helpers, pace, webVaultAccount } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, stopFixtures } from "./harness.mjs";
 import { SENTINEL_PREFIX, addPasskey, ask, onBridge, pinPlaces, scanFolder, setPin } from "./unlock.mjs";
 
@@ -24,7 +24,7 @@ const UNLOCK_WINDOW_URL = `${EXTENSION_ORIGIN}/pages/unlockWindow.html`;
 const PIN = `${SENTINEL_PREFIX}web-flow-æøå`;
 
 /** The soft token answers the virtual authenticator; the default profile uses the USB token, which a container has none of. */
-const SOFT_TOKEN = { "security.webauth.webauthn_enable_softtoken": true, "security.webauth.webauthn_enable_usbtoken": false };
+const SOFT_TOKEN = { ...KEEP_BACKGROUND, "security.webauth.webauthn_enable_softtoken": true, "security.webauth.webauthn_enable_usbtoken": false };
 
 /** @typedef {import("./driver.mjs").Session} Session */
 

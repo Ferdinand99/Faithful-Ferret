@@ -20,6 +20,13 @@ export const ADMIN_URL = `https://${ADMIN_HOST}`;
 export const DEVICE_NAME = "Ferret for Firefox (Linux)";
 /** Argon2id runs for seconds in Firefox. */
 export const SLOW = 120_000;
+/**
+ * The preference that ends the background page of the manifest 3 build (an event page) when it has had no event for this long, in
+ * milliseconds. Firefox's own is 30 seconds. A page that is ended comes back locked (that is the build's rule, and
+ * 02-lifetime.spec checks it), and its ports hang up. The specs here wait with `pace()` for up to a minute with the vault open and
+ * a port in hand, so they run with a time no spec reaches: the end of the page is the subject of 02-lifetime and not of them.
+ */
+export const KEEP_BACKGROUND = Object.freeze({ "extensions.background.idle.timeout": 3_600_000 });
 
 // ------------------------------------------------------------ the run's account
 
@@ -192,7 +199,7 @@ export async function extensionSignIn(session, fields) {
 /** @param {string} channel */
 export async function start(channel) {
   assert.ok(process.env.FERRET_E2E_CA_PEM, "FERRET_E2E_CA_PEM is not set (run through scripts/lanbox-ext.sh e2e)");
-  const session = await launch({ channel });
+  const session = await launch({ channel, prefs: KEEP_BACKGROUND });
   await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
   return session;
 }
