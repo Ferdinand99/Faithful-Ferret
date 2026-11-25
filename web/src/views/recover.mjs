@@ -50,6 +50,8 @@ export function recoverErrorText(t, error) {
  * @property {(text: string) => Promise<import("../flows/setupQr.mjs").SetupQr>} readSetupQr reads the sheet's QR text (no request)
  * @property {(email: string) => Promise<{ pinned: boolean, skBit: boolean | null, skStored: boolean }>} deviceStatus what this device knows (no request)
  * @property {(args: Record<string, any>) => Promise<"recovered">} recover the flow (`recoverAccount`), bound to the session
+ * @property {() => Promise<boolean>} [passkeysOffered] whether the server offers passkeys as unlock methods; when it does, the
+ *   page that says the account is recovered asks the user to look at the passkeys (a recovery leaves them as they were)
  * @property {(path: string) => void} go
  * @property {() => void} [print]
  * @property {typeof realSheetView} [sheetView]
@@ -207,6 +209,17 @@ export function recoverView(deps) {
     form.hidden = true;
     const open = el("button", { type: "button", class: "btn btn-primary", "data-role": "open-vault" }, t("recover.done_open"));
     open.addEventListener("click", () => go("/"));
+    // A recovery rewrites the password and the recovery key and leaves the passkeys as they were: a passkey someone added
+    // before is still there. Where passkeys are offered, the user is asked to look at the list.
+    const passkeys = el("p", { "data-role": "done-passkeys" });
+    passkeys.hidden = true;
+    if (signedIn && deps.passkeysOffered) {
+      deps.passkeysOffered().then((offered) => {
+        if (!offered) return;
+        mount(passkeys, document.createTextNode(`${t("recover.done_passkeys")} `), el("a", { href: "#/unlock-methods", "data-role": "done-passkeys-link" }, t("recover.done_passkeys_link")));
+        passkeys.hidden = false;
+      }, () => undefined);
+    }
     mount(
       doneSlot,
       el(
@@ -219,6 +232,9 @@ export function recoverView(deps) {
         el("p", null, t("recover.done_old_files")),
         el("p", null, t("recover.done_sheet")),
         el("p", null, t("recover.done_backup")),
+        passkeys,
+        // Not signed in: the passkey list cannot be read yet, so the note says where to look once the user is.
+        signedIn ? null : el("p", { "data-role": "done-passkeys-later" }, t("recover.done_passkeys_later")),
         signedIn ? el("div", { class: "actions" }, open) : el("p", null, el("a", { href: "#/login" }, t("recover.sign_in_link"))),
       ),
     );

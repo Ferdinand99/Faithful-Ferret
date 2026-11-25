@@ -29,7 +29,7 @@ async function withDom(body) {
  * The page over the real flow in a recovery world (or over `recover` when given).
  * @param {{ world?: any, recover?: (args: any) => Promise<any>, info?: any, lang?: string, device?: any }} [options]
  */
-function page({ world, recover, info = null, lang = "en", device = { pinned: false, skBit: null, skStored: false }, resetOpen = false } = {}) {
+function page({ world, recover, info = null, lang = "en", device = { pinned: false, skBit: null, skStored: false }, resetOpen = false, passkeysOffered } = {}) {
   const went = [];
   const root = recoverView({
     t: translator(lang),
@@ -38,6 +38,7 @@ function page({ world, recover, info = null, lang = "en", device = { pinned: fal
     serverUrl: SERVER,
     readSetupQr: (text) => readSetupQr({ vault: { setup_qr_parse: parseQr } }, text),
     deviceStatus: async () => device,
+    passkeysOffered,
     recover: recover ?? ((args) => recoverAccount(world.env, args, { signIn: (a) => world.session.unlock(a) })),
     go: (path) => went.push(path),
     print: () => undefined,
@@ -168,6 +169,69 @@ test("the_new_key_is_shown_alone_typed_back_and_the_page_ends_signed_in", async 
     assert.equal(textOf(byRole(root, "error")).trim(), EN["recover.error.cancelled"]);
     assert.equal(world.recovers.length, 0);
   });
+});
+
+test("after_a_recovery_the_page_asks_the_user_to_look_at_the_passkeys_when_they_are_offered", async () => {
+  // A recovery rewrites the password and the recovery key and leaves the passkeys: the page says so and links to the list.
+  for (const [lang, texts] of [["en", EN], ["nb", NB]]) {
+    for (const offered of [true, false]) {
+      await withDom(async () => {
+        const world = await recoverWorld();
+        const { root } = page({ world, lang, passkeysOffered: async () => offered });
+        await settle();
+        await fill(root);
+        void fire(byRole(root, "recover-form"), "submit");
+        await until(() => byRole(root, "sheet-page") !== null);
+        byRole(byRole(root, "sheet-page"), "rk-typed").value = NEW_RK;
+        await fire(byRole(byRole(root, "sheet-page"), "confirm-form"), "submit");
+        await until(() => byRole(root, "recover-done") !== null);
+        await settle();
+        const note = byRole(root, "done-passkeys");
+        assert.equal(note.hidden, !offered, `${lang} ${offered}`);
+        if (offered) {
+          assert.ok(textOf(note).includes(texts["recover.done_passkeys"]));
+          assert.equal(byRole(note, "done-passkeys-link").getAttribute("href"), "#/unlock-methods");
+        }
+      });
+    }
+  }
+  // A page that cannot tell (no such offer, or the check fails) says nothing about passkeys.
+  await withDom(async () => {
+    const world = await recoverWorld();
+    const { root } = page({ world, passkeysOffered: async () => { throw new Error("no answer"); } });
+    await settle();
+    await fill(root);
+    void fire(byRole(root, "recover-form"), "submit");
+    await until(() => byRole(root, "sheet-page") !== null);
+    byRole(byRole(root, "sheet-page"), "rk-typed").value = NEW_RK;
+    await fire(byRole(byRole(root, "sheet-page"), "confirm-form"), "submit");
+    await until(() => byRole(root, "recover-done") !== null);
+    await settle();
+    assert.equal(byRole(root, "done-passkeys").hidden, true);
+  });
+});
+
+test("a_recovery_that_did_not_sign_in_says_where_to_look_at_the_passkeys_later", async () => {
+  for (const [lang, texts] of [["en", EN], ["nb", NB]]) {
+    await withDom(async () => {
+      const world = await recoverWorld();
+      const failing = async () => {
+        throw Object.assign(new Error("no sign-in"), { code: "network" });
+      };
+      const { root } = page({ world, lang, recover: (args) => recoverAccount(world.env, args, { signIn: failing }), passkeysOffered: async () => true });
+      await settle();
+      await fill(root);
+      void fire(byRole(root, "recover-form"), "submit");
+      await until(() => byRole(root, "sheet-page") !== null);
+      byRole(byRole(root, "sheet-page"), "rk-typed").value = NEW_RK;
+      await fire(byRole(byRole(root, "sheet-page"), "confirm-form"), "submit");
+      await until(() => byRole(root, "recover-done") !== null);
+      await settle();
+      assert.equal(textOf(byRole(root, "done-signed-in")).trim(), texts["recover.done_not_signed_in"]);
+      assert.equal(textOf(byRole(root, "done-passkeys-later")).trim(), texts["recover.done_passkeys_later"]);
+      assert.equal(byRole(root, "done-passkeys").hidden, true, "the list itself cannot be read before the sign-in");
+    });
+  }
 });
 
 test("a_wrong_code_shows_the_single_failure_text", async () => {

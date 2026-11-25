@@ -7,6 +7,8 @@
 import { changePassword } from "../flows/changePassword.mjs";
 import { encryptedExport, plainExport } from "../flows/export.mjs";
 import { continueImport, discardImport, previewImport, runImport } from "../flows/import.mjs";
+import { browserDeps } from "../flows/passkeyCeremony.mjs";
+import { preparePasskeyUnlock, unlockWithPasskey } from "../flows/prfUnlock.mjs";
 import { reauthenticate } from "../flows/reauth.mjs";
 import { reapplyMethods, reapplyOffer } from "../flows/reapplyMethods.mjs";
 import { register } from "../flows/register.mjs";
@@ -55,6 +57,29 @@ export function createVaultSession(options) {
      */
     async unlock(args) {
       return remember(await session.unlock(args));
+    },
+
+    /**
+     * Whether the Unlock page can offer a passkey, and what its click needs (see `flows/prfUnlock.mjs`): null unless the
+     * vault is closed, the vault session is valid, this device has the pinned record, the server offers passkeys and
+     * the account has a passkey method. Nothing is asked of the passkey here.
+     * @param {{ rpId?: string }} [options] `rpId`: the exact host of the vault (left out: the page's)
+     */
+    async preparePasskeyUnlock({ rpId = globalThis.location?.hostname } = {}) {
+      if (inner.current() !== null) return null;
+      return preparePasskeyUnlock(env, { rpId });
+    },
+
+    /**
+     * Opens the vault with a passkey, in the live vault session. Call it from the click: the WebAuthn call is made before
+     * anything else happens. This browser remembers the account, as after any unlock.
+     * @param {import("../flows/prfUnlock.mjs").PasskeyOffer} offer what `preparePasskeyUnlock` gave
+     * @param {{ getAssertion?: (publicKey: any) => Promise<any>, deps?: Parameters<typeof unlockWithPasskey>[2]["deps"] }} [how]
+     */
+    unlockWithPasskey(offer, { getAssertion = (publicKey) => globalThis.navigator.credentials.get({ publicKey }), deps = browserDeps() } = {}) {
+      // No `await` before the flow starts: its first act is the WebAuthn call, and it has to come from the click.
+      if (inner.current() !== null) return Promise.reject(new AccountError("passkey_sequence"));
+      return unlockWithPasskey(env, offer, { getAssertion, deps }).then(async (result) => remember(await inner.opened(result)));
     },
 
     /**

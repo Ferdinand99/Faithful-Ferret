@@ -11,6 +11,8 @@
   "dom.mjs",
   "flows/deviceSecret.mjs",
   "flows/forgetServer.mjs",
+  "flows/passkeyAnswer.mjs",
+  "flows/prfUnlock.mjs",
   "flows/setupQr.mjs",
   "flows/signin.mjs",
   "i18n.mjs",
