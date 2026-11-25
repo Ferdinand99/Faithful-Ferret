@@ -18,13 +18,16 @@
 //   passkey_site    { request_id }  -> { ok, site }      the site as the core checked it (needs the open vault)
 //   passkey_cancel / passkey_browser { request_id }       the person gave up / the browser answers instead
 //   passkey_never   { request_id }                        "Never on this site", then the browser (this window's own type)
+//   passkey_candidates { request_id } -> { ok, candidates, recent, methods, online }   the passkeys of the vault for a get
+//   passkey_choose  { request_id, kind, item_id | mode, name, folder_id }   the person's choice
+//   passkey_verify  { request_id, method, pin | mp, sk | credential_id, prf_output }   the verification step (passkeyVerify.mjs)
 //
-// What the person can choose from (the passkeys of Ferret for a get, the items a new passkey can go to, and the choice itself)
-// belongs to the tasks that build the answering side of the background. Their messages are named here (passkey_candidates,
-// passkey_create_options, passkey_choose) and are sent only when the build's UI table has them; until it does the window shows
-// no passkeys of Ferret and the browser as the way on, and a choice is refused as not_available.
+// Each message is sent only when the build's UI table has it (passkey_create_options belongs to the create side of the
+// background); without it the window shows no passkeys of Ferret and the browser as the way on, and a choice is refused as
+// not_available.
 
 import { UI_TYPES } from "../shared/protocol.mjs";
+import { VERIFY_WAYS } from "./passkeyVerify.mjs";
 
 /** How long a click is ignored after the window got the focus or its content changed (milliseconds; design § 10.3.3). */
 export const GUARD_MS = 400;
@@ -47,6 +50,7 @@ export const CHOOSER_ERRORS = Object.freeze([
   "invalid_input",
   "not_verified",
   "verification_needed",
+  "verification_unavailable",
   "busy",
   "already_exists",
   "excluded",
@@ -132,6 +136,7 @@ export function defaultItemName(host) {
  *   existing: { itemId: string, name: string } | null,
  *   folders: Array<{ id: string, name: string }>,
  *   recent: boolean,
+ *   methods: string[],
  * }} View
  */
 
@@ -239,6 +244,8 @@ export function viewOf(reply) {
     existing: existingId !== null && isRecord(reply.existing) ? { itemId: existingId, name: siteText(reply.existing.name) } : null,
     folders,
     recent: reply.recent === true,
+    // The ways to verify the background offers, in its order (the recent unlock is the background's own: it needs no step).
+    methods: (Array.isArray(reply.methods) ? reply.methods : []).filter((m) => typeof m === "string" && VERIFY_WAYS.includes(m)),
   };
 }
 
@@ -304,6 +311,7 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
         existing: null,
         folders: [],
         recent: false,
+        methods: [],
       };
       if (site?.ok === true && isRecord(site.site)) {
         raw.state = "ready";
@@ -321,6 +329,8 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
         if (found?.ok === true && Array.isArray(found.candidates)) {
           raw.candidates = found.candidates;
           raw.recent = found.recent === true;
+          raw.methods = Array.isArray(found.methods) ? found.methods : [];
+          raw.online = found.online !== false;
         }
       } else {
         // A new passkey is saved only with the server (design UK111): the window finds out before it offers anything.
@@ -332,6 +342,7 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
           raw.existing = isRecord(options.existing) ? options.existing : null;
           raw.folders = Array.isArray(options.folders) ? options.folders : [];
           raw.recent = options.recent === true;
+          raw.methods = Array.isArray(options.methods) ? options.methods : [];
         }
       }
       const view = viewOf(raw);
@@ -349,6 +360,23 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
       else if (choice.mode === "new") Object.assign(body, { mode: "new", name: choice.name, ...(choice.folderId !== null ? { folder_id: choice.folderId } : {}) });
       else Object.assign(body, { mode: "attach", item_id: choice.itemId });
       return outcome(await ask("passkey_choose", body));
+    },
+    /**
+     * One try of the verification step: the way and what the person gave for it (the PIN, the master password and the secret key,
+     * or a passkey's credential id and 32 bytes). The background checks it and issues the request's one-time mark; the window
+     * never says "verified" itself.
+     * @param {"prf" | "pin" | "password"} method @param {Record<string, string>} input
+     * @returns {Promise<{ ok: true } | { ok: false, reason: string, left?: number, wait_ms?: number }>}
+     */
+    async verify(method, input) {
+      const reply = await ask("passkey_verify", { method, ...input });
+      if (reply?.ok === true) return { ok: true };
+      return {
+        ok: false,
+        reason: named(reply?.reason),
+        ...(Number.isSafeInteger(reply?.left) ? { left: reply.left } : {}),
+        ...(Number.isSafeInteger(reply?.wait_ms) ? { wait_ms: reply.wait_ms } : {}),
+      };
     },
     browser: async () => outcome(await ask("passkey_browser")),
     never: async () => outcome(await ask("passkey_never")),

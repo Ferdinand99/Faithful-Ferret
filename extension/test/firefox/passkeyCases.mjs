@@ -293,7 +293,9 @@ export function observe(reports, { windowShown, windowsOpened = windowShown ? 1 
   } else if (done?.ok) {
     o.ceremony = "ok";
   }
-  if (!windowShown && steps.some((s) => s.ok)) o.route = "browser";
+  // No window of Ferret's and the page's call ended: the browser answered it (a call Ferret took ends only from its window, or
+  // waits with a mark when no window may open).
+  if (!windowShown && steps.length > 0) o.route = "browser";
   const last = [...steps].reverse().find((s) => s.ok && s.server?.flags);
   if (last) o.flags = last.server.flags;
   // The extension results are what the page's browser (or Ferret) returned, whether or not the relying party then accepted the response.

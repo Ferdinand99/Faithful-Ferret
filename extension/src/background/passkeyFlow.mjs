@@ -6,13 +6,13 @@
 // passkey_create_options  what the vault has for a create request: the items a new passkey can be added to (a login of this
 //                         address by host or exactly, without a passkey; `same_user` when its user name is the page's), the item
 //                         that already holds a passkey for the same RP ID and user handle (`existing`), and the folders, each
-//                         named by a reference good for this request only
-// passkey_choose          the person's choice: a new item (a name, a folder) or an item to add to. The click in the window is the
-//                         evidence of user presence (only this top-level window sends it); user verification is the broker's
-//                         one-time mark for the request. The passkey is made in the core and written by passkeyWrite.mjs, and the
+//                         named by a reference good for this request only; with it, whether a recent unlock is enough and the
+//                         ways to verify
+// chooseCreate            the create side of the window's `passkey_choose` (the op is passkeyGet.mjs's, which hands a create choice
+//                         on here): a new item (a name, a folder) or an item to add to. The click in the window is the evidence of
+//                         user presence (only this top-level window sends it); user verification is decided as for a get
+//                         (passkeyVerify.mjs `decide`). The passkey is made in the core and written by passkeyWrite.mjs, and the
 //                         page gets its answer only after the server has the item.
-//
-// A get's choice is not made here yet (`not_available`); the window then offers the browser.
 //
 // Everything the window gets is the vault's and the core's, never the page's: the RP ID is the one the core checked, and the
 // items are read in the core. The page learns nothing from the window's messages: it gets its answer, or the error the browser
@@ -20,9 +20,10 @@
 
 import { fromB64u, responseToWire } from "../shared/webauthnWire.mjs";
 import { pageErrorOf } from "./passkeyRequests.mjs";
+import { VERIFY_METHODS } from "./passkeyVerify.mjs";
 
 /** The core operations of this module (also the chooser window's UI types). */
-export const PASSKEY_CHOICE_OPS = Object.freeze(["passkey_create_options", "passkey_choose"]);
+export const PASSKEY_CHOICE_OPS = Object.freeze(["passkey_create_options"]);
 
 /** The core's codes that say the vault or its worker is gone: the core host handles those (the window asks for the unlock). */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory", "stopped"]);
@@ -91,10 +92,11 @@ export function createResponseOf(r) {
  * @param {{
  *   requests: ReturnType<typeof import("./passkeyRequests.mjs").createPasskeyRequests>,
  *   writer: () => ReturnType<typeof import("./passkeyWrite.mjs").createPasskeyWrite> | null,
+ *   verify: ReturnType<typeof import("./passkeyVerify.mjs").createPasskeyVerify>,
  *   random?: (bytes: Uint8Array) => Uint8Array,
- * }} deps `writer`: the passkey writer of the open vault (null when the sync does not run)
+ * }} deps `writer`: the passkey writer of the open vault (null when the sync does not run); `verify`: user verification
  */
-export function createPasskeyFlow({ requests, writer, random = (bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)) }) {
+export function createPasskeyFlow({ requests, writer, verify, random = (bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)) }) {
   /** The folder references a window was given, per request: reference -> folder name. @type {Map<string, Map<string, string>>} */
   const folderRefs = new Map();
 
@@ -179,14 +181,19 @@ export function createPasskeyFlow({ requests, writer, random = (bytes) => global
     }
     // Nothing is written for a page that is no longer the one that asked.
     if (!(await requests.recheck(req.id, req.session))) return { ok: false, reason: "gone" };
-    // User verification: only the broker's one-time mark for this request (a recent unlock or a verification in the window). It is
-    // spent with the answer (the request ends, and its mark with it); a write the server refused gave the page nothing, so the
-    // mark stays for the person's next try of the same request.
-    const verified = requests.verifiedFor(req.id, req.session);
-    if (level === "required" && !verified) return { ok: false, reason: "verification_needed" };
-    // User presence: the click in this window is the evidence (only the window's own choice reaches this op). A page that
-    // discourages verification gets the click alone.
-    const uv = { user_present: true, user_verified: verified && level !== "discouraged" };
+    // User verification, decided as for a get (passkeyVerify.mjs): the request's one-time mark or the recent unlock gives UV, and
+    // the mark is used here. A write the server refused gave the page nothing, so the mark is given back for the person's next try
+    // of the same request.
+    const ref = { request_id: req.id, session: req.session };
+    const decided = await verify.decide(ref, level);
+    if (!decided.ok) return decided;
+    /** A refusal that answered the page nothing: the mark goes back to the request. @param {{ ok: false, reason: string }} out */
+    const giveBack = (out) => {
+      if (decided.uv) verify.restore(ref);
+      return out;
+    };
+    // User presence: the click in this window is the evidence (only the window's own choice reaches this op).
+    const uv = { user_present: true, user_verified: decided.uv };
     const write = w;
     const rpId = found.site.rp_id;
     /** @type {(() => void) | null} */
@@ -215,12 +222,12 @@ export function createPasskeyFlow({ requests, writer, random = (bytes) => global
         // The core refused: excludeCredentials named a passkey of the vault (InvalidStateError after the click), or options it
         // cannot take. The request ends as the browser would end it.
         const page = pageErrorOf(code);
-        if (page === "NotAllowedError") return { ok: false, reason: "internal_error" };
+        if (page === "NotAllowedError") return giveBack({ ok: false, reason: "internal_error" });
         requests.fail(req.id, req.session, page);
         return { ok: false, reason: ENDED[page] };
       }
       if (outcome.kind === "late") return { ok: false, reason: "gone" };
-      if (outcome.kind === "refused") return { ok: false, reason: outcome.reason };
+      if (outcome.kind === "refused") return giveBack({ ok: false, reason: outcome.reason });
       /** @type {Record<string, unknown>} */
       let wire;
       try {
@@ -254,23 +261,19 @@ export function createPasskeyFlow({ requests, writer, random = (bytes) => global
           if ("reason" in found) return { ok: false, reason: found.reason };
           const scanned = await scanFor(w, req, found.site.rp_id);
           if (!requests.waiting(req.id, req.session)) return { ok: false, reason: "gone" };
+          const ways = await verify.methods();
           return {
             ok: true,
             targets: scanned.targets.map((/** @type {any} */ t) => ({ item_id: t.item_id, name: t.name, user_name: t.user_name, same_user: t.same_user })),
             existing: scanned.existing,
             folders: issueFolders(req.id, scanned.folders),
+            recent: await verify.recent(),
+            methods: VERIFY_METHODS.filter((m) => /** @type {Record<string, boolean>} */ (/** @type {unknown} */ (ways))[m] === true),
           };
         },
       },
-      passkey_choose: {
-        vault: true,
-        worker: /** @type {const} */ ("vault"),
-        run: async (/** @type {any} */ client, /** @type {any} */ args) => {
-          if (args?.kind === "create") return chooseCreate(client, args);
-          // A get's choice belongs to the get side, which is not here yet: the window offers the browser.
-          return { ok: false, reason: "not_available" };
-        },
-      },
     }),
+    // The create side of the window's one `passkey_choose` (passkeyGet.mjs holds the op and hands a create choice on here).
+    chooseCreate,
   });
 }

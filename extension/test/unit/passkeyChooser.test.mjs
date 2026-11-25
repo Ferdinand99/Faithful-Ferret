@@ -470,11 +470,10 @@ test("no_match_still_shows_the_window_with_the_browser_choice", async () => {
     requests.push({ type, body });
     return answers[/** @type {keyof typeof answers} */ (type)];
   };
-  // A background that answers the window's two questions and has no list of Ferret's passkeys (the type is not in the table of
-  // this build): the list is not asked for, and the window is the same.
+  // A background that answers the window's two questions and has no list of Ferret's passkeys (a build whose table lacks the
+  // type): the list is not asked for, and the window is the same.
   const { UI_TYPES } = await world.load("shared/protocol.mjs");
-  assert.equal(Object.hasOwn(UI_TYPES, "passkey_candidates"), false);
-  const backend = world.flow.createChooserBackend(request, REQUEST, { has: (/** @type {string} */ type) => type in answers || Object.hasOwn(UI_TYPES, type) });
+  const backend = world.flow.createChooserBackend(request, REQUEST, { has: (/** @type {string} */ type) => type in answers || (Object.hasOwn(UI_TYPES, type) && type !== "passkey_candidates") });
   const view = await backend.view();
   assert.ok(view.ok);
   assert.equal(view.view.candidates.length, 0);
@@ -751,4 +750,98 @@ test("the_other_choices_are_one_button_one_row_and_one_disclosure_and_the_rows_a
   const create = await open(world, { view: raw({ kind: "create", user: { name: "a", display_name: "" }, folders: [{ id: ID(9), name: "Work" }] }) });
   const namerow = every(create.root).find((n) => n.getAttribute("class") === "ff-pk-namerow");
   assert.ok(namerow && one(namerow, "passkey-name") && one(namerow, "passkey-folder"));
+});
+
+test("verification_needed_shows_the_step_in_the_window_and_the_same_choice_goes_again_after_it", async () => {
+  const world = await setup();
+  const state = { view: raw({ candidates: [CANDIDATES[0]], methods: ["prf", "pin", "password", "nonsense"] }) };
+  const { root, fake, time } = await open(world, state);
+  /** @type {any[]} */
+  const verified = [];
+  let chooses = 0;
+  fake.backend.choose = async (/** @type {any} */ choice) => {
+    fake.calls.push({ call: "choose", arg: choice });
+    chooses += 1;
+    return chooses === 1 ? { ok: false, reason: "verification_needed" } : { ok: true };
+  };
+  /** @type {any} */ (fake.backend).verify = async (/** @type {string} */ method, /** @type {any} */ input) => {
+    verified.push({ method, input, field: one(root, "passkey-verify-pin")?.value });
+    return input.pin === "123456" ? { ok: true } : { ok: false, reason: "wrong_pin", left: 4 };
+  };
+  await time.tick(400);
+  await tap(byRole(root, "passkey-candidate")[0]);
+  // The step takes the list's place: the chosen passkey, the PIN and the master password (which says it signs in). No passkey
+  // button without the window's WebAuthn call (none was given), and only the ways the background named.
+  assert.ok(one(root, "passkey-verify-step"));
+  assert.equal(one(root, "passkey-chosen").getAttribute("data-item"), CANDIDATES[0].item_id);
+  assert.equal(byRole(root, "passkey-candidate").length, 0);
+  assert.equal(one(root, "passkey-verify-prf"), null);
+  assert.ok(one(root, "passkey-verify-pin-form") && one(root, "passkey-verify-password-form"));
+  assert.match(one(root, "passkey-verify-signs-in").textContent, /signing in to your server/);
+  assert.ok(one(root, "passkey-browser") && one(root, "passkey-cancel"), "the other choices stay");
+  // A wrong PIN: the field is emptied before the request goes out, and the window says how many tries are left.
+  const pin = one(root, "passkey-verify-pin");
+  pin.value = "000000";
+  fire(one(root, "passkey-verify-pin-form"), "submit");
+  await settle();
+  assert.deepEqual(verified[0], { method: "pin", input: { pin: "000000" }, field: "" });
+  assert.match(one(root, "passkey-verify-error").textContent, /4 tries left/);
+  assert.equal(chooses, 1);
+  // The right PIN: the background issued the mark, and the window sends the same choice again (and closes on the answer).
+  one(root, "passkey-verify-pin").value = "123456";
+  fire(one(root, "passkey-verify-pin-form"), "submit");
+  await settle();
+  assert.equal(chooses, 2);
+  const choices = fake.calls.filter((c) => c.call === "choose").map((c) => c.arg);
+  assert.deepEqual(choices[1], choices[0]);
+  assert.equal(root.getAttribute("data-state"), "ended");
+});
+
+test("the_verification_step_has_a_passkey_button_only_with_the_windows_call_and_back_returns_to_the_list", async () => {
+  const world = await setup();
+  const step = await world.load("pages/passkeyVerify.mjs");
+  const state = { view: raw({ candidates: CANDIDATES, methods: ["prf"] }) };
+  /** @type {any[]} */
+  const proved = [];
+  const proof = {
+    options: async () => ({ ok: true, offer: { rpId: "vault.example", credentials: [{ id: new Uint8Array([1]), salt: new Uint8Array(32) }] } }),
+    prove: async (/** @type {any} */ offer) => {
+      proved.push(offer.rpId);
+      return { ok: true, credential_id: "AQ", prf_output: "x".repeat(43) };
+    },
+  };
+  const { root, fake, time } = await open(world, state, { proof });
+  fake.backend.choose = async () => ({ ok: false, reason: "verification_needed" });
+  /** @type {any[]} */
+  const verified = [];
+  /** @type {any} */ (fake.backend).verify = async (/** @type {string} */ method, /** @type {any} */ input) => {
+    verified.push({ method, input });
+    return { ok: false, reason: "prf_failed" };
+  };
+  await time.tick(400);
+  await tap(byRole(root, "passkey-candidate")[1]);
+  await settle();
+  const button = one(root, "passkey-verify-prf");
+  assert.ok(button, "the passkey of the vault is offered in the window");
+  assert.equal(button.hasAttribute("disabled"), false, "once what the call needs is there");
+  // A click counts only after the guard, and only when the person made it.
+  await tap(button, false);
+  assert.equal(proved.length, 0);
+  await time.tick(400);
+  await tap(button);
+  assert.deepEqual(proved, ["vault.example"]);
+  assert.deepEqual(verified, [{ method: "prf", input: { credential_id: "AQ", prf_output: "x".repeat(43) } }]);
+  assert.match(one(root, "passkey-verify-error").textContent, /does not open your vault/);
+  // "Back to the list".
+  await time.tick(400);
+  await tap(one(root, "passkey-verify-back"));
+  assert.equal(byRole(root, "passkey-candidate").length, 2);
+  assert.equal(one(root, "passkey-verify-step"), null);
+  // Every reason of the step has a text in both languages, and no step text is missing.
+  for (const lang of ["en", "nb"]) {
+    const catalog = world.catalog(lang);
+    for (const reason of [...step.VERIFY_REASONS, "unknown"]) assert.ok(catalog[`passkeys.verify.error.${reason}`], `${lang}: ${reason}`);
+    for (const key of ["title", "prf", "pin", "confirm", "signs_in", "back", "none"]) assert.ok(catalog[`passkeys.verify.${key}`], `${lang}: ${key}`);
+    assert.ok(catalog["passkeys.error.verification_unavailable"], lang);
+  }
 });

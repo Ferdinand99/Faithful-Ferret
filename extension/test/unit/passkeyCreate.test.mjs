@@ -67,11 +67,12 @@ function item(n, { name = `Item ${n}`, url = `${RP}/`, how = "host", username, p
  */
 async function world({ items = [], halted = null, put, options = {}, timeout, retry = 20 } = {}) {
   const { load } = await pkg();
-  const [{ createPasskeyRequests }, { createPasskeyFlow }, { createPasskeyWrite }, { decode, PUSH_TYPES }] = await Promise.all([
+  const [{ createPasskeyRequests }, { createPasskeyFlow }, { createPasskeyWrite }, { decode, PUSH_TYPES }, { createPasskeyVerify }] = await Promise.all([
     load("background/passkeyRequests.mjs"),
     load("background/passkeyFlow.mjs"),
     load("background/passkeyWrite.mjs"),
     load("shared/protocol.mjs"),
+    load("background/passkeyVerify.mjs"),
   ]);
   // The broker's clock and timers, moved by the test.
   let at = 1_000_000;
@@ -247,7 +248,15 @@ async function world({ items = [], halted = null, put, options = {}, timeout, re
   const make = () => createPasskeyWrite({ engine, vault, api, epoch: async () => 3, scope: "s", leftovers, saveMs: 300, retryMs: () => retry, store });
   let writer = make();
   let writerOn = true;
-  const flow = createPasskeyFlow({ requests, writer: () => (writerOn ? writer : null) });
+  // User verification as the background has it: the master password is a way only while `ways` is on (it needs the server).
+  const verifyState = { ways: false };
+  const verify = createPasskeyVerify({
+    password: { verify: async () => ({ ok: true }) },
+    settings: { recentAllowed: async () => true },
+    marks: { mark: (/** @type {string} */ id, /** @type {string} */ s) => requests.markVerified(id, s), take: (/** @type {string} */ id, /** @type {string} */ s) => requests.takeVerified(id, s) },
+    online: async () => verifyState.ways,
+  });
+  const flow = createPasskeyFlow({ requests, writer: () => (writerOn ? writer : null), verify });
   const client = { vault };
 
   /** A create request of the page, owned by the window's session. @param {Record<string, any>} [over] */
@@ -263,9 +272,10 @@ async function world({ items = [], halted = null, put, options = {}, timeout, re
     return id;
   }
   /** @param {string} op @param {Record<string, unknown>} args */
-  const call = (op, args) => /** @type {Promise<any>} */ (flow.ops[op].run(client, { session: SESSION, ...args }));
+  const call = (op, args) =>
+    /** @type {Promise<any>} */ (op === "passkey_choose" ? flow.chooseCreate(client, { session: SESSION, ...args }) : flow.ops[op].run(client, { session: SESSION, ...args }));
   return {
-    requests, flow, engine, vault, api, puts, pushed, core, writes, engineCalls, byId, server, clock, frames, request, call, feed, failRemove, sessionStore,
+    requests, flow, verify, verifyState, engine, vault, api, puts, pushed, core, writes, engineCalls, byId, server, clock, frames, request, call, feed, failRemove, sessionStore,
     get writer() {
       return writer;
     },
@@ -563,17 +573,18 @@ test("a_refused_write_keeps_the_verification_mark_for_the_next_try", async () =>
   const answers = [apiError(503, "unavailable")];
   const w = await world({ options: { authenticator_selection: { user_verification: "required" } }, put: () => (answers.length > 0 ? Promise.reject(answers.shift()) : Promise.resolve({ rev: 1, seq: 1, replayed: false })) });
   const id = await w.request();
+  w.verifyState.ways = true;
   // Without a mark a required request asks for the verification first, and nothing is made.
   assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: false, reason: "verification_needed" });
   assert.equal(w.core.filter((c) => c.op === "passkey_create").length, 0);
   assert.equal(w.requests.markVerified(id, SESSION), true);
   // The server refuses the write: the page got nothing, and the mark stays for the person's next try.
   assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: false, reason: "network" });
-  assert.equal(w.requests.verifiedFor(id, SESSION), true);
+  // (The mark was used for the try and given back: the next try needs no new verification.)
   assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: true });
   assert.deepEqual(w.core.filter((c) => c.op === "passkey_create").map((c) => c.uv), [{ user_present: true, user_verified: true }, { user_present: true, user_verified: true }]);
   // The answer ends the request, and its mark with it.
-  assert.equal(w.requests.verifiedFor(id, SESSION), false);
+  assert.equal(w.requests.takeVerified(id, SESSION), false);
 });
 
 // -------------------------------------------------------------------------------------------------------- what the window is offered
@@ -725,7 +736,8 @@ test("only_passkey_write_sends_a_passkey_create", async () => {
     const text = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
     const rel = relative(SRC, path).split("\\").join("/");
     if (/\.passkey_create(?:_confirm|_abort)?\s*\(/.test(text)) callers.push(rel);
-    if (/\/api\/sync\/items/.test(text)) writers.push(rel);
+    // (The test build's own probe that stores a test key in the vault, background/test-only, is never in a release.)
+    if (/\/api\/sync\/items/.test(text) && !rel.startsWith("background/test-only/")) writers.push(rel);
   }
   assert.deepEqual(callers, ["background/passkeyWrite.mjs"]);
   assert.deepEqual(writers, ["background/passkeyWrite.mjs"]);
@@ -754,4 +766,22 @@ test("only_passkey_write_sends_a_passkey_create", async () => {
   const { validate } = await load("shared/schema.mjs");
   assert.throws(() => validate(UI_TYPES.passkey_choose.request, { request_id: "a".repeat(32), kind: "create", mode: "new", name: "x", user_present: true }));
   assert.throws(() => validate(UI_TYPES.passkey_choose.request, { request_id: "a".repeat(32), kind: "create", mode: "new", name: "x", user_verified: true }));
+});
+
+test("a_create_decides_verification_as_a_get_does", async () => {
+  const w = await world();
+  w.verifyState.ways = true;
+  const id = await w.request();
+  // `preferred` (no `userVerification` given) asks for verification when there is a way, as a get does.
+  assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: false, reason: "verification_needed" });
+  assert.equal(w.core.filter((c) => c.op === "passkey_create").length, 0);
+  // The options tell the window which ways there are, and whether a recent unlock is enough.
+  const options = await w.call("passkey_create_options", { request_id: id });
+  assert.deepEqual(options.methods, ["password"]);
+  assert.equal(options.recent, false);
+  // A recent unlock is enough, and the mark it issues is used by the create.
+  w.verify.markUnlocked();
+  assert.equal((await w.call("passkey_create_options", { request_id: id })).recent, true);
+  assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: true });
+  assert.deepEqual(w.core.filter((c) => c.op === "passkey_create").map((c) => c.uv), [{ user_present: true, user_verified: true }]);
 });

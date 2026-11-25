@@ -89,6 +89,8 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   // The 32 bytes a passkey gave the unlock window, on their one way to the background (a request from the window, never a
   // reply). The window wipes its copy as soon as the message is sent.
   prf_unlock: Object.freeze(["prf_output"]),
+  // The passkey chooser's verification step: the PIN or a passkey's 32 bytes, one way (a request only).
+  passkey_verify: Object.freeze(["pin", "prf_output"]),
 });
 
 /**
@@ -109,6 +111,8 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   pin_unlock: Object.freeze(["pin"]),
   // Not typed, but it travels the same way: from the unlock window to the background, one way, in this one type.
   prf_unlock: Object.freeze(["prf_output"]),
+  // The passkey chooser's verification step.
+  passkey_verify: Object.freeze(["mp", "sk", "pin", "prf_output"]),
 });
 
 /** The type of the background's refusal. No table may define it. */
@@ -398,6 +402,9 @@ export const PASSKEY_REQUEST_VIEW = object({
   incognito: boolean(),
 });
 /** The site of a request as the core checked it (`passkey_site`): canonical forms (A-labels) and the forms for reading. */
+/** The ways to verify for a passkey request, in the order the window offers them. */
+const PK_WAYS = ["recent", "prf", "pin", "password"];
+const pkWays = array(string({ max: 16, oneOf: PK_WAYS }), { max: 4 });
 const pkSite = object({
   origin: string({ min: 1, max: 300 }),
   host_unicode: string({ min: 1, max: 300 }),
@@ -607,8 +614,9 @@ export const UI_TYPES = defineTypes({
         existing: nullable(object({ item_id: pkRequestRef, name: string({ max: 4096 }) })),
         folders: array(object({ id: pkRequestRef, name: string({ max: 4096 }) }), { max: 500 }),
         recent: boolean(),
+        methods: pkWays,
       },
-      { optional: ["reason", "targets", "existing", "folders", "recent"] },
+      { optional: ["reason", "targets", "existing", "folders", "recent", "methods"] },
     ),
   },
   // The person's choice in the window: for a create request a new item (`name`, `folder_id` from passkey_create_options) or an
@@ -627,6 +635,43 @@ export const UI_TYPES = defineTypes({
       { optional: ["mode", "name", "folder_id", "item_id"] },
     ),
     reply: okReply,
+  },
+  // A get in the window: the passkeys the core says may answer, the ways to verify now (in order), whether the server answers.
+  passkey_candidates: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        candidates: array(
+          object({ item_id: pkRequestRef, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: nullable(integer({ min: 0, max: 8_640_000_000_000_000 })) }),
+          { max: 200 },
+        ),
+        recent: boolean(),
+        methods: pkWays,
+        online: boolean(),
+      },
+      { optional: ["reason", "candidates", "recent", "methods", "online"] },
+    ),
+  },
+  // The window's verification step (chooser window of the request only; request only, never a reply).
+  passkey_verify: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        method: string({ max: 16, oneOf: PK_WAYS }),
+        pin: string({ min: 1, max: 256 }),
+        mp: string({ min: 1, max: 1024 }),
+        sk: string({ min: 1, max: 128 }),
+        credential_id: string({ min: 1, max: 1024, pattern: B64U }),
+        prf_output: string({ min: 43, max: 43, pattern: B64U }),
+      },
+      { optional: ["pin", "mp", "sk", "credential_id", "prf_output"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
+      { optional: ["reason", "left", "wait_ms"] },
+    ),
   },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's

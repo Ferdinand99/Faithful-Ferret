@@ -65,6 +65,8 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
     methodsStatus: 200,
     /** The server never answers. */
     hang: false,
+    /** The clients made for one check each (the verification for a passkey request). @type {any[]} */
+    scratch: [],
   };
 
   const server = deviceServer({
@@ -91,6 +93,19 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
     return server.fetchImpl(input, init);
   };
 
+  const pinUnlockFake = async (/** @type {Uint8Array} */ pin, /** @type {any} */ record, /** @type {any} */ wrap, /** @type {any} */ rule) => {
+    state.unlockCalls += 1;
+    state.pinsSeen.push(Buffer.from(pin).toString("utf8"));
+    pin.fill(0); // the real client wipes what it was given
+    if (state.unlockBehaviour) await state.unlockBehaviour(state.unlockCalls);
+    if (wrap.vk_epoch < record.vk_epoch_max) throw coded("pin_stale");
+    // Before any key stretching, as the core does.
+    if (!rule.allowed) throw coded("pin_not_allowed");
+    if ([...state.pinsSeen.at(-1)].length < rule.min_length) throw coded("input_too_short");
+    if (state.pinsSeen.at(-1) !== state.correctPin) throw coded("decrypt");
+    return { pinned: record };
+  };
+
   const client = coreClient({
     login_start: (/** @type {Uint8Array} */ mp) => {
       state.passwordsSeen.push(Buffer.from(mp).toString("utf8"));
@@ -100,18 +115,7 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
       if (state.passwordsSeen.at(-1) !== state.correctPassword) throw coded("decrypt");
       return { ke3: filled(64, 2), server_public_key: filled(32, 9) };
     },
-    pin_unlock: async (/** @type {Uint8Array} */ pin, /** @type {any} */ record, /** @type {any} */ wrap, /** @type {any} */ rule) => {
-      state.unlockCalls += 1;
-      state.pinsSeen.push(Buffer.from(pin).toString("utf8"));
-      pin.fill(0); // the real client wipes what it was given
-      if (state.unlockBehaviour) await state.unlockBehaviour(state.unlockCalls);
-      if (wrap.vk_epoch < record.vk_epoch_max) throw coded("pin_stale");
-      // Before any key stretching, as the core does.
-      if (!rule.allowed) throw coded("pin_not_allowed");
-      if ([...state.pinsSeen.at(-1)].length < rule.min_length) throw coded("input_too_short");
-      if (state.pinsSeen.at(-1) !== state.correctPin) throw coded("decrypt");
-      return { pinned: record };
-    },
+    pin_unlock: pinUnlockFake,
     check_server_methods: () => state.methodsCheck?.(),
     confirm_password: (/** @type {string} */ _url, /** @type {any} */ ctx, /** @type {any} */ _wrap, /** @type {any} */ pin) => {
       state.confirmCalls.push({ ctx, kind: pin?.kind });
@@ -134,7 +138,19 @@ async function pinWorld({ policy, policyStatus = 200, unlockTimeoutMs } = {}) {
     client,
     store,
     fetchImpl,
-    pin: { store: pinStore, options: { ...(unlockTimeoutMs ? { unlockTimeoutMs } : {}), policyTimeoutMs: 2000 } },
+    pin: {
+      store: pinStore,
+      options: {
+        ...(unlockTimeoutMs ? { unlockTimeoutMs } : {}),
+        policyTimeoutMs: 2000,
+        // The verification for a passkey request runs the core's PIN unlock in a client of its own for each check.
+        scratch: async () => {
+          const made = coreClient({ pin_unlock: pinUnlockFake });
+          state.scratch.push(made);
+          return made;
+        },
+      },
+    },
   });
   w.clock.set(START);
   const page = w.page("pages/settings.html");
@@ -971,4 +987,89 @@ test("the_unlock_ops_are_not_reachable_as_runtime_messages_and_nothing_hands_on_
   assert.equal(callers.some((f) => f.includes("handlers/") || f.includes("router")), false, callers.join(", "));
   const handler = readFileSync(join(src, "background", "handlers", "unlock.handler.mjs"), "utf8");
   assert.equal(/\bstore\b/.test(handler.replace(/\/\/[^\n]*/g, "")), false);
+});
+
+// ------------------------------------------------------------------------------------------------ verifying for a passkey request
+
+const pinCalls = (/** @type {any} */ client) => client.calls.filter((/** @type {any} */ c) => c.method === "pin_unlock").length;
+
+test("pin_verification_counts_attempts_like_unlock", async () => {
+  const w = await withPin();
+  const v = w.pinHost.verifier;
+  assert.equal(w.coreHost.state(), "unlocked");
+  assert.deepEqual(await v.pin.verify(WRONG), { ok: false, reason: "wrong_pin", left: 4, wait_ms: 0 });
+  assert.deepEqual(await v.pin.verify(WRONG), { ok: false, reason: "wrong_pin", left: 3, wait_ms: 5000 });
+  // The wait is the store's, as for an unlock: until it is over, nothing runs.
+  const runs = w.state.unlockCalls;
+  assert.deepEqual(await v.pin.verify(PIN), { ok: false, reason: "pin_wait", left: 3, wait_ms: 5000 });
+  assert.equal(w.state.unlockCalls, runs);
+  w.advance(40_000);
+  assert.deepEqual(await v.pin.verify(PIN), { ok: true });
+  assert.equal((await w.status()).failuresLeft, 5, "a right PIN gives the attempts back");
+  // The open vault was never touched: the core's unlock ran in a client of its own each time, which was ended.
+  assert.equal(w.coreHost.state(), "unlocked");
+  assert.equal(pinCalls(w.client), 0);
+  assert.equal(w.state.scratch.length, 3);
+  assert.ok(w.state.scratch.every((/** @type {any} */ c) => c.locks >= 1 && pinCalls(c) === 1));
+  // A PIN shorter than the rule costs nothing.
+  assert.equal((await v.pin.verify("12")).reason, "pin_rule");
+  assert.equal(w.state.scratch.length, 3);
+  // Five wrong ones delete it, as for an unlock; the vault stays open.
+  for (const left of [4, 3, 2, 1]) {
+    w.advance(40_000);
+    assert.equal((await v.pin.verify(WRONG)).left, left);
+  }
+  w.advance(40_000);
+  assert.deepEqual(await v.pin.verify(WRONG), { ok: false, reason: "pin_wiped" });
+  assert.equal((await w.status()).set, false);
+  assert.deepEqual(await v.pin.status(), { set: false, offlineOk: false });
+  assert.equal(w.coreHost.state(), "unlocked");
+  // With the vault locked there is nothing to verify for.
+  await w.lockNow();
+  assert.deepEqual(await v.pin.verify(PIN), { ok: false, reason: "vault_locked" });
+});
+
+test("offline_pin_verification_only_within_seven_days_of_contact", async () => {
+  const w = await withPin();
+  const v = w.pinHost.verifier;
+  w.state.online = false;
+  assert.deepEqual(await v.pin.status(), { set: true, offlineOk: true });
+  assert.deepEqual(await v.pin.verify(PIN), { ok: true });
+  w.advance(8 * DAY);
+  assert.deepEqual(await v.pin.status(), { set: true, offlineOk: false });
+  const runs = w.state.unlockCalls;
+  assert.deepEqual(await v.pin.verify(PIN), { ok: false, reason: "pin_offline_expired" });
+  assert.equal(w.state.unlockCalls, runs, "no attempt without the window");
+  // With the server back, the device renews its tokens first and the PIN works again.
+  w.state.online = true;
+  assert.deepEqual(await v.pin.verify(PIN), { ok: true });
+  assert.deepEqual(await v.pin.status(), { set: true, offlineOk: true });
+});
+
+test("the_master_password_verification_confirms_the_pinned_account_key_without_a_second_vault", async () => {
+  const w = await withPin();
+  // The check of the session itself (passkeyVerify.mjs), which a build without the PIN has too.
+  const { passwordCheck } = await (await pkg()).load("background/passkeyVerify.mjs");
+  const v = { password: passwordCheck({ sessionHost: w.sessionHost }) };
+  const before = w.state.confirmCalls.length;
+  const vaults = w.client.calls.filter((/** @type {any} */ c) => c.method === "unlock_password").length;
+  assert.deepEqual(await v.password.verify({ mp: "Not-the-password-1" }), { ok: false, reason: "wrong_credentials" });
+  assert.deepEqual(await v.password.verify({ mp: MP }), { ok: true });
+  // The core's confirm_password against the record this device pinned (the account key of the password wrap must be the
+  // pinned one); no vault is made, the open one stays.
+  assert.equal(w.state.confirmCalls.length, before + 1);
+  assert.equal(w.state.confirmCalls.at(-1).kind, "pinned");
+  assert.equal(w.client.calls.filter((/** @type {any} */ c) => c.method === "unlock_password").length, vaults);
+  assert.equal(w.coreHost.state(), "unlocked");
+  w.state.confirmCheck = () => {
+    throw coded("pinned_auth_key");
+  };
+  assert.deepEqual(await v.password.verify({ mp: MP }), { ok: false, reason: "attack_warning" });
+  w.state.confirmCheck = null;
+  w.state.online = false;
+  assert.equal((await v.password.verify({ mp: MP })).reason, "network");
+  w.state.online = true;
+  // With the vault locked there is nothing to verify for.
+  await w.lockNow();
+  assert.deepEqual(await v.password.verify({ mp: MP }), { ok: false, reason: "vault_locked" });
 });

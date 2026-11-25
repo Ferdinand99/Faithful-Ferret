@@ -131,6 +131,9 @@ export async function turnOnPasskeyScripts(session) {
 /** The address of Ferret's chooser window. */
 const CHOOSER_PAGE = `${EXTENSION_ORIGIN}/pages/passkey.html?r=`;
 
+/** The master password of the account the extension is signed in to (the Ferret provider): what a person types to verify. */
+let ferretPassword = "";
+
 /**
  * The Ferret provider: an account on the end-to-end stack (made by the first channel, signed in to by the next), the extension
  * signed in to it, the permission for https pages, the setting, and both passkey scripts registered. Comes back to the tab the
@@ -143,6 +146,7 @@ export async function turnOnFerret(session, channel) {
   const back = await session.windowHandle();
   await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
   const account = await webVaultAccount(session, channel);
+  ferretPassword = account.password;
   await revokeLeftDevices(session);
   const tab = await session.newTab();
   await session.switchTo(tab);
@@ -185,12 +189,16 @@ export async function turnOnFerret(session, channel) {
 
 /**
  * Presses in every chooser window of Ferret that is ready what a person would: "Save in Ferret" for a new passkey; for a sign-in
- * the first passkey Ferret offers, or "Use the browser" when it offers none. Windows already pressed in (`pressed`) and the ones that were
+ * the newest passkey Ferret offers (the one this case made; a page that lists no credentials gets the passkeys of earlier cases too),
+ * or "Use the browser" when it offers none. When the window then asks the person to verify, the master password is given there. Windows already pressed in (`pressed`) and the ones that were
  * there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window.
+ * A case whose page aborts its own call while Ferret has nothing to offer (`browserWhenEmpty` false) is left waiting: the page's
+ * abort is what it is about.
  * @param {import("./driver.mjs").Session} session @param {Set<string>} baseline @param {Set<string>} pressed @param {string} main
+ * @param {{ browserWhenEmpty?: boolean }} [o]
  * @returns {Promise<Array<{ kind: string, role: string }>>}
  */
-export async function pressInChooser(session, baseline, pressed, main) {
+export async function pressInChooser(session, baseline, pressed, main, { browserWhenEmpty = true } = {}) {
   /** @type {Array<{ kind: string, role: string }>} */
   const done = [];
   try {
@@ -210,16 +218,41 @@ export async function pressInChooser(session, baseline, pressed, main) {
       await sleep(900);
       const candidates = await session.findAll('[data-role="passkey-candidate"]');
       const role = shown.kind === "create" ? "passkey-create-new" : candidates.length > 0 ? "passkey-candidate" : "passkey-browser";
-      const [button] = role === "passkey-candidate" ? candidates : await session.findAll(`[data-role="${role}"]`);
+      if (role === "passkey-browser" && !browserWhenEmpty) {
+        pressed.add(handle);
+        continue;
+      }
+      const [button] = role === "passkey-candidate" ? candidates.slice(-1) : await session.findAll(`[data-role="${role}"]`);
       if (!button) continue;
       await session.click(button);
       pressed.add(handle);
       done.push({ kind: shown.kind, role });
+      if (role !== "passkey-browser") await verifyInChooser(session, handle);
     }
   } finally {
     await session.switchTo(main).catch(() => {});
   }
   return done;
+}
+
+/**
+ * When Ferret's window asks the person to verify after a choice, gives the master password there (the window says it signs in to the
+ * server); a window that answers or closes needs nothing.
+ * @param {import("./driver.mjs").Session} session @param {string} handle
+ */
+async function verifyInChooser(session, handle) {
+  const step = await session
+    .waitFor(async () => {
+      if (!(await session.windowHandles()).includes(handle)) return "closed";
+      return (await session.findAll('[data-role="passkey-verify-password"]')).length > 0 ? "verify" : null;
+    }, 10_000, "the answer of the window or its verification step")
+    .catch(() => "closed");
+  if (step !== "verify" || ferretPassword === "") return;
+  const [field] = await session.findAll('[data-role="passkey-verify-password"]');
+  await session.type(field, ferretPassword);
+  await sleep(900);
+  const [submit] = await session.findAll('[data-role="passkey-verify-password-submit"]');
+  if (submit) await session.click(submit);
 }
 
 /** How many requests went through the bridge so far. @param {import("./driver.mjs").Session} session @param {string} tab */
@@ -327,7 +360,7 @@ export async function runCase(session, c, { channel, provider }) {
       await sleep(250);
       const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
       windowsOpened = Math.max(windowsOpened, handles.filter((h) => !baseline.has(h)).length);
-      if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) await pressInChooser(session, baseline, pressed, main);
+      if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) await pressInChooser(session, baseline, pressed, main, { browserWhenEmpty: c.expected.error !== "AbortError" });
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
     }
@@ -411,6 +444,15 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
     if (session && provider === "ferret") await turnOnFerret(session, channel);
     const bridgeTab = session && BRIDGE_ON && provider === "stub" ? await turnOnPasskeyScripts(session) : null;
     for (const c of cases) {
+      if (session && provider === "ferret") {
+        // A tab of its own for each case: Ferret's calm period (several requests of a tab that ended without an answer) is per
+        // tab, and the cases that end without an answer on purpose must not change how the next case is shown.
+        const old = await session.windowHandle();
+        const fresh = await session.newTab();
+        await session.switchTo(old);
+        await session.closeTab();
+        await session.switchTo(fresh);
+      }
       const r = session ? await runCase(session, c, { channel, provider }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider });
       results.set(c.id, r);
       const failing = r.observed?.reports?.find((/** @type {any} */ x) => x.kind === "step" && !x.ok);

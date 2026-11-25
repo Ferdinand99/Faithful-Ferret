@@ -12,8 +12,17 @@ import { FEATURES } from "../shared/features.mjs";
 import { loadTexts, translateStatic } from "./page.mjs";
 import { createChooserBackend, requestIdOf } from "./passkeyFlow.mjs";
 import { createChooser } from "./passkeyChooser.mjs";
+import { createPasskeyProof, extensionOrigin } from "./passkeyVerify.mjs";
 import { createPopupFlow } from "./popupFlow.mjs";
 import { connectUi } from "./ui.mjs";
+
+/** @param {Uint8Array} data */
+async function sha256(data) {
+  return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", /** @type {Uint8Array<ArrayBuffer>} */ (data)));
+}
+
+/** The one WebAuthn call of this window, as the browser makes it: a passkey of the vault, to verify the person. @param {any} publicKey */
+const getAssertion = (publicKey) => navigator.credentials.get({ publicKey });
 
 /**
  * Closes this page: its own tab only (the page can be open in a tab of an ordinary window, which must stay). The tab of the
@@ -48,10 +57,22 @@ async function main() {
     return;
   }
   const ui = connectUi(browser.runtime);
+  // Windows Hello, Touch ID or another passkey of the vault as the verification: a call against the vault's host from this window
+  // (never the popup). Firefox writes the extension's own origin into the client data, which the check compares exactly.
+  const proof = createPasskeyProof(ui.request, {
+    getAssertion,
+    deps: {
+      rand: (/** @type {Uint8Array} */ bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
+      now: () => Date.now(),
+      sha256,
+      origin: await extensionOrigin(browser.runtime.id, sha256),
+    },
+  });
   const chooser = createChooser({
     texts,
     backend: createChooserBackend(ui.request, requestId),
     unlock: createPopupFlow(ui.request),
+    proof,
     closeWindow: () => void closeWindow(),
     formatDate: (ms) => {
       try {

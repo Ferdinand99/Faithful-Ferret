@@ -23,6 +23,9 @@
 //                    then the checks that follow every unlock, which a passkey unlock always makes against the list it just
 //                    read (it is only done online). The OPAQUE server key handed to the core is the record's own, as in the
 //                    web vault; no response of the server is a source for it.
+//   checkPin, checkPrf  the same core calls as `pinUnlock` and `prfUnlock`, for a vault that is open already (a page's passkey
+//                    request asks the person to verify): they run in a client of their own that the caller made for the
+//                    one check, its vault is dropped at once, and the open vault and the session are not touched.
 //
 // Neither the PIN nor the master password is kept, logged or put in an error here: the bytes go to the core and the
 // client wipes them.
@@ -286,6 +289,65 @@ export function pinSessionMethods(inner) {
       const ready = { accountId, vaultId: hex16.encode(record.vault_id), vkEpoch: num(methods.vk_epoch), email, pinned: opened.pinned };
       const { checked } = await finish(ready, { known: methods });
       return { accountId, email, checked };
+    },
+
+    /**
+     * Checks a PIN for the vault that is open (a page's passkey request asks the person to verify), without touching that
+     * vault: the core's `pin_unlock` with the PIN's blob and the record this device has pinned, in `client`, a client made for
+     * this one check, whose vault is dropped when the check ends (the caller ends the client too). The core checks the vault key
+     * the PIN opens against the pinned account key (`pinned_auth_key`), offline too. Rejects with the core's code, as
+     * `pinUnlock` does, or `vault_locked` / `pinned_account_mismatch` when the open vault is not this device's account.
+     * @param {{ pin: Uint8Array, blob: { methodId: Uint8Array, wrap: Uint8Array, deviceSalt: Uint8Array, pinProfile: number, vkEpoch: number }, rule: { allowed: boolean, after_restart: boolean, min_length: number }, client: any }} args
+     * @returns {Promise<{ accountId: string }>}
+     */
+    async checkPin({ pin, blob, rule, client }) {
+      const open = inner.current();
+      if (open === null) throw new AccountError("vault_locked");
+      const { accountId, record } = await ownAccount();
+      if (open.accountId !== accountId) throw new AccountError("pinned_account_mismatch");
+      if (num(blob.vkEpoch) > num(record.vk_epoch_max)) throw Object.assign(new Error("pin_stale"), { code: "pin_stale" });
+      const wrap = { method_id: blob.methodId, wrap: blob.wrap, device_salt: blob.deviceSalt, profile: blob.pinProfile, vk_epoch: blob.vkEpoch };
+      try {
+        await client.vault.pin_unlock(pin, record, wrap, rule);
+      } finally {
+        // The vault the check opened goes with the check's worker.
+        await Promise.resolve(client.lock()).catch(() => undefined);
+      }
+      return { accountId };
+    },
+
+    /**
+     * Checks the 32 bytes a passkey of the vault gave for its salt, for the vault that is open, without touching that vault: the
+     * server's list is read now (live tokens and the network), and the core's `unlock_prf` runs with the record this device has
+     * pinned (every pin of an unlock, the account key included) in `client`, a client made for this one check, whose vault is
+     * dropped at once. Rejects with `prf_failed` for bytes that do not open the wrap, `method_removed`, the core's `pinned_*`
+     * codes, or the `ApiError` of the read.
+     * @param {{ credentialId: string, output: Uint8Array, client: any }} args
+     * @returns {Promise<{ accountId: string }>}
+     */
+    async checkPrf({ credentialId, output, client }) {
+      const open = inner.current();
+      if (open === null) throw new AccountError("vault_locked");
+      const { accountId, record } = await ownAccount();
+      if (open.accountId !== accountId) throw new AccountError("pinned_account_mismatch");
+      await livingDevice();
+      if (!(record.vault_id instanceof Uint8Array)) throw new AccountError("pinned_missing");
+      /** @type {Record<string, any>} */
+      const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+      const wrap = passkeyWraps(methods).find((m) => m.credential_id === credentialId);
+      if (wrap === undefined) throw new AccountError("method_removed");
+      // The vault that is open is verified at the epoch it is open at: the server's word that the epoch is another says nothing.
+      if (num(methods.vk_epoch) !== num(open.vkEpoch)) throw new AccountError("pinned_vk_epoch");
+      const ctx = { account_id: hex16.decode(accountId), vault_id: record.vault_id, vk_epoch: methods.vk_epoch };
+      const pinned = { kind: "pinned", record, ...(record.server_public_key instanceof Uint8Array ? { server_public_key: record.server_public_key } : {}) };
+      try {
+        await client.vault.unlock_prf(env.server, ctx, output, wrapToCore(wrap, 0), pinned);
+      } catch (error) {
+        throw /** @type {{ code?: unknown }} */ (error)?.code === "decrypt" ? new AccountError("prf_failed") : error;
+      } finally {
+        await Promise.resolve(client.lock()).catch(() => undefined);
+      }
+      return { accountId };
     },
 
     /** The account of this device from its own records, or null. @returns {Promise<string | null>} */
