@@ -675,3 +675,27 @@ test("the_texts_of_the_passkey_unlock_exist_in_en_and_nb_and_each_is_used", asyn
   assert.match(en["passkey.blocked.mac"], /AutoFill & Passwords/);
   assert.match(en["passkey.blocked.windows"], /Windows Hello/);
 });
+
+test("an_extension_page_may_accept_the_origin_firefox_writes_for_it_and_a_web_page_may_not_differ", async () => {
+  // Firefox writes an origin of its own making into the client data of an extension's page (not the page's address), so the
+  // extension's window gives the shared check a function for it; the web vault still gives its exact origin.
+  const { load } = await pkg();
+  const { evaluateOneOf } = await load("shared/flows/passkeyAnswer.mjs");
+  const request = { rpId: HOST, credentials: [{ id: PASSKEY.credential, salt: PASSKEY.salt }], getAssertion: null };
+  const deps = await flowDeps();
+  const given = "moz-extension://loihkokpllkcdpkkahglfeikpjenbcbemfmfjlnbkpdgfmgjpjhplhbkfhmfeaan";
+  const shape = (/** @type {string} */ seen) => /^moz-extension:[/][/][a-z0-9-]{8,128}$/.test(seen);
+  const evaluate = async (/** @type {string} */ writes, /** @type {any} */ origin) => {
+    const fake = await fakeAssertion({ origin: writes });
+    return evaluateOneOf({ ...request, getAssertion: fake.getAssertion }, { ...deps, origin }).then((r) => ({ ok: true, output: r.output }), (e) => ({ ok: false, code: e.code }));
+  };
+  assert.equal((await evaluate(given, shape)).ok, true);
+  // The function decides: another scheme, a web page's origin and a malformed one are refused, as is a string that differs.
+  assert.deepEqual(await evaluate("https://evil.example", shape), { ok: false, code: "passkey_bad_answer" });
+  assert.deepEqual(await evaluate("moz-extension://", shape), { ok: false, code: "passkey_bad_answer" });
+  assert.deepEqual(await evaluate("moz-extension://abc/def", shape), { ok: false, code: "passkey_bad_answer" });
+  assert.equal((await evaluate("https://vault.example.com", "https://vault.example.com")).ok, true);
+  assert.deepEqual(await evaluate("https://evil.example", "https://vault.example.com"), { ok: false, code: "passkey_bad_answer" });
+  // A function that says anything but true is a refusal.
+  assert.deepEqual(await evaluate(given, () => "yes"), { ok: false, code: "passkey_bad_answer" });
+});

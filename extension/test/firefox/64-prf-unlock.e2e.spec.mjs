@@ -114,7 +114,7 @@ test("prf_unlock_after_lock_in_release_and_esr", async () => {
         return now.find((handle) => !before.includes(handle)) ?? null;
       }, 30_000, "the unlock window");
       await session.switchTo(opened);
-      assert.equal(await session.currentUrl(), UNLOCK_WINDOW_URL, channel);
+      await session.waitFor(async () => (await session.currentUrl()) === UNLOCK_WINDOW_URL, 30_000, "the unlock window to load");
       const win = helpers(session);
       await win.waitVisible('[data-role="passkey-unlock"]', SLOW);
       assert.equal(await win.text('[data-role="passkey-host"]'), `Unlock ${VAULT_HOST} with a passkey.`, channel);

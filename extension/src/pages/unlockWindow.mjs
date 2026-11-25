@@ -18,6 +18,9 @@ import { createUnlockWindowFlow, passkeyErrorKey, retryable } from "./unlockWind
 /** The feature mark on the controls the tests and the build's checks look for. */
 const FEATURE = Object.freeze({ "data-feature": "unlock" });
 
+/** The shape of an extension's origin in the client data of an answer. */
+const EXTENSION_ORIGIN = /^moz-extension:[/][/][a-z0-9-]{8,128}$/;
+
 /** How long the window stays after the vault is open (milliseconds), so the person sees that it worked. */
 const CLOSE_AFTER_MS = 1200;
 
@@ -56,7 +59,8 @@ async function main() {
       rand: (/** @type {Uint8Array} */ bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
       now: () => Date.now(),
       sha256,
-      origin: location.origin,
+      // Firefox writes an origin of its own making into the client data of an extension's page, not the page's address.
+      origin: (/** @type {string} */ seen) => EXTENSION_ORIGIN.test(seen),
     },
   });
   // The page goes away: the port closes with it, and nothing of a passkey is left in the page.

@@ -39,7 +39,11 @@ export const TIMEOUT_MS = 120_000;
  * @property {(bytes: Uint8Array) => Uint8Array} rand fills a byte array with random values and gives it back
  * @property {() => number} now milliseconds
  * @property {(data: Uint8Array) => Promise<Uint8Array>} sha256
- * @property {string} origin the page's origin, as the browser writes it into the client data
+ * @property {string | ((seen: string) => boolean)} origin the page's origin, as the browser writes it into the client data. The
+ *   browser writes the web vault's own origin, so a string is compared as it is. For the pages of a browser extension
+ *   Firefox writes an origin of its own making (not the address of the page), so the extension gives a function that
+ *   accepts the shape of an extension's origin: the answer is still checked for the type, the challenge, the relying party
+ *   hash and the credential, and the call was made by the extension's own page.
  */
 
 /** @param {unknown} value @returns {Uint8Array | null} a copy of the bytes of a buffer or a view, or null */
@@ -81,10 +85,16 @@ export function refused(error, elapsed) {
   }
 }
 
+/** @param {unknown} seen @param {string | ((seen: string) => boolean)} expected */
+function originMatches(seen, expected) {
+  if (typeof seen !== "string") return false;
+  return typeof expected === "function" ? expected(seen) === true : seen === expected;
+}
+
 /**
  * Reads the client data of an answer and checks what the browser says it was asked.
  * @param {unknown} raw
- * @param {{ type: string, challenge: Uint8Array, origin: string }} expected
+ * @param {{ type: string, challenge: Uint8Array, origin: string | ((seen: string) => boolean) }} expected
  */
 export function checkClientData(raw, { type, challenge, origin }) {
   const bytes = bytesOf(raw);
@@ -96,7 +106,7 @@ export function checkClientData(raw, { type, challenge, origin }) {
   } catch {
     throw new AccountError("passkey_bad_answer");
   }
-  if (data === null || typeof data !== "object" || data.type !== type || data.origin !== origin || data.challenge !== b64u.encode(challenge)) {
+  if (data === null || typeof data !== "object" || data.type !== type || !originMatches(data.origin, origin) || data.challenge !== b64u.encode(challenge)) {
     throw new AccountError("passkey_bad_answer");
   }
   // A cross-origin frame has no business making this call.
