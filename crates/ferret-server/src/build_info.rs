@@ -14,7 +14,8 @@
 //! build from the commit, never a release image). `wasm: none` is a build without a vault.
 //!
 //! The release image says `features: quick-unlock` (the release workflow, the stack with real data and
-//! the deploy drill require exactly that line); the image of the end-to-end stack says
+//! the deploy drill require exactly that line, so a release image with `passkey-import` is refused until that
+//! feature is released); the image of the end-to-end stack says
 //! `features: e2e-clock, quick-unlock`, so a release image is told from a test image by the clock.
 
 use std::ffi::{OsStr, OsString};
@@ -33,6 +34,8 @@ pub fn active_features() -> Vec<&'static str> {
     features.push("dev-no-web");
     #[cfg(feature = "e2e-clock")]
     features.push("e2e-clock");
+    #[cfg(feature = "passkey-import")]
+    features.push("passkey-import");
     #[cfg(feature = "quick-unlock")]
     features.push("quick-unlock");
     features

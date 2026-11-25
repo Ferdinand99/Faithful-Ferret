@@ -9,8 +9,10 @@ import { createFakeBrowser } from "./fakeBrowser.mjs";
  * what it registered.
  *
  * @param {string} dir the unpacked package
+ * @param {{ scripting?: any }} [overrides] parts of the fake `browser` that a test replaces (`scripting`, to see what the
+ *   background registers or removes at start)
  */
-export async function boot(dir) {
+export async function boot(dir, overrides = {}) {
   const fake = createFakeBrowser();
   /** @type {Array<(port: any) => void>} */
   const onConnect = [];
@@ -29,7 +31,7 @@ export async function boot(dir) {
       remove: async () => {},
       onClicked: { addListener: () => { counts.menuClick += 1; } },
     },
-    scripting: { executeScript: async () => [], getRegisteredContentScripts: async () => [], registerContentScripts: async () => {}, unregisterContentScripts: async () => {} },
+    scripting: overrides.scripting ?? { executeScript: async () => [], getRegisteredContentScripts: async () => [], registerContentScripts: async () => {}, unregisterContentScripts: async () => {} },
     webNavigation: {
       getFrame: async () => null,
       getAllFrames: async () => [],
