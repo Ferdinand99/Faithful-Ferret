@@ -59,6 +59,21 @@ async function addPasskey(session, account, name) {
   });
   await page.waitVisible('[data-role="methods-page"]', SLOW);
   await page.waitAny(['[data-role="methods-empty"]', '[data-role="methods-row"]'], SLOW);
+  // The account keeps the passkey an earlier channel made, whose key is in a browser that is gone: it is removed first, so the
+  // call below has only the credential that this browser has.
+  const count = async () => (await session.findAll('[data-role="methods-row"]')).length;
+  for (let left = await count(); left > 0; left = await count()) {
+    await page.click('[data-role="methods-remove"]');
+    await page.waitVisible('[data-role="dialog-confirm"]', SLOW);
+    await page.click('[data-role="dialog-confirm"]');
+    const next = await page.waitAny(['[data-role="reauth-dialog"]', '[data-role="methods-done"]'], SLOW);
+    if (next === '[data-role="reauth-dialog"]') {
+      await page.type('[data-role="reauth-password"]', account.password);
+      await pace();
+      await page.click('[data-role="reauth-confirm"]');
+    }
+    await session.waitFor(async () => (await count()) < left, SLOW, "the removal of the old passkey");
+  }
   await pace();
   await page.click('[data-role="methods-add"]');
   // The page asks for the master password again when the last check is older than a minute.
