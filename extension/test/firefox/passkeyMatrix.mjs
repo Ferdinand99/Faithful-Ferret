@@ -10,7 +10,13 @@
 //           cannot be seen, so a case that expects Ferret is judged on what the page and the relying party saw, and
 //           cases that need Ferret to answer (a window, a verification, a navigation while a request waits) are not run.
 //           This is what U4-3 can do, and it proves the fixtures, the pages, the runner and the report.
-//   ferret  the extension answers (U4-8 and later). Not wired yet: every case is reported as not run.
+//   ferret  the extension answers: the runner also joins this run's end-to-end stack (the vault), signs the extension in there,
+//           turns the passkey scripts on, and answers Ferret's window as a person would: it clicks the passkey the window lists
+//           and, when the window asks for verification, gives the master password there. A case whose ceremony starts with a
+//           create and then signs in gets its passkey from the vault's import instead (a test key that the page registers at
+//           the relying party, put into a new item by the test build's `item_import_probe`), so a get does not depend on making
+//           a passkey in Ferret. Cases that need what this runner cannot do yet (a passkey made by Ferret, a server cut off for
+//           the extension, the popup of a conditional request) are reported as not run, with the reason.
 //
 // FERRET_PASSKEY_BRIDGE=1 (scripts/lanbox-ext.sh passkey-matrix --bridge) turns the test build's passkey scripts on before the
 // first case (the permission for https pages with a click in the extension's own page, the setting, and the fixture's vault as
@@ -26,7 +32,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFirefox } from "./driver.mjs";
 import { caseAddress, computeMatrix, loadCases, observe, specOf, writeReport } from "./passkeyCases.mjs";
-import { BRIDGE_URL, defaultManifest, xpiPath } from "./harness.mjs";
+import { BRIDGE_URL, defaultManifest, e2eCertificateFile, openBridge, xpiPath } from "./harness.mjs";
+import { KEEP_BACKGROUND, extensionSignIn, webVaultAccount } from "./e2e.mjs";
+import { revokeLeftDevices } from "./adversary.mjs";
+import { core, grantHttps, pressInWindow, readWindow, registerTestKey, WINDOW_PAGE } from "./passkeyFerret.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -152,8 +161,12 @@ export function selectCases(set, grep = "") {
  * Starts Firefox for the matrix: the fixture CA trusted, the soft token on, a virtual authenticator, the test build installed.
  * @param {{ channel: "release" | "esr", manifest?: "mv3" | "mv2", headless?: boolean }} o
  */
-export async function launchMatrixBrowser({ channel, manifest = defaultManifest(), headless = process.env.FERRET_HEADLESS !== "0" }) {
-  const session = await startFirefox({ channel, headless, addon: xpiPath(manifest), hosts: [], certificateFiles: [fixtureCaFile()], prefs: { ...MATRIX_PREFS } });
+export async function launchMatrixBrowser({ channel, manifest = defaultManifest(), headless = process.env.FERRET_HEADLESS !== "0", provider = "stub" }) {
+  // With Ferret answering, the browser also trusts the stack's CA (the vault) and keeps the event page alive under a request.
+  const e2e = provider === "ferret" ? e2eCertificateFile() : undefined;
+  const certificateFiles = e2e ? [fixtureCaFile(), e2e] : [fixtureCaFile()];
+  const prefs = provider === "ferret" ? { ...MATRIX_PREFS, ...KEEP_BACKGROUND } : { ...MATRIX_PREFS };
+  const session = await startFirefox({ channel, headless, addon: xpiPath(manifest), hosts: [], certificateFiles, prefs });
   await session.addVirtualAuthenticator();
   return session;
 }
@@ -179,21 +192,115 @@ async function enterFrames(session, frames) {
 }
 
 /**
+ * Signs the extension in at this run's end-to-end stack and turns the passkey scripts on, in a tab of the extension's test bridge
+ * that stays open; comes back to the tab the session was in.
+ * @param {import("./driver.mjs").Session} session @param {string} channel
+ * @returns {Promise<{ bridgeTab: string, password: string }>}
+ */
+export async function signInForFerret(session, channel) {
+  const back = await session.windowHandle();
+  if (!process.env.FERRET_E2E_CA_PEM) throw new Error("the Ferret provider needs the end-to-end stack (scripts/lanbox-ext.sh passkey-matrix --provider ferret)");
+  const account = await webVaultAccount(session, channel);
+  await revokeLeftDevices(session);
+  const bridgeTab = await session.newTab();
+  await session.switchTo(bridgeTab);
+  const signed = await extensionSignIn(session, account);
+  if (!signed.ok) throw new Error(`the sign-in of the extension failed: ${signed.text}`);
+  const bridge = await openBridge(session);
+  await grantHttps(session);
+  await bridge.invoke("storage.local.set", { use_passkeys: true });
+  await core(session, "passkey_reconcile");
+  await session.waitFor(
+    () => session.content(async () => (await browser.scripting.getRegisteredContentScripts({ ids: ["ferret-passkey-main", "ferret-passkey-bridge"] })).length === 2),
+    15_000,
+    "both passkey scripts registered",
+  );
+  await session.switchTo(back);
+  return { bridgeTab, password: account.password };
+}
+
+/**
+ * Why the Ferret provider cannot run a case yet, or null.
+ * @param {any} c
+ */
+export function ferretCannot(c) {
+  const steps = /** @type {string[]} */ (c.spec?.steps ?? ["create", "get"]);
+  const seeded = steps.length === 2 && steps[0] === "create" && steps[1] === "get";
+  if (steps.includes("create") && !seeded) return "the case needs a passkey made by Ferret (the create side is another task)";
+  if (c.id.startsWith("vault-offline-") || c.id === "get-uv-preferred-no-verification") return "the case needs the server cut off for the extension (a switch the runner does not have yet)";
+  if (c.id.startsWith("sync-")) return "the case needs a second browser profile";
+  if (steps.includes("conditional") || (c.spec?.get?.mediation === "conditional" && c.expected.ceremony === "ok")) return "the case needs the popup's passkey part (another task)";
+  return null;
+}
+
+/**
+ * Answers Ferret's window as a person would: the first passkey the window lists, then (when the window asks for it) the master
+ * password in the verification step. Leaves the session in the window's handle or a closed one; the caller switches back.
+ * @param {import("./driver.mjs").Session} session @param {string} handle @param {string} password
+ */
+async function answerInWindow(session, handle, password) {
+  await session.switchTo(handle);
+  if (!(await session.currentUrl()).startsWith(`${WINDOW_PAGE}?r=`)) return;
+  const shown = await readWindow(session);
+  if (shown.candidates.length === 0) return;
+  // The newest passkey is the one this case put into the vault (the window lists them oldest first); a page that lists no
+  // credentials gets every passkey of the vault for its RP ID, the ones of earlier cases too.
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  const rows = await session.findAll('[data-role="passkey-candidate"]');
+  await session.click(rows[rows.length - 1]);
+  const step = await session
+    .waitFor(async () => {
+      if (!(await session.windowHandles()).includes(handle)) return "closed";
+      return (await session.findAll('[data-role="passkey-verify-password"]')).length > 0 ? "verify" : null;
+    }, 15_000, "the window's answer or its verification step")
+    .catch(() => "closed");
+  if (step !== "verify") return;
+  const [field] = await session.findAll('[data-role="passkey-verify-password"]');
+  await session.type(field, password);
+  await pressInWindow(session, "passkey-verify-password-submit");
+}
+
+/**
  * Runs one case in the session's selected tab.
- * @param {import("./driver.mjs").Session} session @param {any} c @param {{ channel: string, provider: "stub" | "ferret" }} o
+ * @param {import("./driver.mjs").Session} session @param {any} c
+ * @param {{ channel: string, provider: "stub" | "ferret", ferret?: { bridgeTab: string, password: string } | null }} o
  * @returns {Promise<import("./passkeyCases.mjs").CaseResult>}
  */
-export async function runCase(session, c, { channel, provider }) {
+export async function runCase(session, c, { channel, provider, ferret = null }) {
   if (c.set === "demo") return { status: "not-run", reason: "the demo pages have no driver yet (the end-to-end spec of U4-13 brings it)" };
-  if (provider === "ferret") return { status: "not-run", reason: "the Ferret provider is not wired into the runner yet (U4-8 and later)" };
-  if (c.needs === "provider") return { status: "not-run", reason: "the case needs Ferret to answer (a window, a verification or a navigation while a request waits); the stub provider cannot run it" };
+  if (provider === "ferret") {
+    const cannot = ferretCannot(c);
+    if (cannot !== null) return { status: "not-run", reason: cannot };
+    if (ferret === null) return { status: "not-run", reason: "the extension is not signed in for the Ferret provider" };
+  }
+  if (provider === "stub" && c.needs === "provider") return { status: "not-run", reason: "the case needs Ferret to answer (a window, a verification or a navigation while a request waits); the stub provider cannot run it" };
   const run = `${Math.random().toString(16).slice(2, 10)}-${c.id}`.slice(0, 80);
-  const spec = specOf(c, run);
-  const address = caseAddress(c, { spec, auto: c.gesture === "none" });
+  let spec = specOf(c, run);
   const main = await session.windowHandle();
   const baseline = new Set(await session.windowHandles());
   let windowsOpened = 0;
+  /** Ferret's window was answered (once per case). */
+  let answered = false;
+  const answersInWindow = provider === "ferret" && c.expected.route === "ferret" && c.expected.ceremony === "ok";
   try {
+    if (provider === "ferret" && ferret !== null && spec.steps[0] === "create") {
+      // The passkey of the case comes from the vault's import: the page registers a test key at the relying party, and the key
+      // goes into a new item; the case's ceremony then starts with its get.
+      const host = /** @type {string} */ (c.page.chain[c.page.chain.length - 1]);
+      await session.navigate(`https://${host}/ceremony.html`);
+      await session.waitFor(() => session.content(() => document.documentElement.dataset.ready === "1"), 20_000, "the page of the relying party");
+      const userName = spec.user?.name ?? "alice";
+      const key = /** @type {any} */ (await registerTestKey(session, c.rp.lib, spec.rpId ?? host, userName));
+      if (!key?.ok) return { status: "not-run", reason: `the test key could not be registered: ${JSON.stringify(key)}` };
+      await session.switchTo(ferret.bridgeTab);
+      try {
+        await core(session, "item_import_probe", { name: `Matrix ${c.id}`.slice(0, 200), rp_id: spec.rpId ?? host, user_name: userName, cred_id: key.cred_id, user_handle: key.user_handle, key_pkcs8: key.key_pkcs8 });
+      } finally {
+        await session.switchTo(main);
+      }
+      spec = { ...spec, steps: spec.steps.slice(1), sid: key.sid };
+    }
+    const address = caseAddress(c, { spec, auto: c.gesture === "none" });
     await session.navigate(address.url);
     if (c.gesture === "click") {
       await enterFrames(session, address.frames);
@@ -208,7 +315,13 @@ export async function runCase(session, c, { channel, provider }) {
     for (;;) {
       await sleep(250);
       const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
-      windowsOpened = Math.max(windowsOpened, handles.filter((h) => !baseline.has(h)).length);
+      const fresh = handles.filter((h) => !baseline.has(h));
+      windowsOpened = Math.max(windowsOpened, fresh.length);
+      if (answersInWindow && ferret !== null && !answered && fresh.length > 0) {
+        answered = true;
+        await answerInWindow(session, fresh[0], ferret.password).catch(() => {});
+        await session.switchTo(main);
+      }
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
     }
@@ -282,11 +395,12 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
   /** @type {import("./driver.mjs").Session | undefined} */
   let session;
   try {
-    const runnable = cases.some((c) => c.set !== "demo" && c.needs !== "provider" && provider === "stub");
-    if (runnable) session = await launchMatrixBrowser({ channel, manifest });
-    const bridgeTab = session && BRIDGE_ON ? await turnOnPasskeyScripts(session) : null;
+    const runnable = cases.some((c) => c.set !== "demo" && (provider === "ferret" ? ferretCannot(c) === null : c.needs !== "provider"));
+    if (runnable) session = await launchMatrixBrowser({ channel, manifest, provider });
+    const bridgeTab = session && BRIDGE_ON && provider === "stub" ? await turnOnPasskeyScripts(session) : null;
+    const ferret = session && provider === "ferret" ? await signInForFerret(session, channel) : null;
     for (const c of cases) {
-      const r = session ? await runCase(session, c, { channel, provider }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider });
+      const r = session ? await runCase(session, c, { channel, provider, ferret }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider, ferret });
       results.set(c.id, r);
       const failing = r.observed?.reports?.find((/** @type {any} */ x) => x.kind === "step" && !x.ok);
       log(`${set} ${c.id}: ${r.status === "ran" ? JSON.stringify({ ceremony: r.observed?.ceremony, error: r.observed?.error, route: r.observed?.route, ...(failing ? { step: failing.step, message: failing.error?.message } : {}) }) : `not run (${r.reason})`}`);

@@ -22,10 +22,9 @@
 //   passkey_choose  { request_id, kind, item_id | mode, name, folder_id }   the person's choice
 //   passkey_verify  { request_id, method, pin | mp, sk | credential_id, prf_output }   the verification step (passkeyVerify.mjs)
 //
-// What the person can choose from (the passkeys of Ferret for a get, the items a new passkey can go to, and the choice itself)
-// belongs to the tasks that build the answering side of the background. Their messages are named here (passkey_candidates,
-// passkey_create_options, passkey_choose) and are sent only when the build's UI table has them; until it does the window shows
-// no passkeys of Ferret and the browser as the way on, and a choice is refused as not_available.
+// Each message is sent only when the build's UI table has it (passkey_create_options belongs to the create side of the
+// background); without it the window shows no passkeys of Ferret and the browser as the way on, and a choice is refused as
+// not_available.
 
 import { UI_TYPES } from "../shared/protocol.mjs";
 import { VERIFY_WAYS } from "./passkeyVerify.mjs";

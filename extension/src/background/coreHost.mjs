@@ -74,6 +74,7 @@ export const CORE_OPS = Object.freeze([
   "frames_probe",
   "item_probe",
   "item_rename_probe",
+  "item_import_probe",
   "match_bench",
   "fill_offer",
   "fill",

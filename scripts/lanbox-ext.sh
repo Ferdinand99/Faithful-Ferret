@@ -15,7 +15,7 @@
 #                                 network at all (--network none). With FERRET_SHOTS_OUT=<dir> the
 #                                 screenshots the specs take (FERRET_SHOTS_DIR) are unpacked into
 #                                 <dir>/gate-shots/<channel>/.
-#   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up]
+#   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up] [--passkey-rp]
 #                                 the same runner against the end-to-end stack: starts a
 #                                 stack of its own with `lanbox-ferret-test.sh e2e-up`
 #                                 (a compose project, network, host names and volumes
@@ -29,6 +29,9 @@
 #                                 set, it uses that stack (started with `e2e-up` unless
 #                                 --no-up) and leaves it up: run
 #                                 `scripts/lanbox-ferret-test.sh e2e-down` afterwards.
+#                                 --passkey-rp: the runner also joins the passkey fixture container's
+#                                 network and trusts its CA (start it first: scripts/lanbox-passkey-rp.sh up),
+#                                 for the specs in which Ferret answers its relying parties.
 #                                 --no-up without FERRET_E2E_SUFFIX uses the stack with
 #                                 the default names (one user at a time). At most two
 #                                 e2e runs at once, counted inside the limit of two
@@ -180,6 +183,7 @@ matrix_set=corpus
 passkey_set=fixtures
 passkey_provider=stub
 passkey_bridge=0
+passkey_rp=0
 headed=0
 no_up=0
 scenario_list=""
@@ -197,6 +201,7 @@ while [ "$#" -gt 0 ]; do
     passkey-matrix:--set) [ "$#" -ge 2 ] || usage; passkey_set="$2"; shift 2 ;;
     passkey-matrix:--provider) [ "$#" -ge 2 ] || usage; passkey_provider="$2"; shift 2 ;;
     passkey-matrix:--bridge) passkey_bridge=1; shift ;;
+    e2e:--passkey-rp) passkey_rp=1; shift ;;
     firefox:--headed | e2e:--headed | matrix:--headed | passkey-matrix:--headed) headed=1; shift ;;
     e2e:--no-up | matrix:--no-up) no_up=1; shift ;;
     measure:--scenario) [ "$#" -ge 2 ] || usage; scenario_list="$2"; shift 2 ;;
@@ -514,12 +519,18 @@ make_run() {
   # The passkey matrix sits on the fixture container's internal network and on no other; the demo set is the one run that
   # needs the internet, on the ordinary bridge, and trusts no test CA.
   if [ "$step" = passkey-matrix ]; then net="$passkey_network"; fi
+  # Ferret answering passkey requests needs both: the stack's server (the vault) and the fixture container's relying parties.
+  # The runner joins the stack's network and the fixture's internal one, and no other.
+  local extra_net=""
+  if [ "$step" = e2e ] && [ "$passkey_rp" = 1 ]; then extra_net="$passkey_network"; fi
+  if [ "$step" = passkey-matrix ] && [ "$passkey_provider" = ferret ]; then net="$network"; extra_net="$passkey_network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
     "${dev_args_out[@]}"
     --network "$net")
-  if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
+  if [ -n "$extra_net" ]; then run+=(--network "$extra_net"); fi
+  if [ "$step" = e2e ] || [ "$step" = matrix ] || { [ "$step" = passkey-matrix ] && [ "$passkey_provider" = ferret ]; }; then run+=("${e2e_volume_args[@]}"); fi
   # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
   local test_grep="$grep_name"
   if [ "$step" = matrix ] || [ "$step" = passkey-matrix ]; then test_grep=""; fi
@@ -601,7 +612,15 @@ scan_stack_logs_for_sentinels() {
   return "$found"
 }
 
+# The passkey fixture container's network and CA, for a run in which Ferret answers its relying parties.
+passkey_rp_setup() {
+  passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
+  passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
+  [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+}
+
 if [ "$mode" = e2e ]; then
+  if [ "$passkey_rp" = 1 ]; then passkey_rp_setup; fi
   e2e_setup
   make_run "${channel:-release,esr}" ""
   rc=0
@@ -617,10 +636,10 @@ if [ "$mode" = passkey-matrix ]; then
   if [ "$passkey_set" = demo ]; then
     passkey_network=bridge
   else
-    passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
-    passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
-    [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+    passkey_rp_setup
   fi
+  # Ferret as the provider signs in at a stack of this run's own (the vault), beside the fixture container's network.
+  if [ "$passkey_provider" = ferret ]; then e2e_setup; fi
   make_run "${channel:-release,esr}" "passkey-matrix" passkey-matrix 0
   rc=0
   "${run[@]}" < "$work/in.tar" > "$work/passkey-matrix.tar" || rc=$?
