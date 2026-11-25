@@ -372,6 +372,19 @@ test("the_new_response_fields_cross_the_binding", () => {
   const bare = vault.test_passkey_open("example.com", fill(32, 0x77));
   assert.equal(vault.item_view(bare).passkey.rp_name, null);
   assert.equal(vault.item_view(bare).passkey.user_display_name, null);
+  // Names that an older body or an import holds are cleaned on the way out (bidi controls, separators, zero-width space, byte order mark).
+  const dirty = vault.test_passkey_open(
+    "example.com", fill(32, 0x78), "al‮ice ", "Ex‮moc.elgoog​", "⁦Al﻿ice⁩",
+  );
+  const shown = vault.item_view(dirty).passkey;
+  assert.equal(shown.user_name, "alice");
+  assert.equal(shown.rp_name, "Exmoc.elgoog");
+  assert.equal(shown.user_display_name, "Alice");
+  // A name that is nothing but refused characters is no name; the zero-width joiner of an emoji stays.
+  const empty = vault.test_passkey_open("example.com", fill(32, 0x79), "⁦", "‮‬", "👩‍💻");
+  assert.equal(vault.item_view(empty).passkey.rp_name, null);
+  assert.equal(vault.item_view(empty).passkey.user_name, "");
+  assert.equal(vault.item_view(empty).passkey.user_display_name, "👩‍💻");
 });
 
 test("item_view_still_hides_priv_and_seeds", () => {

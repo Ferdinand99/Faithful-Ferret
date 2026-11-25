@@ -477,8 +477,10 @@ test("reveal_allowlist_has_reveal_password_history_and_nothing_else_new", () => 
 // The size of the release module (pkg-web, after wasm-opt) before the password
 // generator, its word list, the field comparison and the password history were
 // added: v0.7.0 with its dependency updates, built with the pinned toolchain.
-// This is the budget of the generator only: a later feature that grows the
-// module sets a new baseline in its own pull request and states its growth there.
+// It is the base of a cumulative ceiling (below), not the budget of one
+// feature: a feature that grows the module sets a new baseline in its own pull
+// request and states its growth there, and only a reviewer raises the ceiling,
+// in the pull request that crosses it.
 const WASM_BYTES_BEFORE_GENERATOR = 1_330_115;
 
 // The size of the release module before the passkey candidates and the site
@@ -493,10 +495,10 @@ test("wasm_size_grows_by_less_than_20_kib", () => {
   assert.ok(growth < 20 * 1024, `${growth} bytes`);
 });
 
-// The generator's own budget was 100 KiB. The PIN functions and the passkey
-// candidates came after it and used up the rest, so the limit over the module
-// before the generator is 120 KiB now; each later feature has its own test
-// above, with its own baseline.
+// The cumulative ceiling over the module before the generator. It was 100 KiB;
+// the passkey candidates crossed it, and the reviewer of that pull request
+// raised it to 120 KiB. Each feature has its own test above, with its own
+// baseline.
 test("wasm_size_grows_by_less_than_120_kib", () => {
   const raw = statSync(pkg("pkg-web", "ferret_core_wasm_bg.wasm")).size;
   const growth = raw - WASM_BYTES_BEFORE_GENERATOR;
@@ -509,12 +511,17 @@ test("the_binding_asks_the_core_only_for_the_validated_candidates", () => {
   // allow list only, and `passkey_candidates_for`, which checks the whole
   // request first. The chooser must never be built on the narrow one.
   const dir = join(root, "bindings", "wasm", "src");
+  // Every mention of the name that is not the _for form, whatever the line
+  // break or an alias (use ... as pc), apart from the binding's own method.
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".rs"))) {
-    const calls = readFileSync(join(dir, file), "utf8")
+    const text = readFileSync(join(dir, file), "utf8")
       .split("\n")
-      .filter((l) => !/^\s*(\/\/|pub fn )/.test(l))
-      .filter((l) => /(^|[^_\w])passkey_candidates\s*\(/.test(l));
-    assert.deepEqual(calls, [], `${file} calls the narrow passkey_candidates`);
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n")
+      .replace(/pub fn passkey_candidates\(/g, "")
+      // The name of the vector operation (a string, not a call).
+      .replace(/"passkey_candidates"/g, "");
+    assert.deepEqual(text.match(/\bpasskey_candidates\b(?!_for)/g) ?? [], [], `${file} names the narrow passkey_candidates`);
   }
   const source = readFileSync(join(dir, "passkey.rs"), "utf8");
   assert.ok(/passkey_candidates_for\(&ctx, &req, &refs\)/.test(source));

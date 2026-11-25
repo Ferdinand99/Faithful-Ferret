@@ -1835,8 +1835,17 @@ impl Vault {
     /// Opens an item that holds a passkey with the given RP ID and credential
     /// id and nothing else of one (no usable key), as a stored passkey the
     /// candidate rule can be tried on: the RP ID is taken as it is, so that
-    /// a value that is not canonical can be tested. Returns its handle.
-    pub fn test_passkey_open(&mut self, rp_id: &str, cred_id: Vec<u8>) -> Result<u32, JsValue> {
+    /// a value that is not canonical can be tested. The names are stored as
+    /// given (not cleaned), as an older body or an import could hold them.
+    /// Returns its handle.
+    pub fn test_passkey_open(
+        &mut self,
+        rp_id: &str,
+        cred_id: Vec<u8>,
+        user_name: Option<String>,
+        rp_name: Option<String>,
+        user_display_name: Option<String>,
+    ) -> Result<u32, JsValue> {
         let inner = self
             .inner
             .as_deref_mut()
@@ -1846,14 +1855,14 @@ impl Vault {
             cred_id,
             rp_id: rp_id.to_owned(),
             user_handle: vec![1],
-            user_name: "test".to_owned(),
+            user_name: user_name.unwrap_or_else(|| "test".to_owned()),
             private_key: Vec::new(),
             sign_count: 0,
             created: 0,
             prf_seed_uv: None,
             prf_seed_nouv: None,
-            rp_name: None,
-            user_display_name: None,
+            rp_name,
+            user_display_name,
             extra: Vec::new(),
         });
         inner

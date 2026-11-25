@@ -428,14 +428,14 @@ redacted_debug!(CreatedPasskey);
 /// and byte order mark). They can move the cursor, reorder what stands next
 /// to the text or hide it in a window. A site's text cannot be refused, so
 /// they are dropped. The length limit is checked on the request before this.
-fn site_text(s: &str) -> String {
+pub fn site_text(s: &str) -> String {
     s.chars()
         .filter(|c| !crate::item::folders::is_refused(*c))
         .collect()
 }
 
 /// [`site_text`], or `None` when nothing is left.
-fn optional_site_text(s: &str) -> Option<String> {
+pub fn optional_site_text(s: &str) -> Option<String> {
     Some(site_text(s)).filter(|t| !t.is_empty())
 }
 
