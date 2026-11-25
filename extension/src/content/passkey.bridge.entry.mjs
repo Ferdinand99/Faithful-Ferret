@@ -13,13 +13,15 @@
 //   page cannot change it: whether the page has transient user activation, and what `document.featurePolicy` says (where
 //   the browser has it; Firefox has none). It never sends an origin, a frame or an address: the background has those from
 //   the browser.
+// - The background says "taken" to a request (the reply of `passkey_request`); a request it does not take (no answer, a
+//   refused sender) goes back to the browser at once, so a page's call never waits for an answer that cannot come.
 // - Each request gets an id of the bridge's own, 16 random bytes. The background answers by a push of that id to this
 //   frame and document only (`tabs.sendMessage` with `frameId` and `documentId`); the bridge passes on an answer only for an
 //   id it issued and still waits for, once, and drops everything else.
 // - While a request waits it pings the background every 20 seconds (a Manifest V3 event page is suspended after 30
 //   seconds otherwise), and never when nothing waits. If the extension cannot be reached, the browser answers.
 
-import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
+import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 import { optionsToWire, responseFromWire } from "../shared/webauthnWire.mjs";
 
 /** The type of the handshake event, as the page's own world has it. Not a secret. */
@@ -52,7 +54,11 @@ function startBridge(runtime) {
     }
   };
 
-  /** Sends a message of the protocol; false when it could not be built or sent. @param {string} type @param {unknown} body */
+  /**
+   * Sends a message of the protocol: false when it could not be built or sent, and, for a type with a reply
+   * (`passkey_request`), when the background did not take it.
+   * @param {string} type @param {unknown} body
+   */
   const toBackground = async (type, body) => {
     /** @type {string} */
     let raw;
@@ -62,8 +68,9 @@ function startBridge(runtime) {
       return false;
     }
     try {
-      await runtime.sendMessage(raw);
-      return true;
+      const reply = await runtime.sendMessage(raw);
+      if (!(/** @type {any} */ (CONTENT_TYPES)[type]).reply) return true;
+      return decode(reply, CONTENT_TYPES, { reply: true }).body.accepted === true;
     } catch {
       return false;
     }
@@ -132,7 +139,8 @@ function startBridge(runtime) {
     idOf.set(n, id);
     keepAlive();
     if (!(await toBackground("passkey_request", body))) {
-      // Too large for a message, or the extension cannot be reached: the browser answers.
+      // Too large for a message, not taken (a refused sender, such as a frame with an opaque origin), or the extension cannot
+      // be reached: the browser answers.
       if (settle(id) !== null) handover();
     }
   };
@@ -219,4 +227,6 @@ function startBridge(runtime) {
 }
 
 const runtime = /** @type {any} */ (globalThis).browser?.runtime;
-if (runtime && /^https:/.test(location.href)) startBridge(runtime);
+// Not in a frame with an opaque origin (a sandbox): the background answers no call from there, so the page's script finds no
+// partner and leaves every call to the browser.
+if (runtime && /^https:/.test(location.href) && window.origin !== "null") startBridge(runtime);

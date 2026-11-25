@@ -158,6 +158,17 @@ test("a_lone_script_or_an_unreachable_extension_leaves_the_call_to_the_browser",
   await page.flush();
   assert.equal(page.nativeCalls.length, 1);
   assert.equal(page.page("out.value"), "browser");
+  // The background does not take the request (a sender it refuses, such as a sandboxed frame): the browser answers at once,
+  // and a late push for the id is dropped.
+  const refused = createPasskeyPage();
+  refused.setTakes(false);
+  refused.page(GET());
+  await refused.flush();
+  assert.equal(refused.nativeCalls.length, 1);
+  assert.equal(refused.page("out.value"), "browser");
+  const id = /** @type {any} */ (lastRequest(refused)).body.request_id;
+  await refused.push("passkey_error", { request_id: id, name: "NotAllowedError" });
+  assert.equal(refused.page("out.value"), "browser");
 });
 
 test("tampered_intrinsics_after_install_fail_closed_to_the_original", async () => {

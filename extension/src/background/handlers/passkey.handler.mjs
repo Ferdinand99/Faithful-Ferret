@@ -4,7 +4,7 @@
 //
 // The router decides who may send them (a content script of this extension, in a tab, from a web page) and decodes them
 // with the content table; this handler hands the body on with the type and the sender the router checked, and nothing
-// else. The origin, the frame and the document are the browser's, never the message's; the answer goes back as a push to
+// else, and says "taken" to a request (the bridge hands a call that was not taken back to the browser). The origin, the frame and the document are the browser's, never the message's; the answer goes back as a push to
 // that frame and document. They are taken while the vault is locked (a locked vault is opened in Ferret's own window)
 // and never move the auto-lock deadline (they are in LOCK_EXEMPT).
 //
@@ -22,6 +22,8 @@ async function handle(body, ctx) {
   // types for a page), and the sender the router checked has a tab.
   if (ctx.channel !== "content" || typeof ctx.passkey !== "function") throw notAvailable();
   await ctx.passkey(body);
+  // `passkey_request` is the one with a reply: taken (the answer follows as a push).
+  return ctx.type === "passkey_request" ? { accepted: true } : undefined;
 }
 
 export default {

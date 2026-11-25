@@ -12,7 +12,8 @@
 //   Content       A content script sends `runtime.sendMessage`. The sender must
 //                 be a content script (`contentSender`), and the message is
 //                 decoded with CONTENT_TYPES only. A content script can report;
-//                 it can never ask for a value.
+//                 it can never ask for a value. The one answer a content script
+//                 gets is the passkey bridge's "taken" (`passkey_request`).
 //
 // A message is decoded and its sender checked before anything else happens. The
 // origin of a sender comes from the browser, never from the message. A handler
@@ -275,11 +276,11 @@ export function createRouter({
 
   /**
    * A message from `runtime.onMessage`. Only a content script's message with a
-   * type of the content table is handled; the answer is always empty.
+   * type of the content table is handled; the answer is empty, except the reply of a type that has one (`passkey_request`).
    *
    * @param {unknown} raw
    * @param {any} sender
-   * @returns {Promise<undefined> | undefined}
+   * @returns {Promise<string | undefined> | undefined}
    */
   function onMessage(raw, sender) {
     const from = contentSender(sender, runtime);
@@ -312,12 +313,23 @@ export function createRouter({
           await call(PASSKEY_OP, { type: message.type, sender: from, body });
         },
       });
+      /** @type {unknown} */
+      let result;
       try {
-        await handler.handle(message.body, ctx);
+        result = await handler.handle(message.body, ctx);
       } catch {
         // A report that fails has no one to answer.
+        return undefined;
       }
-      return undefined;
+      // A content type with a reply (only `passkey_request`: "taken", so that a bridge whose request was not taken hands the
+      // page's call back to the browser) gets the handler's answer; every other report gets nothing.
+      const def = /** @type {any} */ (CONTENT_TYPES)[message.type];
+      if (!def.reply) return undefined;
+      try {
+        return encode(message.type, result, { reply: true, id: message.id });
+      } catch {
+        return undefined;
+      }
     })();
   }
 

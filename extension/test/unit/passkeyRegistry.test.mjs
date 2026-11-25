@@ -13,7 +13,7 @@ import { CORE_OPS } from "../../src/background/coreHost.mjs";
 import { LOCK_EXEMPT } from "../../src/background/lock.mjs";
 import { createRouter, PASSKEY_OP } from "../../src/background/router.mjs";
 import { CAPTURE_ORIGINS } from "../../src/shared/captureConfig.mjs";
-import { decode, encode, PUSH_TYPES } from "../../src/shared/protocol.mjs";
+import { CONTENT_TYPES, decode, encode, PUSH_TYPES } from "../../src/shared/protocol.mjs";
 import { PASSKEY_GEN_FILE, passkeysModule } from "../../scripts/build.mjs";
 
 /**
@@ -205,7 +205,14 @@ test("a_report_of_the_bridge_reaches_the_passkey_operation_with_the_browsers_sen
   const runtime = { id: "ferret-test@hedgerow.tools", getURL: (/** @type {string} */ p) => `moz-extension://x/${p}` };
   // The handler of the package hands the body to `ctx.passkey` (its refusal with the feature off is features.test.mjs's); this
   // stand-in does the same, without the generated features module a unit test has no build for.
-  const handler = { types: ["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping"], channel: /** @type {const} */ ("content"), handle: (/** @type {unknown} */ body, /** @type {any} */ ctx) => ctx.passkey(body) };
+  const handler = {
+    types: ["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping"],
+    channel: /** @type {const} */ ("content"),
+    handle: async (/** @type {unknown} */ body, /** @type {any} */ ctx) => {
+      await ctx.passkey(body);
+      return ctx.type === "passkey_request" ? { accepted: true } : undefined;
+    },
+  };
   const router = createRouter({
     runtime,
     lock: { checkOrLock: async (/** @type {string} */ type) => LOCK_EXEMPT.includes(type), touch: () => {}, setSeconds: async () => {}, getSeconds: async () => 900 },
@@ -215,13 +222,17 @@ test("a_report_of_the_bridge_reaches_the_passkey_operation_with_the_browsers_sen
   const sender = { id: runtime.id, tab: { id: 3 }, frameId: 0, url: "https://rp.example/login", origin: "https://rp.example", documentId: "d-1" };
   const id = "b".repeat(32);
   const body = { request_id: id, kind: "get", mediation: "optional", get: { challenge: "AAAA", allow_credentials: [], hints: [], extensions: {} }, activation: true, policy: null };
-  await router.onMessage(encode("passkey_request", body), sender);
-  await router.onMessage(encode("passkey_ping", { request_ids: [id] }), sender);
+  const taken = await router.onMessage(encode("passkey_request", body), sender);
+  assert.deepEqual(decode(taken, CONTENT_TYPES, { reply: true }).body, { accepted: true }, "a request is answered with taken");
+  assert.equal(await router.onMessage(encode("passkey_ping", { request_ids: [id] }), sender), undefined, "a report gets nothing");
   assert.deepEqual(calls.map((c) => [c.op, c.args.type]), [[PASSKEY_OP, "passkey_request"], [PASSKEY_OP, "passkey_ping"]], "taken while the vault is locked");
   assert.deepEqual(calls[0].args.sender, { tabId: 3, frameId: 0, documentId: "d-1", url: "https://rp.example/login" });
   assert.equal(calls[0].args.body.request_id, id);
-  // A page's message with a key the schema does not have (an origin, say) is refused before anything happens.
-  await router.onMessage(JSON.stringify({ v: 1, id: "x1", type: "passkey_request", body: { ...body, origin: "https://bank.example" } }), sender);
+  // A page's message with a key the schema does not have (an origin, say) is refused before anything happens, and not taken.
+  assert.equal(await router.onMessage(JSON.stringify({ v: 1, id: "x1", type: "passkey_request", body: { ...body, origin: "https://bank.example" } }), sender), undefined);
+  assert.equal(calls.length, 2);
+  // A frame with an opaque origin is not a content sender: not taken, so the bridge hands the call to the browser.
+  assert.equal(await router.onMessage(encode("passkey_request", body), { ...sender, origin: "null" }), undefined);
   assert.equal(calls.length, 2);
   // Not from a content script of this extension: nothing.
   await router.onMessage(encode("passkey_abort", { request_id: id }), { ...sender, id: "other" });

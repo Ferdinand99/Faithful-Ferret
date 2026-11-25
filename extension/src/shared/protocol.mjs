@@ -784,7 +784,7 @@ export const UI_TYPES = defineTypes({
   },
 });
 
-/** Content script to background. A content script only reports; it never asks. */
+/** Content script to background. A content script only reports; it never asks (the passkey bridge only learns "taken"). */
 export const CONTENT_TYPES = defineTypes({
   // `self_origin` is the script's own `self.origin`. The background takes the
   // origin from the browser and uses `self_origin` only to narrow: "null" or a
@@ -855,6 +855,9 @@ export const CONTENT_TYPES = defineTypes({
       },
       { optional: ["create", "get"] },
     ),
+    // The background took the request: it answers it later with a push. Anything else (no answer, a refused sender such as
+    // a frame with an opaque origin, a build without the feature) and the bridge hands the page's call to the browser.
+    reply: object({ accepted: boolean() }),
   },
   // The page's AbortSignal ended a request of this bridge (or a modal request replaced a conditional one).
   passkey_abort: { request: object({ request_id: requestId }) },

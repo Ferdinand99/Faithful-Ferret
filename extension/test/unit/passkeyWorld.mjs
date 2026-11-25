@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { encode } from "../../src/shared/protocol.mjs";
 import {
   classicScript, PASSKEY_BRIDGE_BUNDLE, PASSKEY_BRIDGE_ENTRY, PASSKEY_MAIN_BUNDLE, PASSKEY_MAIN_ENTRY, passkeyBridgeMayInclude, passkeyMainMayInclude,
 } from "../../scripts/lib/classic.mjs";
@@ -125,6 +126,7 @@ const REALM_DOM = String.raw`
     get userActivation() { return { isActive: host.activation(), hasBeenActive: host.activation() }; },
   };
   globalThis.location = { href: host.href };
+  globalThis.origin = "https://rp.example";
   host.register({
     wrap,
     event: (core) => wrap("event", core),
@@ -154,6 +156,7 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
   let intervalId = 0;
   let active = activation;
   let sendFails = false;
+  let takes = true;
 
   /** @type {any} */
   let currentRealm = null;
@@ -277,7 +280,8 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
         if (sendFails) throw new Error("Could not establish connection. Receiving end does not exist.");
         const message = JSON.parse(raw);
         sent.push({ type: message.type, body: message.body });
-        return undefined;
+        // The router's answer: "taken" for a request (when the background takes it), nothing for a report.
+        return message.type === "passkey_request" && takes ? encode("passkey_request", { accepted: true }, { reply: true, id: message.id }) : undefined;
       },
       onMessage: { addListener: (/** @type {any} */ fn) => pushListeners.push(fn) },
     },
@@ -323,6 +327,10 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     /** @param {boolean} fails */
     setSendFails: (fails) => {
       sendFails = fails;
+    },
+    /** Whether the background takes a request (a refused sender gets no answer). @param {boolean} yes */
+    setTakes: (yes) => {
+      takes = yes;
     },
     /** A push of the background to the bridge, the way tabs.sendMessage delivers it. @param {string} type @param {unknown} body @param {{ id?: string }} [sender] */
     push: async (type, body, sender = { id: RUNTIME_ID }) => {
