@@ -564,7 +564,7 @@ test("the_flow_says_one_plain_thing_for_every_failure_of_the_ceremony", async ()
   assert.deepEqual(await run(await fakeAssertion({ output: filled(31, 1) })), { ok: false, reason: "passkey_unlock_failed" });
   assert.deepEqual(asked, []);
   for (const reason of ["passkey_blocked", "passkey_cancelled", "passkey_failed", "passkey_not_verified", "passkey_other_credential", "passkey_security", "passkey_unlock_failed", "passkey_unsupported", "prf_failed", "prf_unavailable", "method_removed", "network", "signed_out", "attack_warning"]) {
-    assert.match(passkeyErrorKey(reason), /^(?:unlock\.passkey|session)\.error\./, reason);
+    assert.match(passkeyErrorKey(reason), /^(?:passkey|session)\.error\./, reason);
   }
   assert.equal(passkeyErrorKey("something_else"), "session.error.unknown");
 });
