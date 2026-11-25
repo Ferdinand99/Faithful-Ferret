@@ -5,6 +5,7 @@ import { concat, fail, ascii, utf8, hex, unhex, equal } from './util.mjs';
 import { C, encode } from './cbor.mjs';
 import { canonicalOrigin, validateRpId } from './origin.mjs';
 import * as p256 from './p256.mjs';
+import { displayHost } from './urlmatch.mjs';
 
 // "One fixed AAGUID (a UUIDv4) for all installations" (section 9.3). The design does not give the value;
 // this one is read from the vectors. It is a version 4, variant 1 UUID (bytes 6 and 8 checked below).
@@ -57,6 +58,11 @@ function prfResults(seed, ev) {
   };
 }
 
+// The texts of the site are stored without control characters (C0, DEL and C1); nothing left means no text.
+const noControls = (t) => t.replace(/[\u0000-\u001f\u007f-\u009f]/gu, '');
+const storedText = (t) => (noControls(t) === '' ? null : noControls(t));
+const MAX_TEXT = 1024;
+
 export function create(input, rng) {
   const req = input.request;
   if (!input.top_origin_is_same) fail('not_allowed');
@@ -65,7 +71,10 @@ export function create(input, rng) {
   if (req.exclude.length > 200) fail('too_large');
   const handle = unhex(req.user_id);
   if (handle.length === 0 || handle.length > 64) fail('malformed_webauthn_options');
-  if (!req.algorithms.includes(-7)) fail('unsupported');
+  // the limit counts the text as the site sent it, in bytes
+  if ([req.rp_name, req.user_name, req.user_display_name].some((t) => utf8(t).length > MAX_TEXT)) fail('too_large');
+  // an empty list means ES256 and RS256 (WebAuthn): answered with ES256
+  if (req.algorithms.length > 0 && !req.algorithms.includes(-7)) fail('unsupported');
   if (!input.uv.user_present) fail('not_allowed');
   if (req.user_verification === 'required' && !input.uv.user_verified) fail('not_allowed');
   const stored = new Set(input.existing_credentials.filter((c) => c.rp_id === rpId).map((c) => c.id));
@@ -103,7 +112,9 @@ export function create(input, rng) {
         cred_id: hex(credId),
         rp_id: rpId,
         user_handle: hex(handle),
-        user_name: req.user_name,
+        user_name: noControls(req.user_name),
+        rp_name: storedText(req.rp_name),
+        user_display_name: storedText(req.user_display_name),
         created: input.created_ms,
         private_scalar: hex(scalar),
         priv_pkcs8: hex(pkcs8(scalar, pub)),
@@ -117,6 +128,9 @@ export function create(input, rng) {
         authenticator_data: hex(authData),
         public_key_spki: hex(spki(pub)),
         alg: -7,
+        authenticator_attachment: 'platform',
+        transports: ['internal', 'hybrid'],
+        cred_props: req.cred_props ? { rk: true } : null,
         prf: prfOut,
       },
     },
@@ -183,6 +197,7 @@ export async function get(input, expected) {
   return {
     expect: {
       id: rec.cred_id,
+      authenticator_attachment: 'platform',
       authenticator_data: hex(authData),
       client_data_json: cdj,
       signature,
@@ -191,6 +206,29 @@ export async function get(input, expected) {
     },
     intermediate: { flags },
   };
+}
+
+// Which stored passkeys may answer a get: the RP ID exactly the resolved one, and in a non-empty allow list.
+export function candidates(input) {
+  if (input.allow.length > 200 || input.allow.some((id) => unhex(id).length > 1023)) fail('too_large');
+  if (input.rp_id !== null && utf8(input.rp_id).length > MAX_TEXT) fail('too_large');
+  if (!input.top_origin_is_same) fail('not_allowed');
+  const { rpId } = resolveRp(input, input.rp_id);
+  const indexes = [];
+  input.stored.forEach((s, i) => {
+    if (s.rp_id === rpId && (input.allow.length === 0 || input.allow.includes(s.id))) indexes.push(i);
+  });
+  return { expect: { indexes } };
+}
+
+// The site as the chooser shows it: canonical origin, RP ID and the Unicode forms of both names.
+export function site(input) {
+  if (input.rp_id !== null && utf8(input.rp_id).length > MAX_TEXT) fail('too_large');
+  if (!input.top_origin_is_same) fail('not_allowed');
+  const o = canonicalOrigin(input.origin);
+  const { origin, rpId } = resolveRp(input, input.rp_id);
+  const unicode = (host) => displayHost(`https://${host}`).unicode;
+  return { expect: { origin, host_unicode: unicode(o.host), rp_id: rpId, rp_id_unicode: unicode(rpId) } };
 }
 
 export { equal };

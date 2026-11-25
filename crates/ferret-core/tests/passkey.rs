@@ -17,8 +17,8 @@ use ferret_core::testing::vector::Outcome;
 use ferret_core::testing::{TestRng, hex_decode};
 use ferret_core::{
     CallerContext, CreateRequest, Error, ExistingCredential, GetRequest, MalformedKind, Passkey,
-    PasskeyRecord, PrfSeed, UserVerification, UvOutcome, canonical_origin, passkey_create,
-    passkey_get,
+    PasskeyRecord, PrfSeed, StoredPasskeyRef, UserVerification, UvOutcome, canonical_origin,
+    passkey_candidates, passkey_create, passkey_get, passkey_site,
 };
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -62,6 +62,7 @@ fn create_req() -> CreateRequest {
         exclude: vec![],
         user_verification: UserVerification::Preferred,
         prf: None,
+        cred_props: false,
     }
 }
 
@@ -159,6 +160,7 @@ fn create_request_of(r: &Value) -> CreateRequest {
         prf: r["prf"].as_object().map(|p| PrfCreate {
             eval: p.get("eval").filter(|e| !e.is_null()).map(eval_of),
         }),
+        cred_props: r["cred_props"].as_bool().unwrap(),
     }
 }
 
@@ -192,6 +194,8 @@ fn record_of(r: &Value) -> PasskeyRecord {
         created: u64s(&r["created"]),
         prf_seed_uv: opt(&r["prf_seed_uv"]),
         prf_seed_nouv: opt(&r["prf_seed_nouv"]),
+        rp_name: r["rp_name"].as_str().map(str::to_owned),
+        user_display_name: r["user_display_name"].as_str().map(str::to_owned),
         extra: vec![],
     })
     .unwrap()
@@ -228,8 +232,8 @@ fn cose_key_of(auth: &[u8]) -> Vec<u8> {
     auth[55 + len..55 + len + 77].to_vec()
 }
 
-fn run_vectors() -> ferret_core::testing::vector::RunReport {
-    let file = load_ops("passkey.json", |_| true);
+fn run_vectors(keep: impl Fn(&str) -> bool) -> ferret_core::testing::vector::RunReport {
+    let file = load_ops("passkey.json", keep);
     ferret_core::testing::vector::run_all(&file, |case, rng| {
         let input = &case.input;
         match case.op.as_str() {
@@ -253,6 +257,8 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                             "rp_id": item.rp_id,
                             "user_handle": he(&item.user_handle),
                             "user_name": item.user_name,
+                            "rp_name": item.rp_name,
+                            "user_display_name": item.user_display_name,
                             "created": item.created.to_string(),
                             "private_scalar": he(&private_scalar(&created.record).unwrap()),
                             "priv_pkcs8": he(&item.private_key),
@@ -266,6 +272,9 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                             "authenticator_data": he(auth),
                             "public_key_spki": he(&r.public_key_spki),
                             "alg": r.alg,
+                            "authenticator_attachment": r.authenticator_attachment,
+                            "transports": r.transports,
+                            "cred_props": r.cred_props.map_or(Value::Null, |c| json!({ "rk": c.rk })),
                             "prf": create_prf_json(&r.prf),
                         },
                     }),
@@ -286,6 +295,7 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                 Ok(Outcome {
                     output: json!({
                         "id": he(&r.id),
+                        "authenticator_attachment": r.authenticator_attachment,
                         "authenticator_data": he(&r.authenticator_data),
                         "client_data_json": String::from_utf8(r.client_data_json.clone()).unwrap(),
                         "signature": he(&r.signature),
@@ -293,6 +303,40 @@ fn run_vectors() -> ferret_core::testing::vector::RunReport {
                         "prf": get_prf_json(&r.prf),
                     }),
                     intermediate: Some(json!({ "flags": flags(&r.authenticator_data) })),
+                })
+            }
+            "passkey.candidates" => {
+                let stored: Vec<(String, Vec<u8>)> = input["stored"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| (e["rp_id"].as_str().unwrap().to_owned(), hex(&e["id"])))
+                    .collect();
+                let refs: Vec<StoredPasskeyRef<'_>> = stored
+                    .iter()
+                    .map(|(rp_id, cred_id)| StoredPasskeyRef { rp_id, cred_id })
+                    .collect();
+                let indexes = passkey_candidates(
+                    &ctx_of(input),
+                    input["rp_id"].as_str(),
+                    &hex_list(&input["allow"]),
+                    &refs,
+                )?;
+                Ok(Outcome {
+                    output: json!({ "indexes": indexes }),
+                    intermediate: None,
+                })
+            }
+            "passkey.site" => {
+                let site = passkey_site(&ctx_of(input), input["rp_id"].as_str())?;
+                Ok(Outcome {
+                    output: json!({
+                        "origin": site.origin,
+                        "host_unicode": site.host_unicode,
+                        "rp_id": site.rp_id,
+                        "rp_id_unicode": site.rp_id_unicode,
+                    }),
+                    intermediate: None,
                 })
             }
             "passkey.prf" => {
@@ -326,7 +370,7 @@ fn segments(v: &Value) -> Vec<u8> {
 
 #[test]
 fn passkey_vectors_from_file() {
-    let report = run_vectors();
+    let report = run_vectors(|op| matches!(op, "passkey.create" | "passkey.get" | "passkey.prf"));
     assert_all_passed(&report, 18);
 }
 
@@ -969,4 +1013,572 @@ fn seal_passkey_item_keeps_the_key_inside_the_envelope() {
 
 fn ctx_vault() -> VaultContext {
     common::ctx()
+}
+
+// ------------------------------------------- candidates, site, new fields
+
+fn stored_ref<'a>(rp_id: &'a str, cred_id: &'a [u8]) -> StoredPasskeyRef<'a> {
+    StoredPasskeyRef { rp_id, cred_id }
+}
+
+#[test]
+fn candidates_need_the_exact_rp_id_and_respect_allow() {
+    let (a, b, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let stored = [
+        stored_ref("example.com", &a),
+        stored_ref("login.example.com", &b),
+        stored_ref("login.example.com", &c),
+        stored_ref("other.test", &a),
+    ];
+    let page = ctx("https://login.example.com");
+    // The RP ID defaults to the host of the origin: only the passkeys of
+    // exactly that host, in the order they are stored.
+    assert_eq!(
+        passkey_candidates(&page, None, &[], &stored).unwrap(),
+        [1, 2]
+    );
+    // `rpId` names the parent: only the passkey of the parent.
+    assert_eq!(
+        passkey_candidates(&page, Some("example.com"), &[], &stored).unwrap(),
+        [0]
+    );
+    // A non-empty `allow` keeps the listed ids, and only those.
+    assert_eq!(
+        passkey_candidates(&page, None, &[c.to_vec()], &stored).unwrap(),
+        [2]
+    );
+    assert_eq!(
+        passkey_candidates(&page, None, &[c.to_vec(), b.to_vec(), vec![9; 5]], &stored).unwrap(),
+        [1, 2]
+    );
+    // An id that is stored for another RP ID is not a candidate here, and
+    // an id that is not stored at all is not an error.
+    assert!(
+        passkey_candidates(&page, None, &[a.to_vec()], &stored)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        passkey_candidates(&page, None, &[vec![0; 32]], &stored)
+            .unwrap()
+            .is_empty()
+    );
+    // Nothing stored, nothing found.
+    assert!(
+        passkey_candidates(&page, None, &[], &[])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn candidates_never_cross_rp_ids() {
+    let id = [7u8; 32];
+    // Looks like a neighbour of the page, but is not the RP ID of the
+    // request: a sibling or a child host, a parent, another registrable
+    // domain, a longer name that ends the same way, a name that is not in
+    // canonical form (upper case, trailing dot, a space).
+    let near = [
+        "evil.example.com",
+        "sub.login.example.com",
+        "notlogin.example.com",
+        "login.example.com.evil.test",
+        "LOGIN.EXAMPLE.COM",
+        "Login.example.com",
+        "login.example.com.",
+        " login.example.com",
+        "login.example.org",
+        "example.com",
+        "com",
+        "",
+    ];
+    let stored: Vec<StoredPasskeyRef<'_>> = near.iter().map(|rp| stored_ref(rp, &id)).collect();
+    let page = ctx("https://login.example.com");
+    assert!(
+        passkey_candidates(&page, None, &[], &stored)
+            .unwrap()
+            .is_empty()
+    );
+    // From the parent's own page, and with the parent named, only the
+    // parent's passkey is one.
+    let parent = ctx("https://example.com");
+    assert_eq!(
+        passkey_candidates(&parent, None, &[], &stored).unwrap(),
+        [9]
+    );
+    assert_eq!(
+        passkey_candidates(&page, Some("example.com"), &[], &stored).unwrap(),
+        [9]
+    );
+    // An internationalized name is the A-label in the store; the Unicode
+    // text is another string and finds nothing.
+    let idn = [
+        stored_ref("xn--bcher-kva.example", &id),
+        stored_ref("b\u{fc}cher.example", &id),
+    ];
+    assert_eq!(
+        passkey_candidates(&ctx("https://xn--bcher-kva.example"), None, &[], &idn).unwrap(),
+        [0]
+    );
+    assert_eq!(
+        passkey_candidates(&ctx("https://b\u{fc}cher.example"), None, &[], &idn).unwrap(),
+        [0]
+    );
+    // The two rules are the same rule: a candidate answers a get, and a
+    // passkey that is not one does not.
+    let (mine, _) = make(&create_req(), YES);
+    let other = {
+        let mut rng = TestRng::new(b"other site");
+        let c = passkey_create(
+            &mut rng,
+            &create_req(),
+            &ctx("https://login.example.com"),
+            YES,
+            &[],
+            1,
+        )
+        .unwrap();
+        c.record
+    };
+    assert_eq!(other.rp_id, "login.example.com");
+    let both = [
+        stored_ref(&mine.rp_id, &mine.cred_id),
+        stored_ref(&other.rp_id, &other.cred_id),
+    ];
+    let at = ctx("https://example.com");
+    assert_eq!(passkey_candidates(&at, None, &[], &both).unwrap(), [0]);
+    assert!(passkey_get(&mine, &get_req(), &at, YES).is_ok());
+    assert_eq!(
+        passkey_get(&other, &get_req(), &at, YES).err(),
+        Some(Error::NotAllowed)
+    );
+}
+
+#[test]
+fn candidates_judge_the_request_as_get_does() {
+    let id = [1u8; 32];
+    let stored = [stored_ref("example.com", &id)];
+    let page = ctx("https://example.com");
+    // An RP ID the origin may not use has its own code, which the caller
+    // gives the page as SecurityError.
+    for bad in [
+        "com",
+        "other.test",
+        "example.com:443",
+        "1.2.3.4",
+        "*.example.com",
+        "",
+    ] {
+        let err = passkey_candidates(&page, Some(bad), &[], &stored).unwrap_err();
+        assert_eq!(err, Error::Malformed(MalformedKind::RpId), "{bad:?}");
+        assert_eq!(err.code(), "malformed_rp_id");
+    }
+    // Cross-origin is the one NotAllowed.
+    let mut framed = ctx("https://example.com");
+    framed.top_origin_is_same = false;
+    assert_eq!(
+        passkey_candidates(&framed, None, &[], &stored).err(),
+        Some(Error::NotAllowed)
+    );
+    // The limits of § 9.2.
+    let long = vec![vec![0u8; 32]; 201];
+    assert_eq!(
+        passkey_candidates(&page, None, &long, &stored).err(),
+        Some(Error::TooLarge)
+    );
+    assert_eq!(
+        passkey_candidates(&page, None, &[vec![0u8; 1024]], &stored).err(),
+        Some(Error::TooLarge)
+    );
+    let ok = vec![vec![0u8; 1023]; 200];
+    assert!(passkey_candidates(&page, None, &ok, &stored).is_ok());
+    let long_rp = "a".repeat(1025);
+    assert_eq!(
+        passkey_candidates(&page, Some(&long_rp), &[], &stored).err(),
+        Some(Error::TooLarge)
+    );
+}
+
+#[test]
+fn passkey_site_gives_the_canonical_origin_rp_id_and_a_label() {
+    let site = passkey_site(&ctx("https://Login.Example.COM:443"), None).unwrap();
+    assert_eq!(site.origin, "https://login.example.com");
+    assert_eq!(site.rp_id, "login.example.com");
+    assert_eq!(site.rp_id_unicode, "login.example.com");
+    assert_eq!(site.host_unicode, "login.example.com");
+    let site = passkey_site(&ctx("https://login.example.com:8443"), Some("EXAMPLE.com")).unwrap();
+    assert_eq!(site.origin, "https://login.example.com:8443");
+    assert_eq!(site.rp_id, "example.com");
+    // An internationalized name: the A-label is what is compared and signed,
+    // the Unicode form is what the window shows next to it.
+    let site = passkey_site(&ctx("https://xn--bcher-kva.example"), None).unwrap();
+    assert_eq!(site.origin, "https://xn--bcher-kva.example");
+    assert_eq!(site.rp_id, "xn--bcher-kva.example");
+    assert_eq!(site.rp_id_unicode, "b\u{fc}cher.example");
+    assert_eq!(site.host_unicode, "b\u{fc}cher.example");
+    let site = passkey_site(
+        &ctx("https://b\u{fc}cher.example"),
+        Some("b\u{fc}cher.example"),
+    )
+    .unwrap();
+    assert_eq!(site.rp_id, "xn--bcher-kva.example");
+    // A label that mixes scripts stays an A-label: Latin letters with a
+    // Cyrillic a.
+    let mixed = passkey_site(&ctx("https://ex\u{430}mple.com"), None).unwrap();
+    assert!(mixed.rp_id.starts_with("xn--"));
+    assert_eq!(mixed.rp_id_unicode, mixed.rp_id);
+    // The request is judged as it is for a get: a wrong RP ID is
+    // `malformed_rp_id`, a cross-origin caller is NotAllowed.
+    assert_eq!(
+        passkey_site(&ctx("https://example.com"), Some("com")).err(),
+        Some(Error::Malformed(MalformedKind::RpId))
+    );
+    assert_eq!(
+        passkey_site(&ctx("https://example.com"), Some("evil.test")).err(),
+        Some(Error::Malformed(MalformedKind::RpId))
+    );
+    let mut framed = ctx("https://example.com");
+    framed.top_origin_is_same = false;
+    assert_eq!(passkey_site(&framed, None).err(), Some(Error::NotAllowed));
+    assert_eq!(
+        passkey_site(&ctx("https://example.com"), Some(&"a".repeat(1025))).err(),
+        Some(Error::TooLarge)
+    );
+}
+
+#[test]
+fn create_response_has_platform_attachment_and_transports() {
+    let (_, response) = make(&create_req(), YES);
+    assert_eq!(response.authenticator_attachment, "platform");
+    assert_eq!(response.transports, ["internal", "hybrid"]);
+    // The same for every request, with or without UV and with prf.
+    let mut req = create_req();
+    req.prf = Some(PrfCreate::default());
+    for uv in [YES, NO_UV] {
+        let (_, response) = make(&req, uv);
+        assert_eq!(response.authenticator_attachment, "platform");
+        assert_eq!(response.transports, ["internal", "hybrid"]);
+    }
+    // And a get says it was a platform authenticator too.
+    let (record, _) = make(&create_req(), YES);
+    let got = passkey_get(&record, &get_req(), &ctx("https://example.com"), YES).unwrap();
+    assert_eq!(got.authenticator_attachment, "platform");
+}
+
+#[test]
+fn cred_props_only_when_asked() {
+    let mut req = create_req();
+    assert!(!req.cred_props);
+    let (_, response) = make(&req, YES);
+    assert_eq!(response.cred_props, None);
+    req.cred_props = true;
+    let (record, response) = make(&req, YES);
+    assert_eq!(
+        response.cred_props.map(|c| c.rk),
+        Some(true),
+        "the passkey is discoverable"
+    );
+    // Asking for it changes nothing else: the key and the flags are the
+    // ones of the request that did not ask (same draws).
+    let (plain, plain_response) = make(&create_req(), YES);
+    assert_eq!(item_of(&record).cred_id, item_of(&plain).cred_id);
+    assert_eq!(
+        response.authenticator_data,
+        plain_response.authenticator_data
+    );
+    // A refused request has no answer, so no credProps either.
+    req.user_verification = UserVerification::Required;
+    let mut rng = TestRng::new(b"refused");
+    assert!(passkey_create(&mut rng, &req, &ctx("https://example.com"), NO_UV, &[], 1).is_err());
+}
+
+#[test]
+fn an_empty_alg_list_means_es256() {
+    // WebAuthn: an empty `pubKeyCredParams` means ES256 and RS256. Ferret
+    // makes ES256.
+    let mut req = create_req();
+    req.algorithms = vec![];
+    let (_, response) = make(&req, YES);
+    assert_eq!(response.alg, -7);
+    // ES256 anywhere in the list is enough.
+    req.algorithms = vec![-257, -7];
+    assert_eq!(make(&req, YES).1.alg, -7);
+    // A list without it is `unsupported`; the extension hands that request
+    // to the browser.
+    req.algorithms = vec![-257];
+    let mut rng = TestRng::new(b"alg");
+    assert_eq!(
+        passkey_create(&mut rng, &req, &ctx("https://example.com"), YES, &[], 1).err(),
+        Some(Error::Unsupported)
+    );
+    req.algorithms = vec![-8, -36];
+    assert_eq!(req.validate().err(), Some(Error::Unsupported));
+}
+
+#[test]
+fn prf_exists_only_when_create_asked_for_it() {
+    // Made without `prf`: no seeds, now and later.
+    let (plain, response) = make(&create_req(), YES);
+    assert!(!plain.has_prf());
+    assert!(response.prf.is_none());
+    assert!(item_of(&plain).prf_seed_uv.is_none() && item_of(&plain).prf_seed_nouv.is_none());
+    let mut get = get_req();
+    get.prf = Some(PrfRequest {
+        eval: Some(PrfEval {
+            first: vec![1; 16],
+            second: None,
+        }),
+        eval_by_credential: vec![],
+    });
+    for uv in [YES, NO_UV] {
+        let got = passkey_get(&plain, &get, &ctx("https://example.com"), uv).unwrap();
+        assert!(got.prf.is_none(), "a later get cannot add prf");
+    }
+    // The same request to a passkey made with `prf` does answer.
+    let mut req = create_req();
+    req.prf = Some(PrfCreate::default());
+    let (with_prf, response) = make(&req, YES);
+    assert!(with_prf.has_prf());
+    assert!(response.prf.as_ref().is_some_and(|p| p.enabled));
+    let got = passkey_get(&with_prf, &get, &ctx("https://example.com"), YES).unwrap();
+    assert!(got.prf.is_some());
+    // And a get that does not ask for prf gets none.
+    let got = passkey_get(&with_prf, &get_req(), &ctx("https://example.com"), YES).unwrap();
+    assert!(got.prf.is_none());
+}
+
+/// The entries of the `passkey` member of a body, in the order they are
+/// written.
+fn passkey_entries(body: &ferret_core::ItemBody) -> Vec<(String, ferret_core::cbor::Value)> {
+    use ferret_core::cbor::Value as Cbor;
+    let value = body.to_value();
+    let Cbor::Map(entries) = &value else {
+        panic!("a body is a map")
+    };
+    let (_, Cbor::Map(passkey)) = entries
+        .iter()
+        .find(|(k, _)| k.as_str() == "passkey")
+        .unwrap()
+    else {
+        panic!("the passkey is a map")
+    };
+    passkey.clone()
+}
+
+#[test]
+fn rp_name_and_display_name_are_optional_and_kept_by_older_readers() {
+    use ferret_core::cbor::{self, Value as Cbor};
+    use ferret_core::{ItemBody, ItemType};
+    // New passkeys carry both texts, as made by create.
+    let (record, _) = make(&create_req(), YES);
+    let item = item_of(&record);
+    assert_eq!(item.rp_name.as_deref(), Some("Example"));
+    assert_eq!(item.user_display_name.as_deref(), Some("Alice"));
+    assert_eq!(record.rp_name.as_deref(), Some("Example"));
+    assert_eq!(record.user_display_name.as_deref(), Some("Alice"));
+    let mut body = ItemBody::new(ItemType::Login, "example.com", 1);
+    record.attach_to(&mut body);
+    let keys: Vec<String> = passkey_entries(&body).into_iter().map(|(k, _)| k).collect();
+    assert_eq!(
+        keys,
+        [
+            "cred_id",
+            "rp_id",
+            "user_handle",
+            "user_name",
+            "priv",
+            "sign_count",
+            "created",
+            "rp_name",
+            "user_display_name"
+        ],
+        "after the keys the first version wrote, in a fixed order"
+    );
+    // Written, read and written again: the same bytes, the texts back.
+    let bytes = body.to_cbor().unwrap();
+    let read = ItemBody::from_cbor(&bytes).unwrap().body;
+    let p = read.passkey.as_ref().unwrap();
+    assert_eq!(p.rp_name.as_deref(), Some("Example"));
+    assert_eq!(p.user_display_name.as_deref(), Some("Alice"));
+    assert_eq!(*read.to_cbor().unwrap(), *bytes);
+    let back = PasskeyRecord::from_item(p).unwrap();
+    assert_eq!(back.rp_name.as_deref(), Some("Example"));
+
+    // Optional: a request without them (empty texts) stores neither key, and
+    // a body from before them reads as `None` and is written back without.
+    let mut req = create_req();
+    req.rp_name = String::new();
+    req.user_display_name = String::new();
+    let (bare, _) = make(&req, YES);
+    let mut bare_body = ItemBody::new(ItemType::Login, "example.com", 1);
+    bare.attach_to(&mut bare_body);
+    assert!(
+        !passkey_entries(&bare_body)
+            .iter()
+            .any(|(k, _)| k == "rp_name" || k == "user_display_name")
+    );
+    let bytes = bare_body.to_cbor().unwrap();
+    let read = ItemBody::from_cbor(&bytes).unwrap().body;
+    assert_eq!(read.passkey.as_ref().unwrap().rp_name, None);
+    assert_eq!(read.passkey.as_ref().unwrap().user_display_name, None);
+    assert_eq!(*read.to_cbor().unwrap(), *bytes);
+
+    // An older reader does not know the two keys. It keeps every unknown key
+    // of the passkey map after the keys it knows, in the order it read them,
+    // and writes them back; with the two keys where they are, that is the
+    // same bytes.
+    const KNOWN_BEFORE: [&str; 7] = [
+        "cred_id",
+        "rp_id",
+        "user_handle",
+        "user_name",
+        "priv",
+        "sign_count",
+        "created",
+    ];
+    let passkey = passkey_entries(&body);
+    let mut old_view: Vec<(String, Cbor)> = KNOWN_BEFORE
+        .iter()
+        .filter_map(|k| passkey.iter().find(|(key, _)| key == k).cloned())
+        .collect();
+    old_view.extend(
+        passkey
+            .iter()
+            .filter(|(k, _)| !KNOWN_BEFORE.contains(&k.as_str()))
+            .cloned(),
+    );
+    assert_eq!(
+        cbor::encode(&Cbor::Map(old_view)).unwrap(),
+        cbor::encode(&Cbor::Map(passkey)).unwrap()
+    );
+    // The mechanism it relies on, with the real reader: an unknown key at
+    // that place survives a read and a write, byte for byte.
+    let mut future = ItemBody::new(ItemType::Login, "example.com", 1);
+    let mut item = item_of(&bare);
+    item.extra = vec![("rp_nickname".into(), Cbor::text("kept"))];
+    future.passkey = Some(item);
+    let bytes = future.to_cbor().unwrap();
+    let read = ItemBody::from_cbor(&bytes).unwrap().body;
+    assert_eq!(
+        read.passkey.as_ref().unwrap().extra,
+        [("rp_nickname".to_owned(), Cbor::text("kept"))]
+    );
+    assert_eq!(*read.to_cbor().unwrap(), *bytes);
+    // A name of another type is not a name: it is kept as it is, and no name
+    // is invented.
+    let mut value = future.to_value();
+    let Cbor::Map(entries) = &mut value else {
+        panic!()
+    };
+    for (k, v) in entries.iter_mut() {
+        if k.as_str() == "passkey" {
+            let Cbor::Map(pk) = v else { panic!() };
+            pk.push(("rp_name".into(), Cbor::Bytes(vec![1, 2, 3])));
+        }
+    }
+    // In a body of this schema that is refused, as for the other keys; a body
+    // of a newer schema is read leniently and keeps the key as it is.
+    assert_eq!(
+        ItemBody::from_cbor(&cbor::encode(&value).unwrap()).err(),
+        Some(Error::Malformed(MalformedKind::ItemBody))
+    );
+    let Cbor::Map(entries) = &mut value else {
+        panic!()
+    };
+    for (k, v) in entries.iter_mut() {
+        if k.as_str() == "schema" {
+            *v = Cbor::uint(2);
+        }
+    }
+    let odd = ItemBody::from_cbor(&cbor::encode(&value).unwrap())
+        .unwrap()
+        .body;
+    assert_eq!(odd.passkey.as_ref().unwrap().rp_name, None);
+    assert!(
+        odd.passkey
+            .as_ref()
+            .unwrap()
+            .extra
+            .iter()
+            .any(|(k, v)| k == "rp_name" && *v == Cbor::Bytes(vec![1, 2, 3]))
+    );
+}
+
+#[test]
+fn control_characters_are_removed_from_site_texts() {
+    let mut req = create_req();
+    req.rp_name = "Ex\u{0}am\nple\u{7f}\u{85}\t site".into();
+    req.user_name = "al\u{1b}[31mice\r\n@example.com".into();
+    req.user_display_name = "\u{8}Alice \u{9c}A\u{0}".into();
+    let (record, _) = make(&req, YES);
+    assert_eq!(record.rp_name.as_deref(), Some("Example site"));
+    assert_eq!(record.user_name, "al[31mice@example.com");
+    assert_eq!(record.user_display_name.as_deref(), Some("Alice A"));
+    let item = item_of(&record);
+    assert_eq!(item.rp_name.as_deref(), Some("Example site"));
+    assert_eq!(item.user_name, "al[31mice@example.com");
+    // Text of other scripts and emoji is text: kept as it is.
+    req.rp_name = "Caf\u{e9} \u{65e5}\u{672c} \u{1f980}".into();
+    req.user_display_name = "\u{c5}se".into();
+    let (record, _) = make(&req, YES);
+    assert_eq!(
+        record.rp_name.as_deref(),
+        Some("Caf\u{e9} \u{65e5}\u{672c} \u{1f980}")
+    );
+    assert_eq!(record.user_display_name.as_deref(), Some("\u{c5}se"));
+    // Nothing but control characters is no name.
+    req.rp_name = "\u{0}\n\t".into();
+    req.user_display_name = "\u{7f}".into();
+    let (record, _) = make(&req, YES);
+    assert_eq!(record.rp_name, None);
+    assert_eq!(record.user_display_name, None);
+    // The limit is 1 KiB of the text as the site sent it.
+    req.rp_name = "a".repeat(1025);
+    assert_eq!(req.validate().err(), Some(Error::TooLarge));
+    req.rp_name = "a".repeat(1024);
+    req.user_display_name = format!("{}{}", "b".repeat(1024), "\u{0}");
+    assert_eq!(req.validate().err(), Some(Error::TooLarge));
+    req.user_display_name = "b".repeat(1024);
+    assert!(req.validate().is_ok());
+    let (record, _) = make(&req, YES);
+    assert_eq!(record.rp_name.as_deref().map(str::len), Some(1024));
+}
+
+#[test]
+fn user_id_of_0_or_65_bytes_is_refused() {
+    let mut req = create_req();
+    let mut rng = TestRng::new(b"user id");
+    let c = ctx("https://example.com");
+    for len in [0usize, 65, 1000] {
+        req.user_id = vec![5; len];
+        assert_eq!(
+            passkey_create(&mut rng, &req, &c, YES, &[], 1).err(),
+            Some(Error::Malformed(MalformedKind::WebauthnOptions)),
+            "{len} bytes"
+        );
+    }
+    for len in [1usize, 16, 64] {
+        req.user_id = vec![5; len];
+        assert!(
+            passkey_create(&mut rng, &req, &c, YES, &[], 1).is_ok(),
+            "{len} bytes"
+        );
+    }
+}
+
+#[test]
+fn vectors_passkey_candidates_pass() {
+    let keep = |op: &str| matches!(op, "passkey.candidates" | "passkey.site");
+    let file = load_ops("passkey.json", keep);
+    let report = run_vectors(keep);
+    assert_all_passed(&report, 20);
+    for op in ["passkey.candidates", "passkey.site"] {
+        let n = file.cases.iter().filter(|c| c.op == op).count();
+        assert!(n >= 8, "{op} has {n} cases");
+    }
+    assert!(
+        file.cases
+            .iter()
+            .any(|c| c.status == ferret_core::testing::vector::Status::Invalid)
+    );
 }

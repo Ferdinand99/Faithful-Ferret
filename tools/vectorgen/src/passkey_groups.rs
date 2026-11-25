@@ -11,7 +11,9 @@
 //! draw; the signature is verified in the tests by `p256`'s verifier, which
 //! also passes the Wycheproof file.
 //!
-//! Ops (see `vectors/OPS.md`): `passkey.create`, `passkey.get`, `passkey.prf`.
+//! Ops (see `vectors/OPS.md`): `passkey.create`, `passkey.get`, `passkey.prf`,
+//! `passkey.candidates`, `passkey.site`. The expected candidates and site
+//! texts are written out by hand in each case, never computed.
 
 use crate::groups::{generator, invalid_case, valid_case};
 use crate::{Error, render};
@@ -205,6 +207,29 @@ struct Create {
     uv_req: &'static str,
     prf: Option<Option<Eval>>,
     uv: Uv,
+    /// The page asked for `credProps`.
+    cred_props: bool,
+    rp_name: String,
+    user_name: String,
+    display_name: String,
+}
+
+/// Control characters are removed from the texts of the site (the C0 and C1
+/// controls and DEL), written out as code point ranges.
+fn without_controls(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(u32::from(*c), 0..=0x1f | 0x7f..=0x9f))
+        .collect()
+}
+
+/// The text as stored: `None` when nothing is left of it.
+fn stored_text(s: &str) -> Value {
+    let t = without_controls(s);
+    if t.is_empty() {
+        Value::Null
+    } else {
+        Value::from(t)
+    }
 }
 
 impl Create {
@@ -221,6 +246,10 @@ impl Create {
             uv_req: "preferred",
             prf: None,
             uv: UV_YES,
+            cred_props: false,
+            rp_name: "Example".into(),
+            user_name: "alice@example.com".into(),
+            display_name: "Alice".into(),
         }
     }
 
@@ -231,14 +260,15 @@ impl Create {
             "request": {
                 "challenge": hex(&self.challenge),
                 "rp_id": self.rp_id,
-                "rp_name": "Example",
+                "rp_name": self.rp_name,
                 "user_id": hex(&self.user_id),
-                "user_name": "alice@example.com",
-                "user_display_name": "Alice",
+                "user_name": self.user_name,
+                "user_display_name": self.display_name,
                 "algorithms": self.algorithms,
                 "exclude": self.exclude.iter().map(|e| hex(e)).collect::<Vec<_>>(),
                 "user_verification": self.uv_req,
                 "prf": self.prf.as_ref().map(|p| json!({ "eval": p.as_ref().map(eval_json) })),
+                "cred_props": self.cred_props,
             },
             "uv": uv_json(&self.uv),
             "existing_credentials": self.existing.iter().map(|(rp, id)| json!({ "rp_id": rp, "id": hex(id) })).collect::<Vec<_>>(),
@@ -307,7 +337,9 @@ fn valid_create(id: &str, title: &str, c: &Create, rp_id: &str) -> Result<Case, 
             "cred_id": hex(&cred_id),
             "rp_id": rp_id,
             "user_handle": hex(&c.user_id),
-            "user_name": "alice@example.com",
+            "user_name": without_controls(&c.user_name),
+            "rp_name": stored_text(&c.rp_name),
+            "user_display_name": stored_text(&c.display_name),
             "created": CREATED,
             "private_scalar": hex(&p.d),
             "priv_pkcs8": hex(&pkcs8(&p)),
@@ -321,6 +353,9 @@ fn valid_create(id: &str, title: &str, c: &Create, rp_id: &str) -> Result<Case, 
             "authenticator_data": hex(&auth),
             "public_key_spki": hex(&spki(&p)),
             "alg": -7,
+            "authenticator_attachment": "platform",
+            "transports": ["internal", "hybrid"],
+            "cred_props": if c.cred_props { json!({ "rk": true }) } else { Value::Null },
             "prf": prf,
         },
     });
@@ -458,6 +493,7 @@ fn valid_get(id: &str, title: &str, g: &Get, rec: &StoredRecord) -> Result<Case,
     };
     let expect = json!({
         "id": hex(&rec.cred_id),
+        "authenticator_attachment": "platform",
         "authenticator_data": hex(&auth),
         "client_data_json": cdj,
         "signature": hex(&signature),
@@ -484,6 +520,353 @@ fn invalid_get(
         g.input(rec)?,
         code,
     ))
+}
+
+// ------------------------------------------- candidates and site
+
+/// A stored passkey for the candidate lookup: `(rp_id, credential id)`.
+type Stored = (&'static str, Vec<u8>);
+
+/// One `passkey.candidates` case; `expect` is written by hand.
+struct Cand {
+    origin: &'static str,
+    same_top: bool,
+    rp_id: Option<String>,
+    allow: Vec<Vec<u8>>,
+    stored: Vec<Stored>,
+}
+
+impl Cand {
+    fn new(origin: &'static str, stored: &[Stored]) -> Self {
+        Self {
+            origin,
+            same_top: true,
+            rp_id: None,
+            allow: vec![],
+            stored: stored.to_vec(),
+        }
+    }
+
+    fn input(&self) -> Value {
+        json!({
+            "origin": self.origin,
+            "top_origin_is_same": self.same_top,
+            "rp_id": self.rp_id,
+            "allow": self.allow.iter().map(|a| hex(a)).collect::<Vec<_>>(),
+            "stored": self.stored.iter().map(|(rp, id)| json!({ "rp_id": rp, "id": hex(id) })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn valid(&self, id: &str, title: &str, indexes: &[usize]) -> Case {
+        valid_case(
+            id,
+            title,
+            "passkey.candidates",
+            vec![],
+            self.input(),
+            json!({ "indexes": indexes }),
+        )
+    }
+
+    fn invalid(&self, id: &str, title: &str, code: &str) -> Case {
+        invalid_case(id, title, "passkey.candidates", vec![], self.input(), code)
+    }
+}
+
+/// One `passkey.site` case.
+struct Site {
+    origin: &'static str,
+    same_top: bool,
+    rp_id: Option<String>,
+}
+
+impl Site {
+    fn new(origin: &'static str, rp_id: Option<&str>) -> Self {
+        Self {
+            origin,
+            same_top: true,
+            rp_id: rp_id.map(str::to_owned),
+        }
+    }
+
+    fn input(&self) -> Value {
+        json!({
+            "origin": self.origin,
+            "top_origin_is_same": self.same_top,
+            "rp_id": self.rp_id,
+        })
+    }
+
+    /// `expect` is `(origin, host_unicode, rp_id, rp_id_unicode)`.
+    fn valid(&self, id: &str, title: &str, expect: (&str, &str, &str, &str)) -> Case {
+        valid_case(
+            id,
+            title,
+            "passkey.site",
+            vec![],
+            self.input(),
+            json!({
+                "origin": expect.0,
+                "host_unicode": expect.1,
+                "rp_id": expect.2,
+                "rp_id_unicode": expect.3,
+            }),
+        )
+    }
+
+    fn invalid(&self, id: &str, title: &str, code: &str) -> Case {
+        invalid_case(id, title, "passkey.site", vec![], self.input(), code)
+    }
+}
+
+fn candidate_cases(cases: &mut Vec<Case>) {
+    let (id1, id2, id3, id4) = (pat(0x10, 32), pat(0x20, 32), pat(0x30, 32), pat(0x40, 32));
+    let stored: Vec<Stored> = vec![
+        ("example.com", id1.clone()),
+        ("login.example.com", id2.clone()),
+        ("login.example.com", id3.clone()),
+        ("other.test", id1.clone()),
+        ("xn--bcher-kva.example", id4),
+    ];
+    let page = "https://login.example.com";
+
+    let c = Cand::new(page, &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/001",
+        "the RP ID defaults to the host: only the passkeys of exactly that host, in stored order",
+        &[1, 2],
+    ));
+    let mut c = Cand::new(page, &stored);
+    c.rp_id = Some("example.com".into());
+    cases.push(c.valid(
+        "passkey/candidates/valid/002",
+        "rpId names the parent domain: only the passkey of the parent",
+        &[0],
+    ));
+    let mut c = Cand::new(page, &stored);
+    c.allow = vec![id3.clone()];
+    cases.push(c.valid(
+        "passkey/candidates/valid/003",
+        "allowCredentials keeps the listed id",
+        &[2],
+    ));
+    let mut c = Cand::new(page, &stored);
+    c.allow = vec![id3, vec![0xff; 5], id2];
+    cases.push(c.valid(
+        "passkey/candidates/valid/004",
+        "ids that are not stored are ignored, the order is the stored order",
+        &[1, 2],
+    ));
+    let mut c = Cand::new(page, &stored);
+    c.allow = vec![id1.clone()];
+    cases.push(c.valid(
+        "passkey/candidates/valid/005",
+        "an id that is stored for other RP IDs is no candidate here",
+        &[],
+    ));
+    let c = Cand::new("https://example.com", &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/006",
+        "from the parent's own page only its passkey",
+        &[0],
+    ));
+    let c = Cand::new("https://xn--bcher-kva.example", &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/007",
+        "an internationalized host matches the A-label in the store",
+        &[4],
+    ));
+    let c = Cand::new("https://b\u{fc}cher.example", &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/008",
+        "the origin given in Unicode form gives the same A-label",
+        &[4],
+    ));
+    let c = Cand::new(page, &[]);
+    cases.push(c.valid(
+        "passkey/candidates/valid/009",
+        "nothing stored, nothing found (not an error)",
+        &[],
+    ));
+    let odd: Vec<Stored> = vec![
+        ("LOGIN.EXAMPLE.COM", id1.clone()),
+        ("login.example.com.", id1.clone()),
+        ("b\u{fc}cher.example", id1.clone()),
+        ("sub.login.example.com", id1.clone()),
+        ("example.com", id1),
+    ];
+    let c = Cand::new(page, &odd);
+    cases.push(c.valid(
+        "passkey/candidates/valid/010",
+        "stored names that are not canonical, or a child or a parent host, never match",
+        &[],
+    ));
+    let mut c = Cand::new(page, &stored);
+    c.rp_id = Some("EXAMPLE.COM".into());
+    cases.push(c.valid(
+        "passkey/candidates/valid/011",
+        "the requested RP ID is made canonical (lower case) before the comparison",
+        &[0],
+    ));
+    let c = Cand::new("https://sub.login.example.com", &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/012",
+        "a subdomain without passkeys of its own finds none of the parent's",
+        &[],
+    ));
+
+    let mut c = Cand::new("https://example.com", &stored);
+    c.rp_id = Some("com".into());
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/001",
+        "RP ID is a public suffix",
+        "malformed_rp_id",
+    ));
+    let mut c = Cand::new("https://example.com", &stored);
+    c.rp_id = Some("other.test".into());
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/002",
+        "RP ID that is not the host or a suffix of it",
+        "malformed_rp_id",
+    ));
+    let mut c = Cand::new("https://example.com", &stored);
+    c.same_top = false;
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/003",
+        "cross-origin frame: NotAllowed",
+        "not_allowed",
+    ));
+    let mut c = Cand::new("https://example.com", &stored);
+    c.allow = vec![pat(1, 32); 201];
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/004",
+        "201 allowed credentials",
+        "too_large",
+    ));
+    let mut c = Cand::new("https://example.com", &stored);
+    c.allow = vec![pat(1, 1024)];
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/005",
+        "an allowed credential id of 1 024 bytes",
+        "too_large",
+    ));
+    let mut c = Cand::new("https://example.com", &stored);
+    c.rp_id = Some("example.com:443".into());
+    cases.push(c.invalid(
+        "passkey/candidates/invalid/006",
+        "RP ID with a port",
+        "malformed_rp_id",
+    ));
+}
+
+fn site_cases(cases: &mut Vec<Case>) {
+    let s = Site::new("https://example.com", None);
+    cases.push(s.valid(
+        "passkey/site/valid/001",
+        "origin and RP ID of a plain host",
+        (
+            "https://example.com",
+            "example.com",
+            "example.com",
+            "example.com",
+        ),
+    ));
+    let s = Site::new("https://Login.Example.COM:443", None);
+    cases.push(s.valid(
+        "passkey/site/valid/002",
+        "the origin is canonical: lower case, the default port dropped",
+        (
+            "https://login.example.com",
+            "login.example.com",
+            "login.example.com",
+            "login.example.com",
+        ),
+    ));
+    let s = Site::new("https://login.example.com:8443", Some("EXAMPLE.com"));
+    cases.push(s.valid(
+        "passkey/site/valid/003",
+        "the port stays in the origin, the RP ID is the parent in lower case",
+        (
+            "https://login.example.com:8443",
+            "login.example.com",
+            "example.com",
+            "example.com",
+        ),
+    ));
+    let s = Site::new("https://xn--bcher-kva.example", None);
+    cases.push(s.valid(
+        "passkey/site/valid/004",
+        "an internationalized host: A-label and Unicode form",
+        (
+            "https://xn--bcher-kva.example",
+            "b\u{fc}cher.example",
+            "xn--bcher-kva.example",
+            "b\u{fc}cher.example",
+        ),
+    ));
+    let s = Site::new(
+        "https://shop.b\u{fc}cher.example",
+        Some("b\u{fc}cher.example"),
+    );
+    cases.push(s.valid(
+        "passkey/site/valid/005",
+        "origin and RP ID given in Unicode form come out as A-labels, the Unicode form is kept for reading",
+        (
+            "https://shop.xn--bcher-kva.example",
+            "shop.b\u{fc}cher.example",
+            "xn--bcher-kva.example",
+            "b\u{fc}cher.example",
+        ),
+    ));
+    let s = Site::new("https://ex\u{430}mple.com", None);
+    cases.push(s.valid(
+        "passkey/site/valid/006",
+        "a label that mixes Latin letters with a Cyrillic a stays an A-label",
+        (
+            "https://xn--exmple-4nf.com",
+            "xn--exmple-4nf.com",
+            "xn--exmple-4nf.com",
+            "xn--exmple-4nf.com",
+        ),
+    ));
+    let s = Site::new("http://localhost", None);
+    cases.push(s.valid(
+        "passkey/site/valid/007",
+        "localhost over http, for development",
+        ("http://localhost", "localhost", "localhost", "localhost"),
+    ));
+
+    let s = Site::new("https://example.com", Some("com"));
+    cases.push(s.invalid(
+        "passkey/site/invalid/001",
+        "RP ID is a public suffix",
+        "malformed_rp_id",
+    ));
+    let s = Site::new("https://example.com", Some("evil.test"));
+    cases.push(s.invalid(
+        "passkey/site/invalid/002",
+        "RP ID of another site",
+        "malformed_rp_id",
+    ));
+    let mut s = Site::new("https://example.com", None);
+    s.same_top = false;
+    cases.push(s.invalid(
+        "passkey/site/invalid/003",
+        "cross-origin frame: NotAllowed",
+        "not_allowed",
+    ));
+    let s = Site::new("https://example.com", Some(&"a".repeat(1025)));
+    cases.push(s.invalid(
+        "passkey/site/invalid/004",
+        "RP ID of 1 025 bytes",
+        "too_large",
+    ));
+    let s = Site::new("https://login.example.com", Some("1.2.3.4"));
+    cases.push(s.invalid(
+        "passkey/site/invalid/005",
+        "RP ID that is an address",
+        "malformed_rp_id",
+    ));
 }
 
 // ------------------------------------------------------------------ prf
@@ -586,6 +969,51 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
         &c,
         "example.com",
     )?);
+    let mut c = Create::new(base);
+    c.cred_props = true;
+    cases.push(valid_create(
+        "passkey/create/valid/009",
+        "create when the page asked for credProps: rk is true",
+        &c,
+        "example.com",
+    )?);
+    let mut c = Create::new(base);
+    c.rp_name = "Ex\u{0}am\nple\u{7f}\u{85}\t site".into();
+    c.user_name = "al\u{1b}[31mice\r\n@example.com".into();
+    c.display_name = "\u{8}Alice \u{9c}A\u{0}".into();
+    cases.push(valid_create(
+        "passkey/create/valid/010",
+        "control characters are removed from rp name, user name and display name",
+        &c,
+        "example.com",
+    )?);
+    let mut c = Create::new(base);
+    c.rp_name = String::new();
+    c.display_name = "\u{7f}\u{0}".into();
+    cases.push(valid_create(
+        "passkey/create/valid/011",
+        "an empty rp name and a display name of control characters only are not stored",
+        &c,
+        "example.com",
+    )?);
+    let mut c = Create::new(base);
+    c.algorithms = vec![];
+    cases.push(valid_create(
+        "passkey/create/valid/012",
+        "an empty algorithm list means ES256 and RS256: Ferret answers with ES256",
+        &c,
+        "example.com",
+    )?);
+    let mut c = Create::new(base);
+    c.user_id = pat(0x20, 64);
+    c.rp_name = "R\u{e9}sum\u{e9} \u{1f980}".into();
+    c.display_name = "\u{c5}se".into();
+    cases.push(valid_create(
+        "passkey/create/valid/013",
+        "a user handle of 64 bytes and texts with non-ASCII letters are kept as they are",
+        &c,
+        "example.com",
+    )?);
 
     // ---- create, invalid
     let mut c = Create::new(base);
@@ -664,6 +1092,38 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
         "201 excludeCredentials",
         &c,
         "too_large",
+    ));
+    let mut c = Create::new(base);
+    c.user_id = pat(0x20, 65);
+    cases.push(invalid_create(
+        "passkey/create/invalid/010",
+        "user handle of 65 bytes",
+        &c,
+        "malformed_webauthn_options",
+    ));
+    let mut c = Create::new(base);
+    c.rp_name = "n".repeat(1025);
+    cases.push(invalid_create(
+        "passkey/create/invalid/011",
+        "rp name of 1 025 bytes",
+        &c,
+        "too_large",
+    ));
+    let mut c = Create::new(base);
+    c.display_name = format!("{}\u{0}", "d".repeat(1024));
+    cases.push(invalid_create(
+        "passkey/create/invalid/012",
+        "display name of 1 024 characters and a control character: the limit counts the text as sent",
+        &c,
+        "too_large",
+    ));
+    let mut c = Create::new(base);
+    c.algorithms = vec![-257, -8];
+    cases.push(invalid_create(
+        "passkey/create/invalid/013",
+        "RS256 and EdDSA only, no ES256",
+        &c,
+        "unsupported",
     ));
 
     // ---- get, valid
@@ -859,6 +1319,10 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
         json!({ "segments": [ { "hex": "ab", "repeat": 1024 } ] }),
         &[0xab; 1024],
     )?);
+
+    // ---- candidates and site
+    candidate_cases(&mut cases);
+    site_cases(&mut cases);
 
     let file = VectorFile {
         format: ferret_core::testing::vector::FORMAT.into(),

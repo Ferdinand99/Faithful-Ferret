@@ -39,16 +39,17 @@ use ferret_core::{
     MasterPassword, Method, MethodId, MethodKey, MpPolicy, MutationOp, PasskeyMeta, PasskeyRecord,
     Pin, PinProfile, PinState, Pinned, PlainExportOptions, PrfOutput, RecoveryKey,
     RecoveryPublicKey, RekeyInput, RekeyItem, RekeyTombstone, RollbackMemory, RowState, SecretKey,
-    ServerMethod, ServerRow, SyncMemory, TotpAlgorithm, UnlockedVault, UserVerification, UvOutcome,
-    VaultContext, VaultId, VaultKey, WrapRecord, auth_sign, canonical_origin, check_server_methods,
-    decode_recovery_key, decode_secret_key, decrypt_item, decrypt_manifest, encode_recovery_key,
-    encode_secret_key, encrypt_item, encrypt_manifest, export_encrypt, export_plain_csv,
-    export_plain_json, import_decrypt, item_tag, make_checkpoint, make_tombstone,
-    manifest_add_method, manifest_remove_method, opaque_login_finish, opaque_login_start,
-    opaque_register_finish, opaque_register_start, parse_export_header, parse_otpauth,
-    passkey_create, passkey_get, prf_output, prf_salt_new, recovery_public_key, recovery_sign,
-    totp_code, totp_seconds_left, unwrap_vk, validate_rp_id, verify_auth_proof, verify_checkpoint,
-    verify_item_tag, verify_recovery_proof, verify_tombstone, wrap_vk,
+    ServerMethod, ServerRow, StoredPasskeyRef, SyncMemory, TotpAlgorithm, UnlockedVault,
+    UserVerification, UvOutcome, VaultContext, VaultId, VaultKey, WrapRecord, auth_sign,
+    canonical_origin, check_server_methods, decode_recovery_key, decode_secret_key, decrypt_item,
+    decrypt_manifest, encode_recovery_key, encode_secret_key, encrypt_item, encrypt_manifest,
+    export_encrypt, export_plain_csv, export_plain_json, import_decrypt, item_tag, make_checkpoint,
+    make_tombstone, manifest_add_method, manifest_remove_method, opaque_login_finish,
+    opaque_login_start, opaque_register_finish, opaque_register_start, parse_export_header,
+    parse_otpauth, passkey_candidates, passkey_create, passkey_get, passkey_site, prf_output,
+    prf_salt_new, recovery_public_key, recovery_sign, totp_code, totp_seconds_left, unwrap_vk,
+    validate_rp_id, verify_auth_proof, verify_checkpoint, verify_item_tag, verify_recovery_proof,
+    verify_tombstone, wrap_vk,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1157,13 +1158,36 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
             "output": he(reveal_prf_output(&out)),
         }));
     }
-    let uv = UvOutcome {
-        user_present: i["uv"]["user_present"].as_bool().unwrap(),
-        user_verified: i["uv"]["user_verified"].as_bool().unwrap(),
-    };
     let ctx = CallerContext {
         origin: canonical_origin(i["origin"].as_str().unwrap())?,
         top_origin_is_same: i["top_origin_is_same"].as_bool().unwrap(),
+    };
+    if method == "passkey_candidates" {
+        let stored: Vec<(String, Vec<u8>)> = i["stored"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["rp_id"].as_str().unwrap().to_owned(), hx(&e["id"])))
+            .collect();
+        let refs: Vec<StoredPasskeyRef<'_>> = stored
+            .iter()
+            .map(|(rp_id, cred_id)| StoredPasskeyRef { rp_id, cred_id })
+            .collect();
+        let indexes = passkey_candidates(&ctx, i["rp_id"].as_str(), &hex_list(&i["allow"]), &refs)?;
+        return Ok(json!({ "indexes": indexes }));
+    }
+    if method == "passkey_site" {
+        let site = passkey_site(&ctx, i["rp_id"].as_str())?;
+        return Ok(json!({
+            "origin": site.origin,
+            "host_unicode": site.host_unicode,
+            "rp_id": site.rp_id,
+            "rp_id_unicode": site.rp_id_unicode,
+        }));
+    }
+    let uv = UvOutcome {
+        user_present: i["uv"]["user_present"].as_bool().unwrap(),
+        user_verified: i["uv"]["user_verified"].as_bool().unwrap(),
     };
     if method == "passkey_create" {
         let r = &i["request"];
@@ -1185,6 +1209,7 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
             prf: r["prf"].as_object().map(|p| PrfCreate {
                 eval: p.get("eval").filter(|e| !e.is_null()).map(eval_of),
             }),
+            cred_props: r["cred_props"].as_bool().unwrap(),
         };
         let existing: Vec<ExistingCredential> = i["existing_credentials"]
             .as_array()
@@ -1212,6 +1237,8 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
                 "rp_id": item.rp_id,
                 "user_handle": he(&item.user_handle),
                 "user_name": item.user_name,
+                "rp_name": item.rp_name,
+                "user_display_name": item.user_display_name,
                 "created": item.created.to_string(),
                 "private_scalar": he(&private_scalar(&created.record).unwrap()),
                 "priv_pkcs8": he(&item.private_key),
@@ -1225,6 +1252,9 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
                 "authenticator_data": he(&r.authenticator_data),
                 "public_key_spki": he(&r.public_key_spki),
                 "alg": r.alg,
+                "authenticator_attachment": r.authenticator_attachment,
+                "transports": r.transports,
+                "cred_props": r.cred_props.map_or(Value::Null, |c| json!({ "rk": c.rk })),
                 "prf": prf,
             },
         }));
@@ -1242,6 +1272,8 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
         created: u64s(&rec["created"]),
         prf_seed_uv: optb(&rec["prf_seed_uv"]),
         prf_seed_nouv: optb(&rec["prf_seed_nouv"]),
+        rp_name: rec["rp_name"].as_str().map(str::to_owned),
+        user_display_name: rec["user_display_name"].as_str().map(str::to_owned),
         extra: vec![],
     })?;
     let r = &i["request"];
@@ -1263,6 +1295,7 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
     let out = passkey_get(&record, &req, &ctx, uv)?;
     Ok(json!({
         "id": he(&out.id),
+        "authenticator_attachment": out.authenticator_attachment,
         "authenticator_data": he(&out.authenticator_data),
         "client_data_json": String::from_utf8(out.client_data_json.clone()).unwrap(),
         "signature": he(&out.signature),
@@ -1418,7 +1451,8 @@ fn dispatch(
         "generate_password" | "generate_passphrase" | "uniform_index" => {
             generator_ops(method, i, rng)
         }
-        "passkey_create" | "passkey_get" | "passkey_prf" => passkey_ops(method, i, rng),
+        "passkey_create" | "passkey_get" | "passkey_prf" | "passkey_candidates"
+        | "passkey_site" => passkey_ops(method, i, rng),
         _ => return Err(None),
     };
     r.map_err(Some)

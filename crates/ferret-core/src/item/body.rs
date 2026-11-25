@@ -11,7 +11,8 @@
 //!   "urls":   [ { "url", "match": "host" | "domain" | "exact" } ],
 //!   "totp":    { "uri" }?,
 //!   "passkey": { "cred_id", "rp_id", "user_handle", "user_name", "priv",
-//!                "sign_count", "created", "prf_seed_uv"?, "prf_seed_nouv"? }?,
+//!                "sign_count", "created", "prf_seed_uv"?, "prf_seed_nouv"?,
+//!                "rp_name"?, "user_display_name"? }?,
 //!   "notes": text?, "created": u64, "modified": u64, "favorite": bool,
 //!   "device": text?,
 //!   "folders": [ text ]?,
@@ -372,6 +373,12 @@ pub struct Passkey {
     pub prf_seed_uv: Option<Vec<u8>>,
     /// The PRF seed used when it was not.
     pub prf_seed_nouv: Option<Vec<u8>>,
+    /// The name the site gave itself (`rp.name`), when it gave one. Optional:
+    /// an older reader keeps it as an unknown key.
+    pub rp_name: Option<String>,
+    /// The display name of the account (`user.displayName`), when there is
+    /// one. Optional in the same way.
+    pub user_display_name: Option<String>,
     /// Keys this version does not know.
     pub extra: Vec<(String, Value)>,
 }
@@ -389,6 +396,8 @@ impl Passkey {
             created: r.require("created", uint, || 0)?,
             prf_seed_uv: r.get("prf_seed_uv", bytes)?,
             prf_seed_nouv: r.get("prf_seed_nouv", bytes)?,
+            rp_name: r.get("rp_name", text)?,
+            user_display_name: r.get("user_display_name", text)?,
             extra: r.finish(),
         })
     }
@@ -411,6 +420,12 @@ impl Passkey {
         }
         if let Some(seed) = &self.prf_seed_nouv {
             put(&mut m, "prf_seed_nouv", Value::Bytes(seed.clone()));
+        }
+        if let Some(name) = &self.rp_name {
+            put(&mut m, "rp_name", Value::text(name.clone()));
+        }
+        if let Some(name) = &self.user_display_name {
+            put(&mut m, "user_display_name", Value::text(name.clone()));
         }
         put_extra(&mut m, &self.extra);
         Value::Map(m)

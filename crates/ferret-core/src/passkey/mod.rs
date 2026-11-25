@@ -7,6 +7,8 @@
 //!
 //! * [`origin`]: canonical origins, RP IDs and the Public Suffix List.
 //! * [`passkey_create`] and [`passkey_get`]: the two ceremonies.
+//! * [`passkey_candidates`] and [`passkey_site`]: which stored passkeys may
+//!   answer a request, and what the chooser shows about the site.
 //! * `prf`: the two PRF seeds and the `prf` extension.
 //!
 //! # What the caller must have done
@@ -40,6 +42,7 @@
 //! exceeded) has its own code.
 
 mod authdata;
+mod candidates;
 mod client_data;
 mod cose;
 pub mod origin;
@@ -47,6 +50,7 @@ mod prf;
 mod psl;
 
 pub use authdata::{AAGUID, FLAG_AT, FLAG_BE, FLAG_BS, FLAG_ED, FLAG_UP, FLAG_UV};
+pub use candidates::{PasskeySite, StoredPasskeyRef, passkey_candidates, passkey_site};
 pub use client_data::Ceremony;
 pub use cose::{COSE_ALG_ES256, PasskeyPrivateKey};
 pub use origin::{CanonicalOrigin, RpId, canonical_origin, validate_rp_id};
@@ -88,6 +92,12 @@ pub const MAX_USER_HANDLE: usize = 64;
 pub const MAX_NAME: usize = 1024;
 /// The length of a credential id made by Ferret.
 pub const CREDENTIAL_ID_LEN: usize = 32;
+/// `authenticatorAttachment` of every answer: Ferret is a platform
+/// authenticator, as the synced passkeys of the operating systems are.
+pub const AUTHENTICATOR_ATTACHMENT: &str = "platform";
+/// `getTransports()` of a new passkey, in the order of WebAuthn's
+/// `AuthenticatorTransport`: what synced passkeys report today.
+pub const TRANSPORTS: [&str; 2] = ["internal", "hybrid"];
 
 fn bad_options() -> Error {
     Error::Malformed(MalformedKind::WebauthnOptions)
@@ -137,8 +147,9 @@ pub struct CreateRequest {
     pub user_name: String,
     /// `user.displayName`.
     pub user_display_name: String,
-    /// The `alg` of `pubKeyCredParams`. Empty means the default (ES256);
-    /// otherwise -7 must be among them.
+    /// The `alg` of `pubKeyCredParams`. An empty list means ES256 and RS256
+    /// (WebAuthn), so Ferret answers it with ES256; otherwise -7 must be
+    /// among them.
     pub algorithms: Vec<i64>,
     /// `excludeCredentials` ids.
     pub exclude: Vec<Vec<u8>>,
@@ -146,6 +157,8 @@ pub struct CreateRequest {
     pub user_verification: UserVerification,
     /// The `prf` extension input; its presence makes the passkey a PRF one.
     pub prf: Option<PrfCreate>,
+    /// The page asked for `credProps`: the answer then says `rk: true`.
+    pub cred_props: bool,
 }
 
 /// A request to sign in (`navigator.credentials.get`).
@@ -240,6 +253,11 @@ pub struct PasskeyRecord {
     pub user_handle: Vec<u8>,
     /// The user name, shown to the user.
     pub user_name: String,
+    /// The name the site gave itself, when it gave one (shown to the user).
+    pub rp_name: Option<String>,
+    /// The display name of the account, when there is one (shown to the
+    /// user).
+    pub user_display_name: Option<String>,
     /// When the passkey was made, unix milliseconds.
     pub created: u64,
     key: PasskeyPrivateKey,
@@ -271,6 +289,8 @@ impl PasskeyRecord {
             rp_id: p.rp_id.clone(),
             user_handle: p.user_handle.clone(),
             user_name: p.user_name.clone(),
+            rp_name: p.rp_name.clone(),
+            user_display_name: p.user_display_name.clone(),
             created: p.created,
             key: PasskeyPrivateKey::from_pkcs8_der(&p.private_key)?,
             prf_seed_uv: seed_from(p.prf_seed_uv.as_ref())?,
@@ -293,6 +313,8 @@ impl PasskeyRecord {
             created: self.created,
             prf_seed_uv: self.prf_seed_uv.as_ref().map(|s| s.expose().to_vec()),
             prf_seed_nouv: self.prf_seed_nouv.as_ref().map(|s| s.expose().to_vec()),
+            rp_name: self.rp_name.clone(),
+            user_display_name: self.user_display_name.clone(),
             extra: Vec::new(),
         }
     }
@@ -329,8 +351,21 @@ pub struct CreateResponse {
     pub public_key_spki: Vec<u8>,
     /// `getPublicKeyAlgorithm()`, -7.
     pub alg: i64,
+    /// `authenticatorAttachment`: always [`AUTHENTICATOR_ATTACHMENT`].
+    pub authenticator_attachment: &'static str,
+    /// `getTransports()`: always [`TRANSPORTS`].
+    pub transports: &'static [&'static str],
+    /// `clientExtensionResults.credProps`, when the request asked for it.
+    pub cred_props: Option<CredProps>,
     /// `clientExtensionResults.prf`, when the request had `prf`.
     pub prf: Option<CreatePrfResponse>,
+}
+
+/// `clientExtensionResults.credProps` of `create`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CredProps {
+    /// `rk`: always true, Ferret's passkeys are discoverable.
+    pub rk: bool,
 }
 
 /// `clientExtensionResults.prf` of `create`.
@@ -347,6 +382,8 @@ pub struct CreatePrfResponse {
 pub struct GetResponse {
     /// The credential id (`rawId`).
     pub id: Vec<u8>,
+    /// `authenticatorAttachment`: always [`AUTHENTICATOR_ATTACHMENT`].
+    pub authenticator_attachment: &'static str,
     /// `authenticatorData`.
     pub authenticator_data: Vec<u8>,
     /// `clientDataJSON`.
@@ -382,6 +419,18 @@ pub struct CreatedPasskey {
 }
 
 redacted_debug!(CreatedPasskey);
+
+/// A text the site chose, as it is stored and shown: control characters
+/// removed (they have no place in a name and can move the cursor or hide
+/// text in a window). The length limit is checked on the request before this.
+fn site_text(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// [`site_text`], or `None` when nothing is left.
+fn optional_site_text(s: &str) -> Option<String> {
+    Some(site_text(s)).filter(|t| !t.is_empty())
+}
 
 fn require_same_origin(ctx: &CallerContext) -> Result<(), Error> {
     if ctx.top_origin_is_same {
@@ -492,13 +541,18 @@ pub fn passkey_create<R: SecureRng>(
         authenticator_data: auth_data,
         public_key_spki: key.public_spki()?,
         alg: COSE_ALG_ES256,
+        authenticator_attachment: AUTHENTICATOR_ATTACHMENT,
+        transports: &TRANSPORTS,
+        cred_props: req.cred_props.then_some(CredProps { rk: true }),
         prf,
     };
     let record = PasskeyRecord {
         cred_id,
         rp_id: rp_id.as_str().to_owned(),
         user_handle: req.user_id.clone(),
-        user_name: req.user_name.clone(),
+        user_name: site_text(&req.user_name),
+        rp_name: optional_site_text(&req.rp_name),
+        user_display_name: optional_site_text(&req.user_display_name),
         created: created_ms,
         key,
         prf_seed_uv,
@@ -554,6 +608,7 @@ pub fn passkey_get(
 
     Ok(GetResponse {
         id: record.cred_id.clone(),
+        authenticator_attachment: AUTHENTICATOR_ATTACHMENT,
         authenticator_data: auth_data,
         client_data_json: client_data.into_bytes(),
         signature,

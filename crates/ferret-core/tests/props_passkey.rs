@@ -6,8 +6,9 @@ use ferret_core::passkey::{FLAG_AT, FLAG_BE, FLAG_BS, FLAG_UP, FLAG_UV};
 use ferret_core::testing::TestRng;
 use ferret_core::testing::passkey::is_public_suffix;
 use ferret_core::{
-    CallerContext, CreateRequest, GetRequest, UserVerification, UvOutcome, canonical_origin,
-    passkey_create, passkey_get, validate_rp_id,
+    CallerContext, CreateRequest, GetRequest, StoredPasskeyRef, UserVerification, UvOutcome,
+    canonical_origin, passkey_candidates, passkey_create, passkey_get, passkey_site,
+    validate_rp_id,
 };
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -65,6 +66,7 @@ proptest! {
             exclude: vec![],
             user_verification: UserVerification::Preferred,
             prf: None,
+            cred_props: false,
         };
         let mut rng = TestRng::new(&seed);
         let created = passkey_create(&mut rng, &req, &ctx(), uv, &[], 0).unwrap();
@@ -107,6 +109,7 @@ proptest! {
             exclude: vec![],
             user_verification: wanted_create,
             prf: with_prf.then(Default::default),
+            cred_props: false,
         };
         let mut rng = TestRng::new(&seed);
         let created = passkey_create(&mut rng, &req, &ctx(), create_outcome, &[], 0);
@@ -139,6 +142,62 @@ proptest! {
         prop_assert_eq!(f & FLAG_UV != 0, get_uv);
         prop_assert_eq!(g.authenticator_data.len(), 37);
         prop_assert_eq!(&g.authenticator_data[33..37], &[0u8; 4][..]);
+    }
+
+    /// The candidates of a get are exactly the stored passkeys whose RP ID
+    /// is the one the request resolves to (no suffix, no case folding) and
+    /// whose id is in a non-empty `allow` list: in the order of `stored`,
+    /// whatever else is stored. `passkey_site` refuses the same requests.
+    #[test]
+    fn candidates_are_exactly_the_exact_rp_matches(
+        stored in prop::collection::vec(
+            (
+                prop_oneof![
+                    Just("login.example.com"), Just("example.com"), Just("com"),
+                    Just("sub.login.example.com"), Just("LOGIN.EXAMPLE.COM"),
+                    Just("login.example.com."), Just("example.org"),
+                    Just("xn--bcher-kva.example"), Just("b\u{fc}cher.example"),
+                ],
+                0u8..4,
+            ),
+            0..12,
+        ),
+        allow in prop::collection::vec(0u8..4, 0..4),
+        request_rp in prop_oneof![
+            Just(None), Just(Some("login.example.com")), Just(Some("example.com")),
+            Just(Some("com")), Just(Some("example.org")), Just(Some("LOGIN.example.com")),
+        ],
+    ) {
+        let ids: Vec<[u8; 32]> = stored.iter().map(|(_, i)| [*i; 32]).collect();
+        let refs: Vec<StoredPasskeyRef<'_>> = stored
+            .iter()
+            .zip(&ids)
+            .map(|((rp, _), id)| StoredPasskeyRef { rp_id: rp, cred_id: id })
+            .collect();
+        let allow: Vec<Vec<u8>> = allow.iter().map(|i| vec![*i; 32]).collect();
+        let got = passkey_candidates(&ctx(), request_rp, &allow, &refs);
+        let site = passkey_site(&ctx(), request_rp);
+        match (&got, &site) {
+            (Err(a), Err(b)) => prop_assert_eq!(a, b),
+            (Ok(_), Ok(_)) => {}
+            _ => prop_assert!(false, "candidates and site disagree"),
+        }
+        if let (Ok(got), Ok(site)) = (got, site) {
+            let want: Vec<usize> = refs
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    s.rp_id == site.rp_id
+                        && (allow.is_empty() || allow.iter().any(|a| a.as_slice() == s.cred_id))
+                })
+                .map(|(i, _)| i)
+                .collect();
+            prop_assert_eq!(&got, &want);
+            prop_assert!(got.windows(2).all(|w| w[0] < w[1]));
+            for i in got {
+                prop_assert_eq!(refs[i].rp_id, site.rp_id.as_str());
+            }
+        }
     }
 
     /// Reading a canonical origin again gives itself, and the result is

@@ -32,6 +32,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -60,17 +61,25 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": null,
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -96,6 +105,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -124,17 +134,25 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": null,
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -162,6 +180,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": {
             "eval": null
@@ -192,21 +211,29 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": {
             "enabled": true,
             "first": null,
             "second": null
           },
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -234,6 +261,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": {
             "eval": {
@@ -267,21 +295,29 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947dd00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": {
             "enabled": true,
             "first": "f625f1e055ca2bdbf76f77f2efee18f85cd6fb9cd1981fa5bf782f1ea3cd94d5",
             "second": null
           },
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -309,6 +345,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": {
             "eval": {
@@ -342,21 +379,29 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158b2a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947d900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947d900000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424a16b686d61632d736563726574f5",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": {
             "enabled": true,
             "first": "e85c0a4e80658984b1df585c2762fd88eabecb1a8192f3cb0a35fcfeaecaed09",
             "second": "d98e53e1a965e057c2e8b4bb6932df0e55fbb8f0ef405758a71b297cc308a65c"
           },
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -382,6 +427,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": "example.com",
@@ -410,17 +456,25 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://login.example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": null,
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -446,6 +500,7 @@
             -257
           ],
           "challenge": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -474,17 +529,25 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "xn--bcher-kva.example",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4970ca6b73eaf2630a6b8d6aa59f106433bbe80b15e3f9d427af4363e5bce44365d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
           "authenticator_data": "970ca6b73eaf2630a6b8d6aa59f106433bbe80b15e3f9d427af4363e5bce44365d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v\",\"origin\":\"https://xn--bcher-kva.example:8443\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": null,
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -515,6 +578,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
             "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
@@ -546,17 +610,389 @@
           "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
           "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
           "user_handle": "707172737475767778797a7b7c7d7e7f",
           "user_name": "alice@example.com"
         },
         "response": {
           "alg": -7,
           "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
           "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
           "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
           "prf": null,
-          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/009",
+      "title": "create when the page asked for credProps: rk is true",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": true,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": {
+            "rk": true
+          },
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/010",
+      "title": "control characters are removed from rp name, user name and display name",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Ex\u0000am\nple\t site",
+          "user_display_name": "\bAlice A\u0000",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "al\u001b[31mice\r\n@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": "Example site",
+          "user_display_name": "Alice A",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "al[31mice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/011",
+      "title": "an empty rp name and a display name of control characters only are not stored",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "",
+          "user_display_name": "\u0000",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": null,
+          "user_display_name": null,
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/012",
+      "title": "an empty algorithm list means ES256 and RS256: Ferret answers with ES256",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/013",
+      "title": "a user handle of 64 bytes and texts with non-ASCII letters are kept as they are",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Résumé 🦀",
+          "user_display_name": "Åse",
+          "user_id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": "Résumé 🦀",
+          "user_display_name": "Åse",
+          "user_handle": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "user_name": "alice@example.com"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
         }
       },
       "expect_error": null
@@ -579,6 +1015,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -614,6 +1051,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -658,6 +1096,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
             "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
@@ -696,6 +1135,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": "github.io",
@@ -731,6 +1171,7 @@
             -257
           ],
           "challenge": "5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -766,6 +1207,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -801,6 +1243,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -835,6 +1278,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [],
           "prf": null,
           "rp_id": null,
@@ -870,6 +1314,7 @@
             -257
           ],
           "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
           "exclude": [
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
@@ -1090,6 +1535,150 @@
       "expect_error": "too_large"
     },
     {
+      "id": "passkey/create/invalid/010",
+      "title": "user handle of 65 bytes",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey/create/invalid/011",
+      "title": "rp name of 1 025 bytes",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/create/invalid/012",
+      "title": "display name of 1 024 characters and a control character: the limit counts the text as sent",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\u0000",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/create/invalid/013",
+      "title": "RS256 and EdDSA only, no ES256",
+      "op": "passkey.create",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -257,
+            -8
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "expect_error": "unsupported"
+    },
+    {
       "id": "passkey/get/valid/001",
       "title": "get with UV, no prf",
       "op": "passkey.get",
@@ -1126,6 +1715,7 @@
         "flags": 29
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1172,6 +1762,7 @@
         "flags": 25
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471900000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1224,6 +1815,7 @@
         "flags": 29
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1279,6 +1871,7 @@
         "flags": 25
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471900000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1343,6 +1936,7 @@
         "flags": 29
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1398,6 +1992,7 @@
         "flags": 29
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1444,6 +2039,7 @@
         "flags": 29
       },
       "expect": {
+        "authenticator_attachment": "platform",
         "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
         "client_data_json": "{\"type\":\"webauthn.get\",\"challenge\":\"kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq8\",\"origin\":\"https://login.example.com\",\"crossOrigin\":false}",
         "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
@@ -1789,6 +2385,1157 @@
         "salt": "71d58b691cd65eb2b33b7f0fbb4fbad6f16fadc89c879795b888b53ae87856c7"
       },
       "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/001",
+      "title": "the RP ID defaults to the host: only the passkeys of exactly that host, in stored order",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          1,
+          2
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/002",
+      "title": "rpId names the parent domain: only the passkey of the parent",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": "example.com",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          0
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/003",
+      "title": "allowCredentials keeps the listed id",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [
+          "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f"
+        ],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          2
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/004",
+      "title": "ids that are not stored are ignored, the order is the stored order",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [
+          "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+          "ffffffffff",
+          "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+        ],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          1,
+          2
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/005",
+      "title": "an id that is stored for other RP IDs is no candidate here",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [
+          "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+        ],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": []
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/006",
+      "title": "from the parent's own page only its passkey",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          0
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/007",
+      "title": "an internationalized host matches the A-label in the store",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://xn--bcher-kva.example",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          4
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/008",
+      "title": "the origin given in Unicode form gives the same A-label",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://bücher.example",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          4
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/009",
+      "title": "nothing stored, nothing found (not an error)",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": []
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/010",
+      "title": "stored names that are not canonical, or a child or a parent host, never match",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "LOGIN.EXAMPLE.COM"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "login.example.com."
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "bücher.example"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "sub.login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": []
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/011",
+      "title": "the requested RP ID is made canonical (lower case) before the comparison",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": "EXAMPLE.COM",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          0
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/012",
+      "title": "a subdomain without passkeys of its own finds none of the parent's",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://sub.login.example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": []
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/invalid/001",
+      "title": "RP ID is a public suffix",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://example.com",
+        "rp_id": "com",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/candidates/invalid/002",
+      "title": "RP ID that is not the host or a suffix of it",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://example.com",
+        "rp_id": "other.test",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/candidates/invalid/003",
+      "title": "cross-origin frame: NotAllowed",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": false
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/candidates/invalid/004",
+      "title": "201 allowed credentials",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        ],
+        "origin": "https://example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/candidates/invalid/005",
+      "title": "an allowed credential id of 1 024 bytes",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [
+          "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafb0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafb0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafb0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafb0102030405060708090a0b0c0d0e0f1011121314"
+        ],
+        "origin": "https://example.com",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/candidates/invalid/006",
+      "title": "RP ID with a port",
+      "op": "passkey.candidates",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://example.com",
+        "rp_id": "example.com:443",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/site/valid/001",
+      "title": "origin and RP ID of a plain host",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "rp_id": null,
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "example.com",
+        "origin": "https://example.com",
+        "rp_id": "example.com",
+        "rp_id_unicode": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/002",
+      "title": "the origin is canonical: lower case, the default port dropped",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://Login.Example.COM:443",
+        "rp_id": null,
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "login.example.com",
+        "origin": "https://login.example.com",
+        "rp_id": "login.example.com",
+        "rp_id_unicode": "login.example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/003",
+      "title": "the port stays in the origin, the RP ID is the parent in lower case",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com:8443",
+        "rp_id": "EXAMPLE.com",
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "login.example.com",
+        "origin": "https://login.example.com:8443",
+        "rp_id": "example.com",
+        "rp_id_unicode": "example.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/004",
+      "title": "an internationalized host: A-label and Unicode form",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://xn--bcher-kva.example",
+        "rp_id": null,
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "bücher.example",
+        "origin": "https://xn--bcher-kva.example",
+        "rp_id": "xn--bcher-kva.example",
+        "rp_id_unicode": "bücher.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/005",
+      "title": "origin and RP ID given in Unicode form come out as A-labels, the Unicode form is kept for reading",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://shop.bücher.example",
+        "rp_id": "bücher.example",
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "shop.bücher.example",
+        "origin": "https://shop.xn--bcher-kva.example",
+        "rp_id": "xn--bcher-kva.example",
+        "rp_id_unicode": "bücher.example"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/006",
+      "title": "a label that mixes Latin letters with a Cyrillic a stays an A-label",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://exаmple.com",
+        "rp_id": null,
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "xn--exmple-4nf.com",
+        "origin": "https://xn--exmple-4nf.com",
+        "rp_id": "xn--exmple-4nf.com",
+        "rp_id_unicode": "xn--exmple-4nf.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/007",
+      "title": "localhost over http, for development",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "http://localhost",
+        "rp_id": null,
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "localhost",
+        "origin": "http://localhost",
+        "rp_id": "localhost",
+        "rp_id_unicode": "localhost"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/invalid/001",
+      "title": "RP ID is a public suffix",
+      "op": "passkey.site",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "rp_id": "com",
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/site/invalid/002",
+      "title": "RP ID of another site",
+      "op": "passkey.site",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "rp_id": "evil.test",
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey/site/invalid/003",
+      "title": "cross-origin frame: NotAllowed",
+      "op": "passkey.site",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "rp_id": null,
+        "top_origin_is_same": false
+      },
+      "expect_error": "not_allowed"
+    },
+    {
+      "id": "passkey/site/invalid/004",
+      "title": "RP ID of 1 025 bytes",
+      "op": "passkey.site",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://example.com",
+        "rp_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "top_origin_is_same": true
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey/site/invalid/005",
+      "title": "RP ID that is an address",
+      "op": "passkey.site",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com",
+        "rp_id": "1.2.3.4",
+        "top_origin_is_same": true
+      },
+      "expect_error": "malformed_rp_id"
     }
   ]
 }

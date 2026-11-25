@@ -85,7 +85,7 @@ const scrambled = (extra) =>
     ['favorite', { k: 'bool', v: false }],
     ['name', t('n')],
     ['modified', u(2)],
-    ['passkey', map([...extra('passkey'), ['prf_seed_nouv', bytes(32)], ['created', u(1)], ['sign_count', u(0)], ['priv', bytes(8)], ['user_name', t('a')], ['user_handle', bytes(4)], ['rp_id', t('r')], ['cred_id', bytes(4)], ['prf_seed_uv', bytes(32)]])],
+    ['passkey', map([...extra('passkey'), ['user_display_name', t('D')], ['prf_seed_nouv', bytes(32)], ['rp_name', t('R')], ['created', u(1)], ['sign_count', u(0)], ['priv', bytes(8)], ['user_name', t('a')], ['user_handle', bytes(4)], ['rp_id', t('r')], ['cred_id', bytes(4)], ['prf_seed_uv', bytes(32)]])],
     ['schema', u(1)],
     ['created', u(1)],
     ['totp', map([...extra('totp'), ['uri', t('otpauth://totp/x?secret=ME')]])],
@@ -99,7 +99,7 @@ const scrambled = (extra) =>
   assert.deepEqual(keysOf(at(out, 'fields').v[0]), ['id', 'label', 'kind', 'value', 'zz_field', 'aa_field']);
   assert.deepEqual(keysOf(at(out, 'urls').v[0]), ['url', 'match', 'zz_url', 'aa_url']);
   assert.deepEqual(keysOf(at(out, 'totp')), ['uri', 'zz_totp', 'aa_totp']);
-  assert.deepEqual(keysOf(at(out, 'passkey')), ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv', 'zz_passkey', 'aa_passkey']);
+  assert.deepEqual(keysOf(at(out, 'passkey')), ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv', 'rp_name', 'user_display_name', 'zz_passkey', 'aa_passkey']);
   ok('known keys come first in schema order at every level, unknown keys follow as read');
 }
 // 6b. unknown keys named like members of Object.prototype are kept as any other unknown key, at every level
@@ -115,7 +115,7 @@ const scrambled = (extra) =>
   sameTail(at(out, 'fields').v[0], 'field', 4);
   sameTail(at(out, 'urls').v[0], 'url', 2);
   sameTail(at(out, 'totp'), 'totp', 1);
-  sameTail(at(out, 'passkey'), 'passkey', 9);
+  sameTail(at(out, 'passkey'), 'passkey', 11);
   // and the bytes survive a round trip
   assert.equal(hex(encode(parseBody(encode(out)).value)), hex(encode(out)));
   ok('unknown keys named toString, valueOf, __proto__ ... round-trip unchanged at every level');

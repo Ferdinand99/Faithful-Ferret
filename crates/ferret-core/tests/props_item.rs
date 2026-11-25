@@ -128,6 +128,8 @@ fn passkey() -> impl Strategy<Value = Passkey> {
         any::<u64>(),
         prop::option::of(prop::collection::vec(any::<u8>(), 32)),
         prop::option::of(prop::collection::vec(any::<u8>(), 32)),
+        prop::option::of(text()),
+        prop::option::of(text()),
         extra(),
     )
         .prop_map(
@@ -141,6 +143,8 @@ fn passkey() -> impl Strategy<Value = Passkey> {
                 created,
                 prf_seed_uv,
                 prf_seed_nouv,
+                rp_name,
+                user_display_name,
                 extra,
             )| Passkey {
                 cred_id,
@@ -152,6 +156,8 @@ fn passkey() -> impl Strategy<Value = Passkey> {
                 created,
                 prf_seed_uv,
                 prf_seed_nouv,
+                rp_name,
+                user_display_name,
                 extra,
             },
         )
