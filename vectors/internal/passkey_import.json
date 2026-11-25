@@ -2527,6 +2527,56 @@
         "user_name": "alice@example.com"
       },
       "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/049",
+      "title": "JWK with a member name that has an escape (a second d)",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"\\u0064\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/050",
+      "title": "JWK with a second token after a skipped value that hides a member",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"n\":0 \"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
     }
   ]
 }

@@ -342,6 +342,14 @@ fn jwk_reading_is_strict_about_the_key_and_lenient_about_other_members() {
         format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":\"a\nb\"}}"),
         String::new(),
         "null".to_owned(),
+        // A member name with an escape (a reader that unescapes it would see
+        // a second `d`, or another `kty`), and a second token after a skipped
+        // value (that hides a member from the check for a duplicate).
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"\\u0064\":\"{d}\"}}"),
+        format!("{{\"crv\":\"P-256\",\"\\u006bty\":\"RSA\",\"d\":\"{d}\"}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":0 \"d\":\"{d}\"}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":[1] [2]}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":\"a\"x}}"),
         // A skipped value with its brackets mismatched, missing, or unclosed.
         format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":[1}}"),
         format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":{{\"a\":[1]]}}"),

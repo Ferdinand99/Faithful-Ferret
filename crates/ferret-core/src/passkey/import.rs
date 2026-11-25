@@ -212,43 +212,50 @@ impl<'a> Scan<'a> {
         Ok((s, escaped))
     }
 
-    /// Skips one value of any kind: a string, or anything up to the `,` or
-    /// `}` that ends it, with the brackets and the strings inside it matched. A
-    /// skipped value is checked for its structure (quotes, brackets, commas),
-    /// not for every rule of JSON's numbers and words; the members that are read
-    /// are checked fully.
+    /// Skips one value of any kind: a string, a bracketed value, or a run of
+    /// other characters (a number or a word) up to the `,` or `}` that
+    /// ends it, with the brackets and the strings inside it matched. The value
+    /// is one token: a second token after it (`0 "d"`, `[1] [2]`) is
+    /// refused, so that no text that is not JSON is read in a way that hides a
+    /// member. A skipped value is checked for its structure, not for every rule
+    /// of JSON's numbers and words; the members that are read are checked fully.
     fn skip_value(&mut self) -> Result<(), Error> {
         // The closing bracket that each open one waits for.
         let mut open = [0u8; MAX_JSON_DEPTH];
         let mut depth = 0usize;
-        let mut seen = false;
+        // Something of the value has been read, and the token at depth 0 has ended.
+        let (mut seen, mut done) = (false, false);
         loop {
-            match self.peek() {
-                None => return Err(bad_key()),
-                Some(b'"') => {
+            let c = self.peek().ok_or_else(bad_key)?;
+            match c {
+                b'"' | b'{' | b'[' if depth == 0 && seen => return Err(bad_key()),
+                b'"' => {
                     self.string()?;
                     seen = true;
+                    done = depth == 0;
                     continue;
                 }
-                Some(c @ (b'{' | b'[')) => {
+                b'{' | b'[' => {
                     let slot = open.get_mut(depth).ok_or_else(bad_key)?;
                     *slot = if c == b'{' { b'}' } else { b']' };
                     depth = depth.saturating_add(1);
                 }
-                Some(c @ (b'}' | b']')) => match depth.checked_sub(1) {
-                    Some(inner) if open.get(inner) == Some(&c) => depth = inner,
+                b'}' | b']' => match depth.checked_sub(1) {
+                    Some(inner) if open.get(inner) == Some(&c) => {
+                        depth = inner;
+                        done = depth == 0;
+                    }
                     Some(_) => return Err(bad_key()),
-                    None if seen => return Ok(()),
-                    None => return Err(bad_key()),
+                    None => return if seen { Ok(()) } else { Err(bad_key()) },
                 },
-                Some(b',') if depth == 0 => {
-                    return if seen { Ok(()) } else { Err(bad_key()) };
-                }
-                Some(b' ' | b'\t' | b'\n' | b'\r') => {
+                b',' if depth == 0 => return if seen { Ok(()) } else { Err(bad_key()) },
+                b' ' | b'\t' | b'\n' | b'\r' => {
+                    done = done || (depth == 0 && seen);
                     self.pos = self.pos.saturating_add(1);
                     continue;
                 }
-                Some(_) => {}
+                _ if depth == 0 && done => return Err(bad_key()),
+                _ => {}
             }
             seen = true;
             self.pos = self.pos.saturating_add(1);
@@ -287,14 +294,18 @@ fn parse_jwk(text: &str) -> Result<Jwk<'_>, Error> {
             scan.skip_ws();
             scan.expect(b':')?;
             scan.skip_ws();
-            // A key with an escape is not one of ours.
-            match (escaped, key) {
-                (false, "kty") => text_member(&mut scan, &mut jwk.kty)?,
-                (false, "crv") => text_member(&mut scan, &mut jwk.crv)?,
-                (false, "alg") => text_member(&mut scan, &mut jwk.alg)?,
-                (false, "x") => text_member(&mut scan, &mut jwk.x)?,
-                (false, "y") => text_member(&mut scan, &mut jwk.y)?,
-                (false, "d") => text_member(&mut scan, &mut jwk.d)?,
+            // No exporter escapes a member name, and one that is escaped would be
+            // read as another member by a reader that unescapes it.
+            if escaped {
+                return Err(bad_key());
+            }
+            match key {
+                "kty" => text_member(&mut scan, &mut jwk.kty)?,
+                "crv" => text_member(&mut scan, &mut jwk.crv)?,
+                "alg" => text_member(&mut scan, &mut jwk.alg)?,
+                "x" => text_member(&mut scan, &mut jwk.x)?,
+                "y" => text_member(&mut scan, &mut jwk.y)?,
+                "d" => text_member(&mut scan, &mut jwk.d)?,
                 _ => scan.skip_value()?,
             }
             scan.skip_ws();

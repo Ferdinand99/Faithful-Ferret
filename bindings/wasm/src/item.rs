@@ -257,6 +257,12 @@ pub(crate) struct DraftDto {
 }
 
 impl DraftDto {
+    /// True when the draft makes a login (`item_type` is `login`): a passkey
+    /// is only ever kept in a login.
+    pub(crate) fn is_login(&self) -> bool {
+        self.item_type.as_deref() == Some("login")
+    }
+
     /// True when the draft sets or removes a passkey. An imported passkey
     /// comes from the core's `passkey_import` and never from a draft.
     pub(crate) fn touches_passkey(&self) -> bool {

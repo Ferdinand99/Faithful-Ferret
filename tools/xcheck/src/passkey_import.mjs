@@ -180,6 +180,8 @@ function scalarOfJwk(text) {
   const known = ['kty', 'crv', 'alg', 'x', 'y', 'd'];
   const found = {};
   for (const m of all) {
+    // no exporter escapes a member name; a reader that unescapes it would see another member
+    if (m.key.includes('\\')) badKey();
     if (!known.includes(m.key)) continue;
     // a known member is one string without an escape, and appears once
     if (m.raw === null || m.raw.includes('\\') || m.key in found) badKey();

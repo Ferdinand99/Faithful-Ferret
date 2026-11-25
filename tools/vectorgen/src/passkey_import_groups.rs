@@ -744,6 +744,21 @@ pub(crate) fn passkey_import() -> Result<Vec<u8>, Error> {
         "too_large",
     ));
 
+    for (n, title, text) in [
+        (
+            "049",
+            "JWK with a member name that has an escape (a second d)",
+            format!("{{\"crv\":\"P-256\",\"d\":\"{dj}\",\"\\u0064\":\"{dj}\"}}"),
+        ),
+        (
+            "050",
+            "JWK with a second token after a skipped value that hides a member",
+            format!("{{\"crv\":\"P-256\",\"d\":\"{dj}\",\"n\":0 \"d\":\"{dj}\"}}"),
+        ),
+    ] {
+        cases.push(invalid(n, title, &with_key(Key::Jwk(text)), BAD_KEY));
+    }
+
     let file = VectorFile {
         format: ferret_core::testing::vector::FORMAT.into(),
         group: "passkey_import".into(),

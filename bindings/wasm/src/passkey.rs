@@ -10,7 +10,7 @@
 
 use crate::convert::{
     ANY, ByteBuf, SealedDto, Shape, Shaped, arr, b16, b32, bytes, from_js, from_js_list, js_time,
-    js_u64, opt_bytes, to_js,
+    js_u64, opt_bytes, secret_bytes, secret_text, to_js,
 };
 use crate::error::{Fail, Res, run};
 use crate::item::{Bytes, DraftDto, build_body};
@@ -25,7 +25,7 @@ use ferret_core::{
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -681,20 +681,24 @@ impl Vault {
             let rev = js_u64(rev)?;
             let now = js_time(now_ms)?;
             let draft: DraftDto = from_js(draft)?;
-            if draft.touches_passkey() {
+            // Ferret's own passkeys are logins; so are the imported ones.
+            if draft.touches_passkey() || !draft.is_login() {
                 return Err(Fail::Input);
             }
             let dto: ImportDto = from_js(passkey)?;
             let created = js_u64(dto.created)?;
             let counter = u32::try_from(js_u64(dto.counter)?).map_err(|_| Fail::Input)?;
             let key = match (&dto.key_pkcs8, &dto.key_jwk) {
-                (Some(der), None) => ImportKey::Pkcs8Der(der),
-                (None, Some(text)) => ImportKey::JwkJson(text),
+                (Some(der), None) => ImportKey::Pkcs8Der(der.as_slice()),
+                (None, Some(text)) => ImportKey::JwkJson(text.as_str()),
                 _ => return Err(Fail::Input),
             };
             let prf = match (&dto.prf_seed_uv, &dto.prf_seed_nouv) {
                 (None, None) => ImportPrf::None,
-                (Some(uv), Some(nouv)) => ImportPrf::Seeds { uv, nouv },
+                (Some(uv), Some(nouv)) => ImportPrf::Seeds {
+                    uv: uv.as_slice(),
+                    nouv: nouv.as_slice(),
+                },
                 _ => return Err(Fail::Input),
             };
             let input = ImportedPasskeyInput {
@@ -766,14 +770,14 @@ struct ImportDto {
     user_display_name: Option<String>,
     /// When the passkey was made, unix milliseconds.
     created: f64,
-    #[serde(default, with = "opt_bytes")]
-    key_pkcs8: Option<Vec<u8>>,
-    #[serde(default)]
-    key_jwk: Option<String>,
-    #[serde(default, with = "opt_bytes")]
-    prf_seed_uv: Option<Vec<u8>>,
-    #[serde(default, with = "opt_bytes")]
-    prf_seed_nouv: Option<Vec<u8>>,
+    #[serde(default, deserialize_with = "secret_bytes::deserialize")]
+    key_pkcs8: Option<Zeroizing<Vec<u8>>>,
+    #[serde(default, deserialize_with = "secret_text::deserialize")]
+    key_jwk: Option<Zeroizing<String>>,
+    #[serde(default, deserialize_with = "secret_bytes::deserialize")]
+    prf_seed_uv: Option<Zeroizing<Vec<u8>>>,
+    #[serde(default, deserialize_with = "secret_bytes::deserialize")]
+    prf_seed_nouv: Option<Zeroizing<Vec<u8>>>,
     /// The signature counter of the source (0 when it has none).
     #[serde(default)]
     counter: f64,

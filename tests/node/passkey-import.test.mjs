@@ -182,6 +182,10 @@ test("import_checks_its_arguments", () => {
   assert.equal(call(a(), { ...DRAFT, remove_passkey: true }), "invalid_input");
   assert.equal(call(a(), { ...DRAFT, passkey: { user_name: "x" } }), "invalid_input");
   assert.equal(call(a(), { ...DRAFT, private_key: "x" }), "invalid_input");
+  // A passkey is kept in a login only.
+  for (const item_type of ["note", "card", "Login", "", "something"]) {
+    assert.equal(call(a(), { ...DRAFT, item_type }), "invalid_input", item_type);
+  }
   // The item id: 16 bytes, and not the manifest.
   assert.equal(call(a(), DRAFT, fill(15, 1)), "invalid_input");
   assert.equal(call(a(), DRAFT, fill(16, 0)), "invalid_input");
@@ -269,6 +273,21 @@ test("import_takes_the_key_as_owned_bytes_and_zeroizes", () => {
   assert.equal(code(() => vault.passkey_import(fill(16, 0x53), 1, DRAFT, { ...input(key, "pkcs8"), rp_id: "co.uk" }, NOW)), "malformed_rp_id");
   const seeds = { prf_seed_uv: randomBytes(32), prf_seed_nouv: randomBytes(31) };
   assert.equal(code(() => vault.passkey_import(fill(16, 0x53), 1, DRAFT, { ...input(key, "pkcs8"), ...seeds }, NOW)), "malformed_item_body");
+  // A value of the wrong type after the key and the seeds are read: the
+  // pieces that were read are wiped when they are thrown away.
+  const late = freshKey();
+  const lateSeeds = { prf_seed_uv: randomBytes(32), prf_seed_nouv: randomBytes(32) };
+  for (const [form, wrong] of [["pkcs8", { counter: "7" }], ["jwk", { counter: "7" }], ["pkcs8", { created: "1" }]]) {
+    const argument = { ...input(late, form), ...lateSeeds, ...wrong };
+    assert.equal(code(() => vault.passkey_import(fill(16, 0x54), 1, DRAFT, argument, NOW)), "invalid_input", form);
+    if (argument.key_pkcs8) argument.key_pkcs8.fill(0);
+  }
+  assert.deepEqual(findInMemory(late.d), [], "a refused argument leaves no scalar");
+  assert.deepEqual(findInMemory(late.pkcs8), [], "a refused argument leaves no PKCS#8");
+  assert.deepEqual(findInMemory(Buffer.from(late.dText)), [], "a refused argument leaves no text of d");
+  assert.deepEqual(findInMemory(Buffer.from(late.jwk)), [], "a refused argument leaves no JWK text");
+  assert.deepEqual(findInMemory(Buffer.from(lateSeeds.prf_seed_uv)), [], "a refused argument leaves no seed");
+  assert.deepEqual(findInMemory(Buffer.from(lateSeeds.prf_seed_nouv)), [], "a refused argument leaves no second seed");
   assert.deepEqual(findInMemory(key.d), [], "a refused import leaves no scalar");
   assert.deepEqual(findInMemory(key.pkcs8), [], "a refused import leaves no PKCS#8");
   assert.deepEqual(findInMemory(Buffer.from(key.dText)), [], "a refused import leaves no text of d");
