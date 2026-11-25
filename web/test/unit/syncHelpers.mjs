@@ -565,6 +565,18 @@ const rev8 = (rev) => {
   return out;
 };
 
+/**
+ * The passkey of a body as the core's view shows it: the public facts and the credential ids, never the key (`priv`) or a seed.
+ * @param {any} pk
+ */
+function passkeyView(pk) {
+  if (pk === undefined || pk === null) return null;
+  return {
+    rp_id: pk.rp_id, user_name: pk.user_name, created: pk.created ?? 0, has_prf: pk.prf_seed_uv !== undefined,
+    cred_id: pk.cred_id, user_handle: pk.user_handle, rp_name: pk.rp_name ?? null, user_display_name: pk.user_display_name ?? null,
+  };
+}
+
 /** The worker client for one vault key. Handles are numbers; the body stays inside. */
 export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_000_000_000, memoryLimit = 50_000 } = {}) {
   const handles = new Map();
@@ -614,7 +626,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       return {
         item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
         // The fake knows a code only as the flag `has_totp` in the draft.
-        has_totp: open.body.has_totp === true, passkey: null, has_notes: false, created: modified, modified, favorite,
+        has_totp: open.body.has_totp === true, passkey: passkeyView(open.body.passkey), has_notes: false, created: modified, modified, favorite,
         device: open.body.device ?? null, read_only: open.body.read_only === true,
         // Like the core: the folder names as stored, [] for none.
         folders: Array.isArray(open.body.folders) ? [...open.body.folders] : [],
@@ -624,7 +636,7 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       calls.push(["encrypt_item", hex16.encode(id), rev, existing ?? null]);
       // Like the core: `folders` left out (or null) keeps the item's, [] takes the key away, a list replaces them; a list
       // that breaks the rules is refused with the core's code and nothing is sealed.
-      const { folders, ...rest } = draft;
+      const { folders, remove_passkey: removePasskey, ...rest } = draft;
       if (folders !== undefined && folders !== null) {
         if (!Array.isArray(folders) || folders.some((name) => typeof name !== "string")) throw new FakeFerretError("invalid_input");
         const wrong = checkFolderList(folders);
@@ -639,6 +651,8 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
         if (!open || open.id !== hex16.encode(id)) throw new FakeFerretError("invalid_input");
         body = { ...open.body, ...rest };
       }
+      // Like the core: a draft that does not mention the passkey keeps it; `remove_passkey` takes it away.
+      if (removePasskey === true) delete body.passkey;
       if (Array.isArray(folders)) {
         if (folders.length === 0) delete body.folders;
         else body.folders = folders.map((name) => normalizeFolder(name));

@@ -15,6 +15,7 @@ import { MANIFEST_ID } from "../sync/engine.mjs";
 import { folderChips, folderIndex, foldKey, withShownNames } from "../folders.mjs";
 import { askConfirm, canChange, describeError, listenWhileShown, markBadges, marksOf } from "./common.mjs";
 import { typeLabel } from "./item.mjs";
+import { passkeySites } from "./itemModel.mjs";
 import {
   OVERSCAN, WINDOW_FROM, applyFilters, countByFolder, countByType, createMatcher, defaultDir, formatListQuery, hasFilters,
   formatExact, inDirection, initialOf, parseListQuery, relativeTime, sameState, sortItems, typesPresent, windowRange,
@@ -195,8 +196,18 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     change({ ...state, favorite: false });
     focusNode(favButton);
   });
+  const passkeyButton = el("button", { type: "button", class: "chip-main", "aria-pressed": "false", "data-role": "passkeys-chip" },
+    el("span", { class: "chip-text" }, t("passkey.filter")));
+  const passkeyCross = el("button", { type: "button", class: "chip-x", "aria-label": t("list.chip_remove", { filter: t("passkey.filter") }), "data-role": "passkeys-remove" }, el("span", { class: "icon", "data-icon": "close", "aria-hidden": "true" }));
+  passkeyCross.hidden = true;
+  const passkeyChip = el("div", { class: "chip", "data-role": "chip-passkeys", "data-active": "false" }, passkeyButton, passkeyCross);
+  passkeyButton.addEventListener("click", () => change({ ...state, passkey: !state.passkey }));
+  passkeyCross.addEventListener("click", () => {
+    change({ ...state, passkey: false });
+    focusNode(passkeyButton);
+  });
   const summary = el("p", { class: "count list-count", role: "status", "data-role": "count" });
-  const chips = el("div", { class: "list-chips", role: "group", "aria-label": t("list.filters") }, typeChip.node, favChip, folderChip.node, summary);
+  const chips = el("div", { class: "list-chips", role: "group", "aria-label": t("list.filters") }, typeChip.node, favChip, passkeyChip, folderChip.node, summary);
 
   // ---- the bar for several rows
   const bulkCount = el("span", { class: "bulk-count", role: "status", "data-role": "bulk-count" });
@@ -344,7 +355,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     for (const id of [...selected]) if (indexOf(id) === undefined) selected.delete(id);
 
     const total = source.length;
-    const typeCounts = countByType(eff.favorite || eff.folders.length > 0 ? applyFilters(searched, eff, "types") : searched);
+    const typeCounts = countByType(eff.favorite || eff.passkey || eff.folders.length > 0 ? applyFilters(searched, eff, "types") : searched);
     typeChip.update({
       hidden: total === 0,
       active: eff.types.length > 0,
@@ -364,12 +375,18 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     favChip.setAttribute("data-active", eff.favorite ? "true" : "false");
     favButton.setAttribute("aria-pressed", eff.favorite ? "true" : "false");
     favCross.hidden = !eff.favorite;
+    // The passkey filter is there only while some item holds a passkey (or while it is on, so it can be taken off).
+    const anyPasskey = eff.passkey || source.some((item) => typeof item.passkeySite === "string" && item.passkeySite !== "");
+    passkeyChip.hidden = total === 0 || !anyPasskey;
+    passkeyChip.setAttribute("data-active", eff.passkey ? "true" : "false");
+    passkeyButton.setAttribute("aria-pressed", eff.passkey ? "true" : "false");
+    passkeyCross.hidden = !eff.passkey;
     chips.hidden = total === 0;
     searchBox.hidden = total === 0;
     customise.hidden = total === 0;
     clearSearch.hidden = query === "";
 
-    const onlyFavorites = eff.favorite && eff.types.length === 0 && eff.folders.length === 0;
+    const onlyFavorites = eff.favorite && !eff.passkey && eff.types.length === 0 && eff.folders.length === 0;
     const onlyTheFolder = typeof folder === "string" && eff.folders.length === 1 && eff.folders[0] === folder;
     mount(headingText, document.createTextNode(onlyTheFolder ? /** @type {string} */ (folder) : t(onlyFavorites ? "shell.nav.favorites" : "shell.nav.items")));
     heading.setAttribute("data-folder-page", onlyTheFolder ? "true" : "false");
@@ -390,7 +407,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
         /** @type {import("./emptyState.mjs").EmptyAction[]} */
         const ways = [];
         if (searching) ways.push({ label: t("list.search_clear_all"), role: "empty-clear-search", onClick: () => clearTheSearch() });
-        if (filtering) ways.push({ label: t("list.clear_filters"), role: "empty-clear-filters", onClick: () => change({ ...state, types: [], favorite: false, folders: [] }) });
+        if (filtering) ways.push({ label: t("list.clear_filters"), role: "empty-clear-filters", onClick: () => change({ ...state, types: [], favorite: false, passkey: false, folders: [] }) });
         const line = t(searching && filtering ? "list.empty_both" : searching ? "vault.list.no_match" : onlyFavorites ? "shell.favorites.empty" : "list.empty_filters");
         emptyView.fill(line, ways, searching ? "search" : onlyFavorites ? "star" : "items");
       }
@@ -427,7 +444,7 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   // ----------------------------------------------------------- the rows
   /** What a row shows, as one text: the row is built again only when this changes. @param {any} item */
   function signature(item) {
-    return [item.rev, item.name, item.username ?? "", item.urls?.[0] ?? "", item.favorite === true, item.type, item.modified ?? 0, marksOf(item).join(","), canChange(item),
+    return [item.rev, item.name, item.username ?? "", item.urls?.[0] ?? "", item.favorite === true, item.type, item.modified ?? 0, marksOf(item).join(","), item.passkeySite ?? "", canChange(item),
       foldersOn() ? (item.folders ?? []).join("\u0001") : "", changedOn()].join("\u0000");
   }
 
@@ -449,6 +466,10 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     const marks = markBadges(t, item);
     // A mark that is cut on a phone still has its word, in the title; the first one (the most serious) is not cut.
     marksOf(item).forEach((mark, i) => marks[i]?.setAttribute("title", t(`vault.mark.${mark}`)));
+    // The passkey comes after the marks of the sync state: it says what the item holds, not how it stands with the server.
+    if (typeof item.passkeySite === "string" && item.passkeySite !== "") {
+      marks.push(el("span", { class: "mark mark-passkey", "data-mark": "passkey", title: t("passkey.mark_title", { site: item.passkeySite }) }, t("passkey.mark")));
+    }
     const link = el("a", { href: `#/items/${item.id}`, class: "item-link", "data-role": "item-link" },
       item.favorite ? el("span", { class: "star", "aria-label": t("vault.item.favorite"), role: "img" }, "★") : null,
       name);
@@ -692,6 +713,9 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
   });
 
   // ------------------------------------------------------------ actions
+  /** The item as the engine has it now (the list may have been drawn before a change). @param {any} item */
+  const latestOf = (item) => engine.list().find((entry) => entry.id === item.id) ?? item;
+
   /**
    * A change of one or several items, one write each in the engine's outbox. The list is read again once at the end, not
    * after each write.
@@ -713,9 +737,12 @@ export function listView({ engine, router, t, nav, locale, prefs = createListPre
     let text = "";
     try {
       if (kind === "trash") {
+        // Items with a passkey: the question names the sites that still hold the public keys and says what happens to the keys here.
+        const keys = passkeySites(items.map((item) => latestOf(item)));
         const yes = await askConfirm({
-          t, host, title: items.length === 1 ? "list.trash_title_one" : "list.trash_title_many", body: "list.trash_body", confirm: "list.trash_confirm",
-          vars: { name: items.length === 1 ? (items[0].name === "" ? t("vault.item.unnamed") : items[0].name) : "", count: items.length },
+          t, host, title: items.length === 1 ? "list.trash_title_one" : "list.trash_title_many",
+          body: keys.passkeys === 0 ? "list.trash_body" : items.length === 1 ? "passkey.delete_body" : "passkey.delete_many_body", confirm: "list.trash_confirm",
+          vars: { name: items.length === 1 ? (items[0].name === "" ? t("vault.item.unnamed") : items[0].name) : "", count: items.length, site: keys.sites, sites: keys.sites, passkeys: keys.passkeys },
         });
         if (!yes || wiped) return;
       }

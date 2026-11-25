@@ -92,7 +92,7 @@ test("the_address_has_the_filters_and_the_order_and_never_the_search_text", () =
   const roundTrip = (state, options) => parseListQuery(formatListQuery(state, options), options);
   assert.equal(formatListQuery(defaultState()), "", "the default list has no query");
   assert.deepEqual(parseListQuery(""), defaultState());
-  const state = { types: ["note", "login"], favorite: true, folders: [], sort: "changed", dir: "asc" };
+  const state = { types: ["note", "login"], favorite: true, passkey: false, folders: [], sort: "changed", dir: "asc" };
   assert.equal(formatListQuery(state), "type=login,note&fav=1&sort=changed&dir=asc", "one spelling: types sorted, only what is not the default");
   assert.deepEqual(roundTrip(state), normalState(state));
   assert.deepEqual(roundTrip({ ...defaultState(), sort: "changed", dir: "desc" }), { ...defaultState(), sort: "changed", dir: "desc" });
@@ -107,7 +107,7 @@ test("the_address_has_the_filters_and_the_order_and_never_the_search_text", () =
   assert.equal(sameState({ ...defaultState(), folders: ["A"] }, defaultState()), false, "but it is part of the state");
   assert.equal(sameState({ ...defaultState(), folders: ["B", "A"] }, { ...defaultState(), folders: ["A", "B"] }), true);
   // No field of the state can carry the search text or an item name.
-  for (const key of Object.keys(defaultState())) assert.ok(["types", "favorite", "folders", "sort", "dir"].includes(key));
+  for (const key of Object.keys(defaultState())) assert.ok(["types", "favorite", "passkey", "folders", "sort", "dir"].includes(key));
 });
 
 test("the_matcher_forgets_what_it_folded_when_asked", () => {

@@ -100,3 +100,50 @@ export function historyEntries(view) {
 export function favouriteDraft(entry) {
   return { favorite: entry?.favorite !== true };
 }
+
+/**
+ * @typedef {object} PasskeyFacts what the page shows of an item's passkey: public facts only
+ * @property {string} site the relying party id the core checked: the identity of the site (never a text the site chose)
+ * @property {string} user the user name the site gave, cleaned by the core
+ * @property {string | null} siteName what the site calls itself (the site's own text; null when it gave none or it only repeats the id)
+ * @property {string | null} displayName the name the site gave the account (the site's own text; null when none or it only repeats the user name)
+ * @property {number | null} created when the passkey was made (milliseconds), or null when the view has no usable date
+ */
+
+/**
+ * The public facts of the passkey in a view, or null for an item without one. The key, the seeds, the credential id and the user
+ * handle are not read: the page has no use for them, and the view of the core does not hold the private parts at all. The two texts
+ * the site chose are kept apart from the site's identity so the screen can mark them as the site's.
+ * @param {unknown} view
+ * @returns {PasskeyFacts | null}
+ */
+export function passkeyOf(view) {
+  const pk = /** @type {any} */ (view)?.passkey;
+  if (pk === null || typeof pk !== "object" || typeof pk.rp_id !== "string" || pk.rp_id === "") return null;
+  const user = typeof pk.user_name === "string" ? pk.user_name : "";
+  /** @param {unknown} text @param {string} same */
+  const own = (text, same) => (typeof text === "string" && text.trim() !== "" && text.trim().toLowerCase() !== same.toLowerCase() ? text : null);
+  return {
+    site: pk.rp_id,
+    user,
+    siteName: own(pk.rp_name, pk.rp_id),
+    displayName: own(pk.user_display_name, user),
+    created: typeof pk.created === "number" && Number.isSafeInteger(pk.created) && pk.created > 0 ? pk.created : null,
+  };
+}
+
+/** How many sites the delete question names; the rest are counted. */
+const MAX_SITES_NAMED = 5;
+
+/**
+ * The sites of the passkeys among some items, each once and in the order first met, for the question before they are deleted.
+ * @param {readonly { passkeySite?: string | null }[]} items
+ * @returns {{ passkeys: number, sites: string }} how many of the items hold a passkey, and the first few sites as one line
+ *   (with "…" after them when more follow)
+ */
+export function passkeySites(items) {
+  const withKey = items.filter((item) => typeof item.passkeySite === "string" && item.passkeySite !== "");
+  const sites = [...new Set(withKey.map((item) => /** @type {string} */ (item.passkeySite)))];
+  const named = sites.slice(0, MAX_SITES_NAMED).join(", ");
+  return { passkeys: withKey.length, sites: sites.length > MAX_SITES_NAMED ? `${named}, …` : named };
+}

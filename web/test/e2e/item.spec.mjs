@@ -27,7 +27,8 @@ async function ready(page) {
 /**
  * Builds one screen in the real frame, in #app. `which`: item, edit, new, trash-empty, trash-full, devices-empty, list-empty,
  * list-favourites-empty, list-populated (two rows, the Favourites chip on). `opts.name` and `opts.url` make long values;
- * `opts.history` (a number) gives the item that many earlier passwords, "old-password-<n>", newest first.
+ * `opts.history` (a number) gives the item that many earlier passwords, "old-password-<n>", newest first. `opts.firstRevision: false` makes the trash entry of a passkey a later version. `opts.passkey` (an object
+ * whose keys replace the defaults) gives the item a passkey the way the core's view shows it, and the list and trash entries its site.
  */
 async function scene(page, which, opts = {}) {
   await page.evaluate(async ({ which, opts }) => {
@@ -38,7 +39,12 @@ async function scene(page, which, opts = {}) {
     const common = await import("/app/views/common.mjs");
     const { shellView } = await import("/app/views/shell.mjs");
     window.__calls = { updates: [], removes: [], copied: [], creates: [], devices: 0 };
+    const passkey = opts.passkey ? {
+      rp_id: "github.com", user_name: "ada@example.com", created: Date.UTC(2026, 10, 20, 12, 0), has_prf: true,
+      cred_id: [1, 2, 3, 4], user_handle: [5, 6], rp_name: "GitHub", user_display_name: "Ada Lovelace", ...opts.passkey,
+    } : null;
     const view = {
+      passkey,
       name: opts.name ?? "GitHub", item_type: "login", favorite: false, has_notes: true, has_totp: false, read_only: false,
       fields: [
         { id: "username", label: "User name", value: "ada@example.com" },
@@ -49,7 +55,7 @@ async function scene(page, which, opts = {}) {
       folders: opts.folders ?? [],
       password_history: Array.from({ length: opts.history ?? 0 }, (_, i) => ({ until: Date.UTC(2026, 10, 20 - i, 12, 0) })),
     };
-    const entry = { id: "a1".repeat(16), name: view.name, type: "login", favorite: false, urls: [], username: "ada@example.com", rev: 3 };
+    const entry = { id: "a1".repeat(16), name: view.name, type: "login", favorite: false, urls: [], username: "ada@example.com", rev: 3, passkeySite: passkey?.rp_id ?? null, hasPasskey: passkey !== null };
     const second = { id: "d4".repeat(16), name: "Bank", type: "note", favorite: true, urls: [], username: "ola", rev: 1, modified: Date.now() - 86_400_000 };
     const handlers = new Set();
     const engine = {
@@ -63,7 +69,7 @@ async function scene(page, which, opts = {}) {
       },
       create: async (draft) => { window.__calls.creates.push(structuredClone(draft)); return "b2".repeat(16); },
       remove: async (id) => { window.__calls.removes.push(id); },
-      trash: async () => (which === "trash-full" ? [{ id: "c3".repeat(16), name: "Old router", deletedAt: Date.now() - 86_400_000 }] : []),
+      trash: async () => (which === "trash-full" ? [{ id: "c3".repeat(16), name: "Old router", deletedAt: Date.now() - 86_400_000, ...(passkey ? { passkeySite: passkey.rp_id, firstRevision: opts.firstRevision !== false } : {}) }] : []),
       restoreFromTrash: async () => {}, removeFromTrash: async () => {},
     };
     const client = { vault: {
@@ -480,6 +486,94 @@ for (const scheme of ["light", "dark"]) {
   });
 }
 
+const PASSKEY_ITEM_ID = "a1".repeat(16);
+
+test.describe("a passkey in the web vault", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("a_passkey_made_in_the_extension_shows_in_the_web_vault", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item", { passkey: {} });
+    const card = page.locator('[data-card="passkey"]');
+    await expect(card).toBeVisible();
+    await expect(card.locator("h2")).toHaveText("Passkey");
+    // The site is the relying party id; the user name is the one the site gave; the date is the day it was made.
+    await expect(card.locator('[data-role="passkey-value"][data-key="site"]')).toHaveText("github.com");
+    await expect(card.locator('[data-role="passkey-value"][data-key="user"]')).toHaveText("ada@example.com");
+    await expect(card.locator('[data-role="passkey-value"][data-key="created"]')).toContainText("2026");
+    await expect(card.locator('[data-role="passkey-kind"]')).toContainText("Synced Ferret passkey");
+    // What the site calls itself is the site's own text, labelled as such, and never the identity.
+    await expect(card.locator('[data-role="passkey-row"][data-key="site_name"] .label')).toHaveText("The site calls itself");
+    await expect(card.locator('[data-role="passkey-row"][data-key="site"] bdi')).toHaveText("github.com");
+    // No key, no seed and no id of the credential is on the page, and nothing in the card can be shown or copied.
+    const text = await page.locator('[data-role="item"]').innerText();
+    for (const hidden of ["1,2,3,4", "AQIDBA", "01020304", "priv", "seed"]) expect(text).not.toContain(hidden);
+    await expect(card.locator('[data-role="reveal"], [data-role="copy"]')).toHaveCount(0);
+    expect(await noSidewaysScroll(page)).toBe(true);
+  });
+
+  test("removing_the_passkey_asks_first_and_names_the_site", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item", { passkey: {} });
+    await page.getByRole("button", { name: "Remove passkey for github.com" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("Remove the passkey for github.com?");
+    await expect(dialog).toContainText("github.com still has the public key");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect(await page.evaluate(() => window.__calls.updates)).toEqual([]);
+    await page.getByRole("button", { name: "Remove passkey for github.com" }).click();
+    await dialog.getByRole("button", { name: "Remove passkey" }).click();
+    await expect(page.locator('[data-role="message"]')).toContainText("The passkey for github.com was removed from the item.");
+    expect(await page.evaluate(() => window.__calls.updates.map(([id, draft]) => [id, draft]))).toEqual([[PASSKEY_ITEM_ID, { remove_passkey: true }]]);
+  });
+
+  test("deleting_an_item_with_a_passkey_names_the_site", async ({ page }) => {
+    await ready(page);
+    await scene(page, "item", { passkey: {} });
+    await page.locator('[data-role="delete"]').click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("This item holds a passkey for github.com");
+    await expect(dialog).toContainText("restoring the item brings the passkey back");
+  });
+
+  test("the_passkeys_filter_and_the_mark_are_in_the_list", async ({ page }) => {
+    await ready(page);
+    await scene(page, "list-populated", { passkey: {} });
+    await expect(page.locator('[data-role="item"]')).toHaveCount(2);
+    await expect(page.locator('[data-role="item"] [data-mark="passkey"]')).toHaveCount(1);
+    const chip = page.locator('[data-role="passkeys-chip"]');
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    await chip.click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-role="item"]')).toHaveCount(1);
+    await expect(page.locator('[data-role="item"]')).toContainText("GitHub");
+    await page.getByRole("button", { name: "Remove the filter Passkeys" }).click();
+    await expect(page.locator('[data-role="item"]')).toHaveCount(2);
+  });
+
+  test("the_trash_says_which_site_a_passkey_belongs_to", async ({ page }) => {
+    await ready(page);
+    await scene(page, "trash-full", { passkey: {} });
+    await expect(page.locator('[data-role="trash-passkey"]')).toContainText("Holds a passkey for github.com");
+    await expect(page.locator('[data-role="trash-passkey"]')).toContainText("not registered at github.com");
+    // An item that was changed after it was made cannot be one that Ferret moved here for an unfinished save: no such sentence.
+    await scene(page, "trash-full", { passkey: {}, firstRevision: false });
+    await expect(page.locator('[data-role="trash-passkey"]')).toContainText("Holds a passkey for github.com");
+    await expect(page.locator('[data-role="trash-passkey"]')).not.toContainText("not registered");
+    expect(await noSidewaysScroll(page)).toBe(true);
+  });
+
+  test("a_long_text_from_the_site_wraps_on_a_phone", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 640 });
+    await ready(page);
+    const long = "x".repeat(150);
+    await scene(page, "item", { passkey: { rp_name: long, user_name: `${long}@example.com`, user_display_name: long } });
+    await expect(page.locator('[data-card="passkey"]')).toBeVisible();
+    expect(await noSidewaysScroll(page)).toBe(true);
+  });
+});
+
 /** How far the page is taller than its screen and its content together: what something under the content (a footer) would add. */
 const extraHeight = (page) =>
   page.evaluate(() => {
@@ -578,10 +672,13 @@ for (const scheme of ["light", "dark"]) {
   test.describe(`contrast in the ${scheme} theme`, () => {
     test.use({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
 
-    for (const which of ["item", "edit", "list-populated", "list-empty", "trash-full", "trash-empty", "devices-empty"]) {
+    for (const which of ["item", "edit", "list-populated", "list-empty", "trash-full", "trash-empty", "devices-empty", "item-passkey", "list-passkey", "trash-passkey"]) {
       test(`the_${which}_page_reads_at_aa`, async ({ page }) => {
         await ready(page);
-        await scene(page, which, which === "item" ? { folders: ["Home"], history: 2 } : {});
+        // The passkey pages are the same screens with an item that holds a passkey.
+        const passkey = which.endsWith("-passkey");
+        const screen = { "item-passkey": "item", "list-passkey": "list-populated", "trash-passkey": "trash-full" }[which] ?? which;
+        await scene(page, screen, which === "item" ? { folders: ["Home"], history: 2 } : passkey ? { passkey: {} } : {});
         if (which === "list-populated") {
           // The chosen chip, a row that is ticked (so the bar for several rows is up), and the open menu of a row.
           await expect(page.locator('[data-role="favorites-chip"]')).toHaveAttribute("aria-pressed", "true");
