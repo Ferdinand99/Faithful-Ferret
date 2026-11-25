@@ -358,6 +358,11 @@ test("every UI request and reply round-trips with a sample body", () => {
     ],
     passkey_cancel: [{ request_id: "a1".repeat(16) }, { ok: false, reason: "gone" }],
     passkey_browser: [{ request_id: "a1".repeat(16) }, { ok: true }],
+    passkey_create_options: [
+      { request_id: "a1".repeat(16) },
+      { ok: true, targets: [{ item_id: "b2".repeat(16), name: "Example", user_name: "anna", same_user: true }], existing: null, folders: [{ id: "c3".repeat(16), name: "Work" }] },
+    ],
+    passkey_choose: [{ request_id: "a1".repeat(16), kind: "create", mode: "new", name: "example.com", folder_id: "c3".repeat(16) }, { ok: false, reason: "network" }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {

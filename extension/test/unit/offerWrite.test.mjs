@@ -562,6 +562,8 @@ function engineLeaks(source) {
     if (call && SYNC_ENGINE_METHODS.includes(call[1])) continue;
     if (/^engine\s*=\s*createEngine\s*\(/.test(after) && /const\s+$/.test(before)) continue;
     if (/^engine\s*,/.test(after) && /createOfferWriter\(\{\s*$/.test(before)) continue;
+    // The passkey writer (the `passkeys` feature), made by the sync from the factory it is given.
+    if (/^engine\s*,/.test(after) && /passkeyWrite\(\{\s*$/.test(before)) continue;
     if (/^engine\s*,\s*writer\s*,/.test(after) && /const run = \{\s*$/.test(before)) continue;
     out.push(code.slice(Math.max(0, at - 30), at + 40).replace(/\s+/g, " "));
   }
@@ -644,6 +646,9 @@ const ALLOWED_WRITES = Object.freeze({
 const ALLOWED_FEATURE_WRITES = Object.freeze({
   // The passkey chooser window (one at a time).
   "background/passkeyRequests.mjs": ["windows.create"],
+  // The passkey writer: never the engine's create (a new passkey goes to the server directly), only an ordinary change after the
+  // server's yes: a passkey nobody got leaves its item again, and the folder the person chose goes on a new item.
+  "background/passkeyWrite.mjs": ["engine.update", "engine.update"],
 });
 
 test("only_offer_write_calls_engine_create_or_update", async () => {

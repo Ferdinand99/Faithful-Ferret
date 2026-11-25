@@ -1,7 +1,8 @@
 // Ferret's chooser window for a page's passkey request (the `passkeys` feature, design document § 9.2 and § 9.4): what the
 // window may see of the request (`passkey_pending`), the site as the core checked it (`passkey_site`), the user's cancel
-// (`passkey_cancel`), "use the browser instead" (`passkey_browser`) and "never on this site" (`passkey_never`: the core's RP ID goes on
-// the never list, then the browser answers; it needs the open vault).
+// (`passkey_cancel`), "use the browser instead" (`passkey_browser`), "never on this site" (`passkey_never`: the core's RP ID goes on
+// the never list, then the browser answers; it needs the open vault), what the vault has for a create request
+// (`passkey_create_options`) and the person's choice (`passkey_choose`, background/passkeyFlow.mjs).
 //
 // Only from the window itself: a top-level page of this extension at `pages/passkey.html?r=<the request's id>` (the router
 // accepted its port already; this checks the page), and, where the browser names it, from the browser window the
@@ -43,11 +44,25 @@ async function handle(body, ctx) {
   if (typeof ctx.call !== "function" || !fromWindow(ctx, body?.request_id)) throw notAvailable();
   // The browser window the page is in: the broker checks it against the window it opened for the request.
   const windowId = ctx.sender?.tab?.windowId;
-  return ctx.call(ctx.type, { request_id: body.request_id, session: ctx.session, ...(Number.isSafeInteger(windowId) ? { window_id: windowId } : {}) });
+  return ctx.call(ctx.type, {
+    request_id: body.request_id,
+    session: ctx.session,
+    ...(Number.isSafeInteger(windowId) ? { window_id: windowId } : {}),
+    // The person's choice (checked by the schema of the type): what was chosen, never a claim of presence or verification.
+    ...(ctx.type === "passkey_choose" ? choiceOf(body) : {}),
+  });
+}
+
+/** The fields of a choice the window sends. @param {any} body */
+function choiceOf(body) {
+  /** @type {Record<string, unknown>} */
+  const out = { kind: body.kind };
+  for (const key of ["mode", "name", "folder_id", "item_id"]) if (body[key] !== undefined) out[key] = body[key];
+  return out;
 }
 
 export default {
-  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"],
+  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never", "passkey_create_options", "passkey_choose"],
   channel: /** @type {"ui"} */ ("ui"),
   handle,
 };

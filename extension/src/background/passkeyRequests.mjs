@@ -53,7 +53,16 @@ import { PASSKEY_ORIGINS, PASSKEY_SETTING_KEY } from "./passkeyRegistry.mjs";
 /** The core operation the router hands a message of the bridge to. */
 export const PASSKEY_EVENT_OP = "passkey_event";
 /** The core operations of Ferret's chooser window (the UI types of the same names). */
-export const PASSKEY_WINDOW_OPS = Object.freeze(["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"]);
+export const PASSKEY_WINDOW_OPS = Object.freeze([
+  "passkey_pending",
+  "passkey_site",
+  "passkey_cancel",
+  "passkey_browser",
+  "passkey_never",
+  // The choices of the window (passkeyFlow.mjs): what the vault has for a create request, and the person's choice.
+  "passkey_create_options",
+  "passkey_choose",
+]);
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -95,7 +104,7 @@ const ES256 = -7;
  *   id: string, bridgeId: string, key: string, sender: Sender, origin: string, kind: "create" | "get",
  *   mediation: "optional" | "required" | "conditional", options: any, top: string | null,
  *   deadline: number | null, timer: unknown, state: "window" | "waiting" | "conditional",
- *   windowId: number | null, session: string | null,
+ *   windowId: number | null, session: string | null, held: boolean,
  * }} Request
  * @typedef {{
  *   request_id: string, kind: "create" | "get", mediation: string, origin: string, rp_id: string | null,
@@ -455,7 +464,8 @@ export function createPasskeyRequests({
 
   /** A modal request reached its deadline. @param {Request} req */
   const expire = (req) => {
-    if (requests.get(req.id) !== req || req.deadline === null) return;
+    // An upload that has started holds the deadline: it waits for the outcome (`holdDeadline`).
+    if (requests.get(req.id) !== req || req.deadline === null || req.held) return;
     void endWithError(req, "NotAllowedError", true);
   };
 
@@ -464,7 +474,7 @@ export function createPasskeyRequests({
     if (typeof id !== "string" || !REF.test(id)) return null;
     const req = requests.get(id);
     if (req === undefined) return null;
-    if (req.deadline !== null && now() >= req.deadline) {
+    if (req.deadline !== null && !req.held && now() >= req.deadline) {
       expire(req);
       return null;
     }
@@ -721,6 +731,7 @@ export function createPasskeyRequests({
       state: conditional ? "conditional" : "waiting",
       windowId: null,
       session: null,
+      held: false,
     };
     requests.set(req.id, req);
     byBridge.set(key, req.id);
@@ -1015,6 +1026,51 @@ export function createPasskeyRequests({
         if (req.sender.tabId === tabId && req.state === "waiting" && live(req.id) !== null) return showWindow(req);
       }
       return false;
+    },
+    /**
+     * What the window's create op needs of a create request it owns (the same gate as the window's ops: `{ request_id, session,
+     * window_id? }`): the page's options, the frame's address, the caller (built here) and the RP ID the page asked for. Null for
+     * a request that has ended, is another session's, or is a get.
+     * @param {any} args
+     */
+    createOf: (args) => {
+      const req = ownedBy(args);
+      if (req === null || req.kind !== "create") return null;
+      return Object.freeze({ id: req.id, session: req.session, options: req.options, url: req.sender.url, caller: callerFor(req), askedRpId: askedRpId(req) });
+    },
+    /**
+     * Holds the deadline of a request while an upload for it runs: it does not end by its deadline until the returned function
+     * is called (then a deadline that has passed ends it). Null for a request the session does not own.
+     * @param {string} id @param {string} session @returns {(() => void) | null}
+     */
+    holdDeadline: (id, session) => {
+      const req = owned(id, session);
+      if (req === null) return null;
+      req.held = true;
+      return () => {
+        if (!req.held) return;
+        req.held = false;
+        if (requests.get(req.id) === req && req.deadline !== null && now() >= req.deadline) expire(req);
+      };
+    },
+    /** Whether the request still waits and the session owns it. @param {string} id @param {string} session */
+    waiting: (id, session) => owned(id, session) !== null,
+    /**
+     * Checks again, before anything is written for it, that the request may still be answered: the frame chain is whole and the
+     * device is still signed in at a server that is not the page's. A request that may not ends with NotAllowedError.
+     * @param {string} id @param {string} session @returns {Promise<boolean>}
+     */
+    recheck: async (id, session) => {
+      const req = owned(id, session);
+      if (req === null) return false;
+      const chain = await chainOf(req.sender);
+      const allowed = chain !== null && (await stillAllowed(req));
+      if (requests.get(req.id) !== req) return false;
+      if (!allowed) {
+        void endWithError(req, "NotAllowedError", false);
+        return false;
+      }
+      return true;
     },
     /** The user was verified for this request (one time, gone with the request and at every lock). @param {string} id @param {string} session */
     markVerified: (id, session) => {

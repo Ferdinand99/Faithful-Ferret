@@ -92,6 +92,8 @@ export function createChooser({
   let titleNode = null;
   /** The line the window speaks errors through. @type {HTMLElement | null} */
   let alertNode = null;
+  /** The line that says a new passkey is being saved with the server. @type {HTMLElement | null} */
+  let savingNode = null;
   /** The timers: the guard's end, the poll, the close. @type {unknown} */
   let guardTimer = null;
   /** @type {unknown} */
@@ -540,6 +542,7 @@ export function createChooser({
     touch();
     shownSignature = signature(view);
     alertNode = el("p", { class: "ff-error", role: "alert", tabindex: "-1", "data-role": "passkey-error", hidden: true });
+    savingNode = el("p", { class: "ff-hint", role: "status", "data-role": "passkey-saving", hidden: true }, t("passkeys.make.saving"));
     const v = view;
     const key = v.state === "locked" ? "passkeys.title.locked" : v.kind === "get" ? "passkeys.title.get" : "passkeys.title.make";
     const parts =
@@ -550,7 +553,7 @@ export function createChooser({
     root.setAttribute("data-state", v.state);
     root.setAttribute("aria-busy", "false");
     busy = false;
-    mount(root, heading(key), ...(/** @type {HTMLElement[]} */ ([...parts, alertNode].filter((part) => part !== null))));
+    mount(root, heading(key), ...(/** @type {HTMLElement[]} */ ([...parts, savingNode, alertNode].filter((part) => part !== null))));
   }
 
   /** The request is over: the window says so and closes. @param {string} key */
@@ -580,6 +583,9 @@ export function createChooser({
     if (busy || closed) return;
     say(null);
     holding(true);
+    // A new passkey is saved with the server before the website gets it (it may take a while when the connection is poor).
+    const saving = doneKey === "passkeys.done.created" || doneKey === "passkeys.done.added";
+    if (saving && savingNode !== null) savingNode.hidden = false;
     const mine = build;
     const kept = { name: nameDraft, folder: folderDraft };
     /** @type {{ ok: true } | { ok: false, reason: string }} */
@@ -590,6 +596,7 @@ export function createChooser({
       outcome = { ok: false, reason: "internal_error" };
     }
     if (closed || mine !== build) return;
+    if (savingNode !== null) savingNode.hidden = true;
     if (outcome.ok) {
       wipe();
       ended(doneKey);

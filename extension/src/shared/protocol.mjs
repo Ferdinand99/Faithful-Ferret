@@ -572,6 +572,40 @@ export const UI_TYPES = defineTypes({
   },
   passkey_cancel: { request: object({ request_id: pkRequestRef }), reply: okReply },
   passkey_browser: { request: object({ request_id: pkRequestRef }), reply: okReply },
+  // What the vault has for a create request (the window's choices; needs the open vault): the items a new passkey can be added
+  // to (`same_user`: its user name is the page's), the item that already holds a passkey for the same RP ID and user handle, and
+  // the folders, each named by a reference good for this request only. Names are the vault's, as stored: the window cleans them.
+  passkey_create_options: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        targets: array(object({ item_id: pkRequestRef, name: string({ max: 4096 }), user_name: string({ max: 4096 }), same_user: boolean() }), { max: 200 }),
+        existing: nullable(object({ item_id: pkRequestRef, name: string({ max: 4096 }) })),
+        folders: array(object({ id: pkRequestRef, name: string({ max: 4096 }) }), { max: 500 }),
+        recent: boolean(),
+      },
+      { optional: ["reason", "targets", "existing", "folders", "recent"] },
+    ),
+  },
+  // The person's choice in the window: for a create request a new item (`name`, `folder_id` from passkey_create_options) or an
+  // item to add to (`item_id`); for a get request a passkey of the vault (`item_id`). Nothing about presence or verification: the
+  // click in this window is the background's evidence of presence, and verification is its own mark for the request.
+  passkey_choose: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        kind: string({ max: 8, oneOf: ["create", "get"] }),
+        mode: string({ max: 8, oneOf: ["new", "attach"] }),
+        name: string({ min: 1, max: 800 }),
+        folder_id: pkRequestRef,
+        item_id: pkRequestRef,
+      },
+      { optional: ["mode", "name", "folder_id", "item_id"] },
+    ),
+    reply: okReply,
+  },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
   // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`
