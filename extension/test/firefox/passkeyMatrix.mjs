@@ -10,7 +10,11 @@
 //           cannot be seen, so a case that expects Ferret is judged on what the page and the relying party saw, and
 //           cases that need Ferret to answer (a window, a verification, a navigation while a request waits) are not run.
 //           This is what U4-3 can do, and it proves the fixtures, the pages, the runner and the report.
-//   ferret  the extension answers (U4-8 and later). Not wired yet: every case is reported as not run.
+//   ferret  the extension answers: it is signed in to the end-to-end stack of the run (scripts/lanbox-ext.sh passkey-matrix
+//           --provider ferret joins both networks), with passkeys on, and the runner presses in Ferret's window what a person
+//           would: "Save in Ferret" for a new passkey, the first passkey of a sign-in (or "Cancel" when Ferret offers none).
+//           The cases that need a driver step of their own (a lock, a navigation, the network going away while a request
+//           waits) are reported as not run.
 //
 // FERRET_PASSKEY_BRIDGE=1 (scripts/lanbox-ext.sh passkey-matrix --bridge) turns the test build's passkey scripts on before the
 // first case (the permission for https pages with a click in the extension's own page, the setting, and the fixture's vault as
@@ -26,7 +30,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFirefox } from "./driver.mjs";
 import { caseAddress, computeMatrix, loadCases, observe, specOf, writeReport } from "./passkeyCases.mjs";
-import { BRIDGE_URL, defaultManifest, xpiPath } from "./harness.mjs";
+import { BRIDGE_URL, defaultManifest, e2eCertificateFile, EXTENSION_ORIGIN, openBridge, TEST_ADDON_ID, xpiPath } from "./harness.mjs";
+import { KEEP_BACKGROUND, extensionSignIn, webVaultAccount } from "./e2e.mjs";
+import { revokeLeftDevices } from "./adversary.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -121,6 +127,100 @@ export async function turnOnPasskeyScripts(session) {
   return tab;
 }
 
+/** The address of Ferret's chooser window. */
+const CHOOSER_PAGE = `${EXTENSION_ORIGIN}/pages/passkey.html?r=`;
+
+/**
+ * The Ferret provider: an account on the end-to-end stack (made by the first channel, signed in to by the next), the extension
+ * signed in to it, the permission for https pages, the setting, and both passkey scripts registered. Comes back to the tab the
+ * session was in.
+ * @param {import("./driver.mjs").Session} session @param {string} channel
+ * @returns {Promise<string>} the handle of the extension's tab
+ */
+export async function turnOnFerret(session, channel) {
+  if (!process.env.FERRET_E2E_CA_PEM) throw new Error("the Ferret provider needs the end-to-end stack (scripts/lanbox-ext.sh passkey-matrix --provider ferret)");
+  const back = await session.windowHandle();
+  await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+  const account = await webVaultAccount(session, channel);
+  await revokeLeftDevices(session);
+  const tab = await session.newTab();
+  await session.switchTo(tab);
+  const signed = await extensionSignIn(session, account);
+  if (!signed.ok) throw new Error(`${channel}: the extension's sign-in failed: ${signed.text}`);
+  const bridge = await openBridge(session);
+  await session.content(() => {
+    const button = document.createElement("button");
+    button.id = "pk-grant";
+    button.textContent = "grant";
+    button.addEventListener("click", () => {
+      browser.permissions.request({ origins: ["https://*/*"] }).then((ok) => { document.documentElement.dataset.pkGranted = String(ok); });
+    });
+    document.body.append(button);
+  });
+  const [button] = await session.findAll("#pk-grant");
+  await session.click(button);
+  const granted = await session.waitFor(() => session.content(() => document.documentElement.dataset.pkGranted), 15_000, "the permission for https pages");
+  if (granted !== "true") throw new Error("the permission for https pages was not granted");
+  await bridge.invoke("storage.local.set", { use_passkeys: true });
+  await session.content(() => new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-test-core" });
+    const timer = setTimeout(() => reject(new Error("passkey_reconcile did not answer")), 15_000);
+    port.onMessage.addListener((/** @type {any} */ reply) => {
+      clearTimeout(timer);
+      port.disconnect();
+      if (reply?.ok) resolve(true);
+      else reject(new Error(`passkey_reconcile: ${reply?.code}`));
+    });
+    port.postMessage({ id: "r1", op: "passkey_reconcile" });
+  }));
+  await session.waitFor(
+    () => session.content(async () => (await browser.scripting.getRegisteredContentScripts({ ids: ["ferret-passkey-main", "ferret-passkey-bridge"] })).length === 2),
+    15_000,
+    "both passkey scripts registered",
+  );
+  await session.switchTo(back);
+  return tab;
+}
+
+/**
+ * Presses in every chooser window of Ferret that is ready what a person would: "Save in Ferret" for a new passkey; for a sign-in
+ * the first passkey Ferret offers, or "Cancel" when it offers none. Windows already pressed in (`pressed`) and the ones that were
+ * there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window.
+ * @param {import("./driver.mjs").Session} session @param {Set<string>} baseline @param {Set<string>} pressed @param {string} main
+ * @returns {Promise<Array<{ kind: string, role: string }>>}
+ */
+export async function pressInChooser(session, baseline, pressed, main) {
+  /** @type {Array<{ kind: string, role: string }>} */
+  const done = [];
+  try {
+    for (const handle of await session.windowHandles()) {
+      if (baseline.has(handle) || pressed.has(handle)) continue;
+      await session.switchTo(handle);
+      const url = await session.currentUrl().catch(() => "");
+      if (!url.startsWith(CHOOSER_PAGE)) continue;
+      const shown = await session
+        .content(() => {
+          const root = document.querySelector('[data-role="passkey-chooser"]');
+          return { ready: document.body?.dataset.ready === "1", kind: root?.getAttribute("data-kind") ?? "", state: root?.getAttribute("data-state") ?? "", busy: root?.getAttribute("aria-busy") === "true" };
+        })
+        .catch(() => null);
+      if (shown === null || !shown.ready || shown.state !== "ready" || shown.busy) continue;
+      // The window's guard: a click counts only 400 ms after its content was built.
+      await sleep(900);
+      const candidates = await session.findAll('[data-role="passkey-candidate"]');
+      const role = shown.kind === "create" ? "passkey-create-new" : candidates.length > 0 ? "passkey-candidate" : "passkey-cancel";
+      const [button] = role === "passkey-candidate" ? candidates : await session.findAll(`[data-role="${role}"]`);
+      if (!button) continue;
+      await session.click(button);
+      pressed.add(handle);
+      done.push({ kind: shown.kind, role });
+    }
+  } finally {
+    await session.switchTo(main).catch(() => {});
+  }
+  return done;
+}
+
 /** How many requests went through the bridge so far. @param {import("./driver.mjs").Session} session @param {string} tab */
 export async function bridgeRequests(session, tab) {
   const back = await session.windowHandle();
@@ -153,7 +253,17 @@ export function selectCases(set, grep = "") {
  * @param {{ channel: "release" | "esr", manifest?: "mv3" | "mv2", headless?: boolean }} o
  */
 export async function launchMatrixBrowser({ channel, manifest = defaultManifest(), headless = process.env.FERRET_HEADLESS !== "0" }) {
-  const session = await startFirefox({ channel, headless, addon: xpiPath(manifest), hosts: [], certificateFiles: [fixtureCaFile()], prefs: { ...MATRIX_PREFS } });
+  // With the Ferret provider the end-to-end stack's CA is trusted too (its server is the one the extension signs in to), and the
+  // event page is kept alive as in the end-to-end specs.
+  const e2e = e2eCertificateFile();
+  const session = await startFirefox({
+    channel,
+    headless,
+    addon: xpiPath(manifest),
+    hosts: [],
+    certificateFiles: [fixtureCaFile(), ...(e2e ? [e2e] : [])],
+    prefs: { ...MATRIX_PREFS, ...(e2e ? KEEP_BACKGROUND : {}) },
+  });
   await session.addVirtualAuthenticator();
   return session;
 }
@@ -185,14 +295,19 @@ async function enterFrames(session, frames) {
  */
 export async function runCase(session, c, { channel, provider }) {
   if (c.set === "demo") return { status: "not-run", reason: "the demo pages have no driver yet (the end-to-end spec of U4-13 brings it)" };
-  if (provider === "ferret") return { status: "not-run", reason: "the Ferret provider is not wired into the runner yet (U4-8 and later)" };
-  if (c.needs === "provider") return { status: "not-run", reason: "the case needs Ferret to answer (a window, a verification or a navigation while a request waits); the stub provider cannot run it" };
+  if (c.needs === "provider") {
+    return provider === "ferret"
+      ? { status: "not-run", reason: "the case needs a driver step of its own (a lock, a navigation, the network, a verification) that the runner does not have yet" }
+      : { status: "not-run", reason: "the case needs Ferret to answer (a window, a verification or a navigation while a request waits); the stub provider cannot run it" };
+  }
   const run = `${Math.random().toString(16).slice(2, 10)}-${c.id}`.slice(0, 80);
   const spec = specOf(c, run);
   const address = caseAddress(c, { spec, auto: c.gesture === "none" });
   const main = await session.windowHandle();
   const baseline = new Set(await session.windowHandles());
   let windowsOpened = 0;
+  /** The chooser windows the runner pressed in (the Ferret provider). @type {Set<string>} */
+  const pressed = new Set();
   try {
     await session.navigate(address.url);
     if (c.gesture === "click") {
@@ -209,6 +324,7 @@ export async function runCase(session, c, { channel, provider }) {
       await sleep(250);
       const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
       windowsOpened = Math.max(windowsOpened, handles.filter((h) => !baseline.has(h)).length);
+      if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) await pressInChooser(session, baseline, pressed, main);
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
     }
@@ -282,9 +398,10 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
   /** @type {import("./driver.mjs").Session | undefined} */
   let session;
   try {
-    const runnable = cases.some((c) => c.set !== "demo" && c.needs !== "provider" && provider === "stub");
+    const runnable = cases.some((c) => c.set !== "demo" && c.needs !== "provider");
     if (runnable) session = await launchMatrixBrowser({ channel, manifest });
-    const bridgeTab = session && BRIDGE_ON ? await turnOnPasskeyScripts(session) : null;
+    if (session && provider === "ferret") await turnOnFerret(session, channel);
+    const bridgeTab = session && BRIDGE_ON && provider === "stub" ? await turnOnPasskeyScripts(session) : null;
     for (const c of cases) {
       const r = session ? await runCase(session, c, { channel, provider }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider });
       results.set(c.id, r);

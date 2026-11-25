@@ -26,7 +26,7 @@ import { test } from "node:test";
 import { channels, defaultManifest } from "./harness.mjs";
 import { builderScript, SHIM_SCRIPT } from "./passkeyAnswer.mjs";
 import { caseAddress, specOf } from "./passkeyCases.mjs";
-import { fetchReports, launchMatrixBrowser, runSet } from "./passkeyMatrix.mjs";
+import { fetchReports, launchMatrixBrowser, pressInChooser, runSet, turnOnFerret } from "./passkeyMatrix.mjs";
 
 const SET = /** @type {"fixtures" | "adversarial" | "holdout" | "demo"} */ (["adversarial", "holdout", "demo"].includes(process.env.FERRET_PASSKEY_SET ?? "") ? process.env.FERRET_PASSKEY_SET : "fixtures");
 const PROVIDER = /** @type {"stub" | "ferret"} */ (process.env.FERRET_PASSKEY_PROVIDER === "ferret" ? "ferret" : "stub");
@@ -87,6 +87,55 @@ test("virtual_authenticator_and_fixture_tls_work_in_both_channels", async () => 
   }
   selfTestPassed = true;
 });
+
+// With the Ferret provider only (a stub run registers no such test, so it is never skipped there): a new passkey made by Ferret,
+// with the person's "Save in Ferret" in Ferret's own window, is accepted by both relying parties: webauthn-rs (strict) and
+// SimpleWebAuthn verify the registration on their servers. The page got the answer only after Ferret's server had the item.
+if (PROVIDER === "ferret") {
+  test("create_on_both_fixtures_verifies_on_the_server", async (t) => {
+    if (!selfTestPassed) {
+      t.skip("the self-test did not pass");
+      return;
+    }
+    for (const channel of channels()) {
+      const session = await launchMatrixBrowser({ channel });
+      try {
+        await turnOnFerret(session, channel);
+        for (const lib of /** @type {const} */ (["rs", "swa"])) {
+          for (const client of /** @type {const} */ (["manual", "swa"])) {
+            const c = { rp: { lib, client }, page: { chain: ["rp-a.test"] }, spec: { steps: ["create"], user: { name: `ferret-${lib}-${client}`, displayName: "Ferret" } } };
+            const run = `ferret-create-${Math.random().toString(16).slice(2, 10)}`;
+            const address = caseAddress(c, { spec: specOf(c, run), auto: false });
+            const main = await session.windowHandle();
+            const baseline = new Set(await session.windowHandles());
+            await session.navigate(address.url);
+            await session.waitFor(() => session.content(() => document.documentElement.dataset.ready === "1"), 20_000, `the page ${address.url}`);
+            const [go] = await session.findAll("#go");
+            assert.ok(go, `#go on ${address.url}`);
+            await session.click(go);
+            /** @type {Set<string>} */
+            const pressed = new Set();
+            /** @type {Array<{ kind: string, role: string }>} */
+            const presses = [];
+            const done = await session.waitFor(async () => {
+              presses.push(...(await pressInChooser(session, baseline, pressed, main)));
+              return (await fetchReports(run)).find((r) => r.kind === "done");
+            }, 60_000, `the report of ${address.url}`);
+            const label = `${channel}: ${lib} with ${client}`;
+            const reports = await fetchReports(run);
+            assert.deepEqual(presses, [{ kind: "create", role: "passkey-create-new" }], `${label}: Ferret's window made the passkey`);
+            assert.equal(done.ok, true, `${label}: ${JSON.stringify(reports.filter((r) => r.kind === "step").map((r) => ({ step: r.step, stage: r.stage, error: r.error })))}`);
+            const step = reports.find((r) => r.kind === "step" && r.step === "create");
+            assert.equal(step?.ok, true, `${label}: the relying party verified the registration`);
+            await session.waitFor(async () => (await session.windowHandles()).every((h) => baseline.has(h)), 20_000, `${label}: the window closed`);
+          }
+        }
+      } finally {
+        await session.quit();
+      }
+    }
+  });
+}
 
 test("simplewebauthn_browser_and_manual_conversion_both_accept_the_answer", async (t) => {
   if (!selfTestPassed) {
