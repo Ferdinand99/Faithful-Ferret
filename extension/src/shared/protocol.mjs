@@ -61,6 +61,7 @@ export const FORBIDDEN_KEYS = Object.freeze([
   "value",
   "secret",
   "totp_secret",
+  "code",
   "vk",
   "pin",
   "prf_output",
@@ -72,13 +73,15 @@ export const FORBIDDEN_KEYS = Object.freeze([
  * for the popup to show; `offer_reveal` answers with the password of one offer, to the popup session that was told of
  * it, on the click of "Show" (it is never in a list or a classification); and `form_capture` (content script to
  * background) carries what the person typed into the form they submitted, the password and, in a change form, the one
- * in use. Nothing is sent back.
+ * in use. Nothing is sent back. `item_code` answers with the current one-time code of one item, to the popup session
+ * that holds the item's reference, for the popup to show it; the secret the code comes from never leaves the core.
  */
 export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   fill_field: Object.freeze(["value"]),
   generate: Object.freeze(["value"]),
   form_capture: Object.freeze(["password", "current_password"]),
   offer_reveal: Object.freeze(["value"]),
+  item_code: Object.freeze(["code"]),
   // What the user types to open the vault with a PIN, and the PIN when one is set: a request from an extension page to
   // the background, never a reply. (The master password and the secret key of `pin_set` are `mp` and `sk`, as in `unlock`.)
   pin_set: Object.freeze(["pin"]),
@@ -171,11 +174,13 @@ const handle = object(
     type: itemType,
     // The item has a web address that "Open the site" can open.
     site: boolean(),
+    // The item has a one-time code and was filled in this tab a short while ago: the page may ask for the code next.
+    next: boolean(),
     // A candidate of a page: the first frame it was matched in, and every frame it may be filled in (the top first).
     frame_id: frameId,
     frame_ids: array(frameId, { max: 4 }),
   },
-  { optional: ["username", "insecure", "favorite", "type", "site", "frame_id", "frame_ids"] },
+  { optional: ["username", "insecure", "favorite", "type", "site", "next", "frame_id", "frame_ids"] },
 );
 const empty = object({});
 // A generation: a random name for a value that the background keeps for a while.
@@ -410,8 +415,9 @@ export const UI_TYPES = defineTypes({
   },
   // "Fill" with a reference of `candidates`. Without `frame_id` the background fills the first of the reference's frames
   // that has a sign-in form; with it (the menu's frame) only that frame.
+  // `only: "totp"` fills the one-time code field alone (the frame is the first one that has such a field).
   fill: {
-    request: object({ ref, tab_id: tabId, frame_id: frameId }, { optional: ["frame_id"] }),
+    request: object({ ref, tab_id: tabId, frame_id: frameId, only: string({ max: 16, oneOf: ["totp"] }) }, { optional: ["frame_id", "only"] }),
     reply: okReply,
   },
   copy: {
@@ -434,6 +440,15 @@ export const UI_TYPES = defineTypes({
         copyable: array(field, { max: 3 }),
       },
       { optional: ["reason", "name", "username", "type", "favorite", "urls", "copyable"] },
+    ),
+  },
+  // The current one-time code of an item and the seconds it still holds, made in the core from the device's clock, for the
+  // popup to show. `automatic`: the open popup asks again at the end of a period, which is not the user's activity.
+  item_code: {
+    request: object({ ref, automatic: boolean() }, { optional: ["automatic"] }),
+    reply: object(
+      { ok: boolean(), reason, code: string({ min: 6, max: 10, pattern: /^[0-9]{6,10}$/ }), seconds_left: integer({ min: 0, max: 3600 }) },
+      { optional: ["reason", "code", "seconds_left"] },
     ),
   },
   // "Open the site": the background opens the item's first web address in a new tab.

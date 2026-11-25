@@ -76,6 +76,7 @@ export const CORE_OPS = Object.freeze([
   "fill_report",
   "search",
   "item",
+  "item_code",
   "copy",
   "open_site",
   "offer_classify",

@@ -6,6 +6,7 @@
 // content script's would). Not a test file (the runner picks up *.test.mjs
 // only).
 import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../../src/shared/protocol.mjs";
+import { totpAt } from "../firefox/totp.mjs";
 import { createAlarmsAndIdle, createClock, createFakeClient, createSessionStorage } from "./backgroundHelpers.mjs";
 import { contentScriptSender, createFakeBrowser, extensionPageSender } from "./fakeBrowser.mjs";
 import { pkg } from "./sessionHelpers.mjs";
@@ -124,11 +125,12 @@ function viewOf(item) {
  *   resultTimeoutMs?: number,
  *   fillContext?: any,
  *   generated?: boolean,
+ *   totpSecret?: string | null,
  * }} [options] `frames` is what the page matching says of the tab `TAB` (it can be changed later through `world.frames`);
  *   `fillContext` is given to the fill flow; `generated` adds the generator (its handler, its operations, a core that
  *   makes passwords of the length it is asked for) and a store of offers that records what it is told
  */
-export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null, generated = false } = {}) {
+export async function itemWorld({ items = ITEMS, frames, source = true, reportTimeoutMs = 200, resultTimeoutMs = 200, fillContext = null, generated = false, totpSecret = null } = {}) {
   const { load } = await pkg();
   const [
     { createCoreHost, CORE_OPS },
@@ -150,6 +152,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
     load("background/handlers/fill.handler.mjs"),
     load("background/handlers/copy.handler.mjs"),
     load("background/handlers/search.handler.mjs"),
+    load("background/handlers/itemCode.handler.mjs"),
     load("background/handlers/fillReport.handler.mjs"),
     load("background/handlers/candidates.handler.mjs"),
     ...(generated ? [load("background/handlers/generator.handler.mjs")] : []),
@@ -200,7 +203,8 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
       totp_code: (/** @type {number} */ handle, /** @type {number} */ seconds) => {
         const item = handles.get(handle);
         if (!item?.totp) throw Object.assign(new Error("no totp"), { code: "invalid_input" });
-        return { code: TOTP_CODE, seconds_left: 30 - (seconds % 30) };
+        // With a secret (base32, SHA-1, 6 digits, 30 seconds) the code is the RFC 6238 one for the second the caller names.
+        return { code: totpSecret === null ? TOTP_CODE : totpAt(totpSecret, Math.floor(seconds / 30)), seconds_left: 30 - (seconds % 30) };
       },
       page_origin: (/** @type {string} */ url) => {
         const parsed = new URL(url);
