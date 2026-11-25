@@ -12,7 +12,9 @@
 #                                 (unbranded Release and ESR; both unless --channel
 #                                 names one) through geckodriver, in the runner image
 #                                 docker/ext-runner.Dockerfile. The step has no
-#                                 network at all (--network none).
+#                                 network at all (--network none). With FERRET_SHOTS_OUT=<dir> the
+#                                 screenshots the specs take (FERRET_SHOTS_DIR) are unpacked into
+#                                 <dir>/gate-shots/<channel>/.
 #   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up]
 #                                 the same runner against the end-to-end stack: starts a
 #                                 stack of its own with `lanbox-ferret-test.sh e2e-up`
@@ -562,6 +564,18 @@ make_run() {
 }
 
 if [ "$mode" = firefox ]; then
+  if [ -n "${FERRET_SHOTS_OUT:-}" ]; then
+    # The screenshots the specs take (FERRET_SHOTS_DIR) come back as a tar archive on stdout and are unpacked into
+    # $FERRET_SHOTS_OUT/gate-shots/, also after a failure.
+    mkdir -p "$FERRET_SHOTS_OUT"
+    make_run "${channel:-release,esr}" "" firefox 1
+    rc=0
+    "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
+    if [ -s "$work/shots.tar" ]; then
+      tar -x --no-same-owner -C "$FERRET_SHOTS_OUT" < "$work/shots.tar" || rc=$?
+    fi
+    exit "$rc"
+  fi
   make_run "${channel:-release,esr}" ""
   "${run[@]}" < "$work/in.tar"
   exit 0

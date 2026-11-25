@@ -328,6 +328,7 @@ test("every UI request and reply round-trips with a sample body", () => {
     pin_off: [{}, { ok: true }],
     prf_options: [{}, { ok: true, rp_id: "vault.example.com", credentials: [{ id: "AQID", salt: "a".repeat(43) }] }],
     prf_window: [{}, { ok: true }],
+    passkey_never: [{ request_id: "ab".repeat(16) }, { ok: true }],
     prf_unlock: [{ credential_id: "AQID", prf_output: "b".repeat(43) }, { ok: false, reason: "prf_failed" }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());

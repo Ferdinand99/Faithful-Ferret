@@ -55,16 +55,17 @@ export function listedHost(host) {
 
 /**
  * The never list.
- * @param {{ storageLocal: StorageLocal }} deps
+ * @param {{ storageLocal: StorageLocal, key?: string }} deps `key`: where the list is kept in `storage.local` (the offers' own
+ *   list by default; the passkeys feature keeps one of its own)
  */
-export function createNeverList({ storageLocal }) {
+export function createNeverList({ storageLocal, key = NEVER_KEY }) {
   /** What is on disk, in the order it was added. @type {string[]} */
   let kept = [];
   /** What private windows chose: memory only. @type {Set<string>} */
   const memory = new Set();
   const loaded = (async () => {
     try {
-      const stored = (await storageLocal.get(NEVER_KEY))?.[NEVER_KEY];
+      const stored = (await storageLocal.get(key))?.[key];
       if (Array.isArray(stored)) kept = [...new Set(stored.map(listedHost).filter((h) => h !== null))].slice(-MAX_NEVER);
     } catch {
       // No list is read: nothing is on it (the offers it would have stopped come back).
@@ -74,7 +75,7 @@ export function createNeverList({ storageLocal }) {
   let writes = Promise.resolve();
   const save = () => {
     const snapshot = [...kept];
-    writes = writes.then(() => storageLocal.set({ [NEVER_KEY]: snapshot })).catch(() => {});
+    writes = writes.then(() => storageLocal.set({ [key]: snapshot })).catch(() => {});
     return writes;
   };
 

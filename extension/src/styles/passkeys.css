@@ -1,0 +1,274 @@
+/* The chooser window for passkey requests (pages/passkey.html, passkeyChooser.mjs; the `passkeys` feature). Sizes and colours are the
+   tokens of session.css, so the window follows the light and the dark theme with the rest of the extension. */
+
+.ff-chooser-window .ff-chooser-card {
+  max-width: 460px;
+}
+
+.ff-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.ff-chooser > * {
+  min-width: 0;
+}
+
+.ff-chooser .ff-pk-title {
+  margin: 0;
+  font-size: 1.25rem;
+  text-wrap: balance;
+}
+
+/* The heading takes the focus when the window opens, so it must not look like a control. */
+.ff-chooser .ff-pk-title:focus {
+  outline: none;
+}
+
+.ff-chooser .ff-pk-title:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ff-chooser p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ff-pk-eyebrow {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The identity of the site: the host and the exact address the core gives, and the RP ID the passkeys are tied to. */
+.ff-pk-site {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card-raised);
+}
+
+.ff-pk-site .ff-pk-eyebrow:not(:first-child) {
+  margin-top: var(--sp-2);
+}
+
+.ff-pk-host {
+  font-size: 1.125rem;
+  line-height: 1.25;
+}
+
+.ff-pk-host .ff-host {
+  font-weight: 700;
+}
+
+.ff-pk-origin,
+.ff-pk-rp {
+  font-size: 0.8125rem;
+}
+
+.ff-pk-ascii {
+  color: var(--muted);
+}
+
+/* What the website wrote: apart, quieter, and labelled as the website's. */
+.ff-pk-claims {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--hover);
+}
+
+.ff-pk-claim-list {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-1) 0 0;
+  font-size: 0.8125rem;
+}
+
+.ff-pk-claim-list dt {
+  color: var(--muted);
+}
+
+.ff-pk-claim-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 22rem) {
+  .ff-pk-claim-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Ferret's choices come first and carry the brand colour; the others sit under them. */
+.ff-pk-ferret {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--brand);
+  border-radius: var(--r-md);
+  background: var(--brand-fill);
+}
+
+.ff-pk-empty {
+  border-color: var(--line-strong);
+  background: transparent;
+}
+
+.ff-pk-h2 {
+  margin: 0;
+  font-size: 1rem;
+  text-wrap: balance;
+}
+
+.ff-pk-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-pk-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card-raised);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.ff-pk-row:hover {
+  background: var(--card);
+}
+
+.ff-pk-row:active {
+  transform: scale(0.985);
+}
+
+.ff-pk-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ff-pk-row:focus-visible,
+.ff-chooser .ff-input:focus-visible,
+.ff-chooser .ff-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.ff-pk-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ff-pk-row-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ff-pk-row-sub {
+  overflow-wrap: anywhere;
+}
+
+.ff-pk-row-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.ff-pk-row-go {
+  flex: none;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--brand);
+  color: var(--on-inverse);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.ff-pk-none {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* The choices beside Ferret's. */
+.ff-pk-others {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-pk-others > .ff-button {
+  width: 100%;
+}
+
+.ff-pk-quiet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ff-pk-quiet .ff-button {
+  flex: 1 1 auto;
+}
+
+.ff-pk-verify:empty {
+  display: none;
+}
+
+.ff-chooser .ff-notice {
+  overflow-wrap: anywhere;
+}
+
+/* The first 400 ms after the window got the focus or its content changed: a click does not count yet, and it looks so. */
+.ff-chooser[data-guarded] .ff-pk-row,
+.ff-chooser[data-guarded] .ff-button {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.ff-chooser[aria-busy="true"] {
+  cursor: progress;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-pk-row {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ff-pk-site,
+  .ff-pk-claims,
+  .ff-pk-ferret,
+  .ff-pk-row {
+    border-color: CanvasText;
+  }
+
+  .ff-pk-row-go {
+    border: 1px solid CanvasText;
+  }
+}

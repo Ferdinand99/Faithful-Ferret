@@ -112,9 +112,9 @@ if [ "$mode" = measure ]; then
   export FERRET_MEASURE_OUT
   mkdir -p "$FERRET_MEASURE_OUT"
 fi
-# The gate's e2e step: the screenshots the specs take (FERRET_SHOTS_DIR) leave the container as a
-# tar archive on stdout, as the measure reports do.
-if [ "$mode" = e2e ] && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
+# The gate's e2e step, and a firefox step that was asked for them (FERRET_SHOTS_OUT of lanbox-ext.sh): the screenshots the specs
+# take (FERRET_SHOTS_DIR) leave the container as a tar archive on stdout, as the measure reports do.
+if { [ "$mode" = e2e ] || [ "$mode" = firefox ]; } && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
   FERRET_SHOTS_DIR=/work/test-results/out/gate-shots
   export FERRET_SHOTS_DIR
   mkdir -p "$FERRET_SHOTS_DIR"
