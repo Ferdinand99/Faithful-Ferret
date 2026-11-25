@@ -154,9 +154,13 @@ export const PASSKEY_FILES = Object.freeze([
   "background/passkeyWrite.mjs",
   "background/passkeyVerify.mjs",
   "background/passkeyHandover.mjs",
+  "background/passkeyNever.mjs",
   "pages/passkey.html",
   "pages/passkey.mjs",
   "pages/passkeyFlow.mjs",
+  "pages/passkeyChooser.mjs",
+  "pages/test-only/passkeyChooserPage.html",
+  "pages/test-only/passkeyChooserPage.mjs",
   "pages/passkeyVerify.mjs",
   "pages/popupPasskeys.mjs",
   "shared/webauthnWire.mjs",
@@ -967,11 +971,13 @@ export function passkeysModule(on, dist) {
   if (on.includes("passkeys")) {
     lines.push('export { createPasskeyRegistry } from "./passkeyRegistry.mjs";');
     lines.push('export { chooserWindows, createPasskeyRequests } from "./passkeyRequests.mjs";');
+    lines.push('export { createPasskeyNever } from "./passkeyNever.mjs";');
     lines.push(`export const PASSKEY_WINDOW_PAGE = ${dist.has(PASSKEY_WINDOW_PAGE) ? JSON.stringify(PASSKEY_WINDOW_PAGE) : "null"};`);
   } else {
     lines.push("export const createPasskeyRegistry = null;");
     lines.push("export const createPasskeyRequests = null;");
     lines.push("export const chooserWindows = null;");
+    lines.push("export const createPasskeyNever = null;");
     lines.push("export const PASSKEY_WINDOW_PAGE = null;");
   }
   return `${lines.join("\n")}\n`;

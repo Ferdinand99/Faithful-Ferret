@@ -947,3 +947,36 @@ test("the_broker_listeners_are_added_only_while_a_request_waits", () => {
   assert.match(main, /stop\(\) \{\s*for \(const \[event, listener\] of passkeyEvents\(\)\) \{\s*try \{\s*event\.removeListener\(listener\);/);
   assert.equal([...main.matchAll(/event\.addListener\(listener\)/g)].length, 1);
 });
+
+test("passkey_never_keeps_the_cores_rp_id_on_the_list_and_hands_the_call_to_the_browser", async () => {
+  /** @type {Array<[string, any]>} */
+  const added = [];
+  const w = world({ never: { has: async () => false, add: async (/** @type {string} */ rpId, /** @type {any} */ options) => void added.push([rpId, options]) } });
+  const ops = /** @type {any} */ (w.requests.ops);
+  assert.equal(ops.passkey_never.vault, true, "it needs the open vault: only then is there an RP ID the core has checked");
+  // The page asks for "rp-a.test"; the core says its canonical form; the list gets the core's, never the page's text.
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("n1", { options: { rp_id: "RP-A.test" } }))).request_id;
+  const client = (/** @type {any} */ rpId) => ({ vault: { passkey_site: async () => ({ origin: RP, host_unicode: "rp-a.test", rp_id: rpId, rp_id_unicode: rpId }) } });
+  // The first window that names the request owns it; another window's session cannot.
+  assert.equal((await ops.passkey_pending.run(null, { request_id: id, session: "win" })).ok, true);
+  assert.deepEqual(await ops.passkey_never.run(client("rp-a.test"), { request_id: id, session: "other" }), { ok: false, reason: "gone" });
+  assert.deepEqual(added, []);
+  // A locked vault is the router's refusal; nothing is stored and the request waits.
+  const locked = { vault: { passkey_site: async () => Promise.reject(Object.assign(new Error("vault_locked"), { code: "vault_locked" })) } };
+  await assert.rejects(ops.passkey_never.run(locked, { request_id: id, session: "win" }), /vault_locked/);
+  assert.deepEqual(added, []);
+  assert.equal(w.requests.size(), 1);
+  // The core's RP ID is kept (a private window's choice carries the flag), and the browser answers with the page's own options.
+  assert.deepEqual(await ops.passkey_never.run(client("rp-a.test"), { request_id: id, session: "win" }), { ok: true });
+  assert.deepEqual(added, [["rp-a.test", { incognito: false }]]);
+  assert.deepEqual(pushesOf(w.pushed, "n1").map((p) => [p.type, p.body.once]), [["passkey_handover", false]]);
+  assert.equal(w.requests.size(), 0);
+  const priv = /** @type {any} */ (await w.requests.open(senderOf({ incognito: true }), getBody("n2"))).request_id;
+  await ops.passkey_never.run(client("rp-a.test"), { request_id: priv, session: "win2" });
+  assert.deepEqual(added[1], ["rp-a.test", { incognito: true }]);
+  // A broker without the list does not pretend.
+  const bare = world();
+  const bareId = /** @type {any} */ (await bare.requests.open(senderOf(), getBody("n3"))).request_id;
+  assert.deepEqual(await /** @type {any} */ (bare.requests.ops).passkey_never.run(client("rp-a.test"), { request_id: bareId, session: "w" }), { ok: false, reason: "not_available" });
+  assert.equal(bare.requests.size(), 1);
+});

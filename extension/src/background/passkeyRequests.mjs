@@ -53,7 +53,7 @@ import { PASSKEY_ORIGINS, PASSKEY_SETTING_KEY } from "./passkeyRegistry.mjs";
 /** The core operation the router hands a message of the bridge to. */
 export const PASSKEY_EVENT_OP = "passkey_event";
 /** The core operations of Ferret's chooser window (the UI types of the same names). */
-export const PASSKEY_WINDOW_OPS = Object.freeze(["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser"]);
+export const PASSKEY_WINDOW_OPS = Object.freeze(["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"]);
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -234,7 +234,7 @@ export function chooserWindows({ windows, getURL, page }) {
  *   servers?: Servers | null,
  *   storageLocal?: { get(key: string): Promise<Record<string, unknown>> } | null,
  *   permissions?: { contains(wanted: { origins: string[] }): Promise<boolean> } | null,
- *   never?: { has(host: string): Promise<boolean> } | null,
+ *   never?: { has(host: string): Promise<boolean>, add?(rpId: string, options: { incognito?: boolean }): Promise<unknown> } | null,
  *   listen?: { start(): void, stop(): void } | null,
  *   release?: boolean,
  *   now?: () => number,
@@ -1078,6 +1078,36 @@ export function createPasskeyRequests({
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
           const req = ownedBy(args);
           return req !== null && handoverReq(req, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
+        },
+      },
+      // "Never on this site", from the window: the RP ID the core checked (never the page's unchecked one) goes on the never list, in
+      // memory only for a private window, and the page's call goes to the browser. It needs the open vault, like `passkey_site`
+      // (refused `vault_locked` otherwise), because only then is there an RP ID the core has checked.
+      passkey_never: {
+        vault: true,
+        worker: /** @type {const} */ ("vault"),
+        run: async (/** @type {{ vault: any }} */ client, /** @type {any} */ args) => {
+          const req = ownedBy(args);
+          if (req === null) return { ok: false, reason: "gone" };
+          if (never === null || typeof never.add !== "function") return { ok: false, reason: "not_available" };
+          /** @type {any} */
+          let site;
+          try {
+            site = await client.vault.passkey_site(callerFor(req), askedRpId(req));
+          } catch (error) {
+            const code = /** @type {{ code?: unknown }} */ (error)?.code;
+            if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+            const name = pageErrorOf(code);
+            failReq(req, name);
+            return { ok: false, reason: SITE_REASONS[name] };
+          }
+          if (requests.get(req.id) !== req) return { ok: false, reason: "gone" };
+          try {
+            await never.add(site.rp_id, { incognito: req.sender.incognito });
+          } catch {
+            return { ok: false, reason: "internal_error" };
+          }
+          return handoverReq(req, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
         },
       },
       passkey_site: {

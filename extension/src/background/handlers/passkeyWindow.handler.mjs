@@ -1,6 +1,7 @@
 // Ferret's chooser window for a page's passkey request (the `passkeys` feature, design document § 9.2 and § 9.4): what the
 // window may see of the request (`passkey_pending`), the site as the core checked it (`passkey_site`), the user's cancel
-// (`passkey_cancel`) and "use the browser instead" (`passkey_browser`).
+// (`passkey_cancel`), "use the browser instead" (`passkey_browser`) and "never on this site" (`passkey_never`: the core's RP ID goes on
+// the never list, then the browser answers; it needs the open vault).
 //
 // Only from the window itself: a top-level page of this extension at `pages/passkey.html?r=<the request's id>` (the router
 // accepted its port already; this checks the page), and, where the browser names it, from the browser window the
@@ -46,7 +47,7 @@ async function handle(body, ctx) {
 }
 
 export default {
-  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser"],
+  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"],
   channel: /** @type {"ui"} */ ("ui"),
   handle,
 };

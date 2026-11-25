@@ -467,6 +467,13 @@ export const UI_TYPES = defineTypes({
     request: object({ mp: string({ min: 1, max: 1024 }), sk: string({ min: 1, max: 128 }) }, { optional: ["sk"] }),
     reply: okReply,
   },
+  // "Never on this site", from Ferret's chooser window for a page's passkey request (the `passkeys` feature): the background keeps
+  // the request's RP ID on the never list (in memory only for a private window) and hands the page's call to the browser. The
+  // request is named by the id the window has in its address; the host is the background's, never the window's.
+  passkey_never: {
+    request: object({ request_id: pkRequestRef }),
+    reply: okReply,
+  },
   // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
   // it, and what this device has of a PIN (whether one is set, where it is kept, the attempts left, the wait, whether
   // it works without the server now). It needs no key and works while the vault is locked. Nothing in it tells the
