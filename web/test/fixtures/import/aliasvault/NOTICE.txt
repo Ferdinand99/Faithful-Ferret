@@ -20,6 +20,10 @@ its test files:
       (synthetic.avux holds synthetic-manifest.json as its manifest.json, a text file as an
       attachment and a one-pixel picture as a logo; web/test/unit/importAliasVault.test.mjs
       checks that the two agree)
+  passkeys-manifest.json (and ../passkeys-expected.json)
+      core/models/src/vault/Passkey.ts and apps/server/Databases/AliasClientDb/Passkey.cs (the
+      keys are throwaway P-256 keys made for these tests, for the site rp-a.test, and
+      registered nowhere; the tests pack the manifest into an .avux file)
   encrypted.avex
       core/client/src/transfer/import/importers/aliasvault/__tests__/aliasvault.avex (the
       header only; the payload is not encrypted data and opens with nothing)

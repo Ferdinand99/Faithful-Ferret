@@ -63,6 +63,9 @@ export const DEFAULT_LABELS = Object.freeze({
   birthdate: "Birth date",
   nickname: "Nickname",
   pin: "PIN",
+  passkey_register_again:
+    "This passkey came from another password manager and had been used before. Many sites refuse a passkey like that. If signing in with it fails, register a new passkey at the site.",
+  passkey_extra: "This passkey belonged to a login with another passkey. An item holds one passkey, so it has its own item.",
 });
 
 /** The kinds of field the vault takes (`FieldKind` of the core), as a reader may name them. */
@@ -96,16 +99,24 @@ export function resolveLabels(custom) {
  *   counts: {
  *     items: number, login: number, note: number, card: number, identity: number,
  *     urls: number, totp: number, customFields: number,
- *     matchNull: number, http: number, textAddresses: number, sealed: number,
+ *     matchNull: number, http: number, textAddresses: number, sealed: number, passkeys: number,
  *   },
  *   skipped: {
  *     passkeys: number, folders: number, linked: number,
  *     unknownKeys: number, otherTypes: number, trashed: number, tooLarge: number,
  *     passwordHistory: number, reprompt: number, attachments: number, fieldHistory: number, tags: number,
  *   },
+ *   passkeys: {
+ *     skipped: { not_discoverable: number, other_key: number, bad_site: number, unreadable: number, duplicate: number },
+ *     registerAgain: number, prfDropped: number, extra: number, sites: string[],
+ *   },
  *   warnings: { code: string, index: number }[],
  *   warningsDropped: number,
  * }} ImportReport
+ *
+ * `counts.passkeys` is how many passkeys are imported; `skipped.passkeys` how many are left out, and `passkeys` says
+ * why (the reasons), how many of those imported must be registered at their site again, how many lost their PRF key, how
+ * many got an item of their own, and the sites (the vault's own spelling of them) of the first few that must be registered again.
  */
 
 /**
@@ -114,8 +125,9 @@ export function resolveLabels(custom) {
  */
 export function createReport() {
   return {
-    counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0 },
+    counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0, passkeys: 0 },
     skipped: { passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
+    passkeys: { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 0, prfDropped: 0, extra: 0, sites: [] },
     warnings: [],
     warningsDropped: 0,
   };

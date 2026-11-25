@@ -9,6 +9,7 @@ import { createI18n } from "../../src/i18n.mjs";
 import { autoLockFor } from "../../src/lock.mjs";
 import { createWipeScope } from "../../src/views/common.mjs";
 import { COUNT_NOTES, IMPORT_ERRORS, IMPORT_PHASES, SKIPPED_KEYS, WARNING_CODES, importErrorText, importView } from "../../src/views/import.mjs";
+import { PASSKEY_SKIP_REASONS } from "../../src/import/passkeys.mjs";
 import { SECURITY_ERRORS } from "../../src/views/securityError.mjs";
 import { accountDocument } from "./accountHelpers.mjs";
 import { web } from "./helpers.mjs";
@@ -105,6 +106,64 @@ function page(options = {}) {
 }
 
 // ------------------------------------------------------------------ the preview
+
+test("the_preview_says_what_passkeys_are_imported_left_out_and_to_be_registered_again", async () => {
+  await withDom(async () => {
+    const passkeys = {
+      skipped: { not_discoverable: 2, other_key: 1, bad_site: 0, unreadable: 3, duplicate: 1 }, registerAgain: 2, prfDropped: 1, extra: 1, sites: ["github.com", "rp-a.test"],
+    };
+    const preview = bitwarden({
+      counts: { ...COUNTS, passkeys: 4 },
+      skipped: { ...SKIPPED, passkeys: 7 },
+      passkeys,
+      warnings: [{ code: "passkey_prf_dropped", count: 1 }, { code: "passkey_extra_item", count: 1 }],
+    });
+    const { root } = page({ preview });
+    await choose(root);
+    const box = find(root, "preview");
+    assert.match(textOf(find(box, "count-passkeys")), /4 passkey\(s\)/);
+    // The generic line (passkeys cannot be imported) is not true now: each reason has its line, and one with no passkeys has none.
+    assert.equal(find(box, "skipped-passkeys"), null);
+    assert.match(textOf(find(box, "skipped-passkey-not_discoverable")), /2 passkey\(s\) were left out because they are not discoverable/);
+    assert.match(textOf(find(box, "skipped-passkey-other_key")), /1 passkey\(s\).*P-256/);
+    assert.match(textOf(find(box, "skipped-passkey-unreadable")), /3 passkey\(s\)/);
+    assert.match(textOf(find(box, "skipped-passkey-duplicate")), /1 passkey\(s\).*already/);
+    assert.equal(find(box, "skipped-passkey-bad_site"), null);
+    // The sites to register again.
+    assert.match(textOf(find(box, "passkey-register-again")), /2 imported passkey\(s\) had been used before.*github\.com, rp-a\.test/);
+    assert.match(textOf(find(box, "warning-passkey_prf_dropped")), /1 passkey\(s\) had a PRF key/);
+    assert.match(textOf(find(box, "warning-passkey_extra_item")), /1 passkey\(s\) belonged to a login/);
+    // A list of sites that is cut says so.
+    const cut = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 30, sites: ["a.test"] } }) });
+    await choose(cut.root);
+    assert.match(textOf(find(find(cut.root, "preview"), "passkey-register-again")), /30 imported passkey\(s\).*the first ones are: a\.test/);
+    // With no passkey to register again there is no note; with the import off the old line says passkeys are not imported.
+    const none = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 0, sites: [] } }) });
+    await choose(none.root);
+    assert.equal(find(find(none.root, "preview"), "passkey-register-again"), null);
+    const off = page({ preview: bitwarden() });
+    await choose(off.root);
+    assert.match(textOf(find(find(off.root, "preview"), "skipped-passkeys")), /Passkeys cannot be imported/);
+    assert.equal(find(find(off.root, "preview"), "count-passkeys"), null);
+  });
+});
+
+test("the_page_still_says_what_to_register_again_when_the_import_is_done", async () => {
+  await withDom(async () => {
+    const passkeys = { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 1, prfDropped: 0, extra: 0, sites: ["rp-a.test"] };
+    const engine = fakeImportEngine({ status: { queued: 0, sent: 0, total: 0 } });
+    const { root } = page({ preview: bitwarden({ passkeys, counts: { ...COUNTS, passkeys: 1 } }), engine });
+    await choose(root);
+    type(root, { "master-password": MASTER });
+    await submit(root);
+    await settle();
+    engine.status = { ...engine.status, queued: 0, sent: 12, total: 12 };
+    engine.emit("import", { sent: 12, total: 12, failed: 0 });
+    await settle();
+    assert.match(textOf(find(root, "tracker")), /rp-a.test/);
+    assert.ok(find(root, "passkey-register-again"));
+  });
+});
 
 test("preview_shows_counts_free_space_and_warns_when_the_vault_is_not_empty", async () => {
   await withDom(async () => {
@@ -576,13 +635,14 @@ test("import_texts_exist_in_both_languages", async () => {
   const sources = ["flows/import.mjs", "views/import.mjs", "routes/import.route.mjs"].map((f) => readFileSync(join(web, "src", f), "utf8")).join("\n");
   const used = new Set([...sources.matchAll(/["'`](import\.[A-Za-z_.]+?)["'`]/g)].map((m) => m[1]));
   for (const key of used) assert.ok(key in en, `missing text: ${key}`);
-  const labels = ["username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code", "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country", "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number", "gender", "birthdate", "nickname", "pin"];
+  const labels = ["username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code", "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country", "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number", "gender", "birthdate", "nickname", "pin", "passkey_register_again", "passkey_extra"];
   const dynamic = [
     ...IMPORT_ERRORS.map((code) => `import.error.${code}`),
     ...IMPORT_PHASES.map((phase) => `import.progress.${phase}`),
     ...SKIPPED_KEYS.map((key) => `import.skipped.${key}`),
     ...WARNING_CODES.map((code) => `import.warning.${code}`),
     ...COUNT_NOTES.map((key) => `import.note.${key}`),
+    ...PASSKEY_SKIP_REASONS.map((reason) => `import.skipped.passkey_${reason}`),
     ...["ferretexport", "bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux"].map((kind) => `import.kind.${kind}`),
     ...labels.map((key) => `import.label.${key}`),
   ];

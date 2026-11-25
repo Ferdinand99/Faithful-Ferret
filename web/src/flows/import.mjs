@@ -28,6 +28,7 @@
 import { hex16 } from "../b64.mjs";
 import { AccountError } from "../crypto/errors.mjs";
 import { IMPORT_ERROR_TEXT, MAX_AVUX_FILE_BYTES, MAX_FILE_BYTES } from "../import/limits.mjs";
+import { MAX_SITES, PASSKEY_SKIP_REASONS } from "../import/passkeys.mjs";
 import { encodeWire } from "../wire.mjs";
 import { reauthenticate } from "./reauth.mjs";
 
@@ -43,6 +44,24 @@ export const IMPORT_TIMEOUT_MS = 300_000;
 /** The largest `.ferretexport` the page reads into memory: the body is at most 128 MiB (`MAX_BODY_LEN` of the core), plus a header. */
 export const MAX_EXPORT_FILE_BYTES = 128 * 1024 * 1024 + 4096;
 
+/** Where the server says whether it has the import of passkeys (`passkeys.import`). */
+const POLICY_PATH = "/api/vault/policy";
+
+/**
+ * Whether the server offers the import of passkeys from another password manager's file (`GET /api/vault/policy`, `passkeys.import`).
+ * False when it does not say so, or cannot be asked: the passkeys of a file are then left out, as before.
+ * @param {{ get(path: string): Promise<any> } | undefined} api
+ * @returns {Promise<boolean>}
+ */
+export async function passkeyImportOffered(api) {
+  try {
+    const rule = await api?.get(POLICY_PATH);
+    return rule?.passkeys?.import === true;
+  } catch {
+    return false;
+  }
+}
+
 /** The kinds of file the import takes: what a preview says the file is. */
 export const IMPORT_KINDS = Object.freeze(["ferretexport", "bitwarden_json", "bitwarden_csv", "aliasvault_csv", "aliasvault_avux"]);
 
@@ -56,6 +75,13 @@ const MAX_IMPORT_ITEMS = VAULT_ROW_LIMIT - 1;
 const states = new WeakMap();
 
 /**
+ * What a preview says of the passkeys of a file when their import is on: why some are left out, how many must be registered at
+ * their site again (and the first few of those sites), how many lost their PRF key, how many got an item of their own.
+ * @typedef {{
+ *   skipped: Record<"not_discoverable" | "other_key" | "bad_site" | "unreadable" | "duplicate", number>,
+ *   registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string>,
+ * }} PasskeyReport
+ *
  * @typedef {{ id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }} Sealed
  * @typedef {{
  *   file: Blob | null,
@@ -70,6 +96,7 @@ const states = new WeakMap();
  *   kind: "ferretexport" | "bitwarden_json" | "bitwarden_csv" | "aliasvault_csv" | "aliasvault_avux",
  *   counts: ImportReport["counts"] | null,
  *   skipped: ImportReport["skipped"] | null,
+ *   passkeys: PasskeyReport | null,
  *   warnings: ReadonlyArray<{ code: string, count: number }>,
  *   warningsDropped: number,
  *   free: number,
@@ -138,12 +165,27 @@ function numbersOf(source, shape) {
 }
 
 const COUNT_KEYS = Object.freeze({
-  items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0,
+  items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0, passkeys: 0,
 });
 const SKIPPED_KEYS = Object.freeze({
   passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0,
   attachments: 0, fieldHistory: 0, tags: 0,
 });
+
+/** The name of a site as the vault spells it: lower case letters, digits, dots and hyphens, 253 at the most. */
+const SITE = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
+
+/**
+ * The passkey part of a worker's report: counts by reason, and the sites that look like sites.
+ * @param {unknown} source
+ * @returns {PasskeyReport}
+ */
+function readPasskeys(source) {
+  const p = source !== null && typeof source === "object" ? /** @type {Record<string, any>} */ (source) : {};
+  const skipped = /** @type {PasskeyReport["skipped"]} */ (numbersOf(p.skipped, Object.fromEntries(PASSKEY_SKIP_REASONS.map((reason) => [reason, 0]))));
+  const sites = (Array.isArray(p.sites) ? p.sites : []).filter((site) => typeof site === "string" && SITE.test(site)).slice(0, MAX_SITES);
+  return { skipped, registerAgain: count(p.registerAgain), prfDropped: count(p.prfDropped), extra: count(p.extra), sites };
+}
 
 /**
  * What the page may take from a worker's report: the counts, and the warning codes counted (never an index or a value).
@@ -161,6 +203,7 @@ function readReport(report) {
   return {
     counts: numbersOf(r.counts, COUNT_KEYS),
     skipped: numbersOf(r.skipped, SKIPPED_KEYS),
+    passkeys: readPasskeys(r.passkeys),
     warnings: [...byCode].map(([code, n]) => ({ code, count: n })).sort((a, b) => (a.code < b.code ? -1 : 1)),
     warningsDropped: count(r.warningsDropped),
   };
@@ -172,7 +215,7 @@ function readReport(report) {
  * word would leave it waiting for ever. The port to the vault worker goes to the worker with the file; the page keeps
  * no end of it.
  * @param {Env & { createImportWorker?: () => any }} env
- * @param {{ kind: string, file: Blob, labels?: unknown }} request
+ * @param {{ kind: string, file: Blob, labels?: unknown, passkeys?: { known: string[] } }} request
  * @param {{ signal?: AbortSignal, timeoutMs?: number }} options
  * @returns {Promise<Record<string, any>>}
  */
@@ -227,7 +270,7 @@ function runWorker(env, request, { signal, timeoutMs = IMPORT_TIMEOUT_MS }) {
     worker.onerror = () => finish(reject, new AccountError("import_worker_failed"));
     worker.onmessageerror = () => finish(reject, new AccountError("import_worker_failed"));
     try {
-      worker.postMessage({ id: 1, kind: request.kind, file: request.file, port, ...(request.labels === undefined ? {} : { labels: request.labels }) }, [port]);
+      worker.postMessage({ id: 1, kind: request.kind, file: request.file, port, ...(request.labels === undefined ? {} : { labels: request.labels }), ...(request.passkeys === undefined ? {} : { passkeys: request.passkeys }) }, [port]);
     } catch {
       finish(reject, new AccountError("import_worker_failed"));
     }
@@ -274,6 +317,8 @@ function readSealed(sealed) {
  * @param {Blob & { name?: string }} file
  * @param {{ engine: { list(): unknown[] }, labels?: unknown, signal?: AbortSignal, timeoutMs?: number }} options
  * `labels`: the names of the fields of the items (user name, password, ...) in the language of the page.
+ * A JSON file of Bitwarden and an `.avux` of AliasVault have their passkeys imported when the server offers it (`passkeyImportOffered`)
+ * and the engine can say which passkeys the vault has already (`passkeyKeys`, items and trash); otherwise they are counted and left out.
  * @returns {Promise<Preview>}
  */
 export async function previewImport(env, file, { engine, labels, signal, timeoutMs } = /** @type {any} */ ({})) {
@@ -302,7 +347,7 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     const createdAt = Number.isSafeInteger(header.created_at) && header.created_at > 0 ? header.created_at : null;
     /** @type {Preview} */
     const preview = Object.freeze({
-      kind, counts: null, skipped: null, warnings: [], warningsDropped: 0, free, used, vaultEmpty: used === 0, fits: free > 0, createdAt,
+      kind, counts: null, skipped: null, passkeys: null, warnings: [], warningsDropped: 0, free, used, vaultEmpty: used === 0, fits: free > 0, createdAt,
     });
     states.set(preview, { file, kind, sealed: null, header: { salt: header.salt, kdf: { ...header.kdf } }, running: false, gone: false });
     return preview;
@@ -312,7 +357,15 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
   if (kind === "aliasvault_avux" ? file.size > MAX_AVUX_FILE_BYTES : file.size > MAX_FILE_BYTES) {
     throw new AccountError(kind === "aliasvault_avux" ? "import_archive_too_large" : "import_too_large");
   }
-  const answer = await runWorker(env, { kind, file, labels }, { signal, timeoutMs });
+  // The passkeys of a file are read only when the server says so and the page can tell which the vault has already (a passkey is
+  // never imported twice: not from the vault, not from the trash, not from the file).
+  /** @type {{ known: string[] } | undefined} */
+  let passkeys;
+  if ((kind === "bitwarden_json" || kind === "aliasvault_avux") && typeof /** @type {any} */ (engine).passkeyKeys === "function" && await passkeyImportOffered(env.api)) {
+    const known = await /** @type {any} */ (engine).passkeyKeys();
+    if (Array.isArray(known) && known.every((key) => typeof key === "string")) passkeys = { known };
+  }
+  const answer = await runWorker(env, { kind, file, labels, ...(passkeys === undefined ? {} : { passkeys }) }, { signal, timeoutMs });
   if (answer === null || typeof answer !== "object" || answer.id !== 1 || typeof answer.ok !== "boolean") throw new AccountError("import_bad_answer");
   if (answer.ok !== true) throw workerRefusal(answer);
   const sealed = readSealed(answer.sealed);
@@ -330,6 +383,7 @@ export async function previewImport(env, file, { engine, labels, signal, timeout
     kind: /** @type {Preview["kind"]} */ (readAs),
     counts: Object.freeze({ ...report.counts, items: sealed.length }),
     skipped: Object.freeze(report.skipped),
+    passkeys: passkeys === undefined ? null : Object.freeze({ ...report.passkeys, skipped: Object.freeze(report.passkeys.skipped), sites: Object.freeze(report.passkeys.sites) }),
     warnings: Object.freeze(report.warnings.map((w) => Object.freeze(w))),
     warningsDropped: report.warningsDropped,
     free, used, vaultEmpty: used === 0, fits: sealed.length <= free, createdAt: null,
