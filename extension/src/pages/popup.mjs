@@ -108,7 +108,6 @@ async function main() {
   // then goes nowhere, but a permission that was given stays given, and the switch says so the next time (see captureSettings.mjs).
   const settingsFlow = createSettingsFlow(ui.request, {
     requestPermission: (wanted) => browser.permissions.request(wanted),
-    removePermission: (gone) => browser.permissions.remove(gone),
     openTab: (url) => browser.tabs.create({ url }),
   });
   const { tabId, windowed } = await placeOf();

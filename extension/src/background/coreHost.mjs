@@ -111,6 +111,7 @@ export const CORE_OPS = Object.freeze([
   "passkey_cancel",
   "passkey_browser",
   "passkey_never",
+  "passkey_settings",
 ]);
 
 /**

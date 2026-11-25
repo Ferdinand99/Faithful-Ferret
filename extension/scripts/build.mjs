@@ -155,6 +155,7 @@ export const PASSKEY_FILES = Object.freeze([
   "background/passkeyVerify.mjs",
   "background/passkeyHandover.mjs",
   "background/passkeyNever.mjs",
+  "background/passkeySettings.mjs",
   "pages/passkey.html",
   "pages/passkey.mjs",
   "pages/passkeyFlow.mjs",
@@ -972,12 +973,14 @@ export function passkeysModule(on, dist) {
     lines.push('export { createPasskeyRegistry } from "./passkeyRegistry.mjs";');
     lines.push('export { chooserWindows, createPasskeyRequests } from "./passkeyRequests.mjs";');
     lines.push('export { createPasskeyNever } from "./passkeyNever.mjs";');
+    lines.push('export { createPasskeySettings } from "./passkeySettings.mjs";');
     lines.push(`export const PASSKEY_WINDOW_PAGE = ${dist.has(PASSKEY_WINDOW_PAGE) ? JSON.stringify(PASSKEY_WINDOW_PAGE) : "null"};`);
   } else {
     lines.push("export const createPasskeyRegistry = null;");
     lines.push("export const createPasskeyRequests = null;");
     lines.push("export const chooserWindows = null;");
     lines.push("export const createPasskeyNever = null;");
+    lines.push("export const createPasskeySettings = null;");
     lines.push("export const PASSKEY_WINDOW_PAGE = null;");
   }
   return `${lines.join("\n")}\n`;

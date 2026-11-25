@@ -107,10 +107,11 @@ async function frameIsShown(scripting, tabId, frame) {
  *   autoOpen?: ReturnType<typeof import("./autoOpen.mjs").createAutoOpen> | null,
  *   writer?: import("./offers.mjs").Writer | null,
  *   timers?: import("./offers.mjs").Timers,
- * }} deps `writer` classifies a capture with the vault open (the write path); `badge` is the toolbar button's per-tab
+ *   access?: ReturnType<typeof import("./httpsAccess.mjs").createHttpsAccess>,
+ * }} deps `access`: the permission for https pages that the passkeys share (one is made when none is given); `writer` classifies a capture with the vault open (the write path); `badge` is the toolbar button's per-tab
  *   count and refusal mark (badge.mjs); `autoOpen` is the setting and the attempt to open the popup by itself
  */
-export function createCaptureHost({ now, random, webNavigation, tabs, scripting, permissions, storageLocal, badge = null, autoOpen = null, writer = null, timers }) {
+export function createCaptureHost({ now, random, webNavigation, tabs, scripting, permissions, storageLocal, badge = null, autoOpen = null, writer = null, timers, access }) {
   /** The core host's `call`, set by `attach`. @type {((op: string, args?: unknown) => Promise<any>) | null} */
   let callCore = null;
   /** @param {string} op @param {unknown} args */
@@ -188,6 +189,7 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     permissions,
     storageLocal,
     onOff: (reason) => offers.clear(reason),
+    ...(access ? { access } : {}),
   });
 
   // What happened in a tab, from the browser: the offers that wait for it are told. Registered now, while the page
@@ -256,6 +258,8 @@ export function createCaptureHost({ now, random, webNavigation, tabs, scripting,
     if (args?.never_clear === true) for (const host of await never.list()) await never.remove(host);
     if (typeof args?.never_remove === "string") await never.remove(args.never_remove);
     if (typeof args?.auto_open === "boolean") await autoOpen?.setOn(args.auto_open);
+    // The switch is about to ask for the permission (or the person said no): a grant that follows is this feature's to finish.
+    if (typeof args?.pending === "boolean") await (args.pending ? registry.markPending() : registry.clearPending());
     if (typeof args?.enable === "boolean") {
       const outcome = args.enable ? await registry.enable() : await registry.disable();
       const now_ = await settingsNow();

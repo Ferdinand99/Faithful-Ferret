@@ -474,6 +474,28 @@ export const UI_TYPES = defineTypes({
     request: object({ request_id: pkRequestRef }),
     reply: okReply,
   },
+  // The passkey provider's settings, from the settings page (the `passkeys` feature): `enable` follows the page's own request for the
+  // permission for https pages (the background checks it again), `pending` marks that the switch is about to ask for it, `never_remove`
+  // takes one RP ID off the "never" list and `never_clear` empties it, `recent_unlock` is "Count an unlock in the last 5 minutes as
+  // verification". A request with none of them only reads. The reply is what is true now.
+  passkey_settings: {
+    request: object(
+      { enable: boolean(), pending: boolean(), never_remove: host, never_clear: boolean(), recent_unlock: boolean() },
+      { optional: ["enable", "pending", "never_remove", "never_clear", "recent_unlock"] },
+    ),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        on: boolean(),
+        permission: boolean(),
+        signed_in: boolean(),
+        never: array(host, { max: 500 }),
+        recent_unlock: boolean(),
+      },
+      { optional: ["reason"] },
+    ),
+  },
   // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
   // it, and what this device has of a PIN (whether one is set, where it is kept, the attempts left, the wait, whether
   // it works without the server now). It needs no key and works while the vault is locked. Nothing in it tells the
@@ -825,11 +847,13 @@ export const UI_TYPES = defineTypes({
   },
   // "Offer to save passwords" and the never list, from the settings page. `enable` follows the page's own request for
   // the permission for https pages (the background checks it again); `never_remove` takes one host off the list and
-  // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
+  // `never_clear` empties it. `pending` marks that the switch is about to ask the browser for the permission (true) or that it
+  // will not (false): only a grant that follows a mark switches the feature on (the permission is shared with the passkeys). A
+  // request with none of them only reads. The reply is what is true now.
   capture_settings: {
     request: object(
-      { enable: boolean(), never_remove: host, never_clear: boolean(), auto_open: boolean() },
-      { optional: ["enable", "never_remove", "never_clear", "auto_open"] },
+      { enable: boolean(), never_remove: host, never_clear: boolean(), auto_open: boolean(), pending: boolean() },
+      { optional: ["enable", "never_remove", "never_clear", "auto_open", "pending"] },
     ),
     reply: object(
       {

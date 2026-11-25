@@ -211,6 +211,15 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
   assert.ok(wraps.includes("Ferret's own AAGUID is refused as an extra guard (§ 9.4)"));
   assert.ok(section("### 4.6 Sensitive operations and signed proofs (F-15, F-05, F-07)").includes("A local PIN is **no unlock method on the server**"));
   assert.ok(section("### 9.4 Choice between Ferret and the browser (F-13)").includes('an all-zero AAGUID is accepted and shown as "unknown"'));
+  // The handover is the one-time pass on both channels, with the reason and what would reopen it.
+  const handover = section("### 9.4 Choice between Ferret and the browser (F-13)");
+  for (const rule of [
+    "**The one-time pass is the handover on both channels, Release and ESR; the original is not called at the moment the window closes.**",
+    "the probe of 2026-11-25 ran headless with a virtual authenticator",
+    "ESR 153 under the same harness already made it a race",
+    "the hand tests on real hardware (§ 15)",
+    '"Never on this site" has no pass',
+  ]) assert.ok(handover.includes(rule), rule);
   const server = section("## 11. Server and vole-kit – limits");
   for (const rule of [
     "**Allow PIN** (on; an emergency switch), **Allow PIN after restart** (on;",

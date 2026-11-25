@@ -643,7 +643,7 @@ const ALLOWED_WRITES = Object.freeze({
 /** The same for files of a feature that is off in a release (the `passkeys` feature): checked where the package has them. */
 const ALLOWED_FEATURE_WRITES = Object.freeze({
   // The passkey chooser window (one at a time).
-  "background/passkeyRequests.mjs": ["windows.create"],
+  "background/passkeyRequests.mjs": ["tabs.update", "windows.create"],
 });
 
 test("only_offer_write_calls_engine_create_or_update", async () => {

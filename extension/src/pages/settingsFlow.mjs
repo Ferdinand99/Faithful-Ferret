@@ -27,6 +27,15 @@ export function captureErrorKey(reason) {
   return `capture.error.${typeof reason === "string" && known.includes(reason) ? reason : "unknown"}`;
 }
 
+/**
+ * The text of a reason of the passkeys setting (`passkeys.settings.error.<reason>`); one the page has no text for is `unknown`.
+ * @param {unknown} reason
+ */
+export function passkeyErrorKey(reason) {
+  const known = ["disconnected", "not_available", "permission_missing", "permission_refused"];
+  return `passkeys.settings.error.${typeof reason === "string" && known.includes(reason) ? reason : "unknown"}`;
+}
+
 /** @param {unknown} error */
 const reasonOf = (error) => {
   const code = /** @type {{ code?: unknown }} */ (error)?.code;
@@ -37,17 +46,18 @@ const reasonOf = (error) => {
  * @typedef {{ ok: true, seconds: number } | { ok: false, reason: string }} Outcome
  * @typedef {{ on: boolean, permission: boolean, never: string[], autoOpen?: boolean, autoOpenState?: "unknown" | "works" | "fails" }} CaptureState
  * @typedef {({ ok: true } & CaptureState) | ({ ok: false, reason: string } & Partial<CaptureState>)} CaptureOutcome
+ * @typedef {{ on: boolean, permission: boolean, signedIn: boolean, never: string[], recentUnlock: boolean }} PasskeyState
+ * @typedef {({ ok: true } & PasskeyState) | ({ ok: false, reason: string } & Partial<PasskeyState>)} PasskeyOutcome
  * @param {import("./ui.mjs").Request} request
  * @param {{
  *   requestPermission?: ((wanted: { origins: string[] }) => Promise<boolean>) | null,
- *   removePermission?: ((gone: { origins: string[] }) => Promise<boolean>) | null,
  *   openTab?: ((url: string) => Promise<unknown>) | null,
  * }} [options]
  *   `requestPermission` is `browser.permissions.request`, which the browser lets a page call only from a click: the
- *   steps that need it call it first, before anything is awaited; `removePermission` is `browser.permissions.remove`;
+ *   steps that need it call it first, before anything is awaited (the permission is taken back by the background, never by a page: it is shared);
  *   `openTab` opens an address in a tab of the browser (the way from the "Unlock" part to the web vault)
  */
-export function createSettingsFlow(request, { requestPermission = null, removePermission = null, openTab = null } = {}) {
+export function createSettingsFlow(request, { requestPermission = null, openTab = null } = {}) {
   /**
    * What the background says about capture: whether it is on, whether the permission for https pages is there, and
    * the hosts of the never list. An answer of another shape is not shown.
@@ -64,6 +74,29 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
         state.autoOpen = reply.auto_open;
         state.autoOpenState = reply.auto_open_state === "works" || reply.auto_open_state === "fails" ? reply.auto_open_state : "unknown";
       }
+      return reply.ok === true ? { ok: true, ...state } : { ok: false, reason: typeof reply.reason === "string" ? reply.reason : "unknown", ...state };
+    } catch (error) {
+      return { ok: false, reason: reasonOf(error) };
+    }
+  }
+
+  /**
+   * What the background says about the passkey provider: whether it is on, whether the permission for https pages is there,
+   * whether Ferret is signed in, the sites of the "never" list and the recent-unlock choice. An answer of another shape is not shown.
+   * @param {Record<string, unknown>} body @returns {Promise<PasskeyOutcome>}
+   */
+  async function askPasskeys(body) {
+    try {
+      const reply = await request("passkey_settings", body);
+      if (typeof reply?.on !== "boolean" || typeof reply.permission !== "boolean" || !Array.isArray(reply.never) || typeof reply.recent_unlock !== "boolean") return { ok: false, reason: "unknown" };
+      /** @type {PasskeyState} */
+      const state = {
+        on: reply.on,
+        permission: reply.permission,
+        signedIn: reply.signed_in === true,
+        never: reply.never.filter((/** @type {unknown} */ h) => typeof h === "string"),
+        recentUnlock: reply.recent_unlock,
+      };
       return reply.ok === true ? { ok: true, ...state } : { ok: false, reason: typeof reply.reason === "string" ? reply.reason : "unknown", ...state };
     } catch (error) {
       return { ok: false, reason: reasonOf(error) };
@@ -100,6 +133,8 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
        */
       async turnOn() {
         const asking = typeof requestPermission === "function" ? requestPermission({ origins: [...CAPTURE_ORIGINS] }) : null;
+        // The permission is shared with the passkeys: the background finishes a grant only for the switch that marked it.
+        const marking = askCapture({ pending: true });
         /** @type {boolean} */
         let granted = false;
         try {
@@ -107,8 +142,9 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
         } catch {
           granted = false;
         }
+        await marking;
         if (!granted) {
-          const state = /** @type {any} */ (await askCapture({}));
+          const state = /** @type {any} */ (await askCapture({ pending: false }));
           return typeof state.on === "boolean"
             ? { ok: false, reason: "permission_refused", on: state.on, permission: state.permission, never: state.never }
             : { ok: false, reason: "permission_refused" };
@@ -116,28 +152,54 @@ export function createSettingsFlow(request, { requestPermission = null, removePe
         return askCapture({ enable: true });
       },
       /**
-       * Turns it off: the capture script goes and so does the access to https pages that was asked for with it (the
-       * permission goes only once the background has switched capture off; the browser then tells the background, which
-       * finds nothing left to switch off).
+       * Turns it off: the capture script goes, and so does the access to https pages that was asked for with it unless the
+       * passkeys are on and need it. The background takes the permission back (the page never removes it itself: the
+       * permission is shared); the browser then tells the background, which finds nothing left to switch off.
        * @returns {Promise<CaptureOutcome>}
        */
-      async turnOff() {
-        const outcome = await askCapture({ enable: false });
-        if (outcome.ok && typeof removePermission === "function") {
-          try {
-            await removePermission({ origins: [...CAPTURE_ORIGINS] });
-          } catch {
-            // The access stays and says so in the state that is read next.
-          }
-          return askCapture({});
-        }
-        return outcome;
+      turnOff() {
+        return askCapture({ enable: false });
       },
       /** @param {string} host */
       removeNever: (host) => askCapture({ never_remove: host }),
       /** "Open the popup by itself when there is an offer": the setting only (a click on the offer is still needed to save). @param {boolean} on */
       setAutoOpen: (on) => askCapture({ auto_open: on === true }),
       clearNever: () => askCapture({ never_clear: true }),
+    }),
+    /** What is true of "Use Ferret for passkeys", the "never" list and the recent-unlock choice (passkey_settings). */
+    passkeys: Object.freeze({
+      load: () => askPasskeys({}),
+      /**
+       * Turns "Use Ferret for passkeys" on. The permission for https pages is asked for first, in the click that called this (a
+       * request from anywhere else the browser refuses), and the switch marks that it asked, so that a grant that lands after the
+       * popup that asked was closed by the browser's prompt is still finished; the background checks the permission again before
+       * it registers the scripts. Nothing is turned on when the person said no.
+       * @returns {Promise<PasskeyOutcome>}
+       */
+      async turnOn() {
+        const asking = typeof requestPermission === "function" ? requestPermission({ origins: [...CAPTURE_ORIGINS] }) : null;
+        const marking = askPasskeys({ pending: true });
+        /** @type {boolean} */
+        let granted = false;
+        try {
+          granted = asking !== null && (await asking) === true;
+        } catch {
+          granted = false;
+        }
+        await marking;
+        if (!granted) {
+          const state = /** @type {any} */ (await askPasskeys({ pending: false }));
+          return typeof state.on === "boolean" ? { ok: false, reason: "permission_refused", on: state.on, permission: state.permission, signedIn: state.signedIn, never: state.never, recentUnlock: state.recentUnlock } : { ok: false, reason: "permission_refused" };
+        }
+        return askPasskeys({ enable: true });
+      },
+      /** Turns it off: the scripts go, and so does the permission unless saving passwords is on and needs it (the background decides). */
+      turnOff: () => askPasskeys({ enable: false }),
+      /** @param {string} rpId */
+      removeNever: (rpId) => askPasskeys({ never_remove: rpId }),
+      clearNever: () => askPasskeys({ never_clear: true }),
+      /** "Count an unlock in the last 5 minutes as verification". @param {boolean} on */
+      setRecentUnlock: (on) => askPasskeys({ recent_unlock: on === true }),
     }),
     /**
      * Saves the setting. A value outside the choices is refused here and never sent.
