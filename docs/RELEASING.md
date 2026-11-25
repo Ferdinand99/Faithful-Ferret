@@ -11,7 +11,9 @@ happens when the maintainer merges the release pull request.
    changes).
 2. The workflow `Release Please` (`.github/workflows/release-please.yml`) keeps one
    open pull request, "chore(main): release x.y.z". It changes the version in
-   `Cargo.toml`, in the lock files (`Cargo.lock`, `fuzz/Cargo.lock`, `ct/dudect/Cargo.lock`
+   `Cargo.toml`, in the version of the Firefox extension (`extension/package.json` and
+   `extension/package-lock.json`: the server and the extension share one version number, see
+   `docs/EXTENSION-FIREFOX.md`), in the lock files (`Cargo.lock`, `fuzz/Cargo.lock`, `ct/dudect/Cargo.lock`
    and `crates/ferret-server/Cargo.lock`), writes `CHANGELOG.md`, and updates `.release-please-manifest.json`. The configuration, with one component,
    is `release-please-config.json`. Before 1.0 a breaking change raises the minor
    version, not the major one.

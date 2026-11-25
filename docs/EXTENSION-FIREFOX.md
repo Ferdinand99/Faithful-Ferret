@@ -185,7 +185,7 @@ What is checked after the approval (the sign job): the downloaded package has th
 
 After the sign job the same run publishes the signed package for the automatic updates (next section). Approving the signing therefore also hands the new version to every installed release build.
 
-AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, raise `version` in `extension/package.json`. The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
+AMO refuses a version it has already seen, and this workflow never changes the version of what it signs. Before signing a new release build, the version in `extension/package.json` must be one that AMO has not seen (see [The version number](#the-version-number-is-shared-with-the-server): it normally rises by itself with the server's release). The same holds after a failed run: once the package has been uploaded to AMO its version is used up, so a run that fails after the upload (while waiting for Mozilla, or in the checks of the signed file) needs a new version before the next try.
 
 ## Automatic updates
 
@@ -221,9 +221,20 @@ The update manifest has Mozilla's format, one entry per published version, oldes
 }
 ```
 
+### The version number is shared with the server
+
+The server and the Firefox extension carry the same version number: server 0.12.0 ships with extension 0.12.0. The release pull request of release-please (see `docs/RELEASING.md`) raises `version` in `extension/package.json` and both version lines of `extension/package-lock.json` together with the Rust crates, because they are `extra-files` of the one component in `release-please-config.json`. The manifests take their version from `package.json` when the extension is built, so nothing else carries it. `scripts/check-shared-version.mjs` runs in CI and fails when the extension, `Cargo.toml`, `crates/ferret-server/Cargo.toml` and `.release-please-manifest.json` do not name the same version.
+
+What this means for a release:
+
+- A version that is released for the server also exists for the extension, whether or not the extension changed. The signed build of it is made by the signing workflow when someone starts it, so a server release does not by itself produce a signed extension; an older signed build stays valid and keeps updating itself.
+- The numbers jump: the extension went from 0.9.1 straight to the version of the next server release. AMO needs only a higher version, and so does `updates.json` (its versions must rise), so a jump is fine.
+- An extension-only fix is shipped as a patch release of both, for example 0.12.1: a `fix:` commit, the release pull request of release-please, and then the signing workflow on the release commit. The server gets a new version too, with nothing changed in it. Do not raise the extension's version by hand.
+- If a signing run has used up a version at AMO (it failed after the upload), the next try needs a higher version, which means another patch release of both.
+
 ### How a version is published
 
-1. Raise `version` in `extension/package.json` (and the lock file) in a pull request to `main`, and merge it.
+1. Make sure `main` has a new version in `extension/package.json`. Normally that is the release pull request of release-please: merging it raises the extension's version to the server's new version. For an extension-only fix, see [The version number](#the-version-number-is-shared-with-the-server).
 2. Start the signing workflow on `main` as above and approve `amo-signing`. Only a run started on `main` for a commit on `main` publishes.
 3. The workflow then runs two more jobs:
    - `manifest` (read access only) checks the signed file against the SHA-256 the sign job reported, fetches the current `updates.json` and adds the new version with `extension/scripts/updates-json.mjs`. The writer hashes the file itself and refuses to go on when the hash differs, when the file has no Mozilla signature, another add-on id, another version or another `update_url`, when the version is not newer than every listed one, or when the current file is not exactly in the shape it writes (a link that is not this repository's HTTPS link for that version, a hash that is not SHA-256, an extra key). Every older entry is kept. Only when the release `extension-updates` does not exist at all (the first publication) does it start a new file; any other failure to read the current file stops the run.
