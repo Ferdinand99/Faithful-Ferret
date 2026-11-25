@@ -86,7 +86,7 @@ pub static SIDEBAR: Sidebar = Sidebar {
         here: "shell.admin",
         there: "shell.vault",
         href: VAULT_PATH,
-        icon: "shield",
+        icon: "server",
     }),
     sections: &[OPERATIONS, ACCESS, SETTINGS],
     home: ADMIN_LANDING,

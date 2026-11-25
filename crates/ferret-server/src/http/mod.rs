@@ -156,6 +156,7 @@ mod tests {
             "/auth/handoff",
             "/api/auth/session",
             "/vault/login",
+            "/vault",
         ] {
             assert_eq!(admin_referrer_policy(path), "no-referrer", "{path}");
         }

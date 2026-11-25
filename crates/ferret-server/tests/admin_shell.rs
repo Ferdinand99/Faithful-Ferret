@@ -154,9 +154,14 @@ async fn the_menu_has_its_words_in_english_and_norwegian() {
         assert!(nb.contains(word), "nb: {word}");
     }
     assert!(!nb.contains("Operations"), "nb has no English heading");
+    // The switch says where it leads, in the reader's language.
     assert!(
-        nb.contains("Bytt til Hvelv") || nb.contains("Hvelv"),
-        "the switch's tooltip"
+        en.contains("title=\"Switch to Vault\""),
+        "en: the switch's tooltip"
+    );
+    assert!(
+        nb.contains("title=\"Bytt til Hvelv\""),
+        "nb: the switch's tooltip"
     );
 }
 
@@ -225,7 +230,9 @@ async fn the_switch_path_sends_the_browser_to_the_vault_origin_and_nothing_else(
             Req::post("/vault").page_fetch(Which::Admin).build(),
         )
         .await;
-    assert_ne!(res.header("location"), format!("{VAULT_URL}/vault/"));
+    assert_eq!(res.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert!(res.headers.get("location").is_none(), "no redirect");
+    assert!(res.headers.get("set-cookie").is_none(), "no cookie");
     // The vault listener has no such redirect: its own `/vault` is the app.
     let res = app.call(Which::Vault, Req::get("/vault").build()).await;
     assert_ne!(res.header("location"), format!("{VAULT_URL}/vault/"));
