@@ -19,7 +19,6 @@ import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, stopFixtures } from 
 after(() => stopFixtures());
 
 const UNLOCK_WINDOW_URL = `${EXTENSION_ORIGIN}/pages/unlockWindow.html`;
-const NAME = "Virtual passkey";
 
 /**
  * One request over the UI port of the extension page the current tab shows.
@@ -51,14 +50,15 @@ function ask(session, type, body) {
  * Makes the account's passkey in the web vault (the account is signed in there), and returns to a blank page.
  * @param {import("./driver.mjs").Session} session
  * @param {{ password: string }} account
+ * @param {string} name the name of the new passkey (each channel makes its own: the account keeps the one an earlier channel made, whose key is in a browser that is gone)
  */
-async function addPasskey(session, account) {
+async function addPasskey(session, account, name) {
   const page = helpers(session);
   await session.content(() => {
     location.hash = "#/unlock-methods";
   });
   await page.waitVisible('[data-role="methods-page"]', SLOW);
-  await page.waitVisible('[data-role="methods-empty"]', SLOW);
+  await page.waitAny(['[data-role="methods-empty"]', '[data-role="methods-row"]'], SLOW);
   await pace();
   await page.click('[data-role="methods-add"]');
   // The page asks for the master password again when the last check is older than a minute.
@@ -69,7 +69,7 @@ async function addPasskey(session, account) {
     await page.click('[data-role="reauth-confirm"]');
   }
   await page.waitVisible('[data-role="methods-name-form"]', SLOW);
-  await page.type('[data-role="methods-name-input"]', NAME);
+  await page.type('[data-role="methods-name-input"]', name);
   await page.click('[data-role="methods-create"]');
   await page.waitVisible('[data-role="methods-confirm"]', SLOW);
   await page.click('[data-role="methods-confirm"]');
@@ -87,7 +87,7 @@ test("prf_unlock_after_lock_in_release_and_esr", async () => {
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
       await session.addVirtualAuthenticator();
       const account = await webVaultAccount(session, channel);
-      await addPasskey(session, account);
+      await addPasskey(session, account, `Virtual passkey ${channel}`);
 
       // The extension signs in as a device, then locks.
       const signedIn = await extensionSignIn(session, account);

@@ -583,3 +583,18 @@ test("without_a_passkey_method_the_unlock_screen_is_as_before", async () => {
     assert.ok(find(host, "password"));
   });
 });
+
+test("the_origin_of_the_answer_is_a_string_or_a_function_that_says_true", async () => {
+  // The browser extension gives a function, because Firefox writes an origin of its own making for an extension's page.
+  const credentials = fakeCredentials({ credential: CREDENTIAL });
+  const ask = (origin) =>
+    evaluateOneOf(
+      { rpId: HOST, credentials: [{ id: CREDENTIAL, salt: SALT }], getAssertion: (publicKey) => credentials.get({ publicKey }) },
+      { ...ceremonyDeps(credentials), origin },
+    ).then((answer) => ({ ok: true, output: answer.output }), (error) => ({ ok: false, code: error.code }));
+  assert.equal((await ask(ORIGIN)).ok, true, "the exact string");
+  assert.equal((await ask((seen) => seen === ORIGIN)).ok, true, "a function that accepts it");
+  assert.deepEqual(await ask("https://evil.example"), { ok: false, code: "passkey_bad_answer" });
+  assert.deepEqual(await ask(() => false), { ok: false, code: "passkey_bad_answer" });
+  assert.deepEqual(await ask(() => "yes"), { ok: false, code: "passkey_bad_answer" }, "anything but true is a refusal");
+});
