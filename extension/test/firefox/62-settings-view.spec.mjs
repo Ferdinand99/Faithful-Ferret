@@ -95,6 +95,7 @@ test("the_settings_view_shows_groups_opens_a_page_and_its_switches_tell_on_from_
       assert.deepEqual(provider.switches, [["passkeys-switch", "false"], ["passkeys-recent-switch", "true"]], channel);
       assert.equal(provider.title, "Passkeys in Ferret", channel);
       assert.equal(provider.feature, "passkeys", channel);
+      assert.equal(await session.content(() => document.querySelector('[data-role="passkeys-recent-switch"]')?.getClientRects().length), 0, `${channel}: the recent-unlock row is not drawn while the passkeys are off`);
       await session.screenshot(shotPath(channel, "ext-settings-passkeys"));
       await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="provider"] [data-role="settings-back"]')).click());
       await openSettingsPage(session, "provider-never");

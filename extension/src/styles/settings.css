@@ -209,6 +209,11 @@
   overflow-wrap: anywhere;
 }
 
+/* A card that is hidden stays hidden: `display: flex` above would win over the browser's own rule for `hidden`. */
+.ff-scard[hidden] {
+  display: none;
+}
+
 li.ff-scard {
   justify-content: space-between;
   list-style: none;

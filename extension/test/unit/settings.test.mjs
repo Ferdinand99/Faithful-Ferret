@@ -683,3 +683,10 @@ test("the_passkeys_texts_exist_in_both_languages_and_the_pages_are_gone_without_
     env.cleanup();
   }
 });
+
+test("a_hidden_card_is_not_drawn_because_the_stylesheet_says_so", () => {
+  // The recent-unlock row is a card that is hidden while the passkeys are off; `.ff-scard { display: flex }` would override `hidden`.
+  const css = readFileSync(join(extensionRoot, "src", "styles", "settings.css"), "utf8");
+  const at = css.indexOf(".ff-scard[hidden]");
+  assert.ok(at > 0 && /^[^}]*display: none/.test(css.slice(at)), "the rule hides it");
+});
