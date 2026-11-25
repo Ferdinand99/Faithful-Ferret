@@ -1,6 +1,5 @@
-# The web vault (web/): build against the published WASM package (or, while the lock is
-# behind the core in the tree, the package built from this commit: wasm-tree.yml), type
-# check, unit tests, and the page under the strict CSP and Trusted Types in Chromium,
+# The web vault (web/): build against the published WASM package, type check,
+# unit tests, and the page under the strict CSP and Trusted Types in Chromium,
 # Firefox and WebKit. Third-party actions are pinned by commit SHA, the
 # Playwright image by digest. The workflow has read access only and never uses
 # `pull_request_target`.
@@ -19,13 +18,8 @@ permissions:
   contents: read
 
 jobs:
-  wasm:
-    name: WASM package
-    uses: ./.github/workflows/wasm-tree.yml
-
   unit:
     name: Build, types and unit tests
-    needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
@@ -44,22 +38,8 @@ jobs:
           persist-credentials: false
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
-      - name: The WASM package of this commit
-        if: needs.wasm.outputs.source == 'tree'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wasm-tree
-          path: wasm-package
-      - name: Build (the package of this commit, or the published one checked against its SHA-256)
-        env:
-          WASM_SOURCE: ${{ needs.wasm.outputs.source }}
-        run: |
-          if [ "$WASM_SOURCE" = tree ]; then
-            node scripts/build.mjs --wasm tree --wasm-tar ../wasm-package/ferret-core-wasm-web-*.tar.gz \
-              --wasm-commit "$(node -p "JSON.parse(require('fs').readFileSync('../wasm-package/wasm-tree.json', 'utf8')).commit")"
-          else
-            node scripts/build.mjs
-          fi
+      - name: Build (fetches the published WASM package and checks its SHA-256)
+        run: node scripts/build.mjs
       - name: Type check
         run: npx tsc -p jsconfig.json --noEmit
       - name: Unit tests
@@ -67,7 +47,6 @@ jobs:
 
   e2e:
     name: Page under the CSP (${{ matrix.browser }})
-    needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -89,22 +68,8 @@ jobs:
           persist-credentials: false
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
-      - name: The WASM package of this commit
-        if: needs.wasm.outputs.source == 'tree'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wasm-tree
-          path: wasm-package
       - name: Build
-        env:
-          WASM_SOURCE: ${{ needs.wasm.outputs.source }}
-        run: |
-          if [ "$WASM_SOURCE" = tree ]; then
-            node scripts/build.mjs --wasm tree --wasm-tar ../wasm-package/ferret-core-wasm-web-*.tar.gz \
-              --wasm-commit "$(node -p "JSON.parse(require('fs').readFileSync('../wasm-package/wasm-tree.json', 'utf8')).commit")"
-          else
-            node scripts/build.mjs
-          fi
+        run: node scripts/build.mjs
       - name: Run the tests in ${{ matrix.browser }}
         run: npx playwright test --project=${{ matrix.browser }}
       # The screenshots of the menu in both themes, for a look at what the browsers drew. Not part of the repository.

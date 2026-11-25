@@ -18,13 +18,15 @@ All data on the test instance is throwaway test data. Use made-up names, passwor
 | Core (XC3) | The PIN wrap and its profile, the passkey wrap and the manifest entry, the epoch rules (`pinned_epoch_ahead` at a server unlock and at a recovery), the property tests, the test vectors natively and through WASM in Node, the constant-time harness | `scripts/lanbox.sh test -p ferret-core --locked --test pin --test props_pin --test wrap --test methods --test pinning --test account`, `scripts/lanbox-vectors.sh`, `scripts/lanbox-props.sh`, `scripts/lanbox-ct.sh` |
 | The independent reference | The test vectors opened by a second implementation that shares no code with the core | the `xcheck` workflow (`tools/xcheck`, Node 24) |
 | Server | The admin rule (`Allow PIN`, `Allow PIN after restart`, the shortest PIN), the passkey routes, the flag-off build | `scripts/lanbox.sh test -p ferret-server --locked` (with and without `--features quick-unlock`) |
-| Extension unit tests and type check | The PIN store, the attempt counter and its waits, the PIN and passkey handlers, the popup, the settings section, the unlock window, the leak scans over every request and reply | `scripts/lanbox-ext.sh unit --wasm tree` |
-| The Firefox suite (XF), Release and ESR | The PIN store over the real IndexedDB and session storage of the extension | `scripts/lanbox-ext.sh firefox --manifest mv2 --wasm tree --grep unlock` |
-| The end-to-end suite (XE), Release and ESR | Specs 61 and 63 to 69 below, each channel against a stack of its own | `scripts/lanbox-ext.sh e2e --manifest mv2 --wasm tree --grep <test name>` |
+| Extension unit tests and type check | The PIN store, the attempt counter and its waits, the PIN and passkey handlers, the popup, the settings section, the unlock window, the leak scans over every request and reply | `scripts/lanbox-ext.sh unit` |
+| The Firefox suite (XF), Release and ESR | The PIN store over the real IndexedDB and session storage of the extension | `scripts/lanbox-ext.sh firefox --manifest mv2 --grep unlock` |
+| The end-to-end suite (XE), Release and ESR | Specs 61 and 63 to 69 below, each channel against a stack of its own | `scripts/lanbox-ext.sh e2e --manifest mv2 --grep <test name>` |
 | The web vault | The methods page, the passkey unlock and the one-time codes in Chromium (virtual authenticator), Firefox and WebKit where the browser allows | `scripts/lanbox-web.sh`, `scripts/lanbox-ferret-e2e-gate.sh` |
 
-`--wasm tree` builds the WASM package from the tree. A release build never does: the signed extension and the server image use the
-pinned package, or the package of their own release run.
+These commands run against the published WASM package that `web/wasm.lock.json` names (0.11.0 or later, the first release with the unlock functions). CI does the
+same: it no longer builds a package from the tree. `--wasm tree` is still there for a change to the core that the pinned package does not have yet; it builds the
+WASM package from the tree for a test build. A release build never does: the signed extension and the server image use the pinned package, or the package of
+their own release run.
 
 ### The end-to-end specs of the unlock
 
