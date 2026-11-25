@@ -21,11 +21,11 @@ use crate::prim::KdfParams;
 /// number is the strongest one that still fits the time budget of a weak
 /// machine.
 ///
-/// These values are provisional: the measurements of the PIN profile
-/// (256/3, 192/3 and 128/4 MiB, on a fast and on a weak machine) may lower
-/// them before the first release. This constant is the one place to change.
-/// Once a release has stored a PIN wrap under profile 1, the numbers never
-/// change for it; a stronger or weaker choice is a new profile.
+/// The values were confirmed by the measurements of the PIN profile (256/3,
+/// 192/3 and 128/4 MiB, on a fast and on a weak machine). This constant is the
+/// one place to change. Once a release has stored a PIN wrap under profile 1,
+/// the numbers never change for it; a stronger or weaker choice is a new
+/// profile.
 pub const PIN_PROFILE_1_PARAMS: KdfParams = KdfParams {
     m_kib: 262_144,
     t: 3,
@@ -34,8 +34,16 @@ pub const PIN_PROFILE_1_PARAMS: KdfParams = KdfParams {
 
 /// Guesses per second that one powerful machine reaches against PIN profile
 /// one. It is the one number that the texts about the offline cost of a PIN
-/// read (the admin page and the extension). Provisional, like
-/// [`PIN_PROFILE_1_PARAMS`].
+/// read (the admin page and the extension).
+///
+/// "One powerful machine" is a server with 64 cores and memory for 64 parallel
+/// guesses. The value comes from a native measurement
+/// (`ct/results/pin-guess-rate.md`, harness `examples/pin_guess_rate.rs`):
+/// 2.03 guesses per second on one core of the best implementation measured, 72 %
+/// parallel efficiency with all cores busy, 64 cores: 93.5, rounded up to the
+/// next ten so that the text never understates the attack. A change here
+/// changes the times in design § 7.2 and § 2.2 A7, the admin page and the
+/// extension's text.
 pub const PIN_OFFLINE_GUESSES_PER_SECOND: u32 = 100;
 
 /// A PIN profile.
