@@ -167,7 +167,7 @@ test("the_matrix_counts_a_case_that_did_not_run_as_failed", async () => {
   assert.equal(r2.status, "not-run");
   const r3 = await runCase(/** @type {any} */ (undefined), plain, { channel: "release", provider: "ferret" });
   assert.equal(r3.status, "not-run");
-  assert.match(r3.reason ?? "", /not wired/);
+  assert.match(r3.reason ?? "", /no browser session/);
   // ... and the numbers of such a run say so: nothing passed, the stub's needs-provider cases are counted.
   const stubResults = new Map(cases.filter((c) => c.set === "fixtures").map((c) => [c.id, c.needs === "provider" ? r1 : { status: /** @type {const} */ ("not-run"), reason: "x" }]));
   const stubMatrix = computeMatrix(cases.filter((c) => c.set === "fixtures"), stubResults, "stub");

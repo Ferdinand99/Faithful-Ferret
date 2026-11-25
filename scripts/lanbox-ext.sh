@@ -67,7 +67,8 @@
 #                                 with ... down). Every run starts with a self-test of the virtual authenticator and the
 #                                 fixture's TLS. --provider stub (the default) lets the browser's own path answer where Ferret
 #                                 would, so the route cannot be seen and the cases that need Ferret are counted as not run;
-#                                 --provider ferret is for when the extension answers (U4-8). --bridge turns the test build's
+#                                 --provider ferret: the extension answers, signed in to an end-to-end stack of this run's own
+#                                 (started as for e2e; the runner joins both internal networks). --bridge turns the test build's
 #                                 passkey scripts on first (permission, setting, a signed-in server); while the background hands
 #                                 every request back to the browser, the stub judgement then also shows that the bridge leaves
 #                                 each ceremony as the browser alone would end it. A case that did not run counts as
@@ -520,6 +521,9 @@ make_run() {
     "${dev_args_out[@]}"
     --network "$net")
   if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
+  # The passkey matrix with the Ferret provider also joins this run's end-to-end stack (the server the extension signs in to); both
+  # networks are internal.
+  if [ "$step" = passkey-matrix ] && [ "$network" != none ]; then run+=(--network "$network" "${e2e_volume_args[@]}"); fi
   # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
   local test_grep="$grep_name"
   if [ "$step" = matrix ] || [ "$step" = passkey-matrix ]; then test_grep=""; fi
@@ -620,6 +624,8 @@ if [ "$mode" = passkey-matrix ]; then
     passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
     passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
     [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+    # The Ferret provider: the extension answers, signed in to an end-to-end stack of this run's own.
+    if [ "$passkey_provider" = ferret ]; then e2e_setup; fi
   fi
   make_run "${channel:-release,esr}" "passkey-matrix" passkey-matrix 0
   rc=0

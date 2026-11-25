@@ -44,9 +44,13 @@
 // changed since the offer was classified (`item_changed`) is answered with a new
 // classification, and the offer stays for another click.
 //
-// The engine is this module's own: it is made here, and the only module it is
-// handed to is the offer writer (`createOfferWriter`), the one place outside the
-// shared modules that calls its `create` and `update`. The matching and the
+// The engine is this module's own: it is made here, and the only modules it is
+// handed to are the offer writer (`createOfferWriter`), the one place outside the
+// shared modules that calls its `create` and `update` for a person's form, and,
+// in a build with Ferret as a passkey provider, the passkey writer
+// (`passkeyWrite.mjs`, given to this module as a factory), which writes a new
+// passkey straight to the server (never through the outbox) and undoes one the
+// page never got. Its follow-ups are kept here across unlocks. The matching and the
 // popup's item ops read the items through `items()`, which has the engine's
 // `list` and `open` and nothing else.
 //
@@ -92,6 +96,9 @@ import { FEATURES } from "../shared/features.mjs";
 import { memoryStore, unavailableMemory } from "../shared/sync/memory.mjs";
 import { createOfferWriter, folderNames } from "./offerWrite.mjs";
 import { permissionOf } from "./session.mjs";
+
+/** The key of the passkey writer's follow-ups in the browser session's storage (sealed bytes and public numbers only). */
+export const PASSKEY_FOLLOWUPS_KEY = "passkey_followups";
 
 /** How often the engine reads the feed on its own when no stream hint comes (and the fallback of the stream). */
 export const FALLBACK_POLL_MS = 300_000;
@@ -222,6 +229,7 @@ export class SyncHostError extends Error {
  * @typedef {{
  *   engine: Engine,
  *   writer: ReturnType<typeof createOfferWriter>,
+ *   passkeys: any,
  *   server: string,
  *   session: AccountSession,
  *   channel: Channel | null,
@@ -255,6 +263,8 @@ export class SyncHostError extends Error {
  *   fillContext?: import("./offerWrite.mjs").FillContextReader | null,
  *   language?: string,
  *   random?: (bytes: Uint8Array) => Uint8Array,
+ *   passkeyWrite?: ((options: Record<string, any>) => any) | null,
+ *   passkeyStore?: { get(key: string): Promise<Record<string, unknown>>, set(items: Record<string, unknown>): Promise<void> } | null,
  * }} options `createEngine` and `createChannel` are the shared engine and live channel (the tests pass fakes); `win`
  *   is where the `online` event comes from; `locks` is the Web Locks of the origin (`navigator.locks`); `captures` is
  *   the store of offers (null: there is no offer to write); `fillContext` what Ferret filled where; `language` the
@@ -274,7 +284,11 @@ export function createSyncHost({
     globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes));
     return bytes;
   },
+  passkeyWrite = null,
+  passkeyStore = null,
 }) {
+  /** The follow-ups of passkey writes (passkeyWrite.mjs), kept across unlocks. @type {Map<string, any>} */
+  const passkeyLeftovers = new Map();
   const store = sessionHost.store;
   /** The engine of the vault that is open, or null. @type {Running | null} */
   let running = null;
@@ -296,6 +310,11 @@ export function createSyncHost({
     refs.clear();
     if (old === null) return;
     old.ended = true;
+    try {
+      old.passkeys?.stop();
+    } catch {
+      // Nothing more is sent from it in any case.
+    }
     try {
       old.channel?.stop();
     } catch {
@@ -424,8 +443,36 @@ export function createSyncHost({
     }, defaultCreateEngine);
     // The one module the engine is handed to: the writer of offers, with the same client of this unlock.
     const writer = createOfferWriter({ engine, liveClient: client, fillContext, now: Date.now, language });
+    // The passkey writer, with the same client and the session's API client: the only path of a new passkey to the server.
+    const passkeys =
+      passkeyWrite === null
+        ? null
+        : passkeyWrite({
+            engine,
+            vault: client.vault,
+            api,
+            // The restore epoch the writes are conditional on, as the engine's own writes take it.
+            epoch: async () => {
+              try {
+                return (await memory.load()).restoreEpoch ?? null;
+              } catch (error) {
+                if (/** @type {any} */ (error)?.code === "unsupported") return null;
+                throw error;
+              }
+            },
+            scope: `${server} ${scope.accountId}`,
+            leftovers: passkeyLeftovers,
+            // The follow-ups also go to the browser session's storage, so a restart of the background page keeps them.
+            store:
+              passkeyStore === null
+                ? null
+                : {
+                    load: async () => (await passkeyStore.get(PASSKEY_FOLLOWUPS_KEY))?.[PASSKEY_FOLLOWUPS_KEY] ?? [],
+                    save: (/** @type {object[]} */ list) => passkeyStore.set({ [PASSKEY_FOLLOWUPS_KEY]: list }),
+                  },
+          });
     /** @type {Running} */
-    const run = { engine, writer, api, server, session, channel: null, live: "offline", seen: new Set(), ended: false, watch };
+    const run = { engine, writer, passkeys, api, server, session, channel: null, live: "offline", seen: new Set(), ended: false, watch };
     running = run;
     engine.on("state", (payload) => onEngineState(run, payload));
     engine.on("error", (payload) => onEngineError(run, payload));
@@ -1067,6 +1114,11 @@ export function createSyncHost({
       const run = running;
       if (run === null) return null;
       return Object.freeze({ list: () => run.engine.list(), open: (/** @type {string} */ id) => run.engine.open(id) });
+    },
+
+    /** The passkey writer of the vault that is open (passkeyWrite.mjs), or null when no engine runs or the build has none. */
+    passkeys() {
+      return running?.passkeys ?? null;
     },
 
     /**
