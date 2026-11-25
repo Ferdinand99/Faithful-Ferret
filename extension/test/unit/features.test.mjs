@@ -13,7 +13,7 @@
 //   module that builds one imports `shared/features.mjs`;
 // - every file, message type and core operation of the feature is added to SAVE_PATHS below, in the change that adds it.
 //
-// The lists in SAVE_PATHS and UNLOCK_PATHS name what belongs to each feature. Each change that adds
+// The lists in SAVE_PATHS, UNLOCK_PATHS and PASSKEY_PATHS name what belongs to each feature. Each change that adds
 // a file, a message type or a control of the feature adds it there. The `unlock` feature follows the same rules, with
 // `data-feature="unlock"` and its own lists; the one trace it leaves with the flag off is the deletion of its database
 // at start (`deleteDatabase("ferret-unlock")`, in background/unlockCleanup.mjs).
@@ -23,11 +23,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { PASSKEY_SCRIPT_IDS, removePasskeyScripts } from "../../src/background/passkeyCleanup.mjs";
 import { CONTENT_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
 import { readGraph } from "./importGraph.mjs";
 import {
-  build, DEFAULT_FEATURES, FEATURE_FILES, FEATURES, FEATURES_FILE, featuresModule, featureProblems, isTestOnlyPath, parseFeatures, RELEASE_FEATURES,
-  releaseProblems, readInternalHosts, SAVE_FILES, sha256, UNLOCK_FILES, UNLOCK_STORE_FILE, UNLOCK_WASM_EXPORTS, unlockStoreModule, WASM_FILES,
+  build, DEFAULT_FEATURES, FEATURE_FILES, FEATURES, FEATURES_FILE, featuresModule, featureProblems, isTestOnlyPath, PASSKEY_CLEANUP_FILE, PASSKEY_FILES,
+  PASSKEY_SCRIPT_ID_PREFIX, parseFeatures, RELEASE_FEATURES, releaseProblems, readInternalHosts, SAVE_FILES, sha256, UNLOCK_FILES, UNLOCK_STORE_FILE, UNLOCK_WASM_EXPORTS, unlockStoreModule, WASM_FILES,
   WasmLacksUnlockError, wasmUnlockProblems,
 } from "../../scripts/build.mjs";
 import { boot } from "./bootBackground.mjs";
@@ -72,6 +73,29 @@ const UNLOCK_PATHS = Object.freeze({
   database: "ferret-unlock",
   /** The one module that deletes it, at start, when the feature is off. */
   cleanup: "background/unlockCleanup.mjs",
+});
+
+/**
+ * What belongs to the `passkeys` feature (Ferret as a passkey provider on web pages). The `passkeys` follow the rules of the
+ * other features, with `data-feature="passkeys"`. The traces a package with the feature off may hold are the ids of the
+ * scripts the feature registers, in background/passkeyCleanup.mjs, which removes a registration an older build left.
+ */
+const PASSKEY_PATHS = Object.freeze({
+  /** Package files of the feature. */
+  files: Object.freeze([
+    "content/passkey.main.inject.js", "content/passkey.bridge.inject.js", "content/passkey.main.entry.mjs", "content/passkey.bridge.entry.mjs",
+    "content/passkeyResponse.mjs", "background/passkeyRegistry.mjs", "background/passkeyRequests.mjs", "background/passkeyFlow.mjs",
+    "background/passkeyWrite.mjs", "background/passkeyVerify.mjs", "background/passkeyHandover.mjs", "pages/passkey.html", "pages/passkey.mjs",
+    "pages/passkeyFlow.mjs", "pages/passkeyVerify.mjs", "pages/popupPasskeys.mjs",
+  ]),
+  /** Message types of the feature: each change that adds a type adds it here. */
+  types: /** @type {readonly string[]} */ (Object.freeze([])),
+  /** The attribute every control of the feature carries (the popup's section included). */
+  control: 'data-feature="passkeys"',
+  controlInCode: /["']data-feature["']\s*:\s*["']passkeys["']|data-feature=\\?["']passkeys/,
+  /** The prefix of the ids of the scripts it registers, and the one module that may name them with the feature off. */
+  scriptIds: PASSKEY_SCRIPT_ID_PREFIX,
+  cleanup: PASSKEY_CLEANUP_FILE,
 });
 
 /** The refusal of a handler whose feature is off (the router's own `not_available`): for each of the types it serves. */
@@ -197,13 +221,13 @@ async function savePathsIn(dir, files) {
   return found;
 }
 
-/** @param {string} dir @returns {Promise<{ save: boolean, unlock: boolean }>} */
+/** @param {string} dir @returns {Promise<{ save: boolean, unlock: boolean, passkeys: boolean }>} */
 const featuresOf = async (dir) => (await import(pathToFileURL(join(dir, ...FEATURES_FILE.split("/"))).href)).FEATURES;
 
 test("the_save_feature_is_on_in_release_and_in_test", async () => {
-  assert.deepEqual([...FEATURES], ["save", "unlock"]);
+  assert.deepEqual([...FEATURES], ["save", "unlock", "passkeys"]);
   assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"]);
-  assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock"]);
+  assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock", "passkeys"]);
   assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"], "a release has save on");
   assert.deepEqual([...SAVE_FILES], [...SAVE_PATHS.files]);
 
@@ -214,12 +238,12 @@ test("the_save_feature_is_on_in_release_and_in_test", async () => {
       const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
       const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
       assert.deepEqual(release.features, ["save", "unlock"]);
-      assert.deepEqual(testBuild.features, ["save", "unlock"]);
+      assert.deepEqual(testBuild.features, ["passkeys", "save", "unlock"]);
       // The generated module says so, in each package, and cannot be changed at run time.
       const releaseOn = await featuresOf(release.dir);
       const testOn = await featuresOf(testBuild.dir);
-      assert.deepEqual({ ...releaseOn }, { save: true, unlock: true }, manifest);
-      assert.deepEqual({ ...testOn }, { save: true, unlock: true }, manifest);
+      assert.deepEqual({ ...releaseOn }, { save: true, unlock: true, passkeys: false }, manifest);
+      assert.deepEqual({ ...testOn }, { save: true, unlock: true, passkeys: true }, manifest);
       assert.equal(Object.isFrozen(releaseOn), true);
       assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock"], new Map()));
       // The capture script and its sources are in the release, and no test-only code is.
@@ -229,7 +253,7 @@ test("the_save_feature_is_on_in_release_and_in_test", async () => {
 
     // --features overrides the variant's default: a test build with the feature off.
     const testOff = await build({ ...options, out: join(env.out, "t-off"), manifest: "mv2", variant: "test", features: [] });
-    assert.deepEqual({ ...(await featuresOf(testOff.dir)) }, { save: false, unlock: false });
+    assert.deepEqual({ ...(await featuresOf(testOff.dir)) }, { save: false, unlock: false, passkeys: false });
     // A release with it off is refused by the build's own release check.
     await assert.rejects(build({ ...options, out: join(env.out, "r-off"), manifest: "mv2", variant: "release", features: [] }), /the feature save is off, which a release must have on/);
     await assert.rejects(build({ ...options, out: join(env.out, "x"), variant: "test", features: ["autosave"] }), /unknown feature "autosave"/);
@@ -242,6 +266,8 @@ test("the_save_feature_is_on_in_release_and_in_test", async () => {
   assert.deepEqual(parseFeatures(" save "), ["save"]);
   assert.deepEqual(parseFeatures("save,unlock"), ["save", "unlock"]);
   assert.deepEqual(parseFeatures("unlock"), ["unlock"]);
+  assert.deepEqual(parseFeatures("save,unlock,passkeys"), ["passkeys", "save", "unlock"]);
+  assert.deepEqual(parseFeatures("passkeys"), ["passkeys"]);
   assert.deepEqual(parseFeatures("none"), []);
   for (const bad of ["", " ", "save,save", "save,", "Save", "all"]) assert.throws(() => parseFeatures(bad), /features/, JSON.stringify(bad));
 
@@ -264,7 +290,7 @@ test("a_package_with_save_off_has_no_capture_offer_or_generator_path", async () 
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
     for (const manifest of ["mv2", "mv3"]) {
       const off = await build({ ...options, out: join(env.out, manifest), manifest, variant: "test", features: [] });
-      assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: false, unlock: false });
+      assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: false, unlock: false, passkeys: false });
       assert.deepEqual(await savePathsIn(off.dir, off.files), [], manifest);
     }
   } finally {
@@ -341,7 +367,7 @@ test("every_message_type_is_a_u1_type_or_listed_as_a_type_of_the_save_feature", 
     "sync_state", "unlock",
   ]);
   const all = [...Object.keys(UI_TYPES), ...Object.keys(CONTENT_TYPES)];
-  const unaccounted = all.filter((type) => !FIRST_RELEASE_TYPES.includes(type) && !SAVE_PATHS.types.includes(type) && !UNLOCK_PATHS.types.includes(type));
+  const unaccounted = all.filter((type) => !FIRST_RELEASE_TYPES.includes(type) && !SAVE_PATHS.types.includes(type) && !UNLOCK_PATHS.types.includes(type) && !PASSKEY_PATHS.types.includes(type));
   assert.deepEqual(unaccounted, [], "a type that is in no list");
   // And everything listed as the feature's that exists is a type of a table (a stale name is found).
   for (const type of ["form_capture", "form_gone", "page_ready", "capture_settings", "sync_items", "item_conflict", "item_resolve", "item_discard"]) {
@@ -390,12 +416,12 @@ async function unlockPathsIn(dir, files) {
 }
 
 test("the_unlock_feature_is_on_in_release_and_in_test", async () => {
-  assert.deepEqual([...FEATURES], ["save", "unlock"]);
+  assert.deepEqual([...FEATURES], ["save", "unlock", "passkeys"]);
   assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"], "a release has unlock on");
-  assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock"], "the test variant has it on");
+  assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock", "passkeys"], "the test variant has it on");
   assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"]);
   assert.deepEqual([...UNLOCK_FILES], [...UNLOCK_PATHS.files]);
-  assert.deepEqual(Object.keys(FEATURE_FILES).sort(), ["save", "unlock"]);
+  assert.deepEqual(Object.keys(FEATURE_FILES).sort(), ["passkeys", "save", "unlock"]);
 
   const env = makeRoot({
     // A window page of the feature: in the package with the feature on, and left out with it off.
@@ -411,8 +437,8 @@ test("the_unlock_feature_is_on_in_release_and_in_test", async () => {
       const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
       const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
       assert.deepEqual(release.features, ["save", "unlock"], manifest);
-      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: true, unlock: true }, manifest);
-      assert.deepEqual({ ...(await featuresOf(testBuild.dir)) }, { save: true, unlock: true }, manifest);
+      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: true, unlock: true, passkeys: false }, manifest);
+      assert.deepEqual({ ...(await featuresOf(testBuild.dir)) }, { save: true, unlock: true, passkeys: true }, manifest);
       assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock"], new Map()));
       for (const path of UNLOCK_PATHS.files) {
         assert.equal(release.files.has(path), true, `${manifest}: ${path} is in a release`);
@@ -422,11 +448,11 @@ test("the_unlock_feature_is_on_in_release_and_in_test", async () => {
     }
     // Each flag on its own: unlock alone leaves out the files of save, and save alone those of unlock.
     const unlockOnly = await build({ ...options, out: join(env.out, "u-only"), manifest: "mv2", variant: "test", features: ["unlock"] });
-    assert.deepEqual({ ...(await featuresOf(unlockOnly.dir)) }, { save: false, unlock: true });
+    assert.deepEqual({ ...(await featuresOf(unlockOnly.dir)) }, { save: false, unlock: true, passkeys: false });
     for (const path of SAVE_FILES) assert.equal(unlockOnly.files.has(path), false, path);
     for (const path of UNLOCK_PATHS.files) assert.equal(unlockOnly.files.has(path), true, path);
     const saveOnly = await build({ ...options, out: join(env.out, "s-only"), manifest: "mv2", variant: "test", features: ["save"] });
-    assert.deepEqual({ ...(await featuresOf(saveOnly.dir)) }, { save: true, unlock: false });
+    assert.deepEqual({ ...(await featuresOf(saveOnly.dir)) }, { save: true, unlock: false, passkeys: false });
     for (const path of UNLOCK_PATHS.files) assert.equal(saveOnly.files.has(path), false, path);
     for (const path of SAVE_FILES) assert.equal(saveOnly.files.has(path), true, path);
   } finally {
@@ -742,7 +768,7 @@ test("a_release_with_unlock_on_is_not_built_against_a_package_that_lacks_what_un
 
     // The same package is fine where the unlock feature is off, and in the test variant (which takes a package of the tree).
     const off = await build({ ...options, out: join(env.out, "old-test"), manifest: "mv2", variant: "test", features: ["save"] });
-    assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: true, unlock: false });
+    assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: true, unlock: false, passkeys: false });
 
     // A package that has them: the release is built.
     pin(current);
@@ -760,4 +786,353 @@ test("a_release_with_unlock_on_is_not_built_against_a_package_that_lacks_what_un
   } finally {
     env.cleanup();
   }
+});
+
+// -------------------------------------------------------------------------------------------- the `passkeys` feature
+
+/**
+ * Every path of the `passkeys` feature that a package still has: a file of the feature, a handler of the register that
+ * serves one of its message types and does not refuse it, a page with one of its controls (the popup's section too), a
+ * page module that builds such a control without asking FEATURES first, a script registered in the page's own world, a
+ * use of the browser's credentials container, and any file other than the cleanup that names the ids of its scripts.
+ * @param {string} dir the unpacked package
+ * @param {Map<string, Buffer>} files
+ * @param {readonly string[]} [extraTypes] message types that a test adds to the feature's own
+ * @returns {Promise<string[]>}
+ */
+async function passkeyPathsIn(dir, files, extraTypes = []) {
+  /** @type {string[]} */
+  const found = [];
+  const types = [...PASSKEY_PATHS.types, ...extraTypes];
+  for (const path of PASSKEY_PATHS.files) if (files.has(path)) found.push(`file ${path}`);
+  const register = files.get("background/handlers.gen.mjs")?.toString("utf8") ?? "";
+  const handlers = [...register.matchAll(/from "\.\/(handlers\/[^"]+)"/g)].map((m) => `background/${m[1]}`);
+  assert.ok(handlers.length > 0, "the register names the handlers");
+  for (const path of handlers) {
+    const handler = (await import(pathToFileURL(join(dir, ...path.split("/"))).href)).default;
+    const served = (handler?.types ?? []).filter((/** @type {string} */ type) => types.includes(type));
+    if (served.length > 0 && !(await refuses(handler, served))) found.push(`handler ${path} serves ${served.join(", ")}`);
+  }
+  for (const [path, bytes] of files) {
+    if (WASM_FILES.includes(path) || isTestOnlyPath(path)) continue;
+    const text = bytes.toString("utf8");
+    if (path.endsWith(".html") && text.includes(PASSKEY_PATHS.control)) found.push(`control in ${path}`);
+    if (path.startsWith("pages/") && path.endsWith(".mjs") && PASSKEY_PATHS.controlInCode.test(text) && !/from\s+["']\.\.\/shared\/features\.mjs["']/.test(text)) {
+      found.push(`control in ${path} without FEATURES`);
+    }
+    if (/\.(?:mjs|js|html)$/.test(path)) {
+      if (/world\s*:\s*["'`]MAIN["'`]/.test(text)) found.push(`script in the page's own world in ${path}`);
+      if (/CredentialsContainer/.test(text)) found.push(`credentials container in ${path}`);
+      if (path !== PASSKEY_PATHS.cleanup && text.includes(PASSKEY_PATHS.scriptIds)) found.push(`script id in ${path}`);
+    }
+  }
+  return found;
+}
+
+test("the_passkeys_feature_is_off_in_release_and_on_in_test", async () => {
+  assert.deepEqual([...FEATURES], ["save", "unlock", "passkeys"]);
+  assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"], "a release has passkeys off until it is released");
+  assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock", "passkeys"], "the test variant has it on");
+  assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"]);
+  assert.deepEqual([...PASSKEY_FILES], [...PASSKEY_PATHS.files]);
+  assert.deepEqual(Object.keys(FEATURE_FILES).sort(), ["passkeys", "save", "unlock"]);
+  assert.equal(PASSKEY_CLEANUP_FILE, "background/passkeyCleanup.mjs");
+  assert.deepEqual([...PASSKEY_SCRIPT_IDS], ["ferret-passkey-main", "ferret-passkey-bridge"]);
+  for (const id of PASSKEY_SCRIPT_IDS) assert.ok(id.startsWith(PASSKEY_SCRIPT_ID_PREFIX), id);
+
+  // A file of the feature for every path that a build does not write itself (the joined scripts are the build's).
+  /** @type {Record<string, string>} */
+  const stubs = {};
+  for (const path of PASSKEY_PATHS.files) {
+    if (path.endsWith(".inject.js")) continue;
+    stubs[`src/${path}`] = path.endsWith(".html") ? "<!doctype html><title>x</title>\n" : "export {};\n";
+  }
+  const env = makeRoot(stubs);
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
+    for (const manifest of ["mv2", "mv3"]) {
+      const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
+      const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
+      assert.deepEqual([...release.features].sort(), ["save", "unlock"], manifest);
+      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: true, unlock: true, passkeys: false }, manifest);
+      assert.deepEqual({ ...(await featuresOf(testBuild.dir)) }, { save: true, unlock: true, passkeys: true }, manifest);
+      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock"], new Map()));
+      assert.equal(testBuild.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock", "passkeys"], new Map()));
+      for (const path of PASSKEY_PATHS.files) {
+        assert.equal(release.files.has(path), false, `${manifest}: ${path} is not in a release`);
+        if (!path.endsWith(".inject.js")) assert.equal(testBuild.files.has(path), true, `${manifest}: ${path} is in the test variant`);
+      }
+      // No page, no script in a page, no handler and no popup part in a release.
+      for (const gone of ["pages/passkey.html", "pages/passkey.mjs", "pages/popupPasskeys.mjs", "content/passkey.main.inject.js"]) assert.equal(release.files.has(gone), false, gone);
+      assert.deepEqual([...release.files.keys()].filter((path) => path.startsWith("content/passkey")), [], manifest);
+      assert.deepEqual(await passkeyPathsIn(release.dir, release.files), [], manifest);
+    }
+    // Each flag on its own: passkeys alone leaves out the files of the others, and the others leave out those of passkeys.
+    const passkeysOnly = await build({ ...options, out: join(env.out, "p-only"), manifest: "mv2", variant: "test", features: ["passkeys"] });
+    assert.deepEqual({ ...(await featuresOf(passkeysOnly.dir)) }, { save: false, unlock: false, passkeys: true });
+    for (const path of [...SAVE_FILES, ...UNLOCK_FILES]) assert.equal(passkeysOnly.files.has(path), false, path);
+    assert.equal(passkeysOnly.files.has("pages/passkey.html"), true);
+    const others = await build({ ...options, out: join(env.out, "o-only"), manifest: "mv2", variant: "test", features: ["save", "unlock"] });
+    assert.deepEqual({ ...(await featuresOf(others.dir)) }, { save: true, unlock: true, passkeys: false });
+    assert.deepEqual(await passkeyPathsIn(others.dir, others.files), []);
+    // A package with nothing on holds nothing of the feature either.
+    const none = await build({ ...options, out: join(env.out, "none"), manifest: "mv2", variant: "test", features: [] });
+    assert.deepEqual(await passkeyPathsIn(none.dir, none.files), []);
+  } finally {
+    env.cleanup();
+  }
+
+  // A file that stays in a package may not import a file of the feature by name: with the feature off the build refuses it.
+  const dangling = makeRoot({ ...stubs, "src/background/probeImport.mjs": 'import "./passkeyRequests.mjs";\nexport {};\n' });
+  try {
+    const options = { root: dangling.root, webRoot: dangling.webRoot, wasmTar: dangling.tarPath, manifest: "mv2" };
+    await build({ ...options, out: join(dangling.out, "on"), variant: "test" });
+    await assert.rejects(build({ ...options, out: join(dangling.out, "off"), variant: "test", features: ["save", "unlock"] }), /passkeyRequests\.mjs/);
+  } finally {
+    dangling.cleanup();
+  }
+});
+
+test("the_release_check_refuses_a_release_build_with_passkeys_on", async () => {
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv2" };
+    // The build's own release check refuses it.
+    await assert.rejects(
+      build({ ...options, out: join(env.out, "r-on"), variant: "release", features: ["save", "unlock", "passkeys"] }),
+      /the feature passkeys is on, which a release may not have/,
+    );
+    const release = await build({ ...options, out: join(env.out, "r"), variant: "release" });
+    const hosts = readInternalHosts(env.root);
+    assert.deepEqual(releaseProblems(release.files, hosts), []);
+
+    // The check on a finished package: the features module with passkeys on, in every way it can be written.
+    for (const text of [
+      featuresModule(["save", "unlock", "passkeys"], new Map()),
+      'export const FEATURES = Object.freeze({"save":true,"unlock":true,"passkeys":true});\n',
+      "export const FEATURES = Object.freeze({ save: true, unlock: true, passkeys: true });\n",
+      "export const FEATURES = Object.freeze({ save: true, unlock: true, 'passkeys': 1 });\n",
+      "export const FEATURES = Object.freeze({ save: true, unlock: true, passkeys: !0 });\n",
+    ]) {
+      const files = new Map(release.files);
+      files.set(FEATURES_FILE, Buffer.from(text));
+      const problems = featureProblems(files);
+      assert.ok(problems.some((p) => /the feature passkeys is on, which a release may not have/.test(p)), text);
+    }
+    // A file of the feature in a release package is refused, and so is a package without the features module.
+    for (const path of PASSKEY_PATHS.files) {
+      const files = new Map(release.files);
+      files.set(path, Buffer.from("x\n"));
+      assert.ok(featureProblems(files).includes(`${path}: belongs to the passkeys feature, which a release may not have`), path);
+    }
+    const noModule = new Map(release.files);
+    noModule.delete(FEATURES_FILE);
+    assert.match(featureProblems(noModule).join("\n"), /shared\/features\.mjs is missing/);
+
+    // A release holds no way in even without a file of the feature: a script registered in the page's own world, the
+    // browser's credentials container, and the ids of the feature's scripts anywhere but in the cleanup are refused.
+    /** @type {Array<[string, string, RegExp]>} */
+    const traces = [
+      ["background/probeWorld.mjs", 'export const register = (s) => s.registerContentScripts([{ id: "x", world: "MAIN", js: ["a.js"] }]);\n', /background\/probeWorld\.mjs: registers a script in the page's own world/],
+      ["background/probeWorld2.mjs", "export const register = (s) => s.registerContentScripts([{ id: 'x', world: 'MAIN' }]);\n", /background\/probeWorld2\.mjs: registers a script in the page's own world/],
+      ["content/probeOverride.mjs", "export const keep = CredentialsContainer.prototype.get;\n", /content\/probeOverride\.mjs: names the browser's credentials container/],
+      ["background/probeId.mjs", 'export const id = "ferret-passkey-main";\n', /background\/probeId\.mjs: names the ids of the passkeys scripts/],
+      ["pages/probeId.html", "<script>var i='ferret-passkey-bridge'</script>\n", /pages\/probeId\.html: names the ids of the passkeys scripts/],
+    ];
+    for (const [path, text, expected] of traces) {
+      const files = new Map(release.files);
+      files.set(path, Buffer.from(text));
+      assert.ok(releaseProblems(files, hosts).some((p) => expected.test(p)), path);
+    }
+    // The cleanup module names them, and only removes: it is the permitted form, and it is in the release.
+    assert.equal(release.files.has(PASSKEY_CLEANUP_FILE), true);
+    assert.equal(release.files.get(PASSKEY_CLEANUP_FILE)?.toString("utf8").includes('"ferret-passkey-main"'), true);
+    assert.doesNotMatch(release.files.get(PASSKEY_CLEANUP_FILE)?.toString("utf8") ?? "", /\bregisterContentScripts\(|world\s*:/);
+
+    // The command the script runs (`scripts/check-ext-release.sh`) says no, with a non-zero status, to the same package.
+    const bad = join(env.out, "bad");
+    for (const [path, bytes] of release.files) {
+      const target = join(bad, ...path.split("/"));
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, path === FEATURES_FILE ? featuresModule(["save", "unlock", "passkeys"], new Map()) : bytes);
+    }
+    const ran = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", bad], { encoding: "utf8" });
+    assert.equal(ran.status, 1, ran.stdout + ran.stderr);
+    assert.match(ran.stderr, /the feature passkeys is on, which a release may not have/);
+    const good = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", "--web-root", env.webRoot, release.dir], { encoding: "utf8" });
+    assert.equal(good.status, 0, good.stdout + good.stderr);
+  } finally {
+    env.cleanup();
+  }
+  // The script names the passkeys feature in its header, so a reader of it sees the rule.
+  assert.match(readFileSync(join(extensionRoot, "..", "scripts", "check-ext-release.sh"), "utf8"), /passkeys/);
+});
+
+test("a_release_package_with_passkeys_off_has_no_passkey_path", async () => {
+  // The repository's own sources: nothing of the feature in a package built with it off, in either manifest version and
+  // in either variant. The only trace is the module that removes a registration an older build left.
+  const env = makeRoot();
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
+    for (const manifest of ["mv2", "mv3"]) {
+      const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
+      assert.deepEqual(await passkeyPathsIn(release.dir, release.files), [], `release ${manifest}`);
+      const off = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test", features: ["save", "unlock"] });
+      assert.deepEqual(await passkeyPathsIn(off.dir, off.files), [], `test ${manifest}`);
+      // No `content/passkey.*`, no `pages/passkey.html`, no popup part.
+      for (const files of [release.files, off.files]) {
+        assert.deepEqual([...files.keys()].filter((path) => /^content\/passkey/.test(path) || /^pages\/(?:passkey|popupPasskeys)/.test(path)), [], manifest);
+      }
+      // The permitted trace is there, and it is the only one: the ids are in the one module, and nothing registers a script.
+      const holders = [...release.files].filter(([path, bytes]) => !WASM_FILES.includes(path) && bytes.toString("utf8").includes(PASSKEY_PATHS.scriptIds)).map(([path]) => path);
+      assert.deepEqual(holders, [PASSKEY_PATHS.cleanup], manifest);
+      // The manifest of a release asks for no content script of the feature either.
+      const manifestText = /** @type {Buffer} */ (release.files.get("manifest.json")).toString("utf8");
+      assert.doesNotMatch(manifestText, /passkey|content_scripts/i, manifest);
+    }
+  } finally {
+    env.cleanup();
+  }
+
+  // The check finds each kind of path (so an empty answer above means something): a handler that serves a type of the
+  // feature, a page with a control of it, a page module that builds one without asking FEATURES, a script in the page's
+  // own world, the credentials container, a script id, and a file of the feature.
+  const probe = makeRoot({
+    "src/background/handlers/keyProbe.handler.mjs": 'export default { types: ["passkey_probe"], channel: "ui", handle: async () => ({ ok: true }) };\n',
+    "src/background/handlers/gatedProbe.handler.mjs": [
+      'import { FEATURES } from "../../shared/features.mjs";',
+      "export default {",
+      '  types: ["passkey_probe_gated"],',
+      '  channel: "ui",',
+      "  handle: async () => {",
+      '    if (!FEATURES.passkeys) throw Object.assign(new Error("not_available"), { code: "not_available" });',
+      "    return { ok: true };",
+      "  },",
+      "};",
+      "",
+    ].join("\n"),
+    "src/pages/passkeyProbe.html": '<!doctype html><section data-feature="passkeys" data-role="probe">x</section>\n',
+    "src/pages/passkeyView.mjs": 'export const section = { "data-feature": "passkeys" };\n',
+    "src/pages/passkeyGated.mjs": 'import { FEATURES } from "../shared/features.mjs";\nexport const section = FEATURES.passkeys ? { "data-feature": "passkeys" } : null;\n',
+    "src/background/worldProbe.mjs": 'export const register = (s) => s.registerContentScripts([{ id: "x", world: "MAIN" }]);\n',
+    "src/content/overrideProbe.mjs": "export const keep = CredentialsContainer.prototype.get;\n",
+    "src/background/idProbe.mjs": 'export const id = "ferret-passkey-main";\n',
+  });
+  try {
+    const options = { root: probe.root, webRoot: probe.webRoot, wasmTar: probe.tarPath, manifest: "mv2" };
+    const off = await build({ ...options, out: join(probe.out, "off"), variant: "test", features: ["save", "unlock"] });
+    off.files.set("pages/passkey.html", Buffer.from("<!doctype html>\n"));
+    off.files.set("content/passkey.main.inject.js", Buffer.from("void 0;\n"));
+    assert.deepEqual((await passkeyPathsIn(off.dir, off.files, ["passkey_probe", "passkey_probe_gated"])).sort(), [
+      "control in pages/passkeyProbe.html",
+      "control in pages/passkeyView.mjs without FEATURES",
+      "credentials container in content/overrideProbe.mjs",
+      "file content/passkey.main.inject.js",
+      "file pages/passkey.html",
+      "handler background/handlers/keyProbe.handler.mjs serves passkey_probe",
+      "script id in background/idProbe.mjs",
+      "script in the page's own world in background/worldProbe.mjs",
+    ]);
+    // With the feature on, the gated handler serves its type: it refuses only because the feature is off.
+    const on = await build({ ...options, out: join(probe.out, "on"), variant: "test" });
+    const gated = (await import(pathToFileURL(join(on.dir, "background", "handlers", "gatedProbe.handler.mjs")).href)).default;
+    assert.deepEqual(await gated.handle({}, {}), { ok: true });
+  } finally {
+    probe.cleanup();
+  }
+});
+
+test("a_build_with_passkeys_off_unregisters_a_left_over_main_world_script", async () => {
+  const env = makeRoot();
+  /** @param {string[]} registered the ids the fake browser holds @param {{ failUnregister?: boolean }} [flags] */
+  const scriptingFor = (registered, flags = {}) => {
+    /** @type {{ queried: string[][], removed: string[][] }} */
+    const calls = { queried: [], removed: [] };
+    const scripting = {
+      executeScript: async () => [],
+      registerContentScripts: async () => {},
+      getRegisteredContentScripts: async (/** @type {{ ids?: string[] }} */ filter) => {
+        calls.queried.push([...(filter?.ids ?? [])]);
+        return registered.filter((id) => !filter?.ids || filter.ids.includes(id)).map((id) => ({ id, world: "MAIN", persistAcrossSessions: true }));
+      },
+      unregisterContentScripts: async (/** @type {{ ids: string[] }} */ filter) => {
+        calls.removed.push([...filter.ids]);
+        if (flags.failUnregister) throw new Error("no");
+        for (const id of filter.ids) {
+          if (!registered.includes(id)) throw new Error(`Nonexistent script ID '${id}'`);
+          registered.splice(registered.indexOf(id), 1);
+        }
+      },
+    };
+    return { scripting, calls, registered };
+  };
+  /** The removals that name the feature's scripts (the capture host removes its own script, with ids of its own, and no call mixes them). @param {string[][]} calls */
+  const ours = (calls) => {
+    for (const ids of calls) assert.ok(ids.every((id) => id.startsWith("ferret-passkey-")) || ids.every((id) => !id.startsWith("ferret-passkey-")), `a call mixes ids: ${ids}`);
+    return calls.filter((ids) => ids.some((id) => id.startsWith("ferret-passkey-")));
+  };
+  try {
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv3" };
+    // Off (a release; a test build with the flag off): the scripts of the feature are removed, once, and nothing else is.
+    for (const [name, variant, features] of /** @type {const} */ ([["release", "release", undefined], ["test, off", "test", ["save", "unlock"]]])) {
+      const result = await build({ ...options, out: join(env.out, name.replace(/\W/g, "")), variant, ...(features ? { features: [...features] } : {}) });
+      const world = scriptingFor(["ferret-passkey-main", "ferret-passkey-bridge", "ferret-capture"]);
+      try {
+        await boot(result.dir, { scripting: world.scripting });
+      } finally {
+        delete (/** @type {any} */ (globalThis)).browser;
+      }
+      assert.deepEqual(ours(world.calls.removed), [["ferret-passkey-main", "ferret-passkey-bridge"]], name);
+      assert.deepEqual(world.registered.filter((id) => id.startsWith("ferret-passkey-")), [], `${name}: none of the feature's scripts is left`);
+      for (const ids of ours(world.calls.queried)) assert.ok(ids.every((id) => PASSKEY_SCRIPT_IDS.includes(id)), `${name}: only its own ids are asked for`);
+    }
+    // Only the one that is there is named (an id that is not registered makes the browser refuse the call), and none at all
+    // is no call. Each start gets a build of its own, because a module that was loaded once is not run again.
+    let n = 0;
+    /** @param {string[]} registered @param {{ failUnregister?: boolean }} [flags] */
+    const startOne = async (registered, flags) => {
+      const fresh = await build({ ...options, out: join(env.out, `fresh-${n++}`), variant: "release" });
+      const world = scriptingFor([...registered], flags);
+      try {
+        const started = await boot(fresh.dir, { scripting: world.scripting });
+        return { world, started };
+      } finally {
+        delete (/** @type {any} */ (globalThis)).browser;
+      }
+    };
+    assert.deepEqual(ours((await startOne(["ferret-passkey-bridge"])).world.calls.removed), [["ferret-passkey-bridge"]]);
+    assert.deepEqual(ours((await startOne([])).world.calls.removed), []);
+    // A browser that refuses the removal does not stop the background from starting.
+    const failing = await startOne(["ferret-passkey-main"], { failUnregister: true });
+    assert.ok(failing.started.onMessage.length > 0, "the background started");
+    assert.deepEqual(ours(failing.world.calls.removed), [["ferret-passkey-main"]]);
+    // On (the test variant): the feature owns its registrations, and the cleanup does not run.
+    const on = await build({ ...options, out: join(env.out, "on"), variant: "test" });
+    const owned = scriptingFor(["ferret-passkey-main", "ferret-passkey-bridge"]);
+    try {
+      await boot(on.dir, { scripting: owned.scripting });
+    } finally {
+      delete (/** @type {any} */ (globalThis)).browser;
+    }
+    assert.deepEqual(ours(owned.calls.removed), [], "with passkeys on the cleanup does not run");
+    assert.deepEqual(owned.registered, ["ferret-passkey-main", "ferret-passkey-bridge"]);
+  } finally {
+    env.cleanup();
+  }
+
+  // The module itself: it never throws and never rejects, whatever the browser does.
+  assert.equal(await removePasskeyScripts(undefined), false);
+  assert.equal(await removePasskeyScripts(null), false);
+  assert.equal(await removePasskeyScripts(/** @type {any} */ ({ getRegisteredContentScripts: () => { throw new Error("no"); }, unregisterContentScripts: async () => {} })), false);
+  assert.equal(await removePasskeyScripts(/** @type {any} */ ({ getRegisteredContentScripts: async () => undefined, unregisterContentScripts: async () => {} })), true);
+  assert.equal(await removePasskeyScripts(/** @type {any} */ ({ getRegisteredContentScripts: async () => [{ id: "ferret-passkey-main" }], unregisterContentScripts: async () => { throw new Error("no"); } })), false);
+  // It names no id that is not its own, even if the browser answers with more.
+  /** @type {string[][]} */
+  const removed = [];
+  const noisy = /** @type {any} */ ({
+    getRegisteredContentScripts: async () => [{ id: "ferret-capture" }, { id: "ferret-passkey-bridge" }, { id: "other" }],
+    unregisterContentScripts: async (/** @type {{ ids: string[] }} */ filter) => { removed.push(filter.ids); },
+  });
+  assert.equal(await removePasskeyScripts(noisy), true);
+  assert.deepEqual(removed, [["ferret-passkey-bridge"]]);
 });

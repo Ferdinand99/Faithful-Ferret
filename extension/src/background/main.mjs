@@ -34,6 +34,7 @@ import { HANDLERS } from "./handlers.gen.mjs";
 import { createLock } from "./lock.mjs";
 import { createMatchHost } from "./match.mjs";
 import { labelLanguage } from "./offerWrite.mjs";
+import { removePasskeyScripts } from "./passkeyCleanup.mjs";
 import { createPinHost } from "./pinHost.mjs";
 import { listenForMenus, menuTitle } from "./menus.mjs";
 import { createRouter } from "./router.mjs";
@@ -258,5 +259,7 @@ coreHost.lock("restart").catch(() => {});
 
 // A build with PIN and passkey unlock off opens no PIN store; it only removes the one an earlier build may have left.
 if (!FEATURES.unlock) void deleteUnlockDatabase(globalThis.indexedDB);
+// A build with Ferret as a passkey provider off registers no script in pages; it removes the ones that an earlier build left.
+if (!FEATURES.passkeys) void removePasskeyScripts(browser.scripting);
 // With it on, the PIN host starts its schedule (the renewal of the device's tokens, with or without a PIN).
 pinHost?.start();

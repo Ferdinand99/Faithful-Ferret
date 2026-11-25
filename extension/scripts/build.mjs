@@ -10,7 +10,8 @@
 // none); without it a variant has its own default (DEFAULT_FEATURES). The
 // features are `save` (saving and updating passwords from the extension and the
 // password generator) and `unlock` (PIN and passkey unlock), both on in a release
-// and in the test variant. The
+// and in the test variant, and `passkeys` (Ferret as a passkey provider on web pages), on in the test variant only
+// until it is released. The
 // build writes shared/features.mjs with the result, and the release check
 // refuses a release package with a feature on that a release does not have
 // (RELEASE_FEATURES), with a feature off that it must have, without that file, or
@@ -95,12 +96,16 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
  * has it on, and so has the test variant; a test build can turn it off (`--features save`) to prove that "off" leaves no
  * path of the feature in the package (the only trace is the deletion of the unlock database at start, so that a blob left
  * by an older build is removed).
+ * `passkeys`: Ferret as a passkey provider on web pages (the MAIN-world script and its bridge, the chooser window, the
+ * handlers, the popup's passkey section). It is on in the test variant only, until it is released; a release has it off,
+ * and a package with it off holds no path of the feature. The only traces are the removal of a script registration that
+ * an older build may have left (background/passkeyCleanup.mjs, which names the script ids for that and nothing else).
  */
-export const FEATURES = Object.freeze(["save", "unlock"]);
+export const FEATURES = Object.freeze(["save", "unlock", "passkeys"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
   release: Object.freeze(["save", "unlock"]),
-  test: Object.freeze(["save", "unlock"]),
+  test: Object.freeze(["save", "unlock", "passkeys"]),
 });
 /** The features a release package has on, no more and no fewer: the release check refuses any other set. */
 export const RELEASE_FEATURES = Object.freeze(["save", "unlock"]);
@@ -122,8 +127,39 @@ export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", 
  * on and says `null` when it is off. The handlers of the feature stay in the package and refuse when it is off.
  */
 export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "pages/unlockWindowFlow.mjs", "background/localUnlock.mjs"]);
+/**
+ * The package files of the `passkeys` feature: the MAIN-world script and the bridge of the isolated world (each as a
+ * joined classic script and as the module it is joined from), the answer objects, the chooser window, and the modules of
+ * the background and the pages that only the feature uses. A package with `passkeys` off never holds one (the build leaves
+ * them out), and a release never has them until the feature is released (the release check refuses any of them while
+ * RELEASE_FEATURES lacks `passkeys`). No file that stays in a package may import one of them by name: the build refuses a
+ * package with a dangling import. The handlers of the feature stay in the package and refuse when it is off. A change that
+ * adds a file of the feature adds it here and to PASSKEY_PATHS in test/unit/features.test.mjs.
+ */
+export const PASSKEY_FILES = Object.freeze([
+  "content/passkey.main.inject.js",
+  "content/passkey.bridge.inject.js",
+  "content/passkey.main.entry.mjs",
+  "content/passkey.bridge.entry.mjs",
+  "content/passkeyResponse.mjs",
+  "background/passkeyRegistry.mjs",
+  "background/passkeyRequests.mjs",
+  "background/passkeyFlow.mjs",
+  "background/passkeyWrite.mjs",
+  "background/passkeyVerify.mjs",
+  "background/passkeyHandover.mjs",
+  "pages/passkey.html",
+  "pages/passkey.mjs",
+  "pages/passkeyFlow.mjs",
+  "pages/passkeyVerify.mjs",
+  "pages/popupPasskeys.mjs",
+]);
+/** The ids under which the background registers the scripts of the `passkeys` feature. */
+export const PASSKEY_SCRIPT_ID_PREFIX = "ferret-passkey-";
+/** The one module that may name them in a package without the feature: it removes a registration an older build left. */
+export const PASSKEY_CLEANUP_FILE = "background/passkeyCleanup.mjs";
 /** The package files of each feature that has files of its own. */
-export const FEATURE_FILES = Object.freeze({ save: SAVE_FILES, unlock: UNLOCK_FILES });
+export const FEATURE_FILES = Object.freeze({ save: SAVE_FILES, unlock: UNLOCK_FILES, passkeys: PASSKEY_FILES });
 
 export const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
@@ -978,6 +1014,24 @@ export function featureProblems(files) {
     const text = bytes.toString("utf8");
     if (text.split("ferret-unlock").length !== text.split('deleteDatabase("ferret-unlock")').length) {
       problems.push(`${path}: names the unlock database other than to delete it, which only the PIN store may do`);
+    }
+  }
+  // A release without `passkeys` holds no way to act as a passkey provider: no script registered in the page's own world, no
+  // override of the browser's credential functions, and the ids of the feature's scripts only in the module that removes
+  // a registration an older build left.
+  if (!RELEASE_FEATURES.includes("passkeys")) {
+    for (const [path, bytes] of files) {
+      if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path)) continue;
+      const text = bytes.toString("utf8");
+      if (/world\s*:\s*["'`]MAIN["'`]/.test(text)) {
+        problems.push(`${path}: registers a script in the page's own world, which a release without the passkeys feature may not do`);
+      }
+      if (/CredentialsContainer/.test(text)) {
+        problems.push(`${path}: names the browser's credentials container, which a release without the passkeys feature may not do`);
+      }
+      if (path !== PASSKEY_CLEANUP_FILE && text.includes(PASSKEY_SCRIPT_ID_PREFIX)) {
+        problems.push(`${path}: names the ids of the passkeys scripts, which a release without the feature may do only in ${PASSKEY_CLEANUP_FILE}`);
+      }
     }
   }
   for (const [name, paths] of Object.entries(FEATURE_FILES)) {
