@@ -1,0 +1,58 @@
+{
+  "id": "handover-browser-chosen",
+  "set": "fixtures",
+  "category": "handover",
+  "title": "the person chooses the browser in the window: the original call answers",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    },
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "choose-browser"
+    }
+  ]
+}

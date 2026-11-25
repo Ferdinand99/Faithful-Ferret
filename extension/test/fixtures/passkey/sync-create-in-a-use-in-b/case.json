@@ -1,0 +1,78 @@
+{
+  "id": "sync-create-in-a-use-in-b",
+  "set": "fixtures",
+  "category": "sync",
+  "title": "a passkey made in profile A signs in from profile B",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    },
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "profile",
+      "name": "a"
+    },
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "choose-in-window"
+    },
+    {
+      "do": "sync"
+    },
+    {
+      "do": "profile",
+      "name": "b"
+    },
+    {
+      "do": "sync"
+    },
+    {
+      "do": "start-get"
+    },
+    {
+      "do": "choose-in-window"
+    }
+  ]
+}

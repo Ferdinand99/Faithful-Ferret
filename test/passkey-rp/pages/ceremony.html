@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey fixture</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/vendor/simplewebauthn-browser.js"></script>
+</head>
+<body>
+<h1 id="title">Passkey fixture</h1>
+<p>Relying party: <code id="rp-lib"></code>, client code: <code id="rp-client"></code>, origin: <code id="origin"></code></p>
+<form id="login" onsubmit="return false">
+  <label>User name <input id="username" name="username" type="text" autocomplete="username webauthn"></label>
+  <button id="go" type="button">Run the case</button>
+</form>
+<pre id="result" data-state="idle">idle</pre>
+<script type="module" src="/ceremony.mjs"></script>
+</body>
+</html>

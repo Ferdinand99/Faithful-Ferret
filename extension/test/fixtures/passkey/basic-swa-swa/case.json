@@ -1,0 +1,53 @@
+{
+  "id": "basic-swa-swa",
+  "set": "fixtures",
+  "category": "create-basic",
+  "title": "create and sign in: SimpleWebAuthn with @simplewebauthn/browser",
+  "rp": {
+    "lib": "swa",
+    "client": "swa"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "the response has user presence set without a trusted click in Ferret's own window or popup"
+    },
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    }
+  ]
+}

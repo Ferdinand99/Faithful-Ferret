@@ -1,0 +1,49 @@
+{
+  "id": "origin-trailing-dot",
+  "set": "fixtures",
+  "category": "origin-rpid",
+  "title": "the host with a trailing dot",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test."
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "note": "Firefox accepts the trailing dot: the RP ID is the host as written. The core strips one trailing dot, so a Ferret answer would have an origin and an RP ID hash that differ from the ones the site expects; the call goes to the browser (reviewer's ruling)."
+}

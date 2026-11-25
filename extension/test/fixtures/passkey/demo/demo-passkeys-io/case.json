@@ -1,0 +1,26 @@
+{
+  "id": "demo-passkeys-io",
+  "set": "demo",
+  "category": "create-basic",
+  "title": "passkeys.io: register and sign in",
+  "page": {
+    "url": "https://www.passkeys.io/"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "the response has user presence set without a trusted click in Ferret's own window or popup"
+    }
+  ],
+  "needs": "provider",
+  "note": "A smoke test against a public demo site: registration and sign-in work in both channels. The driver for these pages comes with the end-to-end spec (U4-13); until then a run of this set counts every case as not run. Needs a network that reaches the site, so this set runs outside the test network."
+}

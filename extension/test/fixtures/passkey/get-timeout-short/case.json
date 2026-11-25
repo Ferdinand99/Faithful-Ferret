@@ -1,0 +1,47 @@
+{
+  "id": "get-timeout-short",
+  "set": "fixtures",
+  "category": "get-modal",
+  "title": "a short timeout that nobody answers: NotAllowedError, no earlier than a person could have answered",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "unknown",
+      "timeout": 3000
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "any",
+    "error": "NotAllowedError"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ],
+  "waitMs": 60000
+}

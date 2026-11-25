@@ -1,0 +1,54 @@
+{
+  "id": "handover-automatic-appid",
+  "set": "fixtures",
+  "category": "handover",
+  "title": "the appid extension goes to the browser with no window",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "unknown",
+      "timeout": 3000,
+      "extensions": {
+        "appid": "https://rp-a.test/appid.json"
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    },
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    }
+  ],
+  "waitMs": 10000
+}

@@ -1,0 +1,237 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "A case of the Ferret passkey matrix",
+  "description": "extension/test/fixtures/passkey/<id>/case.json. The pages are served by the fixture container (test/passkey-rp); the runner is extension/test/firefox/passkeyMatrix.mjs, the checks of this file are caseProblems() in passkeyCases.mjs.",
+  "type": "object",
+  "required": [
+    "id",
+    "set",
+    "category",
+    "title",
+    "gesture",
+    "expected",
+    "unsafe"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,78}$",
+      "description": "Equal to the name of the folder."
+    },
+    "set": {
+      "enum": [
+        "fixtures",
+        "adversarial",
+        "holdout",
+        "demo"
+      ]
+    },
+    "category": {
+      "enum": [
+        "create-basic",
+        "create-options",
+        "create-algs",
+        "create-exclude",
+        "create-extensions",
+        "create-users",
+        "create-gesture",
+        "get-modal",
+        "get-conditional",
+        "get-prf",
+        "origin-rpid",
+        "frames",
+        "navigation",
+        "vault-network",
+        "verification",
+        "handover",
+        "background",
+        "sync",
+        "adv-bridge",
+        "adv-input",
+        "adv-timing",
+        "adv-frames",
+        "adv-window",
+        "adv-vault",
+        "adv-signals"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rp": {
+      "type": "object",
+      "required": [
+        "lib",
+        "client"
+      ],
+      "properties": {
+        "lib": {
+          "enum": [
+            "rs",
+            "swa"
+          ],
+          "description": "rs: webauthn-rs (strict); swa: @simplewebauthn/server"
+        },
+        "client": {
+          "enum": [
+            "swa",
+            "manual",
+            "pubkey"
+          ],
+          "description": "swa: @simplewebauthn/browser; manual: webauthn-json style; pubkey: manual, and reads getPublicKey()"
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "description": "chain: the hosts from the top page to the page that runs the ceremony, kinds[i]: how chain[i] frames chain[i+1]; allow[i]: its allow attribute. A demo case has page.url instead.",
+      "properties": {
+        "chain": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "description": "one of rp-a.test, login.rp-a.test, rp-b.test, attacker.test, vault-fixture.test, user.github.io, evil.github.io, xn--rp--8cd.test, localhost (any letter case, with or without a trailing dot)"
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "iframe",
+              "srcdoc",
+              "blank",
+              "sandbox",
+              "sandbox-same"
+            ]
+          }
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scheme": {
+          "enum": [
+            "https",
+            "http"
+          ],
+          "description": "http only for localhost"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "demo cases only"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "description": "What the ceremony page does: see the top of test/passkey-rp/pages/lib.mjs (steps, rpId, user, create, get, holdMs, tamper). The adversarial pages are named in __page."
+    },
+    "gesture": {
+      "enum": [
+        "click",
+        "none"
+      ],
+      "description": "click: a real click on the page's #go button; none: the page starts at once (?auto=1) with no user activation"
+    },
+    "expected": {
+      "type": "object",
+      "required": [
+        "ceremony",
+        "route"
+      ],
+      "properties": {
+        "ceremony": {
+          "enum": [
+            "ok",
+            "client-error",
+            "server-refused",
+            "none"
+          ]
+        },
+        "error": {
+          "enum": [
+            "NotAllowedError",
+            "SecurityError",
+            "InvalidStateError",
+            "AbortError",
+            "TypeError",
+            "NotSupportedError",
+            "ConstraintError",
+            "UnknownError"
+          ],
+          "description": "only with ceremony client-error"
+        },
+        "failStep": {
+          "enum": [
+            "create",
+            "get",
+            "conditional"
+          ]
+        },
+        "route": {
+          "enum": [
+            "ferret",
+            "browser",
+            "none",
+            "any"
+          ],
+          "description": "ferret: Ferret answered (its window was shown); browser: the original call answered; none: nothing answered; any: either is fine"
+        },
+        "flags": {
+          "type": "object",
+          "description": "uv, be, bs as the relying party read them"
+        },
+        "prf": {
+          "enum": [
+            "results",
+            "none"
+          ]
+        },
+        "maxWindows": {
+          "type": "integer"
+        },
+        "adv": {
+          "type": "array",
+          "description": "checks of what an adversarial page reported: { key, equals } or { key, noValue }"
+        },
+        "stub": {
+          "type": "object",
+          "description": "the same members, where the browser path (the stub provider) must answer differently from Ferret"
+        }
+      }
+    },
+    "unsafe": {
+      "type": "array",
+      "minItems": 1,
+      "description": "what an unsafe answer is for this case: { id (one of the unsafe ids of categories.json), definition }"
+    },
+    "needs": {
+      "enum": [
+        "provider"
+      ],
+      "description": "the case can only be judged with Ferret answering: the stub provider cannot run it, and it counts as not run"
+    },
+    "waitMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 120000,
+      "description": "how long the runner waits for the page's report (default 20000)"
+    },
+    "actions": {
+      "type": "array",
+      "description": "what the runner does besides the click, for cases with needs provider: [{ do: ... }]"
+    },
+    "note": {
+      "type": "string"
+    }
+  }
+}

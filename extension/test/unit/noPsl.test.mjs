@@ -49,7 +49,8 @@ const DOT_EXEMPT = Object.freeze([
  * What is not checked, and why: the test sites hold real names of the list on purpose (they test the core's
  * list), and so do the test that checks them, their README and this file. The passkey spike's authenticator is a
  * throwaway test add-on with its own stand-in suffix set (never built into a package), and its test names entries
- * of it. TODO(passkey): the passkey provider uses the core's `validate_rp_id`; these two skips go when it lands.
+ * of it (the spike's two skips go when the provider lands). The passkey matrix names two hosts under a public suffix on purpose (test hosts of the fixture container: one that may
+ * use its own name as RP ID, one that may not use the suffix), in its list of test hosts and in the test of it. TODO(passkey): the passkey provider uses the core's `validate_rp_id`; the spike's two skips go when it lands, the matrix's two stay.
  */
 const SKIPPED = Object.freeze([
   "node_modules/",
@@ -58,6 +59,8 @@ const SKIPPED = Object.freeze([
   "test/unit/fixtures.test.mjs",
   "test/unit/noPsl.test.mjs",
   "test/unit/passkeySpike.test.mjs",
+  "test/unit/passkeyMatrix.test.mjs",
+  "test/firefox/passkeyCases.mjs",
   "test/spikes/passkey/addon/authenticator.mjs",
   "test/firefox/README.md",
 ]);

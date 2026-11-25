@@ -1,0 +1,69 @@
+{
+  "id": "vault-offline-get-after-7-days-required",
+  "set": "fixtures",
+  "category": "vault-network",
+  "title": "no network for more than seven days: a PIN no longer counts, and userVerification required goes to the browser",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "required",
+      "allow": "all",
+      "timeout": 3000
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError"
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "needs": "provider",
+  "waitMs": 10000,
+  "actions": [
+    {
+      "do": "create-online"
+    },
+    {
+      "do": "go-offline"
+    },
+    {
+      "do": "age-offline",
+      "days": 8
+    },
+    {
+      "do": "start-get"
+    }
+  ],
+  "note": "The passkey was made by Ferret, so the browser has none for the site and ends the request."
+}

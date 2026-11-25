@@ -1,0 +1,60 @@
+Third-party software in the passkey fixture container (test/passkey-rp)
+=======================================================================
+
+The container is a test tool of Faithful Ferret (U4, the passkey matrix). It runs only on a
+test host, behind an internal Docker network. Its dependencies are only test dependencies:
+they are never part of a package, a release archive, the server image or the web vault of
+Faithful Ferret, and the product's own dependency graph (Cargo.lock, the server's lock, the
+extension) does not contain them. This file records them as the plan requires (UK128); the
+list that ships with the product is THIRD-PARTY-NOTICES.
+
+Relying-party libraries (the two fixtures)
+------------------------------------------
+
+webauthn-rs-core 0.6.2 and webauthn-rs-proto 0.6.2   MPL-2.0
+    https://github.com/kanidm/webauthn-rs
+    The relying party of the strict fixture (test/passkey-rp/webauthn-rs-fixture) calls the
+    verification code of webauthn-rs (signature, RP ID hash, origin, flags, backup state,
+    counter, the offered algorithms); the fixture itself adds the crossOrigin refusal, the user
+    handle of a discoverable sign-in and the backup eligibility of the registration. The sources of the library are used unmodified and are fetched
+    from crates.io at the versions in webauthn-rs-fixture/Cargo.lock; the fixture's own code
+    is a separate file under the licence of this repository. The Mozilla Public License 2.0
+    is at https://www.mozilla.org/MPL/2.0/ and lets the source of the library be had from
+    the address above.
+
+@simplewebauthn/server 14.0.0   MIT
+@simplewebauthn/browser 14.0.0  MIT
+    Copyright (c) 2020 Matthew Miller
+    https://github.com/MasterKale/SimpleWebAuthn
+    The relying party that many real sites use (server), and the client library that the
+    test pages use and serve to the browser (browser, the UMD bundle of the package). Both
+    are installed unmodified by `npm ci` from server/package-lock.json.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+    to whom the Software is furnished to do so, subject to the following conditions: The above
+    copyright notice and this permission notice shall be included in all copies or substantial
+    portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+    FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+    CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+    THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Their dependencies
+------------------
+
+The Rust crates the fixture depends on (232 in Cargo.lock) are licensed MIT, Apache-2.0, Unicode-3.0,
+BSD-2-Clause, BSD-3-Clause, Zlib, Unlicense or MPL-2.0 (four crates, among them webauthn-attestation-ca, webauthn-rs-core and webauthn-rs-proto). The
+npm packages of the fixture server (23 with the two above, in server/package-lock.json) are
+MIT, BSD-3-Clause (asn1js), Apache-2.0 (reflect-metadata) or 0BSD (tslib). None is copyleft
+beyond the file-level MPL-2.0 of webauthn-rs.
+
+Code of other projects
+----------------------
+
+No code of Bitwarden or AliasVault (GPL-3.0, AGPL-3.0) is in this directory. Where U4 later
+copies from them (UK128), the copied file keeps its header, gets an SPDX line and "Modified by
+Faithful Ferret", and goes into notices-extra.json.

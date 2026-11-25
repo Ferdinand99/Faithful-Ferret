@@ -1,0 +1,54 @@
+{
+  "id": "handover-automatic-security-key-hints",
+  "set": "fixtures",
+  "category": "handover",
+  "title": "cross-platform attachment with only security-key hints goes to the browser",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "authenticatorAttachment": "cross-platform",
+      "hints": [
+        "security-key"
+      ]
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    },
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    }
+  ],
+  "waitMs": 15000,
+  "note": "The runner puts create.hints on the options (the fixture server does not model hints)."
+}

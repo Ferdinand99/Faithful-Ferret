@@ -1,0 +1,49 @@
+{
+  "id": "get-uv-discouraged-strict",
+  "set": "fixtures",
+  "category": "get-modal",
+  "title": "a strict relying party refuses a sign-in without UV for a passkey made with UV; with a recent unlock Ferret's answer has UV and is accepted",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "discouraged",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "stub": {
+      "ceremony": "server-refused"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "note": "webauthn-rs checks the UV flag against the UV of the registration (UserNotVerified). The virtual authenticator does not verify when the request does not ask; Ferret's UV after a recent unlock (UK107) is what makes this pass."
+}

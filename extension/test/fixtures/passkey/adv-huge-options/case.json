@@ -1,0 +1,56 @@
+{
+  "id": "adv-huge-options",
+  "set": "adversarial",
+  "category": "adv-input",
+  "title": "values of a megabyte and more (challenge, names, thousands of credential ids): above the limits Ferret does not answer and the original call runs",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/huge-options.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "challengeBytes": 2097152
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "SecurityError",
+    "failStep": "get",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "waitMs": 30000,
+  "note": "No error type is defined for oversized values: the specification has no maximum for them, so Ferret leaves the call to the browser (reviewer's ruling), whose own answer is the expected one: the create with a 2 MiB challenge and 1 MiB names goes through, the get with thousands of allowed credentials ends with Firefox's SecurityError."
+}

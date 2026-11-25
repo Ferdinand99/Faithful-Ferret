@@ -1,0 +1,75 @@
+{
+  "id": "sync-delete-in-a-gone-in-b",
+  "set": "fixtures",
+  "category": "sync",
+  "title": "a passkey deleted in profile A is gone in profile B",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    },
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "profile",
+      "name": "a"
+    },
+    {
+      "do": "delete-passkey"
+    },
+    {
+      "do": "sync"
+    },
+    {
+      "do": "profile",
+      "name": "b"
+    },
+    {
+      "do": "sync"
+    },
+    {
+      "do": "start-get"
+    },
+    {
+      "do": "expect-no-candidate"
+    }
+  ]
+}

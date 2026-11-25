@@ -1,0 +1,159 @@
+{
+  "comment": "The categories of the passkey matrix (§ 11 of the U4 plan) and what each set must have at least. The hold-out set uses the same categories. A case names one category.",
+  "sets": [
+    "fixtures",
+    "adversarial",
+    "holdout",
+    "demo"
+  ],
+  "categories": {
+    "create-basic": {
+      "set": "fixtures",
+      "min": 6,
+      "summary": "create and sign in with every relying party and client code"
+    },
+    "create-options": {
+      "set": "fixtures",
+      "min": 8,
+      "summary": "residentKey, userVerification, attestation and authenticatorAttachment"
+    },
+    "create-algs": {
+      "set": "fixtures",
+      "min": 4,
+      "summary": "pubKeyCredParams: empty, ES256 and RS256, RS256 only, EdDSA only"
+    },
+    "create-exclude": {
+      "set": "fixtures",
+      "min": 2,
+      "summary": "excludeCredentials with and without a Ferret match"
+    },
+    "create-extensions": {
+      "set": "fixtures",
+      "min": 4,
+      "summary": "credProps, prf with and without eval, appid"
+    },
+    "create-users": {
+      "set": "fixtures",
+      "min": 4,
+      "summary": "two users on one relying party, the same user.id again, user.id of 0 and 65 bytes"
+    },
+    "create-gesture": {
+      "set": "fixtures",
+      "min": 1,
+      "summary": "create without user activation"
+    },
+    "get-modal": {
+      "set": "fixtures",
+      "min": 8,
+      "summary": "modal get: allowCredentials, userVerification, timeout and the page's AbortSignal"
+    },
+    "get-conditional": {
+      "set": "fixtures",
+      "min": 3,
+      "summary": "conditional mediation, and switching from conditional to modal"
+    },
+    "get-prf": {
+      "set": "fixtures",
+      "min": 3,
+      "summary": "prf eval and evalByCredential, and prf on a passkey made without it"
+    },
+    "origin-rpid": {
+      "set": "fixtures",
+      "min": 10,
+      "summary": "origin and RP ID: parent domain, child, sibling, public suffix, IDN, case, trailing dot, localhost"
+    },
+    "frames": {
+      "set": "fixtures",
+      "min": 7,
+      "summary": "top, same-origin frame, cross-origin frame, nested a-b-a, sandbox, srcdoc, about:blank"
+    },
+    "navigation": {
+      "set": "fixtures",
+      "min": 3,
+      "summary": "a new document mid-request, pushState, a closed tab, a lock mid-request"
+    },
+    "vault-network": {
+      "set": "fixtures",
+      "min": 4,
+      "summary": "open, locked, offline, unknown outcome and a late-accepted write"
+    },
+    "verification": {
+      "set": "fixtures",
+      "min": 3,
+      "summary": "recent unlock, PRF in the window, PIN, master password"
+    },
+    "handover": {
+      "set": "fixtures",
+      "min": 3,
+      "summary": "the browser chosen, Never on this site, automatic hand-over"
+    },
+    "background": {
+      "set": "fixtures",
+      "min": 1,
+      "summary": "the background page unloaded under a waiting request"
+    },
+    "sync": {
+      "set": "fixtures",
+      "min": 2,
+      "summary": "create in one profile and use in another; delete in one and gone in the other"
+    },
+    "adv-bridge": {
+      "set": "adversarial",
+      "min": 4,
+      "summary": "a page that talks to the bridge, tampers with the built-ins or overwrites navigator.credentials"
+    },
+    "adv-input": {
+      "set": "adversarial",
+      "min": 4,
+      "summary": "forged origins, huge options, a thousand requests, control characters and look-alike names"
+    },
+    "adv-timing": {
+      "set": "adversarial",
+      "min": 1,
+      "summary": "no match against cancelled, timed"
+    },
+    "adv-frames": {
+      "set": "adversarial",
+      "min": 3,
+      "summary": "a cross-origin frame that names the top's RP ID, a nested frame, a navigation just before the click"
+    },
+    "adv-window": {
+      "set": "adversarial",
+      "min": 3,
+      "summary": "a request without a gesture, a storm of windows, a page that reaches for the Ferret window"
+    },
+    "adv-vault": {
+      "set": "adversarial",
+      "min": 1,
+      "summary": "a page on the vault's origin (the override must be off)"
+    },
+    "adv-signals": {
+      "set": "adversarial",
+      "min": 1,
+      "summary": "the signal methods go to the browser untouched"
+    }
+  },
+  "unsafe": {
+    "response-to-other-frame": "an answer to another origin or frame than the one that asked",
+    "response-to-foreign-ancestor": "an answer to a frame that has a foreign ancestor",
+    "up-without-click": "user presence without a click in Ferret's own window or popup",
+    "uv-without-verification": "user verification set without a verification (or a recent unlock) for the request",
+    "signature-for-other-rp-id": "a signature for an RP ID that is not exactly the stored one",
+    "window-without-gesture": "a Ferret window without a user gesture",
+    "error-differs": "a difference in error type or time between \"cancelled\" and \"no match\"",
+    "key-outside-core": "a private key outside the core",
+    "passkey-not-delivered": "a passkey in the vault that the site never got, outside the trash",
+    "too-many-windows": "more Ferret windows at a time than the request limit allows (one)"
+  },
+  "hosts": {
+    "A": "rp-a.test",
+    "LOGIN": "login.rp-a.test",
+    "B": "rp-b.test",
+    "ATTACKER": "attacker.test",
+    "VAULT": "vault-fixture.test",
+    "USER_GITHUB": "user.github.io",
+    "EVIL_GITHUB": "evil.github.io",
+    "IDN": "xn--rp--8cd.test",
+    "LOCALHOST": "localhost"
+  }
+}

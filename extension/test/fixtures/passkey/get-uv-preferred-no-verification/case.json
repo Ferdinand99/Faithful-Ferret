@@ -1,0 +1,66 @@
+{
+  "id": "get-uv-preferred-no-verification",
+  "set": "fixtures",
+  "category": "get-modal",
+  "title": "userVerification preferred, no unlock in five minutes and no PIN or PRF: the answer has UV = 0 and a click is all it takes",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "flags": {
+      "uv": false
+    }
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "the response has user presence set without a trusted click in Ferret's own window or popup"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "age-unlock",
+      "minutes": 6
+    },
+    {
+      "do": "start-get"
+    },
+    {
+      "do": "choose-in-window"
+    }
+  ],
+  "note": "The only case that sees UV = 1 without a verification from outside."
+}

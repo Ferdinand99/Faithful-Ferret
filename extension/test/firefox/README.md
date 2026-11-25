@@ -35,6 +35,23 @@ The adversarial specs (`70-phishing`, `71-clickjacking`) and the end-to-end spec
 entries, the real popup about a page's tab, a UI port that stays open across steps,
 and a walk through every frame of a page to see where a password went.
 
+## The passkey matrix
+
+```
+scripts/lanbox-passkey-rp.sh up                 # the fixture container (two relying parties, test CA), on an internal network
+scripts/lanbox-ext.sh passkey-matrix [--channel ...] [--manifest ...] [--set fixtures|adversarial|holdout|demo] [--provider stub|ferret] [--grep <case id>]
+scripts/lanbox-passkey-rp.sh down
+```
+
+The cases are `test/fixtures/passkey/<id>/case.json` (written by `generate.mjs` there; `categories.json` and `case.schema.json`
+are what a hold-out writer gets). `passkeyCases.mjs` checks them and turns a run into numbers; `passkeyMatrix.mjs` drives Firefox;
+`96-passkey-matrix.e2e.spec.mjs` starts with a self-test of the virtual authenticator and the fixture's TLS. The browser trusts the
+fixture's test CA and sits on the fixture's internal network and no other; the pages are in `test/passkey-rp/pages`. Until the
+extension answers (U4-8) the provider is `stub`: the browser's own path answers, the route cannot be seen and the cases that need
+Ferret are counted as not run. A case that did not run counts as failed. The hold-out set is read from
+`test/fixtures/passkey-holdout/` (or `FERRET_PASSKEY_HOLDOUT_DIR`) and is copied in by U4-13. The reports are
+`test-results/out/u4-matrix/<set>-<channel>-<manifest>.json` and `.md`.
+
 ## The runner image
 
 Every download in `docker/ext-runner.Dockerfile` is pinned by version and

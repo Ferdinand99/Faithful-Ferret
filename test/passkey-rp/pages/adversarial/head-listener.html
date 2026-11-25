@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial: head-listener</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+(function () {
+  var seen = [], ports = [];
+  window.__seen = seen;
+  window.__ports = ports;
+  function rec(kind, e) {
+    seen.push({ kind: kind, type: e && e.type, hasPorts: !!(e && e.ports && e.ports.length) });
+    if (e && e.ports && e.ports.length) ports.push(e.ports[0]);
+  }
+  window.addEventListener("message", function (e) { rec("window-capture", e); }, true);
+  document.addEventListener("message", function (e) { rec("document-capture", e); }, true);
+  var dispatch = EventTarget.prototype.dispatchEvent;
+  EventTarget.prototype.dispatchEvent = function (e) { rec("dispatchEvent", e); return Reflect.apply(dispatch, this, arguments); };
+  var add = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function (t) { seen.push({ kind: "addEventListener", type: t }); return Reflect.apply(add, this, arguments); };
+})();
+</script>
+</head>
+<body>
+<h1>Adversarial page: head-listener</h1>
+<form id="login" onsubmit="return false">
+  <label>User name <input id="username" name="username" type="text" autocomplete="username webauthn"></label>
+  <button id="go" type="button">Run the case</button>
+</form>
+<pre id="result" data-state="idle">idle</pre>
+<script type="module">
+import { adversarial } from "/adversarial/adv.mjs";
+import { report, runCeremony } from "/lib.mjs";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+void report; void sleep;
+
+adversarial({ name: "head-listener", run: async (spec, note) => {
+  const out = await runCeremony(spec);
+  const replies = [];
+  for (const p of window.__ports) { p.onmessage = (e) => replies.push(JSON.stringify(e.data).slice(0, 200)); try { p.postMessage({ type: "passkey_request", id: "x", rpId: "github.com" }); } catch {} }
+  await sleep(300);
+  note("eventsSeenByHeadScript", window.__seen.length);
+  note("portsStolen", window.__ports.length);
+  note("repliesOnStolenPorts", replies);
+  return out;
+} });
+</script>
+</body>
+</html>

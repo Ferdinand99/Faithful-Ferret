@@ -1,0 +1,58 @@
+{
+  "id": "nav-new-document",
+  "set": "fixtures",
+  "category": "navigation",
+  "title": "the page loads a new document while the request waits: the request ends",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    },
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "start-waiting-get"
+    },
+    {
+      "do": "navigate",
+      "url": "https://rp-a.test/"
+    }
+  ]
+}
