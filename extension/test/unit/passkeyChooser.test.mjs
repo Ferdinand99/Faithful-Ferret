@@ -672,6 +672,26 @@ test("the_poll_asks_only_pending_and_never_the_site_so_an_open_window_does_not_k
   assert.equal(w.fake.calls.filter((c) => c.call === "view").length, refreshed + 1);
 });
 
+test("a_locked_window_leaves_the_unlock_by_itself_when_the_vault_is_opened_elsewhere", async () => {
+  const world = await setup();
+  const state = { view: raw({ state: "locked", site: null }), fail: /** @type {string | null} */ (null) };
+  const w = await open(world, state, { pollMs: 2000 });
+  assert.equal(w.root.getAttribute("data-state"), "locked");
+  // Locked: the poll reads the view (a refused site moves no timer while locked), not only the request.
+  await w.time.tick(2000);
+  assert.equal(w.root.getAttribute("data-state"), "locked", "nothing changed yet");
+  assert.ok(w.fake.calls.filter((c) => c.call === "view").length >= 2, "the poll read the view");
+  // The vault is opened in another window (a passkey unlock, the popup): one tick later the window shows the passkeys.
+  state.view = raw({ candidates: CANDIDATES });
+  await w.time.tick(2000);
+  assert.equal(w.root.getAttribute("data-state"), "ready");
+  assert.equal(byRole(w.root, "passkey-candidate").length, 2);
+  // Once open it asks only whether the request is there.
+  const views = w.fake.calls.filter((c) => c.call === "view").length;
+  await w.time.tick(2000);
+  assert.equal(w.fake.calls.filter((c) => c.call === "view").length, views);
+});
+
 test("a_pin_offer_does_not_take_the_focus_and_enter_may_submit_the_unlock_forms", async () => {
   const world = await setup();
   const offer = { allowed: true, afterRestart: true, minLength: 6, set: true, location: "disk", failuresLeft: 5, waitMs: 0, offlineOk: true, lastContactAt: null };

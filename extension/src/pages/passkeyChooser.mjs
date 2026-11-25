@@ -513,7 +513,7 @@ export function createChooser({
         const passkeyButton = el("button", { type: "button", class: "ff-button", "data-role": "passkey-unlock-passkey", ...FEATURE }, t("passkey.button"));
         passkeyButton.addEventListener("click", async () => {
           passkeyError.hidden = true;
-          // The unlock window opens; the vault opens there, and this window finds it open by itself (the poll).
+          // The unlock window opens; the vault opens there, and this window finds it open by itself (the poll reads the view while locked).
           if (!(await flow.openPasskeyWindow())) {
             passkeyError.textContent = t("passkey.error.prf_unavailable");
             passkeyError.hidden = false;
@@ -660,7 +660,11 @@ export function createChooser({
   async function poll() {
     pollTimer = null;
     if (closed) return;
-    if (!busy) {
+    // While the window shows the unlock, it reads the view (no idle timer runs while the vault is locked): the vault may have been
+    // opened somewhere else (the unlock window of a passkey, the popup), and this window must leave "Unlock Ferret" by itself.
+    if (!busy && view?.state === "locked") {
+      await refresh();
+    } else if (!busy) {
       const answer = await backend.alive();
       if (closed) return;
       if (!answer.ok && isGone(answer.reason)) {
