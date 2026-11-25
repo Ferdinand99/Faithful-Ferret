@@ -115,6 +115,9 @@ struct CreateDto {
     /// Present when the site asks for the PRF extension.
     #[serde(default)]
     prf: Option<PrfDto>,
+    /// Present and true when the site asks for `credProps`.
+    #[serde(default)]
+    cred_props: bool,
 }
 
 #[derive(Deserialize)]
@@ -313,6 +316,7 @@ impl Vault {
                 prf: dto.prf.map(|p| PrfCreate {
                     eval: p.eval.map(EvalDto::core),
                 }),
+                cred_props: dto.cred_props,
             };
 
             let inner = self.inner_mut()?;

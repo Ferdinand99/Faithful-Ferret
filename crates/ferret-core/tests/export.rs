@@ -99,6 +99,8 @@ fn passkey_body() -> ItemBody {
         created: NOW,
         prf_seed_uv: Some(vec![0xf4; 32]),
         prf_seed_nouv: Some(vec![0xf5; 32]),
+        rp_name: None,
+        user_display_name: None,
         extra: vec![("aaguid".into(), Value::Bytes(vec![1, 2, 3]))],
     });
     b
@@ -1178,6 +1180,8 @@ fn plain_csv_neutralizes_every_text_cell() {
         created: 0,
         prf_seed_uv: None,
         prf_seed_nouv: None,
+        rp_name: None,
+        user_display_name: None,
         extra: vec![],
     });
     let item = ExportItem {

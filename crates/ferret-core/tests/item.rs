@@ -93,6 +93,8 @@ fn full_body() -> ItemBody {
         created: 1_700_000_050_000,
         prf_seed_uv: Some(vec![0xf4; 32]),
         prf_seed_nouv: None,
+        rp_name: Some("Example site".into()),
+        user_display_name: Some("Alice A.".into()),
         extra: vec![(
             "future".into(),
             Value::Map(vec![

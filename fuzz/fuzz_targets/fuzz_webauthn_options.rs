@@ -7,8 +7,8 @@ use arbitrary::Arbitrary;
 use ferret_core::passkey::{PrfCreate, PrfEval, PrfRequest};
 use ferret_core::testing::TestRng;
 use ferret_core::{
-    CallerContext, CreateRequest, GetRequest, UserVerification, UvOutcome, canonical_origin,
-    passkey_create, passkey_get,
+    CallerContext, CreateRequest, GetRequest, StoredPasskeyRef, UserVerification, UvOutcome,
+    canonical_origin, passkey_candidates, passkey_create, passkey_get, passkey_site,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -36,6 +36,8 @@ struct Input {
     get_eval: Option<Eval>,
     by_credential: Vec<(Vec<u8>, Eval)>,
     use_get_prf: bool,
+    cred_props: bool,
+    stored: Vec<(String, Vec<u8>)>,
 }
 
 fn eval(e: Eval) -> PrfEval {
@@ -62,6 +64,7 @@ fuzz_target!(|i: Input| {
         exclude: i.exclude,
         user_verification: uv_kind,
         prf: i.create_prf.map(|p| PrfCreate { eval: p.map(eval) }),
+        cred_props: i.cred_props,
     };
     let get = GetRequest {
         challenge: i.challenge,
@@ -96,5 +99,21 @@ fuzz_target!(|i: Input| {
     }
     if get.validate().is_ok() {
         assert!(get.challenge.len() <= 1024 && get.allow.len() <= 200);
+    }
+    // The candidates are the stored passkeys of exactly the resolved RP ID,
+    // in the allow list when it is not empty; the site says the same RP ID.
+    let refs: Vec<StoredPasskeyRef<'_>> = i
+        .stored
+        .iter()
+        .map(|(rp_id, cred_id)| StoredPasskeyRef { rp_id, cred_id })
+        .collect();
+    let found = passkey_candidates(&ctx, get.rp_id.as_deref(), &get.allow, &refs);
+    let site = passkey_site(&ctx, get.rp_id.as_deref());
+    if let (Ok(found), Ok(site)) = (found, site) {
+        assert!(found.windows(2).all(|w| w[0] < w[1]));
+        for index in found {
+            assert_eq!(refs[index].rp_id, site.rp_id);
+            assert!(get.allow.is_empty() || get.allow.iter().any(|a| a == refs[index].cred_id));
+        }
     }
 });

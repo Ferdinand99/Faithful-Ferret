@@ -89,6 +89,8 @@ export function checkBody(value) {
     need(pk, 'created', uint, 'unsigned');
     opt(pk, 'prf_seed_uv', isBytes, 'bytes');
     opt(pk, 'prf_seed_nouv', isBytes, 'bytes');
+    opt(pk, 'rp_name', isText, 'text');
+    opt(pk, 'user_display_name', isText, 'text');
   }
   opt(value, 'notes', isText, 'text');
   need(value, 'created', uint, 'unsigned');
@@ -105,7 +107,7 @@ const SCHEMA_ORDER = {
   field: ['id', 'label', 'kind', 'value'],
   url: ['url', 'match'],
   totp: ['uri'],
-  passkey: ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv'],
+  passkey: ['cred_id', 'rp_id', 'user_handle', 'user_name', 'priv', 'sign_count', 'created', 'prf_seed_uv', 'prf_seed_nouv', 'rp_name', 'user_display_name'],
 };
 
 // `nested` is a Map: an unknown key named like a member of Object.prototype (toString, __proto__, ...) must be
