@@ -18,7 +18,8 @@
 //   the bytes of Ferret's credential.
 // - It fails closed: anything unexpected sends the call to the browser's own function, never a malformed request. That
 //   includes a bridge that died (the extension was updated, disabled or reloaded while the page was open: its isolated
-//   world goes, this world stays): a request the bridge does not say "taken" for within TAKEN_MS goes to the browser, and
+//   world goes, this world stays): a request the bridge does not say "taken" for (it does as soon as it has the request)
+//   within TAKEN_MS goes to the browser, and
 //   a taken one that hears no "alive" from the bridge for ALIVE_MS ends as one the user left (NotAllowedError; a
 //   conditional one goes to the browser, whose own list then works as before).
 // - It tells the bridge when create or get were not the browser's own at install (another extension came first), or

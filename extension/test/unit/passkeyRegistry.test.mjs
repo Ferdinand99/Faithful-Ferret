@@ -18,6 +18,7 @@ import { build, PASSKEY_GEN_FILE, passkeysModule } from "../../scripts/build.mjs
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { makeRoot } from "./buildHelpers.mjs";
+import { readSources } from "./passkeyWorld.mjs";
 
 /**
  * A browser with the three things the registration follows, and the scripts it holds.
@@ -203,10 +204,8 @@ test("the_answer_goes_only_to_the_frame_and_document_that_asked", async () => {
   const top = { ...sender, frameId: 0, documentId: "top-1" };
   await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender: top, body: {} });
   assert.equal(requests.foreignIn(4, "top-1"), true);
-  // A new top document (another id) is not marked by it; a closed tab forgets it.
+  // A new top document (another id) is not marked by it.
   assert.equal(requests.foreignIn(4, "top-2"), false);
-  requests.onTabRemoved(4);
-  assert.equal(requests.foreignIn(4, "top-1"), false);
   assert.equal(PASSKEY_EVENT_OP, PASSKEY_OP);
   assert.ok(CORE_OPS.includes(PASSKEY_EVENT_OP));
 });
@@ -275,6 +274,19 @@ test("the_handler_takes_only_a_request_it_can_answer", async () => {
   } finally {
     env.cleanup();
   }
+});
+
+test("the_background_wires_the_registry_to_the_session_and_the_permissions", () => {
+  // The registry has no storage listener: the session's sign-in and forget, the permission events and every start reach it.
+  const main = readFileSync(new URL("../../src/background/main.mjs", import.meta.url), "utf8");
+  assert.match(main, /sessionHost\.onServerChange\(\(\) => \{\s*passkeyRegistry\.reconcile\(\)/);
+  assert.match(main, /permissions\.onAdded\?\.addListener\([^)]*\) => \{\s*passkeyRegistry\.onPermissionAdded\(/);
+  assert.match(main, /permissions\.onRemoved\?\.addListener\([^)]*\) => \{\s*passkeyRegistry\.onPermissionRemoved\(/);
+  assert.match(main, /^passkeyRegistry\?\.reconcile\(\)/m);
+  assert.doesNotMatch(main, /onChanged|onInstalled/, "no listener that wakes a stopped event page");
+  // Only the registry writes the setting.
+  const writers = [...readSources()].filter(([path, bytes]) => path.endsWith(".mjs") && /use_passkeys|PASSKEY_SETTING_KEY/.test(bytes.toString("utf8"))).map(([path]) => path);
+  assert.deepEqual(writers, ["background/passkeyRegistry.mjs"]);
 });
 
 test("the_background_reaches_the_feature_only_through_the_generated_module", () => {

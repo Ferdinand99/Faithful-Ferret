@@ -20,8 +20,9 @@
 //   id it issued and still waits for, once, and drops everything else.
 // - While a request waits it pings the background every 20 seconds (a Manifest V3 event page is suspended after 30
 //   seconds otherwise), and never when nothing waits; with each ping it tells the page's script it is alive. It tells the
-//   page's script "taken" when the background took a request. The page's script hands a request that is not taken in
-//   time to the browser, and ends a taken one that hears nothing for 50 seconds (a bridge that died with the extension).
+//   page's script "taken" as soon as it has a request (before the background answers, which can take a while when a Manifest
+//   V3 event page starts from cold). The page's script hands a request that is not taken in time to the browser, and ends a
+//   taken one that hears nothing for 50 seconds (a bridge that died with the extension).
 //   If the extension cannot be reached, the browser answers.
 
 import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
@@ -142,12 +143,13 @@ function startBridge(runtime) {
     waiting.set(id, { n, kind });
     idOf.set(n, id);
     keepAlive();
+    // The bridge is alive and has the request: the page's script waits for the answer now, also while a Manifest V3 event
+    // page starts from cold. A request the background does not take still ends with a handover below.
+    toPage({ n, outcome: "taken" });
     if (!(await toBackground("passkey_request", body))) {
       // Too large for a message, not taken (a refused sender, such as a frame with an opaque origin), or the extension cannot
       // be reached: the browser answers.
       if (settle(id) !== null) handover();
-    } else if (waiting.has(id)) {
-      toPage({ n, outcome: "taken" });
     }
   };
 

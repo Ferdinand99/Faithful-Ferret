@@ -372,16 +372,21 @@ test("a_dead_bridge_fails_closed_to_the_original", async () => {
   assert.equal(conditional.nativeCalls.length, 1);
   assert.equal(conditional.page("out.value"), "browser");
 
-  // A background that never answers (the bridge is alive but nothing is taken): the browser after 3 s, and the bridge drops
-  // the request with the background.
+  // A background that is slow to answer (an event page starting from cold): the bridge said "taken" when it had the request,
+  // so the call waits for Ferret and does not slip to the browser after 3 s.
   const slow = createPasskeyPage();
   slow.setHangs(true);
   slow.page(GET());
   await slow.flush();
-  await slow.advance(3_000);
-  assert.equal(slow.page("out.value"), "browser");
-  const id = /** @type {any} */ (lastRequest(slow)).body.request_id;
-  assert.ok(slow.sent.some((m) => m.type === "passkey_abort" && m.body.request_id === id));
+  await slow.advance(10_000);
+  assert.equal(slow.page("out.done"), false);
+  assert.equal(slow.nativeCalls.length, 0);
+  // A request the background did not take still goes to the browser at once, after the "taken".
+  const refused = createPasskeyPage();
+  refused.setTakes(false);
+  refused.page(GET());
+  await refused.flush();
+  assert.equal(refused.page("out.value"), "browser");
 });
 
 test("a_signal_fired_while_the_options_are_copied_goes_to_the_original", async () => {

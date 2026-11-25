@@ -76,8 +76,6 @@ export function createPasskeyRequests({ tabs }) {
      * @param {number} tabId @param {string} documentId
      */
     foreignIn: (tabId, documentId) => foreign.get(tabId) === documentId,
-    /** A tab that closed. @param {number} tabId */
-    onTabRemoved: (tabId) => void foreign.delete(tabId),
     ops: Object.freeze({
       [PASSKEY_EVENT_OP]: {
         vault: false,
