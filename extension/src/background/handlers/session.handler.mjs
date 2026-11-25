@@ -77,7 +77,6 @@ const SAME_AS = Object.freeze({
   method_list_changed: "attack_warning",
   method_list_missing: "attack_warning",
   method_list_unknown: "attack_warning",
-  epoch_mismatch: "attack_warning",
   kdf_profile_downgrade: "attack_warning",
   forbidden: "two_factor_unsupported",
   // The worker that holds the keys stopped.

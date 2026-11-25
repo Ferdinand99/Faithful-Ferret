@@ -34,7 +34,7 @@ const SENTINEL_PASSWORD = "sentinel-master-password-5528";
 /**
  * A background that keeps what it is told: the policy and the PIN, a vault that is open or locked, and the replies a test
  * sets. Every request is logged (a copy, so what the page sends later cannot change an entry).
- * @param {{ pin?: Record<string, unknown>, prf?: Record<string, unknown>, server?: string, passkeys?: number }} [init]
+ * @param {{ pin?: Record<string, unknown>, prf?: Record<string, unknown>, server?: string, passkeys?: number | "unavailable" }} [init]
  */
 function backend(init = {}) {
   const state = {
@@ -74,7 +74,8 @@ function backend(init = {}) {
         return { state: state.vault, server: state.server };
       case "prf_options":
         if (state.passkeys === undefined) throw new UiError("not_available");
-        return state.passkeys === 0 ? { ok: false, reason: "prf_unavailable" } : { ok: true, rp_id: "ferret.example.net", credentials: Array.from({ length: state.passkeys }, () => ({ id: "AQID", salt: "a".repeat(43) })) };
+        if (state.passkeys === "unavailable") return { ok: false, reason: "prf_unavailable" };
+        return state.passkeys === 0 ? { ok: true, rp_id: "ferret.example.net", credentials: [] } : { ok: true, rp_id: "ferret.example.net", credentials: Array.from({ length: state.passkeys }, () => ({ id: "AQID", salt: "a".repeat(43) })) };
       default:
         throw new UiError("not_available");
     }
@@ -268,6 +269,10 @@ test("the_section_shows_what_is_true_of_the_pin_and_the_passkeys", async () => {
   assert.equal(one(zero.root, "unlock-passkey-count")?.textContent, "No passkey is set up for unlocking.");
   const listed = await sectionOf(on, { prf: { count: 0 }, passkeys: 3 });
   assert.equal(one(listed.root, "unlock-passkey-count")?.textContent, "Passkeys set up: 3.");
+  // A refusal that says nothing about the account (no server, a device whose state is not known, a pinned record that is
+  // missing) does not make the page claim there is no passkey.
+  const refused = await sectionOf(on, { prf: { count: 0 }, passkeys: "unavailable" });
+  assert.equal(one(refused.root, "unlock-passkey-count")?.textContent, "Passkeys are listed in the web vault.");
   const unknown = await sectionOf(on, { prf: { count: 0 } });
   assert.equal(one(unknown.root, "unlock-passkey-count")?.textContent, "Passkeys are listed in the web vault.");
   const noPrf = await sectionOf(on, { prf: { enabled: false, count: 0 } });

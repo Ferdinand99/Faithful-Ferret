@@ -567,10 +567,6 @@ export function createPinHost({
     } catch (error) {
       await lockHost().catch(() => {});
       const code = codeOf(error);
-      if (code === "epoch_mismatch") {
-        await store.wipe(server, account, "vk_epoch").catch(() => {});
-        return refused({ ok: false, reason: "pin_stale" });
-      }
       if (statusOf(error) === 401) {
         await endedAfter(server, code);
         await store.wipe(server, account, "device_revoked").catch(() => {});

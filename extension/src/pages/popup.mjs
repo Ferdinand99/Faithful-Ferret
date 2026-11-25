@@ -360,7 +360,9 @@ async function main() {
       actions.append(usePin);
       form.before(pin.root);
       teardown = () => pin.wipe();
-      if (password.input.value !== "" || secretKey.input.value !== "") {
+      // A submit empties the fields before it awaits the answer, so a form that is busy has been typed in too: a policy
+      // answer that lands in the middle of a master password unlock must not hide the form its error is going to be in.
+      if (password.input.value !== "" || secretKey.input.value !== "" || form.getAttribute("aria-busy") === "true") {
         // Typing has started in the master password's form: it is not taken away.
         pin.root.setAttribute("hidden", "");
         return;

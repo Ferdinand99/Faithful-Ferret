@@ -12,6 +12,7 @@ import { EXTENSION_ORIGIN, TEST_ADDON_ID, launch, readHosts } from "./harness.mj
 
 export const SIGNIN_URL = `${EXTENSION_ORIGIN}/pages/signin.html`;
 export const POPUP_URL = `${EXTENSION_ORIGIN}/pages/popup.html`;
+export const SETTINGS_URL = `${EXTENSION_ORIGIN}/pages/settings.html`;
 export const [VAULT_HOST, ADMIN_HOST] = /** @type {[string, string]} */ (readHosts().e2e);
 export const VAULT_URL = `https://${VAULT_HOST}`;
 export const ADMIN_URL = `https://${ADMIN_HOST}`;

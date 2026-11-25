@@ -13,8 +13,9 @@
 // The stack must be fresh (`e2e-up`), as for the other end-to-end specs; the account is the one the first channel made.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { POPUP_URL, SLOW, VAULT_HOST, extensionSignIn, helpers, pace, webVaultAccount } from "./e2e.mjs";
+import { POPUP_URL, SLOW, VAULT_HOST, extensionSignIn, helpers, webVaultAccount } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, stopFixtures } from "./harness.mjs";
+import { addPasskey } from "./unlock.mjs";
 
 after(() => stopFixtures());
 
@@ -44,51 +45,6 @@ function ask(session, type, body) {
     type,
     body,
   );
-}
-
-/**
- * Makes the account's passkey in the web vault (the account is signed in there), and returns to a blank page.
- * @param {import("./driver.mjs").Session} session
- * @param {{ password: string }} account
- * @param {string} name the name of the new passkey (each channel makes its own: the account keeps the one an earlier channel made, whose key is in a browser that is gone)
- */
-async function addPasskey(session, account, name) {
-  const page = helpers(session);
-  await session.content(() => {
-    location.hash = "#/unlock-methods";
-  });
-  await page.waitVisible('[data-role="methods-page"]', SLOW);
-  await page.waitAny(['[data-role="methods-empty"]', '[data-role="methods-row"]'], SLOW);
-  // The account keeps the passkey an earlier channel made, whose key is in a browser that is gone: it is removed first, so the
-  // call below has only the credential that this browser has.
-  const count = async () => (await session.findAll('[data-role="methods-row"]')).length;
-  for (let left = await count(); left > 0; left = await count()) {
-    await page.click('[data-role="methods-remove"]');
-    await page.waitVisible('[data-role="dialog-confirm"]', SLOW);
-    await page.click('[data-role="dialog-confirm"]');
-    const next = await page.waitAny(['[data-role="reauth-dialog"]', '[data-role="methods-done"]'], SLOW);
-    if (next === '[data-role="reauth-dialog"]') {
-      await page.type('[data-role="reauth-password"]', account.password);
-      await pace();
-      await page.click('[data-role="reauth-confirm"]');
-    }
-    await session.waitFor(async () => (await count()) < left, SLOW, "the removal of the old passkey");
-  }
-  await pace();
-  await page.click('[data-role="methods-add"]');
-  // The page asks for the master password again when the last check is older than a minute.
-  const asked = await page.waitAny(['[data-role="reauth-dialog"]', '[data-role="methods-name-form"]'], SLOW);
-  if (asked === '[data-role="reauth-dialog"]') {
-    await page.type('[data-role="reauth-password"]', account.password);
-    await pace();
-    await page.click('[data-role="reauth-confirm"]');
-  }
-  await page.waitVisible('[data-role="methods-name-form"]', SLOW);
-  await page.type('[data-role="methods-name-input"]', name);
-  await page.click('[data-role="methods-create"]');
-  await page.waitVisible('[data-role="methods-confirm"]', SLOW);
-  await page.click('[data-role="methods-confirm"]');
-  await page.waitVisible('[data-role="methods-done"]', SLOW);
 }
 
 test("prf_unlock_after_lock_in_release_and_esr", async () => {

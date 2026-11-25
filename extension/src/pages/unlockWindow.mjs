@@ -59,7 +59,9 @@ async function main() {
       rand: (/** @type {Uint8Array} */ bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
       now: () => Date.now(),
       sha256,
-      // Firefox writes an origin of its own making into the client data of an extension's page, not the page's address.
+      // Firefox writes the extension's own origin, `moz-extension://` plus the SHA-256 of the extension id with its nibbles written
+      // as the letters a to p, into the client data of an extension's page, not the page's address. The flow derives it from the id
+      // and compares it exactly.
       origin: await extensionOrigin(browser.runtime.id, sha256),
     },
   });
