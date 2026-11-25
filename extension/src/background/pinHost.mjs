@@ -19,9 +19,8 @@
 //
 // For a page's passkey request (the `passkeys` feature, passkeyVerify.mjs) it also verifies the person while the vault is open,
 // without opening or touching that vault (`verifier`): the PIN (`pin.verify`, an attempt counted like an unlock), a passkey of
-// the vault (`prf.verify`, online, the same checks of the core as `prf_unlock`) and the master password (`password.verify`, the
-// sign-in exchange with the server and the password wrap opened against the pinned account, as `pin_set` asks for it). The
-// core's unlock of the PIN and of a passkey runs in a client of its own (`scratch`, made for the one check and ended at once),
+// the vault (`prf.verify`, online, the same checks of the core as `prf_unlock`). (The master password is checked by the session
+// itself, passkeyVerify.mjs, so a build without the PIN has it too.) The core's unlock of the PIN and of a passkey runs in a client of its own (`scratch`, made for the one check and ended at once),
 // so the open vault is never replaced and a check that runs out of memory ends only that worker.
 //
 // What the store's caller must do (the header of the PIN store, "What the caller must do"), and where it is done:
@@ -903,11 +902,13 @@ export function createPinHost({
           await endedAfter(open.server, codeOf(error));
           return refused({ ok: false, reason: "signed_out" });
         }
-        // A refusal of what the server shows against what this device has pinned deletes the PIN, as after `prf_unlock`.
+        // The rule of `prf_unlock`: any refusal that is not an answer of the server and says something about what the server
+        // shows (not only about the passkey, and not a worker or a lock) deletes the PIN, whatever its code: no list of codes
+        // decides it. An offline PIN would otherwise open the vault without the checks that just failed.
         const code = codeOf(error);
-        if (code.startsWith("pinned_") || code.startsWith("method_list_")) {
+        if (statusOf(error) === null && !NOT_A_REFUSAL.has(code) && !PASSKEY_ONLY.has(code)) {
           await store.wipe(open.server, open.account, "pinned_rejected").catch(() => {});
-          return refused({ ok: false, reason: "attack_warning" });
+          return refused({ ok: false, reason: prfReasonOf(error) ?? "attack_warning" });
         }
         return refused({ ok: false, reason: prfReasonOf(error) ?? "prf_failed" });
       } finally {
@@ -932,33 +933,10 @@ export function createPinHost({
     return policy?.prf.enabled === true;
   }
 
-  /**
-   * Checks the master password (and the secret key where this device does not keep it) for the open vault, as `pin_set` asks
-   * for it: the sign-in exchange with the server (OPAQUE) and the password wrap opened against the pinned account key. No vault
-   * is made and nothing is posted.
-   * @param {{ mp: string, sk?: string }} input
-   * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
-   */
-  async function verifyPassword(input) {
-    const open = await openAccount();
-    if (open === null) return refused({ ok: false, reason: "vault_locked" });
-    try {
-      await open.session.verifyPassword({ password: input.mp, ...(typeof input.sk === "string" ? { skCode: input.sk } : {}) });
-    } catch (error) {
-      const code = codeOf(error);
-      if (code === "sk_required" || code === "sk_answer_required") return refused({ ok: false, reason: "sk_required" });
-      if (statusOf(error) === 401 || code === "signed_out" || code === "session_ended") return refused({ ok: false, reason: "signed_out" });
-      if (code.startsWith("pinned_") || code.startsWith("method_list_")) return refused({ ok: false, reason: "attack_warning" });
-      return refused({ ok: false, reason: setReasonOf(error) ?? "not_verified" });
-    }
-    return { ok: true };
-  }
-
   /** The checks of the verification step for a page's passkey request (passkeyVerify.mjs). */
   const verifier = Object.freeze({
     pin: Object.freeze({ status: verifierPinStatus, verify: verifyPin }),
     prf: Object.freeze({ available: prfAvailable, verify: verifyPrf }),
-    password: Object.freeze({ verify: verifyPassword }),
   });
 
   // The alarm's listener is added now, so the alarm that wakes an unloaded page reaches it.
