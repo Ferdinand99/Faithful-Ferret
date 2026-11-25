@@ -183,63 +183,15 @@
   --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M12%2021s-7-4.5-7-10a4%204%200%20017-2.6A4%204%200%200119%2011c0%205.5-7%2010-7%2010z%27/%3E%3C/svg%3E);
 }
 
-/* The settings' part of the popup: the settings page's view (settingsView.mjs) in the width of the popup. It scrolls with its
-   panel; the never list is a plain list here, not the vault's scrolling one. */
+/* The settings' part of the popup: the settings page's view (settingsView.mjs, styled in settings.css) in the width of the popup. It
+   scrolls with its panel. */
 .ff-settings {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
   padding: var(--sp-3) 14px var(--sp-4);
 }
 
-.ff-settings > *,
-.ff-settings .ff-form {
+.ff-settings > * {
   min-width: 0;
-}
-
-.ff-settings p {
-  margin: 0;
-}
-
-.ff-settings .ff-settings-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.ff-settings h2 {
-  margin: 0;
-  font-size: 0.9375rem;
-}
-
-.ff-settings h3 {
-  margin: var(--sp-2) 0 0;
-  font-size: 0.875rem;
-}
-
-.ff-settings .ff-list {
-  flex: none;
-  overflow: visible;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ff-settings .ff-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  padding: var(--sp-1) 0;
-  overflow-wrap: anywhere;
-}
-
-.ff-settings .ff-credits {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--line);
 }

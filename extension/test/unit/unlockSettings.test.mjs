@@ -102,7 +102,7 @@ async function sectionOf(/** @type {Awaited<ReturnType<typeof build>>} */ built,
   const section = sectionModule.createUnlockSection(flow, texts, { pollMs: 0 });
   const root = doc.createElement("div");
   if (section !== null) {
-    root.append(section.node);
+    root.append(...section.pages.map((/** @type {any} */ page) => page.node));
     await section.refresh();
   }
   return { doc, section, root, texts, catalog, opened, ...fake };
@@ -810,13 +810,13 @@ test("manage_in_the_web_vault_opens_the_vault_page", async () => {
   const world = await sectionOf(on);
   await click(one(world.root, "unlock-manage"));
   assert.deepEqual(world.opened, ["https://ferret.example.net/#/account"]);
-  assert.equal(one(world.root, "unlock-error")?.hidden, true);
+  assert.equal(one(world.root, "unlock-passkey-error")?.hidden, true);
   // A server address that is no web address opens nothing and says so.
   const odd = await sectionOf(on, { server: "javascript:alert(1)" });
   await click(one(odd.root, "unlock-manage"));
   assert.deepEqual(odd.opened, []);
-  assert.equal(one(odd.root, "unlock-error")?.hidden, false);
-  assert.equal(one(odd.root, "unlock-error")?.textContent, odd.catalog["settings.unlock.error.not_available"]);
+  assert.equal(one(odd.root, "unlock-passkey-error")?.hidden, false);
+  assert.equal(one(odd.root, "unlock-passkey-error")?.textContent, odd.catalog["settings.unlock.error.not_available"]);
   // A page with no way to open a tab (no `openTab`) opens nothing.
   const flow = createUnlockFlow(async () => ({ state: "unlocked", server: SERVER }));
   assert.deepEqual(await flow.openVault(), { ok: false, reason: "not_available" });

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { SETTINGS_URL, SLOW, extensionSignIn, helpers, pace, start, webVaultAccount } from "./e2e.mjs";
-import { channels, stopFixtures } from "./harness.mjs";
+import { channels, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { afterStart, ask, pinPlaces } from "./unlock.mjs";
 
 after(() => stopFixtures());
@@ -18,6 +18,7 @@ after(() => stopFixtures());
 async function openSettings(session) {
   await session.navigate(SETTINGS_URL);
   await helpers(session).ready();
+  await openSettingsPage(session, "pin");
   await helpers(session).waitVisible("[data-role=unlock-section]");
   // The section shows what the background says once the policy has answered.
   await session.waitFor(() => session.content(() => (document.querySelector("[data-role=unlock-pin-status]")?.textContent ?? "") !== ""), 20_000, "the status of the PIN");

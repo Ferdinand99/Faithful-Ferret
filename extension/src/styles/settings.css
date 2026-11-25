@@ -1,0 +1,484 @@
+/* The settings view (settingsView.mjs and the parts it shows), in the popup and in the settings tab: a main screen of grouped
+   rows that open sub-pages, and on a sub-page compact cards with a bold title, a one-line description and, for a setting that is
+   on or off, a switch on the right. The switch shows its state three ways: the colour, the place of the knob and the words "On"
+   or "Off". Only the tokens of session.css; no colour is written out here. */
+
+.ff-sview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ff-smain,
+.ff-spage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.ff-smain[hidden],
+.ff-spage[hidden] {
+  display: none;
+}
+
+.ff-sview h1,
+.ff-sview h2 {
+  margin: 0;
+  text-wrap: balance;
+}
+
+.ff-sview p {
+  margin: 0;
+}
+
+.ff-sview .ff-settings-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+/* A group: its heading and a list of rows in one rounded block. */
+.ff-sgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-sview .ff-sgroup-title {
+  padding: 0 var(--sp-1);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ff-nav-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.ff-nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 48px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ff-nav-row:first-child {
+  border-top: 0;
+}
+
+.ff-nav-row:hover {
+  background: var(--hover);
+}
+
+.ff-nav-row:focus-visible,
+.ff-back:focus-visible,
+.ff-switch-row:focus-visible,
+.ff-more-summary:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.ff-nav-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--brand-fill);
+  color: var(--brand);
+}
+
+.ff-nav-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ff-nav-summary {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.ff-nav-summary:empty {
+  display: none;
+}
+
+.ff-ico-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.ff-ico-chevron:dir(rtl) {
+  transform: scaleX(-1);
+}
+
+/* A sub-page: the back button, the title, and the cards. */
+.ff-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--sp-1);
+  min-height: 36px;
+  margin-inline-start: calc(var(--sp-2) * -1);
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ff-back:hover {
+  background: var(--hover);
+}
+
+.ff-back .ff-ico:dir(rtl) {
+  transform: scaleX(-1);
+}
+
+.ff-sview .ff-spage-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.ff-spage-title:focus {
+  outline: none;
+}
+
+.ff-spage-title:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ff-spage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+/* A card: one setting. The text is on the left, the control on the right. */
+.ff-scard {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+li.ff-scard {
+  justify-content: space-between;
+  list-style: none;
+}
+
+.ff-scard-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ff-scard-title {
+  font-weight: 700;
+}
+
+.ff-scard-desc {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* A card that holds a state, some lines and buttons, one under the other. */
+.ff-scard-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+}
+
+.ff-scard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.ff-scard-col .ff-status,
+.ff-scard-col .ff-hint {
+  margin: 0;
+}
+
+.ff-scard-col .ff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ff-scard-col .ff-actions[hidden],
+.ff-scard-col .ff-actions:empty {
+  display: none;
+}
+
+.ff-unlock-detail:empty {
+  display: none;
+}
+
+/* "On" or "Off" in words, with a colour that is more than the words. */
+.ff-chip {
+  flex: none;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--field-border);
+  border-radius: var(--r-full);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.ff-chip[data-on="1"] {
+  border-color: var(--brand);
+  background: var(--brand-fill);
+  color: var(--brand);
+}
+
+/* The switch: the whole card is the button. */
+.ff-switch-row {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ff-switch-row:hover {
+  background: var(--hover);
+}
+
+.ff-switch-row:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.ff-switch {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ff-switch-text {
+  min-width: 1.75em;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: end;
+}
+
+.ff-switch-track {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  box-sizing: border-box;
+  border: 2px solid var(--field-border);
+  border-radius: var(--r-full);
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out);
+}
+
+.ff-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-full);
+  background: var(--muted);
+  transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-press) var(--ease-out);
+}
+
+.ff-switch-row[aria-checked="true"] .ff-switch-track {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.ff-switch-row[aria-checked="true"] .ff-switch-knob {
+  background: var(--on-inverse);
+  transform: translateX(18px);
+}
+
+.ff-switch-row[aria-checked="true"] .ff-switch-text {
+  color: var(--brand);
+}
+
+/* A choice from a list: the select is a compact control on the right, with the current value in it. */
+.ff-select {
+  flex: none;
+  width: auto;
+  max-width: 50%;
+  min-height: 36px;
+  padding-block: var(--sp-1);
+  font-weight: 600;
+}
+
+/* The never list. */
+.ff-never {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ff-never > li:not(.ff-scard) {
+  padding: var(--sp-2) var(--sp-1);
+}
+
+.ff-never-host {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ff-spage-body > .ff-button {
+  align-self: flex-start;
+}
+
+/* "More about this": the long explanations, one click away. */
+.ff-more {
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-2);
+}
+
+.ff-more-summary {
+  display: inline-block;
+  padding: var(--sp-1) 0;
+  color: var(--brand);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ff-more[open] > .ff-more-summary {
+  margin-bottom: var(--sp-1);
+}
+
+.ff-more-body,
+.ff-more-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-more-lines:empty {
+  display: none;
+}
+
+.ff-more-body p {
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.ff-sview .ff-credits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-switch-track,
+  .ff-switch-knob {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ff-nav-list,
+  .ff-scard,
+  .ff-switch-track,
+  .ff-chip {
+    border-color: CanvasText;
+  }
+
+  .ff-switch-knob {
+    background: CanvasText;
+  }
+
+  .ff-switch-row[aria-checked="true"] .ff-switch-track {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  .ff-switch-row[aria-checked="true"] .ff-switch-knob {
+    background: HighlightText;
+  }
+
+  .ff-chip[data-on="1"] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+}
+
+.ff-ico-save {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M5%203h11l3%203v15H5z%27/%3E%3Cpath%20d=%27M8%203v5h7V3M8%2021v-7h8v7%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-never {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%279%27/%3E%3Cpath%20d=%27M5.6%205.6l12.8%2012.8%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-pin {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%273.5%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M6%206h.01M12%206h.01M18%206h.01M6%2012h.01M12%2012h.01M18%2012h.01M6%2018h.01M12%2018h.01M18%2018h.01%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-passkey {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Ccircle%20cx=%278%27%20cy=%2715%27%20r=%274%27/%3E%3Cpath%20d=%27M11%2012l9-9M17%206l3%203M14%209l2%202%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-clock {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%279%27/%3E%3Cpath%20d=%27M12%207v5l3%202%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-info {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Ccircle%20cx=%2712%27%20cy=%2712%27%20r=%279%27/%3E%3Cpath%20d=%27M12%2011v6M12%207.5h.01%27/%3E%3C/svg%3E);
+}
+
+.ff-ico-chevron {
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%272%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M9%206l6%206-6%206%27/%3E%3C/svg%3E);
+}
+
+

@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { world } from "./adversary.mjs";
-import { EXTENSION_ORIGIN, channels, defaultManifest, fixtures, launch, stopFixtures } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, defaultManifest, fixtures, launch, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { ENTRIES, caseUrl, casesOf, grantUrls, leave, locate, mergePhases, runCapturePhase, runFillPhase, runGeneratorPhase } from "./matrix.mjs";
 import { computeMatrix, writeReport } from "./matrixReport.mjs";
 
@@ -137,6 +137,7 @@ test("matrix_fill_phase_runs_every_case_and_writes_the_baseline", async (t) => {
       if (PART !== "fill") {
         await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
         await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+        await openSettingsPage(w.session, "capture");
         const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
         assert.ok(toggle, `${channel}: the settings page has the switch`);
         await w.session.click(toggle);

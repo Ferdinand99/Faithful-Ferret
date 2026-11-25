@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
 import { SLOW, pace } from "./e2e.mjs";
-import { EXTENSION_ORIGIN, channels, fixtures, stopFixtures } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, fixtures, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { caseUrl, casesOf, captureCase, leave, locate, offersPeek, readValue } from "./matrix.mjs";
 import { allText, newestTab, popupWithCard, readyWorld, sleep, uniqueSignup, vaultItemHref } from "./offerWorld.mjs";
 
@@ -275,6 +275,7 @@ test("full_u2_flow_end_to_end", async () => {
       // The settings page lists the host, and takes it off again.
       await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
       await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+      await openSettingsPage(w.session, "never");
       await w.page.waitVisible('[data-role="never-list"] [data-role="never-host"]');
       assert.ok((await allText(w, '[data-role="never-host"]')).some((t) => t.includes("forms.example.net")), `${channel}: the settings list has the host`);
       await w.page.click('[data-role="never-remove"][data-host="forms.example.net"]');
@@ -364,6 +365,7 @@ test("the_vault_still_syncs_after_the_https_access_is_taken_back", async () => {
       // The person turns the setting off in the settings tab: the access goes with it.
       await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
       await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+      await openSettingsPage(w.session, "capture");
       const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
       await w.session.click(toggle);
       await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked") === "false"), 15_000, "the switch off");

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { world } from "./adversary.mjs";
 import { POPUP_URL, SLOW } from "./e2e.mjs";
-import { EXTENSION_ORIGIN } from "./harness.mjs";
+import { EXTENSION_ORIGIN, openSettingsPage } from "./harness.mjs";
 import { ENTRIES, casesOf, offersPeek } from "./matrix.mjs";
 
 export const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -28,6 +28,7 @@ export async function readyWorld(channel) {
   }
   await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
   await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+  await openSettingsPage(w.session, "capture");
   const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
   assert.ok(toggle, `${channel}: the settings page has the switch`);
   await w.session.click(toggle);

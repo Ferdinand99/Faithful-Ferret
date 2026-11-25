@@ -213,3 +213,23 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2);
   }
 }
+
+/**
+ * Opens one page of the settings view by pressing its row on the main screen (in the settings tab, or in the settings part of the
+ * popup), and waits until the page is shown. The ids are the ones of the rows: capture, never, pin, passkeys, lock, credits.
+ * @param {import("./driver.mjs").Session} session
+ * @param {string} id
+ */
+export async function openSettingsPage(session, id) {
+  const shown = (/** @type {string} */ css) =>
+    session.content((/** @type {string} */ selector) => {
+      const node = document.querySelector(selector);
+      return node !== null && node.closest("[hidden]") === null && node.getClientRects().length > 0;
+    }, css);
+  const row = `[data-role="settings-row-${id}"]`;
+  await session.waitFor(() => shown(row), 30_000, `the settings row ${id}`);
+  const [button] = await session.findAll(row);
+  if (!button) throw new Error(`no settings row ${id}`);
+  await session.click(button);
+  await session.waitFor(() => shown(`[data-role="settings-page"][data-page="${id}"]`), 15_000, `the settings page ${id}`);
+}

@@ -145,7 +145,7 @@ Reload every open vault tab after a deploy.
 
 ### 2. A PIN in the extension (Firefox, about 25 minutes)
 
-1. Open the extension's settings (the popup's Settings, or about:addons, Ferret, Preferences). In the Unlock part press "Turn on PIN".
+1. Open the extension's settings (the popup's Settings, or about:addons, Ferret, Preferences). Open the "PIN" row (under "Unlocking") and press "Turn on PIN".
    *Expected:* a dialog with the master password, the PIN twice, "Require master password after browser restart" **off**, and
    a warning about the PIN being kept on this computer with "I understand" **not ticked**.
 2. Type a wrong master password and a PIN of six digits.
