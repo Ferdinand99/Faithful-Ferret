@@ -676,26 +676,61 @@ test("the_texts_of_the_passkey_unlock_exist_in_en_and_nb_and_each_is_used", asyn
   assert.match(en["passkey.blocked.windows"], /Windows Hello/);
 });
 
-test("an_extension_page_may_accept_the_origin_firefox_writes_for_it_and_a_web_page_may_not_differ", async () => {
-  // Firefox writes an origin of its own making into the client data of an extension's page (not the page's address), so the
-  // extension's window gives the shared check a function for it; the web vault still gives its exact origin.
+test("the_origin_of_an_extension_page_is_computed_from_its_id_and_checked_exactly", async () => {
+  // Firefox 150 and later writes moz-extension:// and the SHA-256 of the extension id (each hex nibble as a letter a to p) into
+  // the client data of an extension page. The value below was captured from a real Firefox run of the test build.
   const { load } = await pkg();
+  const { extensionOrigin } = await load("pages/unlockWindowFlow.mjs");
   const { evaluateOneOf } = await load("shared/flows/passkeyAnswer.mjs");
-  const request = { rpId: HOST, credentials: [{ id: PASSKEY.credential, salt: PASSKEY.salt }], getAssertion: null };
+  const { createHash } = await import("node:crypto");
+  const sha256 = async (/** @type {Uint8Array} */ data) => Uint8Array.from(createHash("sha256").update(data).digest());
+  const captured = "moz-extension://loihkokpllkcdpkkahglfeikpjenbcbemfmfjlnbkpdgfmgjpjhplhbkfhmfeaan";
+  assert.equal(await extensionOrigin("ferret-test@hedgerow.tools", sha256), captured);
+  const release = await extensionOrigin("ferret@hedgerow.tools", sha256);
+  assert.match(release, /^moz-extension:[/][/][a-p]{64}$/);
+  assert.notEqual(release, captured);
+  // The check is the exact string: the same origin passes, another one (a web page, another extension) does not.
   const deps = await flowDeps();
-  const given = "moz-extension://loihkokpllkcdpkkahglfeikpjenbcbemfmfjlnbkpdgfmgjpjhplhbkfhmfeaan";
-  const shape = (/** @type {string} */ seen) => /^moz-extension:[/][/][a-z0-9-]{8,128}$/.test(seen);
-  const evaluate = async (/** @type {string} */ writes, /** @type {any} */ origin) => {
+  const evaluate = async (/** @type {string} */ writes, /** @type {string} */ expected) => {
     const fake = await fakeAssertion({ origin: writes });
-    return evaluateOneOf({ ...request, getAssertion: fake.getAssertion }, { ...deps, origin }).then((r) => ({ ok: true, output: r.output }), (e) => ({ ok: false, code: e.code }));
+    return evaluateOneOf({ rpId: HOST, credentials: [{ id: PASSKEY.credential, salt: PASSKEY.salt }], getAssertion: fake.getAssertion }, { ...deps, origin: expected }).then(
+      () => "ok",
+      (/** @type {any} */ error) => error.code,
+    );
   };
-  assert.equal((await evaluate(given, shape)).ok, true);
-  // The function decides: another scheme, a web page's origin and a malformed one are refused, as is a string that differs.
-  assert.deepEqual(await evaluate("https://evil.example", shape), { ok: false, code: "passkey_bad_answer" });
-  assert.deepEqual(await evaluate("moz-extension://", shape), { ok: false, code: "passkey_bad_answer" });
-  assert.deepEqual(await evaluate("moz-extension://abc/def", shape), { ok: false, code: "passkey_bad_answer" });
-  assert.equal((await evaluate("https://vault.example.com", "https://vault.example.com")).ok, true);
-  assert.deepEqual(await evaluate("https://evil.example", "https://vault.example.com"), { ok: false, code: "passkey_bad_answer" });
-  // A function that says anything but true is a refusal.
-  assert.deepEqual(await evaluate(given, () => "yes"), { ok: false, code: "passkey_bad_answer" });
+  assert.equal(await evaluate(captured, captured), "ok");
+  assert.equal(await evaluate(release, captured), "passkey_bad_answer");
+  assert.equal(await evaluate("https://evil.example", captured), "passkey_bad_answer");
+});
+
+test("a_refusal_of_the_checks_after_a_passkey_unlock_deletes_the_pin_but_a_wrong_key_does_not", async () => {
+  const { makeBlob } = await import("./localUnlockHelpers.mjs");
+  const withPin = async () => {
+    const w = await lockedWorld();
+    await w.pinStore.save(SERVER, ACCOUNT, makeBlob({ minLength: 6 }), { location: "disk", acknowledged: true });
+    assert.equal((await w.pinStore.status(SERVER, ACCOUNT)).set, true);
+    return w;
+  };
+  // What the server shows disagrees with what this device pinned: the vault locks and the PIN is deleted.
+  for (const [name, cause] of /** @type {Array<[string, (w: any) => void]>} */ ([
+    ["the list differs from the manifest", (w) => { w.state.methodsCheck = () => { throw coded("method_list_changed"); }; }],
+    ["the account key is not the pinned one", (w) => { w.state.pkA = filled(32, 99); }],
+    ["the key epoch is ahead", (w) => { w.state.vkEpoch = 2; }],
+  ])) {
+    const w = await withPin();
+    cause(w);
+    assert.deepEqual(await w.unlock(), { ok: false, reason: "attack_warning" }, name);
+    assert.equal(w.coreHost.state(), "locked", name);
+    assert.equal((await w.pinStore.status(SERVER, ACCOUNT)).set, false, `${name}: the PIN is deleted`);
+  }
+  // A passkey that is only wrong, removed or not offered says nothing about the server: the PIN stays.
+  const w = await withPin();
+  assert.deepEqual(await w.unlock({ prf_output: b64u(filled(32, 1)) }), { ok: false, reason: "prf_failed" });
+  assert.deepEqual(await w.unlock({ credential_id: b64u(filled(24, 5)) }), { ok: false, reason: "prf_failed" });
+  w.state.online = false;
+  assert.deepEqual(await w.unlock(), { ok: false, reason: "network" });
+  w.state.online = true;
+  w.state.prfEnabled = false;
+  assert.deepEqual(await w.unlock(), { ok: false, reason: "prf_unavailable" });
+  assert.equal((await w.pinStore.status(SERVER, ACCOUNT)).set, true, "the PIN is still there");
 });

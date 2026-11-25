@@ -57,6 +57,7 @@
   "settings.unlock.locked_closed": "Ferret låste seg, så PIN-skjemaet ble lukket og tømt.",
   "settings.unlock.passkey.about": "En passkey (Windows Hello, Touch ID eller en telefon) kan låse opp hvelvet. Passkeys legges til og fjernes i webhvelvet, ikke her. En passkey som synkroniseres, for eksempel gjennom iCloud-nøkkelring eller en Google-konto, er bare så trygg som skykontoen; webhvelvet merker hver av dem som «Synkronisert passkey» eller «Bare denne enheten».",
   "settings.unlock.passkey.count": "Passkeys satt opp: {count}.",
+  "settings.unlock.passkey.listed": "Passkeys vises i webhvelvet.",
   "settings.unlock.passkey.manage": "Administrer i webhvelvet",
   "settings.unlock.passkey.none": "Ingen passkey er satt opp for opplåsing.",
   "settings.unlock.passkey.off": "Opplåsing med passkey er ikke slått på for denne serveren.",

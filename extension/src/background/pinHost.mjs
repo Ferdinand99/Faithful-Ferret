@@ -60,6 +60,9 @@ const NO_PIN_POLICY = Object.freeze({ pin: Object.freeze({ allowed: false, after
 /** Codes of a worker that was ended or a lock that came: not a refusal of anything, so no reason to delete a PIN. */
 const NOT_A_REFUSAL = new Set(["locked", "vault_locked", "worker_failed", "internal"]);
 
+/** Codes of a passkey unlock that say something about the passkey and nothing about what the server shows. */
+const PASSKEY_ONLY = new Set(["decrypt", "prf_failed", "method_removed", "prf_unavailable", "pinned_missing", "signed_out", "session_ended"]);
+
 /** @param {unknown} error @returns {string} */
 const codeOf = (error) => {
   const code = /** @type {{ code?: unknown }} */ (error)?.code;
@@ -715,6 +718,14 @@ export function createPinHost({
         if (statusOf(error) === 401) {
           await endedAfter(server, codeOf(error));
           return refused({ ok: false, reason: "signed_out" });
+        }
+        // A refusal of what the server shows against what this device has pinned (a `pinned_*` or `method_list_*` code, a key epoch
+        // that does not fit) deletes the PIN too, as after a PIN unlock: the checks have failed, and an offline PIN would
+        // open the vault without them. A passkey that is only wrong or was removed says nothing about the server and leaves it.
+        const code = codeOf(error);
+        if (statusOf(error) === null && !NOT_A_REFUSAL.has(code) && !PASSKEY_ONLY.has(code)) {
+          const account = await accountOf(server);
+          if (account !== null) await store.wipe(server, account, "pinned_rejected").catch(() => {});
         }
         const reason = prfReasonOf(error);
         if (reason === null) throw error;

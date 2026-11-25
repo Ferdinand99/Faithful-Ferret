@@ -13,13 +13,10 @@ import { el, mount } from "../shared/dom.mjs";
 import { FEATURES } from "../shared/features.mjs";
 import { loadTexts, translateStatic } from "./page.mjs";
 import { connectUi } from "./ui.mjs";
-import { createUnlockWindowFlow, passkeyErrorKey, retryable } from "./unlockWindowFlow.mjs";
+import { createUnlockWindowFlow, extensionOrigin, passkeyErrorKey, retryable } from "./unlockWindowFlow.mjs";
 
 /** The feature mark on the controls the tests and the build's checks look for. */
 const FEATURE = Object.freeze({ "data-feature": "unlock" });
-
-/** The shape of an extension's origin in the client data of an answer. */
-const EXTENSION_ORIGIN = /^moz-extension:[/][/][a-z0-9-]{8,128}$/;
 
 /** How long the window stays after the vault is open (milliseconds), so the person sees that it worked. */
 const CLOSE_AFTER_MS = 1200;
@@ -32,16 +29,19 @@ async function sha256(data) {
 /** The call, as the browser makes it. @param {any} publicKey */
 const getAssertion = (publicKey) => navigator.credentials.get({ publicKey });
 
-/** Closes this window (the one the background opened for the unlock). */
+/**
+ * Closes this page: its own tab only (the page can be open in a tab of an ordinary window, which must stay). The tab of the
+ * dedicated popup window is that window's only one, so the window goes with it.
+ */
 async function closeWindow() {
   try {
-    const current = await browser.windows.getCurrent();
-    if (typeof current.id === "number") {
-      await browser.windows.remove(current.id);
+    const tab = await browser.tabs.getCurrent();
+    if (typeof tab?.id === "number") {
+      await browser.tabs.remove(tab.id);
       return;
     }
   } catch {
-    // No window API: the page closes itself.
+    // No tab API: the page closes itself.
   }
   window.close();
 }
@@ -60,7 +60,7 @@ async function main() {
       now: () => Date.now(),
       sha256,
       // Firefox writes an origin of its own making into the client data of an extension's page, not the page's address.
-      origin: (/** @type {string} */ seen) => EXTENSION_ORIGIN.test(seen),
+      origin: await extensionOrigin(browser.runtime.id, sha256),
     },
   });
   // The page goes away: the port closes with it, and nothing of a passkey is left in the page.

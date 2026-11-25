@@ -17,6 +17,18 @@ import { b64u } from "../shared/b64.mjs";
 import { codeOf } from "../shared/crypto/errors.mjs";
 import { evaluateOneOf } from "../shared/flows/passkeyAnswer.mjs";
 
+/**
+ * The origin Firefox (150 and later) writes into the client data of an extension's page: `moz-extension://` and the SHA-256 of the
+ * extension's id, each nibble of its hex written as a letter from a to p (64 letters). It is not the address of the page.
+ * @param {string} extensionId `browser.runtime.id`
+ * @param {(data: Uint8Array) => Promise<Uint8Array>} sha256
+ * @returns {Promise<string>}
+ */
+export async function extensionOrigin(extensionId, sha256) {
+  const digest = await sha256(new TextEncoder().encode(extensionId));
+  return `moz-extension://${Array.from(digest, (b) => "abcdefghijklmnop"[b >> 4] + "abcdefghijklmnop"[b & 15]).join("")}`;
+}
+
 /** The reasons the page has a text of its own for (`passkey.error.<reason>`). */
 export const PASSKEY_REASONS = Object.freeze([
   "passkey_bad_answer",
