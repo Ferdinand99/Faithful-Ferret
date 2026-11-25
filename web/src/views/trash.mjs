@@ -44,7 +44,7 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
     mount(root);
   });
 
-  /** @param {{ id: string, name: string, deletedAt: number }} entry */
+  /** @param {{ id: string, name: string, deletedAt: number, passkeySite?: string }} entry */
   function row(entry) {
     const name = typeof entry.name === "string" && entry.name !== "" ? entry.name : t("vault.item.unnamed");
     const when = formatMoment(entry.deletedAt, locale);
@@ -52,17 +52,20 @@ export async function trashView({ engine, t, locale, touch = () => true, scope }
     const remove = el("button", { type: "button", class: "btn btn-danger btn-sm", "data-role": "remove", "aria-label": t("conflict.trash.remove_label", { name }) }, t("conflict.trash.remove"));
     restore.addEventListener("click", () => act(entry.id, name, "restore", restore));
     remove.addEventListener("click", () => act(entry.id, name, "remove", remove));
+    // An item with a passkey says which site the key belongs to, and that a key whose saving never finished is not registered there.
+    const site = typeof entry.passkeySite === "string" && entry.passkeySite !== "" ? entry.passkeySite : null;
     return el("li", { class: "trash-item", "data-role": "trash-item", "data-id": entry.id },
       el("span", { class: "trash-name", "data-role": "trash-name" }, name),
       el("span", { class: "detail", "data-role": "trash-deleted" }, when === null ? t("conflict.trash.when_unknown") : t("conflict.trash.deleted", { when })),
-      el("span", { class: "actions" }, restore, remove));
+      el("span", { class: "actions" }, restore, remove),
+      site === null ? null : el("p", { class: "trash-passkey", role: "note", "data-role": "trash-passkey" }, t("passkey.trash_note", { site })));
   }
 
   /** Reads the trash again and shows it. */
   async function refresh() {
     if (wiped) return;
     const mine = (reading += 1);
-    /** @type {Array<{ id: string, name: string, deletedAt: number }>} */
+    /** @type {Array<{ id: string, name: string, deletedAt: number, passkeySite?: string }>} */
     let entries;
     try {
       entries = await engine.trash();

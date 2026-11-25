@@ -113,6 +113,8 @@ export { SyncError };
  * @property {string[]} urls
  * @property {string} username the plain user name field, for the list and its search ("" when the item has none)
  * @property {boolean} hasTotp the item holds a one-time code (only that it does, never the code)
+ * @property {string | null} passkeySite the relying party id of the item's passkey (the site it belongs to), or null for an item without one
+ * @property {boolean} [hasPasskey] the item holds a passkey (the key itself is never in the view); set by `list`, derived from `passkeySite`
  * @property {number} modified
  * @property {boolean} pending a write of this item is waiting for the server
  * @property {boolean} damaged the server's newest row could not be opened (the last good version is shown)
@@ -458,6 +460,15 @@ export function createSyncEngine({
     return typeof field?.value === "string" ? field.value : "";
   }
 
+  /**
+   * The site of the item's passkey (its relying party id, as the core checked it), or null when the item has none.
+   * @param {any} view
+   */
+  function passkeySiteOf(view) {
+    const site = view?.passkey?.rp_id;
+    return typeof site === "string" && site !== "" ? site : null;
+  }
+
   /** @param {any} view @param {number} rev */
   function summaryOf(view, rev) {
     return {
@@ -468,6 +479,7 @@ export function createSyncEngine({
       urls: Array.isArray(view.urls) ? view.urls.map((/** @type {any} */ u) => String(u?.url ?? "")) : [],
       username: usernameOf(view),
       hasTotp: view.has_totp === true,
+      passkeySite: passkeySiteOf(view),
       modified: Number.isSafeInteger(view.modified) ? view.modified : 0,
       readOnly: view.read_only === true,
       // The core has checked the names and put them in NFC; a view without the key (an older core) has none.
@@ -3646,6 +3658,8 @@ export function createSyncEngine({
           urls: [...s.urls],
           username: s.username,
           hasTotp: s.hasTotp,
+          passkeySite: s.passkeySite,
+          hasPasskey: s.passkeySite !== null,
           modified: s.modified,
           pending: runner.entriesOf(id).length > 0,
           damaged: flag?.kind === "damaged",
@@ -3998,7 +4012,8 @@ export function createSyncEngine({
      * What the local trash holds: the items a verified deletion took away in the last 30 days, the most recent first. The names are
      * read out of the sealed items now and kept nowhere. An item that cannot be opened is listed with an empty name (it can still
      * be removed). An entry of an item that is not deleted any more is dropped.
-     * @returns {Promise<Array<{ id: string, name: string, deletedAt: number }>>}
+     * An item that holds a passkey also carries the site of it (`passkeySite`), so the trash can say which site the key belongs to.
+     * @returns {Promise<Array<{ id: string, name: string, deletedAt: number, passkeySite?: string }>>}
      */
     async trash() {
       if (stopped) throw new SyncError("stopped");
@@ -4010,7 +4025,7 @@ export function createSyncEngine({
       // What the store holds decides whether an item is alive again (another tab may have written rows this tab has not read).
       const stored = entries.length > 0 ? new Map(/** @type {CachedRow[]} */ (await store.cache.getRows(db, scope)).map((row) => [row.itemId, row])) : new Map();
       alive();
-      /** @type {Array<{ id: string, name: string, deletedAt: number }>} */
+      /** @type {Array<{ id: string, name: string, deletedAt: number, passkeySite?: string }>} */
       const out = [];
       for (const entry of entries) {
         const row = stored.get(entry.itemId);
@@ -4019,17 +4034,20 @@ export function createSyncEngine({
           continue;
         }
         let name = "";
+        let site = null;
         try {
           const handle = await client.vault.open_item(hex16.decode(entry.itemId), entry.rev, entry.envelope, entry.tag);
           try {
-            name = String((await client.vault.item_view(handle)).name ?? "");
+            const view = await client.vault.item_view(handle);
+            name = String(view.name ?? "");
+            site = passkeySiteOf(view);
           } finally {
             await Promise.resolve(client.vault.close_item(handle)).catch(() => {});
           }
         } catch (error) {
           if (stopped || isFatal(error)) throw error;
         }
-        out.push({ id: entry.itemId, name, deletedAt: entry.deletedAt });
+        out.push({ id: entry.itemId, name, deletedAt: entry.deletedAt, ...(site === null ? {} : { passkeySite: site }) });
         alive();
       }
       return out;

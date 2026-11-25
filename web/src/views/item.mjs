@@ -23,7 +23,7 @@
 import { el, mount } from "../dom.mjs";
 import { secretClipboardFor } from "../secretClipboard.mjs";
 import { askConfirm, canChange, describeError, formatMoment, listenWhileShown, markBadges } from "./common.mjs";
-import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, historyEntries, tileLetter, tileType } from "./itemModel.mjs";
+import { MAX_FOLDER_CHIPS, favouriteDraft, folderLabels, groupFields, historyEntries, passkeyOf, tileLetter, tileType } from "./itemModel.mjs";
 import { focusNode, popMenu, within } from "./popMenu.mjs";
 import { groupCode } from "./totpModel.mjs";
 import { codeTicker, realClock } from "./totpTicker.mjs";
@@ -305,6 +305,55 @@ export async function itemView({
         el("span", { class: "actions" }, copy)));
   }
 
+  /**
+   * The card of the passkey: the site it belongs to (the relying party id: the identity), the user name the site gave, when it was
+   * made and what kind it is. The two texts a site chooses for itself are shown apart, labelled as the site's, each in an isolated
+   * element, and never take the place of the site. The key and the seeds are not on the page, and no button asks for them.
+   * @param {import("./itemModel.mjs").PasskeyFacts} pk @param {boolean} editable
+   * @returns {HTMLElement}
+   */
+  function passkeyCard(pk, editable) {
+    /** @param {string} label @param {string} role @param {string} text */
+    const row = (label, role, text) => el("div", { class: "field-row passkey-row", "data-role": "passkey-row", "data-key": role },
+      el("span", { class: "label" }, label),
+      el("bdi", { class: "value", "data-role": "passkey-value", "data-key": role }, text),
+      el("span", { class: "actions" }));
+    const when = pk.created === null ? null : formatMoment(pk.created, locale);
+    const rows = [
+      row(t("passkey.site"), "site", pk.site),
+      row(t("passkey.user"), "user", pk.user),
+      ...(pk.siteName === null ? [] : [row(t("passkey.site_name"), "site_name", pk.siteName)]),
+      ...(pk.displayName === null ? [] : [row(t("passkey.display_name"), "display_name", pk.displayName)]),
+      ...(when === null ? [] : [row(t("passkey.created"), "created", when)]),
+    ];
+    const kind = el("p", { class: "passkey-kind", "data-role": "passkey-kind" }, el("strong", null, t("passkey.kind")), " ", t("passkey.kind_help"));
+    /** @type {HTMLElement[]} */
+    const tail = [];
+    if (editable) {
+      const remove = el("button", {
+        type: "button", class: "btn btn-secondary btn-sm", "aria-label": t("passkey.remove_label", { site: pk.site }), "data-role": "remove-passkey",
+      }, t("passkey.remove"));
+      remove.addEventListener("click", async () => {
+        if (!touch()) return;
+        const yes = await askConfirm({
+          t, host, title: "passkey.remove_title", body: "passkey.remove_body", confirm: "passkey.remove_confirm", vars: { site: pk.site },
+        });
+        if (!yes) return;
+        try {
+          // The newest revision, as for the favourite mark; the item stays, only its passkey goes.
+          const now = engine.list().find((/** @type {any} */ i) => i.id === id);
+          await engine.update(id, { remove_passkey: true }, now?.rev);
+          say(t("passkey.removed", { site: pk.site }));
+        } catch (error) {
+          say(describeError(t, error));
+        }
+      });
+      tail.push(el("div", { class: "actions passkey-actions" }, remove));
+    }
+    return el("section", { class: "card item-section passkey-card", "data-role": "item-card", "data-card": "passkey" },
+      el("h2", null, t("passkey.heading")), ...rows, kind, ...tail);
+  }
+
   /** Reads the item and builds the screen again. */
   async function load() {
     totpTicker?.stop();
@@ -377,6 +426,7 @@ export async function itemView({
 
     const name = String(view.name ?? "") === "" ? t("vault.item.unnamed") : String(view.name);
     const groups = groupFields(view.fields);
+    const passkey = passkeyOf(view);
     /** @param {import("./itemModel.mjs").FieldSpec} field */
     const fieldRow = (field) => valueRow({
       key: field.key, label: field.label || t("vault.item.field"), plain: field.plain,
@@ -390,6 +440,7 @@ export async function itemView({
     const cards = [];
     if (groups.login.length > 0) cards.push(card(t("vault.item.card_login"), "login", groups.login.map(fieldRow)));
     if (view.has_totp === true) cards.push(totpCard());
+    if (passkey !== null) cards.push(passkeyCard(passkey, canChange(entry)));
     // The passwords the item had before, newest first; a card is drawn only for an item that has some.
     const earlier = historyEntries(view);
     if (earlier.length > 0) {
@@ -454,8 +505,10 @@ export async function itemView({
       const del = el("button", { type: "button", class: "btn btn-danger i-trash", "data-role": "delete" }, t("vault.item.trash"));
       del.addEventListener("click", async () => {
         if (!touch()) return;
+        // An item with a passkey says which site has the public key and what happens to the passkey here.
         const yes = await askConfirm({
-          t, host, title: "list.trash_title_one", body: "list.trash_body", confirm: "list.trash_confirm", vars: { name },
+          t, host, title: "list.trash_title_one", body: passkey === null ? "list.trash_body" : "passkey.delete_body", confirm: "list.trash_confirm",
+          vars: { name, site: passkey?.site ?? "" },
         });
         if (!yes) return;
         try {

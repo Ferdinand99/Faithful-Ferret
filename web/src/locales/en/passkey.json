@@ -1,0 +1,23 @@
+{
+  "passkey.created": "Created",
+  "passkey.delete_body": "This item holds a passkey for {site}. {site} still has the public key of the passkey, so remove the passkey at {site} too. Here, the item and its passkey stay in the trash for 30 days: restoring the item brings the passkey back, and it works as before. The deletion reaches every device.",
+  "passkey.delete_many_body": "{passkeys} of these items hold a passkey, for: {sites}. Those sites still have the public keys of the passkeys, so remove the passkeys at the sites too. Here, the items and their passkeys stay in the trash for 30 days: restoring an item brings its passkey back. The deletion reaches every device.",
+  "passkey.display_name": "Name from the site",
+  "passkey.edit_note": "This item holds a passkey for {site}. It is kept when you save. To remove it, use Remove passkey on the item page.",
+  "passkey.filter": "Passkeys",
+  "passkey.heading": "Passkey",
+  "passkey.kind": "Synced Ferret passkey",
+  "passkey.kind_help": "Ferret keeps the key encrypted in your vault and uses it to sign you in to the site in the browser extension. The key is never shown here.",
+  "passkey.mark": "Passkey",
+  "passkey.mark_title": "Holds a passkey for {site}",
+  "passkey.remove": "Remove passkey",
+  "passkey.remove_body": "The item stays, but its passkey is deleted from your vault and can no longer sign you in to {site} with Ferret. {site} still has the public key of the passkey. Remove the passkey at {site} too, in your account there, so that it does not stay as a way to sign in that nobody can use.",
+  "passkey.remove_confirm": "Remove passkey",
+  "passkey.remove_label": "Remove the passkey for {site}",
+  "passkey.remove_title": "Remove the passkey for {site}?",
+  "passkey.removed": "The passkey for {site} was removed from the item.",
+  "passkey.site": "Site",
+  "passkey.site_name": "The site calls itself",
+  "passkey.trash_note": "Holds a passkey for {site}. A passkey that Ferret could not finish saving is not registered at {site}: the site never got the key. Restoring the item brings the passkey back as it was.",
+  "passkey.user": "User name from the site"
+}

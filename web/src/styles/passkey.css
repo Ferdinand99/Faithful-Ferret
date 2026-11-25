@@ -1,0 +1,43 @@
+/* Passkeys in the vault: the mark on a row, the card on the item page and the note in the edit form. Colours come from the tokens in
+   base.css, so both themes follow. No inline style is used anywhere. */
+
+.mark-passkey {
+  --status: var(--info);
+  --status-text: var(--info-text);
+  --status-fill: var(--info-fill);
+}
+
+.vault-ui .passkey-card .passkey-row .value {
+  /* The texts of a site are isolated with <bdi>; a long one wraps instead of pushing the page sideways. */
+  overflow-wrap: anywhere;
+}
+
+.vault-ui .passkey-kind {
+  margin: var(--sp-3) 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.vault-ui .passkey-kind strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.vault-ui .passkey-actions {
+  margin-top: var(--sp-3);
+}
+
+.vault-ui .passkey-note {
+  margin: 0;
+}
+
+/* The note under an item in the trash: which site its passkey belongs to, and that a passkey that was never saved is not registered. */
+.vault-ui .trash-item .trash-passkey {
+  grid-column: 1 / -1;
+  margin: var(--sp-2) 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}

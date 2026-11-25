@@ -40,6 +40,7 @@ import { FOLDER_ERRORS, folderPicker } from "./folderPicker.mjs";
 import { createOptionsStore } from "../generatorPrefs.mjs";
 import { ERROR_CODES as GENERATOR_ERRORS, makeValue } from "./generatorModel.mjs";
 import { typeLabel } from "./item.mjs";
+import { passkeyOf } from "./itemModel.mjs";
 import { groupCode, namesOwnHost, readInput, uriFromSecret } from "./totpModel.mjs";
 import { canPreview, previewCode } from "./totpPreview.mjs";
 import { codeTicker, realClock } from "./totpTicker.mjs";
@@ -68,7 +69,7 @@ const TOTP_REFUSALS = new Set(["malformed_otpauth", "too_large", "invalid_input"
  * @typedef {{
  *   item_type?: string, name: string, favorite: boolean, fields?: FieldDraft[],
  *   urls?: { url: string, matching: string }[], notes?: string, remove_notes?: boolean, folders?: string[],
- *   keep_password_history?: boolean, totp?: { uri: string }, remove_totp?: boolean,
+ *   keep_password_history?: boolean, totp?: { uri: string }, remove_totp?: boolean, remove_passkey?: boolean,
  * }} Draft
  */
 
@@ -188,6 +189,7 @@ export async function editView({
 
   // ---- the one-time password
   const hasStoredTotp = id !== null && view?.has_totp === true;
+  const passkeyFacts = id === null ? null : passkeyOf(view);
   const totpToggle = /** @type {HTMLButtonElement} */ (el("button", {
     type: "button", class: "reveal-toggle", "aria-pressed": "false", "aria-label": t("vault.edit.totp_show"), "data-role": "totp-toggle",
   }, el("span", { class: "icon", "data-icon": "eye", "aria-hidden": "true" })));
@@ -699,7 +701,9 @@ export async function editView({
     id === null ? el("div", { class: "field" }, el("label", { for: "edit-type" }, t("vault.edit.type")), typeSelect) : null,
     name.row,
     el("div", { class: "choice" }, favorite, el("label", { for: "edit-favorite" }, t("vault.edit.favorite"))),
-    folderSlot),
+    folderSlot,
+    // A passkey stays as it is when the item is saved: the form sends nothing about it. It is removed on the item page.
+    passkeyFacts === null ? null : el("p", { class: "help passkey-note", "data-role": "passkey-note" }, t("passkey.edit_note", { site: passkeyFacts.site }))),
   loginRows,
   dialogHost,
   notesSlot,

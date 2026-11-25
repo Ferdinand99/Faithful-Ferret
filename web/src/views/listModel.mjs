@@ -99,6 +99,7 @@ const TYPE_VALUE = /^[a-z][a-z0-9_-]{0,23}$/;
  * @typedef {object} ListState what the user chose
  * @property {string[]} types item types to show (none: every type)
  * @property {boolean} favorite only the favourites
+ * @property {boolean} passkey only the items that hold a passkey
  * @property {string[]} folders folder names to show (none: every item); the list has them only when the vault has folders
  * @property {"name" | "changed"} sort
  * @property {"asc" | "desc"} dir
@@ -108,10 +109,10 @@ const TYPE_VALUE = /^[a-z][a-z0-9_-]{0,23}$/;
 export const defaultDir = (sort) => (sort === "changed" ? "desc" : "asc");
 
 /** @returns {ListState} */
-export const defaultState = () => ({ types: [], favorite: false, folders: [], sort: "name", dir: "asc" });
+export const defaultState = () => ({ types: [], favorite: false, passkey: false, folders: [], sort: "name", dir: "asc" });
 
 /** @param {ListState} state Whether any filter (not the order) is on. */
-export const hasFilters = (state) => state.types.length > 0 || state.favorite || state.folders.length > 0;
+export const hasFilters = (state) => state.types.length > 0 || state.favorite || state.passkey || state.folders.length > 0;
 
 /**
  * Reads the filters out of the query of the address. Whatever is not in the expected shape is left out, so a made-up
@@ -134,6 +135,7 @@ export function parseListQuery(query) {
   const types = (pairs.get("type") ?? "").split(",").filter((v) => TYPE_VALUE.test(v));
   state.types = [...new Set(types)].slice(0, MAX_VALUES);
   state.favorite = pairs.get("fav") === "1";
+  state.passkey = pairs.get("pk") === "1";
   const sort = pairs.get("sort");
   if (sort === "changed") state.sort = "changed";
   const dir = pairs.get("dir");
@@ -153,6 +155,7 @@ export function formatListQuery(state) {
   const types = [...new Set(state.types.filter((v) => TYPE_VALUE.test(v)))].slice(0, MAX_VALUES);
   if (types.length > 0) out.push(`type=${[...types].sort().join(",")}`);
   if (state.favorite) out.push("fav=1");
+  if (state.passkey) out.push("pk=1");
   if (state.sort !== "name") out.push(`sort=${state.sort}`);
   if (state.dir !== defaultDir(state.sort)) out.push(`dir=${state.dir}`);
   return out.join("&");
@@ -170,7 +173,7 @@ export function sameState(a, b) {
  */
 export function normalState(state) {
   return {
-    types: [...new Set(state.types)].sort(), favorite: state.favorite === true, folders: [...new Set(state.folders)].sort(),
+    types: [...new Set(state.types)].sort(), favorite: state.favorite === true, passkey: state.passkey === true, folders: [...new Set(state.folders)].sort(),
     sort: state.sort === "changed" ? "changed" : "name", dir: state.dir === "desc" ? "desc" : "asc",
   };
 }
@@ -215,7 +218,7 @@ export function countByFolder(items) {
 /**
  * Applies the type, favourite and folder filters; the order of `items` is kept. `skip` leaves one filter out, so a
  * dropdown can show how many items each of its values would give.
- * @template {{ type: string, favorite?: boolean, folders?: readonly string[] }} T
+ * @template {{ type: string, favorite?: boolean, passkeySite?: string | null, folders?: readonly string[] }} T
  * @param {readonly T[]} items
  * @param {ListState} state
  * @param {"types" | "folders" | null} [skip]
@@ -224,10 +227,11 @@ export function countByFolder(items) {
 export function applyFilters(items, state, skip = null) {
   const types = skip === "types" ? [] : state.types;
   const folders = skip === "folders" ? [] : state.folders;
-  if (types.length === 0 && !state.favorite && folders.length === 0) return [...items];
+  if (types.length === 0 && !state.favorite && !state.passkey && folders.length === 0) return [...items];
   return items.filter((item) => {
     if (types.length > 0 && !types.includes(item.type)) return false;
     if (state.favorite && item.favorite !== true) return false;
+    if (state.passkey && !(typeof item.passkeySite === "string" && item.passkeySite !== "")) return false;
     // An item shows when it has any of the folders chosen.
     if (folders.length > 0 && !(item.folders ?? []).some((name) => folders.includes(name))) return false;
     return true;
