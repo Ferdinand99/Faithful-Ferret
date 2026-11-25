@@ -6,6 +6,8 @@
 //!   session (`login`).
 //! * `/vault/reauth`: a fresh check of the password for the open admin session
 //!   (`reauth`).
+//! * `/vault` (the side menu's switch to the web vault): a plain redirect to the web
+//!   vault's own start page. It starts nothing and carries nothing.
 //! * `/vault/setup`: the first administrator is made on the vault origin, so
 //!   this goes straight there and keeps only the setup token (a start-up
 //!   message links with it), moved into the fragment. Nothing is signed in by it.
@@ -117,6 +119,20 @@ async fn setup(State(origins): State<Origins>, RawQuery(query): RawQuery) -> Red
     Redirect::to(&target)
 }
 
+/// Where the side menu's switch to the web vault ends: the vault origin's start
+/// page. Only the configured address is used, and nothing of the request goes
+/// along.
+pub fn vault_location(origins: &Origins) -> String {
+    format!("{}/vault/", origins.vault())
+}
+
+/// `GET /vault`: the switch of the side menu. A `303` to [`vault_location`]; the
+/// vault origin has its own session and shows its own sign-in when there is none,
+/// so nothing is handed over here.
+async fn vault(State(origins): State<Origins>) -> Redirect {
+    Redirect::to(&vault_location(&origins))
+}
+
 /// `GET /` on the admin listener: the bare admin address is the way in. It is
 /// a `303` to [`product::ADMIN_LANDING`] and nothing more: the landing page is
 /// behind the admin session guard, which sends a visitor without a session on
@@ -125,7 +141,7 @@ async fn root() -> Redirect {
     Redirect::to(product::ADMIN_LANDING)
 }
 
-/// `/` and `/vault/{login,setup,password,reauth}`. `/sign-in-code` is not a
+/// `/`, `/vault` and `/vault/{login,setup,password,reauth}`. `/sign-in-code` is not a
 /// route here: the kit has one, so [`sign_in_code_to_recover`] answers it as a
 /// layer.
 pub fn routes<S>() -> Router<S>
@@ -135,6 +151,7 @@ where
 {
     Router::new()
         .route("/", get(root))
+        .route(product::VAULT_PATH, get(vault))
         .route("/vault/login", get(login))
         .route("/vault/password", get(password))
         .route("/vault/reauth", get(reauth))

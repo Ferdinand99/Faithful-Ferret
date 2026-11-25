@@ -113,3 +113,9 @@ time_days = "under {n} days"
 time_months = "under {n} months"
 time_years = "under {n} years"
 time_forever = "more than 1,000 years"
+
+[shell]
+admin = "Admin"
+vault = "Vault"
+operations = "Operations"
+access = "Access"

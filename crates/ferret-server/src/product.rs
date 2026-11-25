@@ -12,7 +12,9 @@ use vole_kit::config::{CredentialMode, ExternalCredentials, KitConfig, KitFeatur
 use vole_kit::docs::{DocsSpec, RouteDoc};
 use vole_kit::http::assets::StaticFile;
 use vole_kit::notify::webhook::Wording;
-use vole_kit::page::{NavItem, SettingsTab, TabAccess, Ui};
+use vole_kit::page::{
+    NavItem, SettingsTab, Shell, Sidebar, SidebarItem, SidebarSection, Switcher, TabAccess, Ui,
+};
 use vole_kit::settings::{FieldKind, GeneralSettings, SettingField, SettingsSection};
 
 /// The product's version (`CARGO_PKG_VERSION`), reported by the OpenAPI
@@ -38,6 +40,11 @@ pub const DB_FILE: &str = "ferret.sqlite";
 /// admin address (`/`) and the kit's navigation lead here, and the web vault's
 /// "Go to the admin pages" buttons name the same page.
 pub const ADMIN_LANDING: &str = "/settings/general";
+/// The path on the admin listener that the side menu's switch to the web vault
+/// leads to: a redirect to the vault origin (`admin::redirects`). The kit takes
+/// a path of the product or a fixed address for the switch, and the vault's
+/// address is a setting, so the admin listener answers for it.
+pub const VAULT_PATH: &str = "/vault";
 
 /// Where the kit sends people for the passwords it does not take. Paths of the
 /// vault origin; the admin listener redirects them there.
@@ -60,6 +67,62 @@ pub static FEATURES: KitFeatures = KitFeatures {
     credentials: CredentialMode::External(&EXTERNAL),
     invites: false,
     sign_in_codes: true,
+    shell: Shell::Sidebar(&SIDEBAR),
+};
+
+/// The admin pages' side menu (vole-kit's `Shell::Sidebar`), in the layout of
+/// the web vault: the Ferret mark and name (leading to the admin start page, so
+/// the logo never leaves the admin pages), a switch to the web vault, the pages
+/// in three sections and, at the foot, the account menu.
+///
+/// Every entry is a settings tab with its own `TabAccess`: the kit hides a tab
+/// from a user who may not see it, but shows a plain navigation entry and the
+/// switch to everybody, so an entry that is for administrators must be a tab.
+/// (Each page still checks the role itself: the menu hides, it does not
+/// protect.) The switch leads to [`VAULT_PATH`], which the admin listener sends
+/// on to the web vault's own address.
+pub static SIDEBAR: Sidebar = Sidebar {
+    switcher: Some(&Switcher {
+        here: "shell.admin",
+        there: "shell.vault",
+        href: VAULT_PATH,
+        icon: "shield",
+    }),
+    sections: &[OPERATIONS, ACCESS, SETTINGS],
+    home: ADMIN_LANDING,
+};
+
+/// The Operations section: the Backup page.
+const OPERATIONS: SidebarSection = SidebarSection {
+    heading: Some("shell.operations"),
+    items: &[SidebarItem::Tab(&BACKUP_TAB)],
+};
+
+/// The Access section: the Users page, where an administrator also makes a
+/// one-time sign-in code for a user.
+const ACCESS: SidebarSection = SidebarSection {
+    heading: Some("shell.access"),
+    items: &[SidebarItem::Tab(&SettingsTab::USERS)],
+};
+
+/// The Settings section: General, with the cargo feature `quick-unlock` the
+/// Unlock page, and Security (the signed-in user's own).
+#[cfg(feature = "quick-unlock")]
+const SETTINGS: SidebarSection = SidebarSection {
+    heading: Some("nav.settings"),
+    items: &[
+        SidebarItem::Tab(&SettingsTab::GENERAL),
+        SidebarItem::Tab(&UNLOCK_TAB),
+        SidebarItem::Tab(&SettingsTab::SECURITY),
+    ],
+};
+#[cfg(not(feature = "quick-unlock"))]
+const SETTINGS: SidebarSection = SidebarSection {
+    heading: Some("nav.settings"),
+    items: &[
+        SidebarItem::Tab(&SettingsTab::GENERAL),
+        SidebarItem::Tab(&SettingsTab::SECURITY),
+    ],
 };
 
 /// Ferret's own static files for the admin pages: icons and the web app
