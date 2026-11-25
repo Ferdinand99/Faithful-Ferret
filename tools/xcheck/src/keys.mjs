@@ -37,7 +37,7 @@ export function kekPrf(credentialId, prfOutput) {
   return hkdf(salt, prfOutput, ascii('ferret/v1/kek/prf'), 32);
 }
 
-// Section 7.2: the PIN profiles. Profile 1 is 256 MiB, t = 3, p = 1 (the numbers are provisional).
+// Section 7.2: the PIN profiles. Profile 1 is 256 MiB, t = 3, p = 1 (confirmed by the U3-0 measurements).
 export const PIN_PROFILES = { 1: { m: 262144, t: 3, p: 1 } };
 export const pinParams = (profile) => (Object.hasOwn(PIN_PROFILES, profile) ? PIN_PROFILES[profile] : undefined);
 
