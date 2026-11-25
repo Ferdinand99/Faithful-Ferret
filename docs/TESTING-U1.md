@@ -130,7 +130,7 @@ Reload every open vault tab after a deploy: a tab loaded before it still runs th
 
 1. Press "Lock" in the popup.
    *Expected:* "The vault is locked" with only a password field (no server, no e-mail); unlock with MP opens it.
-2. Open Ferret's settings (`about:addons`, Ferret, Preferences). Set "Lock after" to 15 seconds.
+2. Open Ferret's settings (`about:addons`, Ferret, Preferences). Open the "Auto-lock" row (under "Security") and set "Lock after" to 15 seconds.
    *Expected:* "Saved."; the choices go from 15 seconds to 24 hours and there is no "never".
 3. Close every Ferret page and wait 30 seconds without touching Ferret. Open the popup.
    *Expected:* locked. Typing in web pages meanwhile does not keep it open.

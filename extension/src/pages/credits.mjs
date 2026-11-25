@@ -1,4 +1,4 @@
-// The credits of the settings page, shown in every build: the passphrase
+// The credits page of the settings view (its title is the page's own heading), shown in every build: the passphrase
 // generator in the core draws its words from the EFF large word list, which is
 // in the WASM file of every package. The list is used under CC BY 3.0 US, which
 // asks for the author's name, the licence and its address, so all three are
@@ -18,9 +18,8 @@ export const EFF_SOURCE_URL = "https://www.eff.org/dice";
  */
 export function createCredits(texts) {
   return el(
-    "section",
+    "div",
     { class: "ff-credits", "data-role": "credits" },
-    el("h2", null, texts.t("settings.credits.title")),
     el("p", { class: "ff-hint", "data-role": "credits-eff" }, texts.t("settings.credits.eff", { license_url: EFF_LICENSE_URL, source_url: EFF_SOURCE_URL })),
   );
 }

@@ -13,7 +13,7 @@ import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
 import { importsOf } from "./importGraph.mjs";
-import { byRole, click, fire, one, settle, textsOf, useDocument } from "./pageDom.mjs";
+import { byRole, click, fire, one, settle, textsOf, useDocument, withAttribute } from "./pageDom.mjs";
 
 /** A `request` that records what the page asks and answers from `answer`. */
 function recorder(/** @type {(body: any) => any} */ answer = (body) => ({ lock_seconds: body.lock_seconds ?? 900 })) {
@@ -99,7 +99,17 @@ test("every_settings_text_is_there_in_both_languages", () => {
   assert.deepEqual(Object.keys(en).sort(), Object.keys(nb).sort(), "the same keys in en and nb");
   const keys = [
     "settings.title",
+    "settings.back",
+    "settings.more",
+    "settings.on",
+    "settings.off",
+    "settings.group.fill",
+    "settings.group.unlock",
+    "settings.group.security",
+    "settings.group.about",
+    "settings.lock.title",
     "settings.lock.label",
+    "settings.lock.short",
     "settings.lock.hint",
     "settings.saved",
     ...LOCK_CHOICES.map(choiceKey),
@@ -114,6 +124,11 @@ test("every_settings_text_is_there_in_both_languages", () => {
   assert.equal(en["settings.lock.choice.900"], "15 minutes");
   assert.equal(nb["settings.lock.choice.900"], "15 minutter");
   assert.equal(nb["settings.lock.label"], "Lås etter");
+  // The words of the switches and of the rows are short, and each language has its own.
+  assert.deepEqual([en["settings.on"], en["settings.off"], nb["settings.on"], nb["settings.off"]], ["On", "Off", "På", "Av"]);
+  assert.equal(nb["settings.group.fill"], "Fylling og lagring");
+  assert.equal(nb["settings.more"], "Mer om dette");
+  for (const key of ["settings.lock.short", "settings.group.fill", "settings.lock.title"]) assert.ok(en[key].length <= 60, key);
 });
 
 test("the_settings_request_has_the_bounds_of_the_choices", () => {
@@ -181,7 +196,7 @@ test("turning_on_offer_to_save_asks_for_https_access_in_the_settings_tab_and_exp
   assert.deepEqual(Object.keys(en).sort(), Object.keys(nb).sort());
   for (const [lang, texts] of [["en", en], ["nb", nb]]) {
     for (const key of Object.keys(texts)) assert.ok(typeof texts[key] === "string" && texts[key].length > 0, `${lang}: ${key}`);
-    for (const key of ["capture.title", "capture.switch", "capture.why", "capture.reload", "capture.on", "capture.off", "capture.never.title", "capture.never.empty", "capture.never.hint", "capture.never.remove", "capture.never.remove.label", "capture.never.clear"]) {
+    for (const key of ["capture.title", "capture.switch", "capture.switch.desc", "capture.why", "capture.idle", "capture.reload", "capture.auto_open.switch", "capture.auto_open.desc", "capture.auto_open.hint", "capture.never.row", "capture.never.short", "capture.never.empty", "capture.never.hint", "capture.never.remove", "capture.never.remove.label", "capture.never.clear"]) {
       assert.ok(texts[key], `${lang}: ${key}`);
     }
     for (const reason of ["disconnected", "not_available", "permission_missing", "permission_refused", "register_failed", "unknown"]) {
@@ -267,11 +282,11 @@ test("turning_offer_to_save_off_takes_the_access_to_https_pages_back", async () 
 });
 
 /** The settings view of a built package, with a flow over a fake background that keeps what it is told. */
-async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boolean, grant?: boolean, lock?: number, on?: boolean }} */ { permission = false, grant = true, lock = 900, on = false } = {}) {
+async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boolean, grant?: boolean, lock?: number, on?: boolean, lang?: string }} */ { permission = false, grant = true, lock = 900, on = false, lang = "en" } = {}) {
   const doc = useDocument();
   const flowModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsFlow.mjs")).href);
   const viewModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsView.mjs")).href);
-  const catalog = JSON.parse(readFileSync(joinPath(dir, "locales.en.json"), "utf8"));
+  const catalog = JSON.parse(readFileSync(joinPath(dir, `locales.${lang}.json`), "utf8"));
   const state = { lock, on, permission, never: ["shop.example.net"], autoOpen: true };
   /** @type {string[]} */
   const log = [];
@@ -301,11 +316,11 @@ async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boole
       },
     },
   );
-  const view = viewModule.createSettingsView({ texts: textsOf(catalog, "en"), flow });
+  const view = viewModule.createSettingsView({ texts: textsOf(catalog, lang), flow });
   const root = doc.createElement("div");
   root.append(...view.nodes);
   await view.ready;
-  return { root, log, state, view };
+  return { root, log, state, view, doc };
 }
 
 test("the_settings_view_is_one_module_for_the_page_and_the_popup_and_works_in_every_build", async () => {
@@ -350,13 +365,16 @@ test("the_settings_view_turns_offer_to_save_on_and_off_with_the_permission_asked
     const on = await viewOf(result.dir);
     const toggle = /** @type {any} */ (one(on.root, "capture-switch"));
     assert.equal(toggle.getAttribute("aria-checked"), "false");
-    assert.equal(one(on.root, "capture-state")?.textContent, "Off. Ferret does not look at the forms you submit.");
+    assert.equal(one(on.root, "capture-state")?.textContent, "Off");
+    assert.equal(toggle.getAttribute("role"), "switch");
     on.log.length = 0;
     fire(toggle, "click");
     assert.deepEqual(on.log, ["permission request"], "the request is made before the click handler returns");
     await settle();
     assert.deepEqual(on.log, ["permission request", 'capture_settings {"enable":true}']);
     assert.equal(toggle.getAttribute("aria-checked"), "true");
+    assert.equal(one(on.root, "capture-state")?.textContent, "On");
+    assert.equal(one(on.root, "capture-summary")?.textContent, "On", "the row of the main screen says it too");
     assert.equal(one(on.root, "never-host")?.textContent.includes("shop.example.net"), true, "the never list is shown");
     // Turning it off: the background first, then the access goes.
     on.log.length = 0;
@@ -371,11 +389,13 @@ test("the_settings_view_turns_offer_to_save_on_and_off_with_the_permission_asked
     // The prompt closed the popup that asked and the user said yes: the next time the view is built it says the access is there, and
     // the next press turns it on (a request for an access that is held is answered at once, with no prompt).
     const closed = await viewOf(result.dir, { permission: true });
-    assert.match(one(closed.root, "capture-state")?.textContent ?? "", /already has access to https pages/);
+    assert.match(one(closed.root, "capture-note")?.textContent ?? "", /already given/);
+    assert.equal(one(closed.root, "capture-note")?.hidden, false);
     await click(/** @type {any} */ (one(closed.root, "capture-switch")));
     assert.equal(closed.state.on, true);
     assert.equal(one(closed.root, "capture-switch")?.getAttribute("aria-checked"), "true");
-    assert.match(one(closed.root, "capture-state")?.textContent ?? "", /^On\./);
+    assert.equal(one(closed.root, "capture-state")?.textContent, "On");
+    assert.equal(one(closed.root, "capture-note")?.hidden, true, "the note goes when it is on");
   } finally {
     env.cleanup();
   }
@@ -385,5 +405,191 @@ test("the_access_given_text_exists_in_both_languages", () => {
   for (const lang of ["en", "nb"]) {
     const catalog = JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "capture.json"), "utf8"));
     assert.ok(typeof catalog["capture.off_access_given"] === "string" && catalog["capture.off_access_given"].length > 0, lang);
+  }
+});
+
+/** The ids of the rows of the main screen, in order, and the texts of the group headings. @param {any} root */
+function outline(root) {
+  const rows = withAttribute(root, "data-role").map((n) => n.getAttribute("data-role") ?? "").filter((role) => role.startsWith("settings-row-")).map((role) => role.slice("settings-row-".length));
+  const groups = withAttribute(root, "class").filter((n) => (n.getAttribute("class") ?? "").split(/\s+/).includes("ff-sgroup-title")).map((n) => n.textContent);
+  return { rows, groups };
+}
+
+/** Walks up from a node to see whether a <details> holds it. @param {any} node */
+function inDisclosure(node) {
+  for (let at = node; at; at = at.parentNode) if (at.tagName === "DETAILS") return true;
+  return false;
+}
+
+test("the_settings_view_groups_its_rows_and_a_group_goes_with_its_flag", async () => {
+  const env = makeRoot();
+  try {
+    const cases = /** @type {const} */ ([
+      ["all", undefined, ["capture", "never", "pin", "passkeys", "lock", "credits"], ["Filling and saving", "Unlocking", "Security", "About"]],
+      ["no-unlock", ["save"], ["capture", "never", "lock", "credits"], ["Filling and saving", "Security", "About"]],
+      ["no-save", ["unlock"], ["pin", "passkeys", "lock", "credits"], ["Unlocking", "Security", "About"]],
+      ["none", [], ["lock", "credits"], ["Security", "About"]],
+    ]);
+    for (const [name, features, rows, groups] of cases) {
+      const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, `groups-${name}`), manifest: "mv2", variant: "test", ...(features ? { features } : {}) });
+      const { root } = await viewOf(result.dir);
+      assert.deepEqual(outline(root), { rows, groups }, name);
+      // One page for each row, each with its own back button and heading.
+      assert.equal(byRole(root, "settings-page").length, rows.length, name);
+      assert.equal(byRole(root, "settings-back").length, rows.length, name);
+      assert.equal(byRole(root, "settings-page-title").length, rows.length, name);
+      // Nothing of a flag that is off is left in the view.
+      assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "save"), rows.includes("capture"), name);
+      assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "unlock"), rows.includes("pin"), name);
+      // No inline style anywhere (the page's content security policy has none).
+      assert.deepEqual(withAttribute(root, "style"), [], name);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a_row_opens_its_page_and_back_returns_to_the_row_with_the_focus", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "nav"), manifest: "mv2", variant: "test" });
+    const { root, doc, view } = await viewOf(result.dir);
+    const main = one(root, "settings-main");
+    const pages = byRole(root, "settings-page");
+    assert.equal(main?.hidden, false, "the main screen is shown first");
+    assert.ok(pages.every((page) => page.hidden), "no page is shown first");
+    assert.equal(view.current(), null);
+    for (const page of pages) {
+      const id = page.getAttribute("data-page") ?? "";
+      const row = /** @type {any} */ (one(root, `settings-row-${id}`));
+      await click(row);
+      assert.equal(view.current(), id);
+      assert.equal(main?.hidden, true, `${id}: the main screen is out of the way`);
+      assert.deepEqual(pages.filter((p) => !p.hidden).map((p) => p.getAttribute("data-page")), [id], `${id}: one page at a time`);
+      assert.equal(doc.activeElement, one(page, "settings-page-title"), `${id}: the focus is on the page's heading`);
+      assert.equal(page.getAttribute("aria-labelledby"), one(page, "settings-page-title")?.getAttribute("id"), id);
+      // The back button reads "Settings" and says where it goes.
+      const back = one(page, "settings-back");
+      assert.equal(back?.textContent, "Settings", id);
+      assert.equal(back?.getAttribute("aria-label"), "Back to settings", id);
+      await click(back);
+      assert.equal(view.current(), null);
+      assert.equal(main?.hidden, false, `${id}: back to the main screen`);
+      assert.ok(pages.every((p) => p.hidden), id);
+      assert.equal(doc.activeElement, row, `${id}: the focus is back on the row that opened the page`);
+    }
+    // What is chosen in a page is there when the page is opened again, and the row says it.
+    await click(one(root, "settings-row-lock"));
+    const select = /** @type {any} */ (one(root, "lock-after"));
+    select.value = "300";
+    fire(select, "change");
+    await settle();
+    const lockPage = pages.find((p) => p.getAttribute("data-page") === "lock");
+    await click(one(lockPage, "settings-back"));
+    assert.equal(one(root, "lock-summary")?.textContent, "5 minutes");
+    await click(one(root, "settings-row-lock"));
+    assert.equal(select.value, "300");
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("every_setting_that_is_on_or_off_is_a_switch_that_says_so_in_words", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "switches"), manifest: "mv2", variant: "test" });
+    for (const lang of ["en", "nb"]) {
+      const { root } = await viewOf(result.dir, { lang });
+      const [on, off] = lang === "en" ? ["On", "Off"] : ["På", "Av"];
+      for (const [role, state] of /** @type {const} */ ([["capture-switch", "capture-state"], ["auto-open-switch", "auto-open-state"]])) {
+        const row = /** @type {any} */ (one(root, role));
+        assert.equal(row.tagName, "BUTTON", role);
+        assert.equal(row.getAttribute("type"), "button", role);
+        assert.equal(row.getAttribute("role"), "switch", role);
+        assert.ok(["true", "false"].includes(row.getAttribute("aria-checked")), role);
+        // The name and the description of the control are the title and the one line under it.
+        const named = (/** @type {string} */ attribute) => {
+          const id = row.getAttribute(attribute);
+          return withAttribute(root, "id").find((n) => n.getAttribute("id") === id)?.textContent ?? "";
+        };
+        assert.ok(named("aria-labelledby").length > 0 && named("aria-describedby").length > 0, role);
+        assert.ok(named("aria-describedby").length <= 80, `${role}: one short sentence`);
+        // The state is in words, not in colour alone, and it follows the switch.
+        const word = /** @type {any} */ (one(root, state));
+        assert.equal(word.textContent, row.getAttribute("aria-checked") === "true" ? on : off, role);
+        await click(row);
+        assert.equal(word.textContent, row.getAttribute("aria-checked") === "true" ? on : off, `${role} after a click`);
+      }
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_long_explanations_are_behind_more_about_this_and_still_there", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "more"), manifest: "mv2", variant: "test" });
+    const { root } = await viewOf(result.dir);
+    const catalog = JSON.parse(readFileSync(joinPath(result.dir, "locales.en.json"), "utf8"));
+    for (const [role, key] of /** @type {const} */ ([
+      ["capture-why", "capture.why"],
+      ["capture-reload", "capture.reload"],
+      ["capture-idle", "capture.idle"],
+      ["auto-open-hint", "capture.auto_open.hint"],
+      ["never-hint", "capture.never.hint"],
+      ["lock-hint", "settings.lock.hint"],
+      ["unlock-pin-about", "settings.unlock.pin.about"],
+      ["unlock-lead", "settings.unlock.lead"],
+      ["unlock-passkey-about", "settings.unlock.passkey.about"],
+    ])) {
+      const node = one(root, role);
+      assert.equal(node?.textContent, catalog[key], `${role}: the whole text`);
+      assert.ok(inDisclosure(node), `${role}: behind "More about this"`);
+    }
+    // Each disclosure is a native one, named by one short line, and the credits (a licence's condition) are in plain sight.
+    for (const more of byRole(root, "more")) {
+      assert.equal(more.tagName, "DETAILS");
+      assert.equal(/** @type {any} */ (more.childNodes[0]).tagName, "SUMMARY");
+      assert.equal(more.childNodes[0].textContent, "More about this");
+    }
+    assert.equal(inDisclosure(one(root, "credits-eff")), false);
+    // What the user reads on the page itself is the state in one short line.
+    for (const role of ["unlock-pin-status", "unlock-passkey-count"]) assert.equal(inDisclosure(one(root, role)), false, role);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_settings_view_speaks_norwegian_with_the_new_words", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "nb"), manifest: "mv2", variant: "test" });
+    const { root } = await viewOf(result.dir, { lang: "nb" });
+    assert.deepEqual(outline(root).groups, ["Fylling og lagring", "Opplåsing", "Sikkerhet", "Om"]);
+    assert.equal(one(root, "settings-title")?.textContent, "Innstillinger");
+    assert.equal(one(root, "capture-state")?.textContent, "Av");
+    assert.equal(one(byRole(root, "settings-page")[0], "settings-back")?.getAttribute("aria-label"), "Tilbake til innstillinger");
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_auto_open_note_keeps_the_badge_sentence_and_a_page_does_not_repeat_its_heading_in_its_card", async () => {
+  const read = (/** @type {string} */ lang, /** @type {string} */ file) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, file), "utf8"));
+  assert.match(read("en", "capture.json")["capture.auto_open.hint"], /badge on Ferret's button always shows that an offer waits/);
+  assert.match(read("nb", "capture.json")["capture.auto_open.hint"], /Merket på Ferret-knappen viser alltid at et tilbud venter/);
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "cards"), manifest: "mv2", variant: "test" });
+    const { root } = await viewOf(result.dir);
+    for (const [card, id] of [["unlock-pin-card", "pin"], ["unlock-passkey-card", "passkeys"]]) {
+      const page = byRole(root, "settings-page").find((p) => p.getAttribute("data-page") === id);
+      const heading = one(page, "settings-page-title")?.textContent;
+      const title = withAttribute(one(root, card), "class").find((n) => (n.getAttribute("class") ?? "").includes("ff-scard-title"))?.textContent;
+      assert.ok(heading && title && heading !== title, `${id}: "${heading}" and "${title}" are not the same`);
+    }
+  } finally {
+    env.cleanup();
   }
 });

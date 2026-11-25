@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { casesOf, caseUrl, leave, runSteps } from "./matrix.mjs";
-import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, openSettingsPage, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
 
 after(() => stopFixtures());
 
@@ -44,6 +44,7 @@ async function open(channel) {
 async function turnOn(session) {
   await session.navigate(SETTINGS_URL);
   await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+  await openSettingsPage(session, "capture");
   const [toggle] = await session.findAll('[data-role="capture-switch"]');
   assert.ok(toggle, "the settings page has the switch");
   await session.click(toggle);
@@ -98,11 +99,13 @@ test("the_settings_page_has_the_switch_for_the_popup_that_opens_by_itself", asyn
       await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
       const state = () => session.content(() => document.querySelector('[data-role="auto-open-switch"]')?.getAttribute("aria-checked"));
       assert.equal(await state(), "true", `${channel}: on by default`);
+      await openSettingsPage(session, "capture");
       const [toggle] = await session.findAll('[data-role="auto-open-switch"]');
       await session.click(toggle);
       await session.waitFor(async () => (await state()) === "false", 15_000, "the switch off");
       await session.navigate(SETTINGS_URL);
       await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page again");
+      await openSettingsPage(session, "capture");
       assert.equal(await state(), "false", `${channel}: the choice is kept`);
     } finally {
       await session.quit();

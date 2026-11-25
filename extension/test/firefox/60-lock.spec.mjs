@@ -7,7 +7,7 @@
 // end-to-end stack (the lock button test of 20-signin.e2e.spec.mjs).
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, openBridge, stopFixtures } from "./harness.mjs";
+import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, openBridge, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { openMeasurePage, portCommand, readLog, sleep, startScenario } from "./measure.mjs";
 
 after(() => stopFixtures());
@@ -41,7 +41,7 @@ async function readSettingsPage(session) {
   const json = await session.content(() => {
     const select = /** @type {HTMLSelectElement | null} */ (document.querySelector("[data-role=lock-after]"));
     const saved = document.querySelector("[data-role=saved]");
-    const error = document.querySelector("[data-role=error]");
+    const error = document.querySelector("[data-role=lock-error]");
     const choices = [];
     for (const option of document.querySelectorAll("[data-role=lock-after] option")) choices.push(option.getAttribute("value"));
     return JSON.stringify({
@@ -173,6 +173,8 @@ test("settings_open_in_a_tab", async () => {
         // A new tab is about:blank for a moment.
         await session.waitFor(async () => (await session.currentUrl()) === SETTINGS_URL, 20_000, `${where}: the settings open in a tab of their own`);
 
+        // The lock is a sub-page of the settings view: its row on the main screen opens it.
+        await openSettingsPage(session, "lock");
         // The default, and exactly the ten choices.
         const page = await readSettingsPage(session);
         assert.equal(page.value, "900", `${where}: 15 minutes by default`);

@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { world } from "./adversary.mjs";
-import { EXTENSION_ORIGIN, channels, fixtures, stopFixtures } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, fixtures, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { ENTRIES, captureCase, caseUrl, casesOf } from "./matrix.mjs";
 
 after(() => stopFixtures());
@@ -39,6 +39,7 @@ test("generate_fill_and_submit_on_the_sign_up_fixture_gives_one_save_offer", asy
       // "Offer to save passwords" on, with a real click in the settings tab.
       await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
       await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+      await openSettingsPage(w.session, "capture");
       const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
       assert.ok(toggle, `${channel}: the settings page has the switch`);
       await w.session.click(toggle);

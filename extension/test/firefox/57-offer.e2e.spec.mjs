@@ -17,8 +17,8 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, test } from "node:test";
 import { ENTRIES, captureCase, casesOf, offersPeek } from "./matrix.mjs";
-import { world } from "./adversary.mjs";
-import { EXTENSION_ORIGIN, channels, stopFixtures } from "./harness.mjs";
+import { shotPath, world } from "./adversary.mjs";
+import { EXTENSION_ORIGIN, channels, openSettingsPage, stopFixtures } from "./harness.mjs";
 import { POPUP_URL, SLOW } from "./e2e.mjs";
 
 after(() => stopFixtures());
@@ -39,6 +39,7 @@ async function ready(channel) {
   }
   await w.session.navigate(`${EXTENSION_ORIGIN}/pages/settings.html`);
   await w.session.waitFor(() => w.session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+  await openSettingsPage(w.session, "capture");
   const [toggle] = await w.session.findAll('[data-role="capture-switch"]');
   assert.ok(toggle, `${channel}: the settings page has the switch`);
   await w.session.click(toggle);
@@ -218,12 +219,54 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       await w.page.click('[data-role="tab-settings"]');
       // Settings is a part of the popup: the view is shown in it, the bar marks it, and no tab or window opens.
       await w.page.waitVisible('[data-role="settings-view"]', SLOW);
+      // The main screen first: the groups with a row each, and no sub-page; the popup's bar stays.
+      assert.deepEqual(
+        await w.session.content(() => [...document.querySelectorAll('[data-role="settings-main"] [class~="ff-nav-row"]')].map((b) => b.getAttribute("data-role"))),
+        ["settings-row-capture", "settings-row-never", "settings-row-pin", "settings-row-passkeys", "settings-row-lock", "settings-row-credits"],
+        channel,
+      );
+      assert.equal(await w.page.visible('[data-role="settings-page"]'), false, `${channel}: no sub-page on the main screen`);
+      assert.equal(await w.page.visible('[data-role="tabs"]'), true, `${channel}: the bar is there`);
       assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-settings"]')?.getAttribute("aria-current")), "page", `${channel}: the settings item is marked`);
       assert.equal(await w.session.content(() => document.querySelector('[data-role="tab-generator"]')?.hasAttribute("aria-current")), false, channel);
-      await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="lock-after"]')?.value !== ""), 20_000, "the lock choice");
+      await w.session.waitFor(() => w.session.content(() => document.querySelector('[data-role="lock-summary"]')?.textContent !== ""), 20_000, "the lock choice");
+      // Screenshots of the main screen and of three pages, in the dark scheme (for the gate's screenshots).
+      await w.session.chrome(() => Services.prefs.setIntPref("layout.css.prefers-color-scheme.content-override", 0));
+      await sleep(500);
+      await w.session.screenshot(shotPath(channel, "ext-settings-1-main"));
+      for (const [n, id] of /** @type {const} */ ([[2, "capture"], [3, "pin"], [4, "lock"]])) {
+        await openSettingsPage(w.session, id);
+        if (id === "pin") await w.session.waitFor(() => w.session.content(() => (document.querySelector('[data-role="unlock-pin-status"]')?.textContent ?? "") !== ""), 20_000, "the PIN status");
+        await sleep(500);
+        await w.session.screenshot(shotPath(channel, `ext-settings-${n}-${id}`));
+        await w.page.click(`[data-page="${id}"] [data-role="settings-back"]`);
+        await w.page.waitVisible('[data-role="settings-main"]');
+      }
+      // A sub-page opens in the popup, the back button returns to its row, and the bar is still there.
+      await openSettingsPage(w.session, "lock");
+      assert.equal(await w.page.visible('[data-role="settings-main"]'), false, channel);
+      assert.equal(await w.page.visible('[data-role="tabs"]'), true, `${channel}: the bar is there on a sub-page`);
+      assert.equal(await w.session.content(() => document.activeElement?.getAttribute("data-role")), "settings-page-title", `${channel}: the focus is on the page's heading`);
+      await w.page.click('[data-page="lock"] [data-role="settings-back"]');
+      await w.page.waitVisible('[data-role="settings-main"]');
+      assert.equal(await w.session.content(() => document.activeElement?.getAttribute("data-role")), "settings-row-lock", `${channel}: the focus is back on the row`);
       await sleep(1_000);
       assert.equal((await w.session.windowHandles()).length, before, `${channel}: Settings opens no tab or window`);
       assert.equal(await w.session.content(() => location.pathname), "/pages/popup.html", channel);
+      // The same main screen in Norwegian (the page takes the language of the browser), still in the dark scheme.
+      await w.session.chrome(() => Services.prefs.setStringPref("intl.accept_languages", "nb, en"));
+      await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
+      await w.page.ready();
+      await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
+      await w.page.click('[data-role="tab-settings"]');
+      await w.page.waitVisible('[data-role="settings-main"]', SLOW);
+      assert.equal(await w.page.text('[data-role="settings-title"]'), "Innstillinger", channel);
+      await sleep(500);
+      await w.session.screenshot(shotPath(channel, "ext-settings-5-main-nb"));
+      await w.session.chrome(() => {
+        Services.prefs.clearUserPref("intl.accept_languages");
+        Services.prefs.clearUserPref("layout.css.prefers-color-scheme.content-override");
+      });
     } finally {
       await w.quit();
     }
@@ -241,6 +284,7 @@ test("offer_to_save_is_turned_on_and_off_from_the_settings_part_of_the_popup", a
       await w.page.ready();
       await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
       await w.page.click('[data-role="tab-settings"]');
+      await openSettingsPage(w.session, "capture");
       await w.page.waitVisible('[data-role="capture-switch"]', SLOW);
       const on = () => w.session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked"));
       const https = () => w.session.content(() => browser.permissions.contains({ origins: ["https://*/*"] }));
@@ -251,12 +295,14 @@ test("offer_to_save_is_turned_on_and_off_from_the_settings_part_of_the_popup", a
       await w.page.click('[data-role="capture-switch"]');
       await w.session.waitFor(async () => (await on()) === "true", 20_000, "the switch on");
       assert.equal(await https(), true, `${channel}: the access to https pages is given`);
-      assert.match(await w.page.text('[data-role="capture-state"]'), /^On\./, channel);
+      assert.equal(await w.page.text('[data-role="capture-state"]'), "On", channel);
       // The same state is on the settings page of the add-on (one setting, two places), and it is kept when the popup is built again.
       await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
       await w.page.ready();
       await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
       await w.page.click('[data-role="tab-settings"]');
+      await w.session.waitFor(async () => (await w.page.text('[data-role="capture-summary"]')) === "On", 20_000, "the row says On after a new popup");
+      await openSettingsPage(w.session, "capture");
       await w.session.waitFor(async () => (await on()) === "true", 20_000, "the switch on after a new popup");
       // Off again: the setting goes, and so does the access.
       await w.page.click('[data-role="capture-switch"]');
@@ -264,6 +310,8 @@ test("offer_to_save_is_turned_on_and_off_from_the_settings_part_of_the_popup", a
       await w.session.waitFor(async () => (await https()) === false, 20_000, "the access taken back");
       assert.equal((await w.session.windowHandles()).length, before, `${channel}: no tab or window was opened`);
       // The lock choice is saved from the popup too.
+      await w.page.click('[data-page="capture"] [data-role="settings-back"]');
+      await openSettingsPage(w.session, "lock");
       await w.session.content(() => {
         const node = /** @type {HTMLSelectElement} */ (document.querySelector('[data-role="lock-after"]'));
         node.value = "3600";

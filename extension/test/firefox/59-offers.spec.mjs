@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { casesOf, caseUrl, leave, runSteps, sha256 } from "./matrix.mjs";
-import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
+import { EXTENSION_ORIGIN, channels, fixtures, launch, openBridge, openSettingsPage, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
 
 after(() => stopFixtures());
 
@@ -55,6 +55,7 @@ async function open(channel) {
 async function turnOn(session) {
   await session.navigate(SETTINGS_URL);
   await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+  await openSettingsPage(session, "capture");
   const [toggle] = await session.findAll('[data-role="capture-switch"]');
   assert.ok(toggle, "the settings page has the switch (the test build has saving passwords on)");
   assert.equal(await session.content(() => document.querySelector('[data-role="capture-switch"]')?.getAttribute("aria-checked")), "false", "off by default");
