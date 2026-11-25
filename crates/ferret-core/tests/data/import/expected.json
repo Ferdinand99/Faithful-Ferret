@@ -1,0 +1,47 @@
+{
+  "note": "TEST ONLY. Throwaway passkeys for rp-a.test (fixture host). Never registered anywhere real.",
+  "passkeys": [
+    {
+      "file": "bitwarden-import-test.json",
+      "label": "guid-id, discoverable",
+      "rpId": "rp-a.test",
+      "credentialIdRawB64u": "obwzIanlQ0qMI2YABmzJEQ",
+      "userHandleB64u": "7LigzOQDSkOT_yr-3e3N9w",
+      "publicKeySpkiB64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJ0AI2V5/JAzSVnmHaFadE2s6dfntncAiI4brEzb8siNACuIvdTm0Dj74k1QTpVEVMwWbvJIIFUHyGR5hbmjubw=="
+    },
+    {
+      "file": "bitwarden-import-test.json",
+      "label": "b64.-id (imported from elsewhere), discoverable, counter 7",
+      "rpId": "rp-a.test",
+      "credentialIdRawB64u": "rG7-pY6CMa0iNyxgdA9ixAV-17h-xnnPsSU8Jcg6PEs",
+      "userHandleB64u": "7Fp0sAOBnwBLY2tWK3tjIQ",
+      "publicKeySpkiB64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEsSbKQNOZKtQlDfARHcVheTjMq742eCrwTsLl4uZDk3hDTLD6aIKputaDwYnVpE+LW8H3t+DUZe7oWOl5QodooA=="
+    },
+    {
+      "file": "bitwarden-import-test.json",
+      "label": "non-discoverable (no userHandle)",
+      "rpId": "rp-a.test",
+      "credentialIdRawB64u": "qgmcl1E1QQe4ZNLOhpiAAg",
+      "userHandleB64u": null,
+      "publicKeySpkiB64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE995CDH6tlwbTHnEjmtphVX4FCAkHnUM2tbJYk+Fn+ma/BMCCB25qAzhh2XviZNQ9egdMjCxawIXSWnyD31+WDg=="
+    },
+    {
+      "file": "aliasvault-import-test.avux",
+      "label": "created in AliasVault (credentialId null -> GUID bytes of id), no PRF",
+      "rpId": "rp-a.test",
+      "credentialIdRawB64u": "QZHEmwXUSyyb2U_sryPINA",
+      "userHandleB64u": "Aay5G3GbWPnAtQjRVBjHIw",
+      "publicKeySpkiB64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo1ZO/uWIYpHOZUTIGGmUxaBuGinN03mhCfTYFevyJAPv47vJTbo+0xtkqlH16bb+IHFWL26KDwEW5SYKxVMpbg==",
+      "prfKeyB64": null
+    },
+    {
+      "file": "aliasvault-import-test.avux",
+      "label": "imported into AliasVault (credentialId set), with PRF key",
+      "rpId": "rp-a.test",
+      "credentialIdRawB64u": "4QsZu5WiUu5iBM0T90fN7XyY8Sac6QBvAE5iVry-vRE",
+      "userHandleB64u": "-Uy2x7oRSNrLSq3KE-ayeQ",
+      "publicKeySpkiB64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvKxOHg/kENeuW/l+KEv42CLA7/2Nz6JOV6DE059z17Th1cCNYwPjRHFnMMH1ol8BlE1sAJmW4q4P4YcyovGhgw==",
+      "prfKeyB64": "O6TQuM7OZTXrItJEbxV4Ru94sC6ORiH92gBtODOousc="
+    }
+  ]
+}

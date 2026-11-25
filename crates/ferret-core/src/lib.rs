@@ -111,8 +111,9 @@ pub use opaque::{
 };
 pub use passkey::{
     CallerContext, CanonicalOrigin, CreateRequest, CreatedPasskey, ExistingCredential, GetRequest,
-    PasskeyRecord, PasskeySite, RpId, StoredPasskeyRef, UserVerification, UvOutcome,
-    canonical_origin, passkey_candidates, passkey_candidates_for, passkey_create, passkey_get,
+    ImportKey, ImportNotes, ImportPrf, ImportedPasskeyInput, PasskeyRecord, PasskeySite, RpId,
+    StoredPasskeyRef, UserVerification, UvOutcome, canonical_origin, canonical_rp_id,
+    passkey_candidates, passkey_candidates_for, passkey_create, passkey_get, passkey_import,
     passkey_site, prf_output, seal_passkey_item, validate_rp_id,
 };
 pub use pin_profile::{

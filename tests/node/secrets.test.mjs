@@ -247,6 +247,8 @@ const EXPECTED_BYTE_PATHS = [
   "passkey_get:id",
   "passkey_get:signature",
   "passkey_get:user_handle",
+  "passkey_import:item.envelope",
+  "passkey_import:item.tag",
   "pin_unlock:pinned.account_id",
   "pin_unlock:pinned.pk_a",
   "pin_unlock:pinned.server_public_key",
@@ -506,6 +508,15 @@ test("no_reply_holds_key_material", () => {
   call("item_view (passkey)", () => vault.item_view(ph));
   call("passkey_candidates", () => vault.passkey_candidates(caller, { challenge: fill(32, 3), rp_id: "example.com", allow: [], user_verification: "required" }));
   call("passkey_site", () => vault.passkey_site(caller, "example.com"));
+  // An imported passkey: the key goes in as bytes and the reply holds the sealed item and the notes only.
+  call("passkey_import", () => vault.passkey_import(
+    fill(16, 0x52), 1, { item_type: "login", name: "Imported" },
+    {
+      cred_id: fill(32, 7), rp_id: "imported.example", user_handle: fill(16, 8), user_name: "u", created: 1, counter: 3,
+      key_pkcs8: vault.test_passkey_secret(ph, "pkcs8"), prf_seed_uv: vault.test_passkey_secret(ph, "seed_uv"), prf_seed_nouv: vault.test_passkey_secret(ph, "seed_nouv"),
+    },
+    NOW,
+  ));
 
   // ---- export and import
   const rows = [row(id, newItem), row(pkId, made.item)];

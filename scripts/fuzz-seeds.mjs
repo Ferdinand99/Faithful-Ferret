@@ -186,6 +186,19 @@ for (const c of cases('passkey.json', 'passkey.create')) {
   );
 }
 
+// Passkey import: flags | credential id length / 5 | user handle length, then
+// the RP ID, the user name and the key, each ended by a zero byte (the layout
+// of the target; the key is PKCS#8 or the JWK text).
+for (const c of cases('passkey_import.json', 'passkey.import')) {
+  const i = c.input;
+  const jwk = i.key.format === 'jwk';
+  const flags = (jwk ? 1 : 0) | (i.prf ? 2 : 0) | (i.rp_name ? 4 : 0) | (i.user_display_name ? 8 : 0);
+  const credLen = Math.min(255, Math.ceil(i.cred_id.length / 2 / 5));
+  const handleLen = Math.min(255, i.user_handle.length / 2);
+  const key = jwk ? text(i.key.text) : hex(i.key.hex);
+  add('fuzz_passkey_import', Buffer.concat([Buffer.from([flags, credLen, handleLen]), text(i.rp_id), Buffer.from([0]), text(i.user_name), Buffer.from([0]), key]));
+}
+
 // OPAQUE: the server's messages.
 for (const c of cases('opaque.json', 'opaque.login')) add('fuzz_opaque_messages', hex(c.input.ke2));
 for (const c of cases('opaque.json', 'opaque.register')) add('fuzz_opaque_messages', hex(c.input.response));

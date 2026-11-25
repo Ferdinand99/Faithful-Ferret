@@ -35,13 +35,13 @@ const BS: u8 = 0x10;
 const AT: u8 = 0x40;
 const ED: u8 = 0x80;
 
-fn pat(start: u8, len: usize) -> Vec<u8> {
+pub(crate) fn pat(start: u8, len: usize) -> Vec<u8> {
     (0..len)
         .map(|i| start.wrapping_add(u8::try_from(i % 251).unwrap_or(0)))
         .collect()
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     hex_encode(b)
 }
 
@@ -54,13 +54,13 @@ fn sha256(parts: &[&[u8]]) -> [u8; 32] {
 }
 
 /// A key pair from a scalar: `(d, x, y)`.
-struct Pair {
-    d: Vec<u8>,
-    x: Vec<u8>,
-    y: Vec<u8>,
+pub(crate) struct Pair {
+    pub(crate) d: Vec<u8>,
+    pub(crate) x: Vec<u8>,
+    pub(crate) y: Vec<u8>,
 }
 
-fn pair(d: Vec<u8>) -> Result<Pair, Error> {
+pub(crate) fn pair(d: Vec<u8>) -> Result<Pair, Error> {
     let key = SigningKey::from_slice(&d).map_err(|e| format!("scalar: {e}"))?;
     let point = key.verifying_key().to_sec1_point(false);
     let x = point.x().ok_or("no x")?.to_vec();
@@ -70,7 +70,7 @@ fn pair(d: Vec<u8>) -> Result<Pair, Error> {
 
 /// PKCS#8 `PrivateKeyInfo` of a P-256 key with the public key included
 /// (RFC 5958, RFC 5915): 138 bytes.
-fn pkcs8(p: &Pair) -> Vec<u8> {
+pub(crate) fn pkcs8(p: &Pair) -> Vec<u8> {
     let mut out =
         hex_to_bytes("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420");
     out.extend_from_slice(&p.d);
@@ -81,14 +81,14 @@ fn pkcs8(p: &Pair) -> Vec<u8> {
 }
 
 /// SubjectPublicKeyInfo of an uncompressed P-256 point: 91 bytes.
-fn spki(p: &Pair) -> Vec<u8> {
+pub(crate) fn spki(p: &Pair) -> Vec<u8> {
     let mut out = hex_to_bytes("3059301306072a8648ce3d020106082a8648ce3d03010703420004");
     out.extend_from_slice(&p.x);
     out.extend_from_slice(&p.y);
     out
 }
 
-fn hex_to_bytes(s: &str) -> Vec<u8> {
+pub(crate) fn hex_to_bytes(s: &str) -> Vec<u8> {
     ferret_core::testing::hex_decode(s).unwrap_or_default()
 }
 
@@ -128,7 +128,7 @@ fn client_data(kind: &str, challenge: &[u8], origin: &str) -> String {
     )
 }
 
-fn base64url(b: &[u8]) -> String {
+pub(crate) fn base64url(b: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     let mut acc: u32 = 0;
@@ -218,7 +218,7 @@ struct Create {
 /// site: the C0 and C1 controls and DEL, the line and paragraph separators, the
 /// bidirectional controls, the zero-width space and the byte order mark,
 /// written out as code point ranges.
-fn without_controls(s: &str) -> String {
+pub(crate) fn without_controls(s: &str) -> String {
     s.chars()
         .filter(|c| {
             !matches!(
@@ -240,7 +240,7 @@ fn without_controls(s: &str) -> String {
 }
 
 /// The text as stored: `None` when nothing is left of it.
-fn stored_text(s: &str) -> Value {
+pub(crate) fn stored_text(s: &str) -> Value {
     let t = without_controls(s);
     if t.is_empty() {
         Value::Null

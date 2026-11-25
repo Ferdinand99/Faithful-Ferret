@@ -45,6 +45,7 @@ mod authdata;
 mod candidates;
 mod client_data;
 mod cose;
+mod import;
 pub mod origin;
 mod prf;
 mod psl;
@@ -55,7 +56,8 @@ pub use candidates::{
 };
 pub use client_data::Ceremony;
 pub use cose::{COSE_ALG_ES256, PasskeyPrivateKey};
-pub use origin::{CanonicalOrigin, RpId, canonical_origin, validate_rp_id};
+pub use import::{ImportKey, ImportNotes, ImportPrf, ImportedPasskeyInput, passkey_import};
+pub use origin::{CanonicalOrigin, RpId, canonical_origin, canonical_rp_id, validate_rp_id};
 pub use prf::{
     MAX_EVAL_BY_CREDENTIAL, MAX_PRF_INPUT, PrfCreate, PrfEval, PrfRequest, PrfResults, prf_output,
     prf_salt,

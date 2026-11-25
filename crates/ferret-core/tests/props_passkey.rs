@@ -6,12 +6,12 @@ use ferret_core::passkey::{FLAG_AT, FLAG_BE, FLAG_BS, FLAG_UP, FLAG_UV};
 use ferret_core::testing::TestRng;
 use ferret_core::testing::passkey::is_public_suffix;
 use ferret_core::{
-    CallerContext, CreateRequest, GetRequest, StoredPasskeyRef, UserVerification, UvOutcome,
-    canonical_origin, passkey_candidates, passkey_create, passkey_get, passkey_site,
-    validate_rp_id,
+    CallerContext, CreateRequest, GetRequest, ImportKey, ImportPrf, ImportedPasskeyInput,
+    StoredPasskeyRef, UserVerification, UvOutcome, canonical_origin, passkey_candidates,
+    passkey_create, passkey_get, passkey_import, passkey_site, validate_rp_id,
 };
 use p256::ecdsa::signature::Verifier;
-use p256::ecdsa::{Signature, VerifyingKey};
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
@@ -270,4 +270,111 @@ proptest! {
             );
         }
     }
+}
+
+// ------------------------------------------------------------ import
+
+/// The base64url text of `bytes`, no padding.
+fn b64url(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for b in bytes {
+        acc = (acc << 8) | u32::from(*b);
+        bits += 8;
+        while bits >= 6 {
+            bits -= 6;
+            out.push(A[((acc >> bits) & 63) as usize] as char);
+        }
+        acc &= (1 << bits) - 1;
+    }
+    if bits > 0 {
+        out.push(A[((acc << (6 - bits)) & 63) as usize] as char);
+    }
+    out
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// A key given as PKCS#8 (with or without the public key) or as a JWK (with
+    /// or without `x` and `y`) is stored as the same scalar in the same
+    /// PKCS#8, and the passkey signs for the public key of that scalar.
+    #[test]
+    fn imported_key_round_trips(
+        scalar in proptest::array::uniform32(any::<u8>()),
+        cred_id in proptest::collection::vec(any::<u8>(), 1..=1023),
+        user_handle in proptest::collection::vec(any::<u8>(), 1..=64),
+        counter in any::<u32>(),
+        challenge in proptest::collection::vec(any::<u8>(), 0..=64),
+        verified in any::<bool>(),
+    ) {
+        let Ok(key) = SigningKey::from_slice(&scalar) else { return Ok(()); };
+        let point = key.verifying_key().to_sec1_point(false);
+        let mut full = vec![];
+        full.extend_from_slice(&hex_to_vec(
+            "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420",
+        ));
+        full.extend_from_slice(&scalar);
+        full.extend_from_slice(&hex_to_vec("a14403420004"));
+        full.extend_from_slice(point.x().unwrap());
+        full.extend_from_slice(point.y().unwrap());
+        let mut short = hex_to_vec(
+            "3041020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420",
+        );
+        short.extend_from_slice(&scalar);
+        let jwk_with = format!(
+            "{{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"{}\",\"y\":\"{}\",\"d\":\"{}\"}}",
+            b64url(point.x().unwrap()),
+            b64url(point.y().unwrap()),
+            b64url(&scalar)
+        );
+        let jwk_without = format!("{{\"crv\":\"P-256\",\"d\":\"{}\"}}", b64url(&scalar));
+
+        let mut stored: Vec<Vec<u8>> = vec![];
+        for key_input in [
+            ImportKey::Pkcs8Der(&full),
+            ImportKey::Pkcs8Der(&short),
+            ImportKey::JwkJson(&jwk_with),
+            ImportKey::JwkJson(&jwk_without),
+        ] {
+            let input = ImportedPasskeyInput {
+                cred_id: &cred_id,
+                rp_id: "Example.com",
+                user_handle: &user_handle,
+                user_name: "u",
+                rp_name: None,
+                user_display_name: None,
+                created: 1,
+                key: key_input,
+                prf: ImportPrf::None,
+                counter,
+            };
+            let (record, notes) = passkey_import(&input).unwrap();
+            prop_assert_eq!(notes.register_again, counter > 0);
+            prop_assert_eq!(&record.rp_id, "example.com");
+            prop_assert_eq!(&record.cred_id, &cred_id);
+            stored.push(ferret_core::testing::passkey::item_of(&record).private_key.clone());
+
+            let req = GetRequest {
+                challenge: challenge.clone(),
+                rp_id: Some("example.com".into()),
+                allow: vec![cred_id.clone()],
+                user_verification: UserVerification::Preferred,
+                prf: None,
+            };
+            let uv = UvOutcome { user_present: true, user_verified: verified };
+            let g = passkey_get(&record, &req, &ctx(), uv).unwrap();
+            let mut msg = g.authenticator_data.clone();
+            msg.extend_from_slice(&Sha256::digest(&g.client_data_json));
+            let sig = Signature::from_der(&g.signature).unwrap();
+            prop_assert!(key.verifying_key().verify(&msg, &sig).is_ok());
+        }
+        // One stored form, and it is the PKCS#8 with the public key.
+        prop_assert!(stored.iter().all(|s| *s == full));
+    }
+}
+
+fn hex_to_vec(s: &str) -> Vec<u8> {
+    ferret_core::testing::hex_decode(s).unwrap()
 }
