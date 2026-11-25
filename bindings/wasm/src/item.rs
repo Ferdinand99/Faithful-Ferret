@@ -50,6 +50,11 @@ struct PasskeyViewDto<'a> {
     cred_id: &'a [u8],
     #[serde(with = "bytes")]
     user_handle: &'a [u8],
+    /// What the site called itself and the account, as it gave it (`null`
+    /// for a passkey that has none). Text a site chose: show it in an
+    /// isolated element and never as the identity of the site (`rp_id` is).
+    rp_name: Option<&'a str>,
+    user_display_name: Option<&'a str>,
 }
 
 /// What JavaScript may see of an item: no private key, no PRF seed, no TOTP
@@ -91,6 +96,11 @@ impl<'a> ViewDto<'a> {
         let (cred_id, user_handle) = body.passkey.as_ref().map_or((NONE, NONE), |p| {
             (p.cred_id.as_slice(), p.user_handle.as_slice())
         });
+        let rp_name = body.passkey.as_ref().and_then(|p| p.rp_name.as_deref());
+        let user_display_name = body
+            .passkey
+            .as_ref()
+            .and_then(|p| p.user_display_name.as_deref());
         Self {
             item_type: &v.item_type,
             name: &v.name,
@@ -120,6 +130,8 @@ impl<'a> ViewDto<'a> {
                 has_prf: p.has_prf,
                 cred_id,
                 user_handle,
+                rp_name,
+                user_display_name,
             }),
             has_notes: v.has_notes,
             created: v.created,

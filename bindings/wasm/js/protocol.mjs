@@ -271,6 +271,8 @@ export const STRING_ARGS = {
   items_with_field_value: [[1, false], [2, false]],
   // The name of a new passkey method (see WELL_FORMED_ARGS).
   manifest_add_method: [[3, false]],
+  // The RP ID of a request, or none (the host of the origin).
+  passkey_site: [[1, true]],
 };
 
 /**

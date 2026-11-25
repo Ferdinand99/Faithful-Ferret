@@ -18,8 +18,9 @@ use crate::vault::{MAX_OPEN, OpenItem, PendingPasskey, Vault};
 use ferret_core::passkey::{PrfCreate, PrfEval, PrfRequest, PrfResults};
 use ferret_core::{
     CallerContext, CreateRequest, ExistingCredential, GetRequest, ItemBody, ItemId, ItemType,
-    OsRng, PasskeyRecord, UrlEntry, UrlMatch, UserVerification, UvOutcome, canonical_origin,
-    encrypt_item, passkey_create, passkey_get,
+    OsRng, PasskeyRecord, StoredPasskeyRef, UrlEntry, UrlMatch, UserVerification, UvOutcome,
+    canonical_origin, encrypt_item, passkey_candidates_for, passkey_create, passkey_get,
+    passkey_site,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -151,6 +152,35 @@ fn user_verification(s: &str) -> Res<UserVerification> {
     }
 }
 
+impl GetDto {
+    /// The core's request. `passkey_get` and `passkey_candidates` read it the
+    /// same way, so that both judge the same request.
+    fn core(self) -> Res<GetRequest> {
+        Ok(GetRequest {
+            challenge: self.challenge,
+            rp_id: self.rp_id,
+            allow: id_list(self.allow),
+            user_verification: user_verification(&self.user_verification)?,
+            prf: self.prf.map(|p| PrfRequest {
+                eval: p.eval.map(EvalDto::core),
+                eval_by_credential: p
+                    .eval_by_credential
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.id,
+                            PrfEval {
+                                first: e.first,
+                                second: e.second,
+                            },
+                        )
+                    })
+                    .collect(),
+            }),
+        })
+    }
+}
+
 #[derive(Serialize)]
 struct PrfResultsDto {
     #[serde(with = "b32")]
@@ -174,6 +204,12 @@ struct CreatePrfDto {
     results: Option<PrfResultsDto>,
 }
 
+/// `clientExtensionResults.credProps` of a registration.
+#[derive(Serialize)]
+struct CredPropsDto {
+    rk: bool,
+}
+
 #[derive(Serialize)]
 struct CreateResponseDto {
     id: Bytes,
@@ -182,12 +218,19 @@ struct CreateResponseDto {
     authenticator_data: Bytes,
     public_key_spki: Bytes,
     alg: i64,
+    /// `authenticatorAttachment`: public text.
+    authenticator_attachment: &'static str,
+    /// `getTransports()`: public text, in the order the core gives.
+    transports: &'static [&'static str],
+    /// Present only when the site asked for `credProps`.
+    cred_props: Option<CredPropsDto>,
     prf: Option<CreatePrfDto>,
 }
 
 #[derive(Serialize)]
 struct GetResponseDto {
     id: Bytes,
+    authenticator_attachment: &'static str,
     authenticator_data: Bytes,
     client_data_json: Bytes,
     signature: Bytes,
@@ -437,6 +480,9 @@ impl Vault {
                     authenticator_data: Bytes(r.authenticator_data.clone()),
                     public_key_spki: Bytes(r.public_key_spki.clone()),
                     alg: r.alg,
+                    authenticator_attachment: r.authenticator_attachment,
+                    transports: r.transports,
+                    cred_props: r.cred_props.map(|c| CredPropsDto { rk: c.rk }),
                     prf: r.prf.as_ref().map(|p| CreatePrfDto {
                         enabled: p.enabled,
                         results: p.results.as_ref().map(PrfResultsDto::of),
@@ -472,7 +518,7 @@ impl Vault {
     /// and without it, so a site that derives keys from the output needs user
     /// verification on every request.
     ///
-    /// Returns `{ id, authenticator_data,
+    /// Returns `{ id, authenticator_attachment, authenticator_data,
     /// client_data_json, signature, user_handle, prf }`.
     pub fn passkey_get(
         &self,
@@ -482,37 +528,16 @@ impl Vault {
         uv: JsValue,
     ) -> Result<JsValue, JsValue> {
         run(|| {
-            let dto: GetDto = from_js(request)?;
+            let req = from_js::<GetDto>(request)?.core()?;
             let ctx = from_js::<CallerDto>(caller)?.core()?;
             let uv = from_js::<UvDto>(uv)?.core();
-            let req = GetRequest {
-                challenge: dto.challenge,
-                rp_id: dto.rp_id,
-                allow: id_list(dto.allow),
-                user_verification: user_verification(&dto.user_verification)?,
-                prf: dto.prf.map(|p| PrfRequest {
-                    eval: p.eval.map(EvalDto::core),
-                    eval_by_credential: p
-                        .eval_by_credential
-                        .into_iter()
-                        .map(|e| {
-                            (
-                                e.id,
-                                PrfEval {
-                                    first: e.first,
-                                    second: e.second,
-                                },
-                            )
-                        })
-                        .collect(),
-                }),
-            };
             let item = self.inner()?.item(handle)?;
             let passkey = item.body.passkey.as_ref().ok_or(Fail::Input)?;
             let record = PasskeyRecord::from_item(passkey)?;
             let r = passkey_get(&record, &req, &ctx, uv)?;
             to_js(&GetResponseDto {
                 id: Bytes(r.id),
+                authenticator_attachment: r.authenticator_attachment,
                 authenticator_data: Bytes(r.authenticator_data),
                 client_data_json: Bytes(r.client_data_json),
                 signature: Bytes(r.signature),
@@ -521,6 +546,89 @@ impl Vault {
             })
         })
     }
+
+    /// The open passkey items that may answer a `navigator.credentials.get`
+    /// request, as item handles, in handle order. A passkey qualifies when its
+    /// RP ID is exactly the RP ID the request resolves to and, when `allow` is
+    /// not empty, its credential id is in `allow`. The core decides
+    /// (`passkey_candidates_for`), after it has checked the whole request as
+    /// `passkey_get` does.
+    ///
+    /// * `caller` is `{ origin, top_origin_is_same }`.
+    /// * `request` is the request of `passkey_get`: `{ challenge, rp_id,
+    ///   allow, user_verification, prf }`.
+    ///
+    /// An empty list is not an error. The errors do not depend on what the
+    /// vault holds: `too_large`, `invalid_input`, `not_allowed` (a
+    /// cross-origin caller) and `malformed_rp_id` (an RP ID the origin may
+    /// not use, which the caller gives the page as `SecurityError`). This
+    /// only reads: nothing is signed or written. The list is for the
+    /// extension's own windows and must never reach the page.
+    pub fn passkey_candidates(
+        &self,
+        caller: JsValue,
+        request: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        run(|| {
+            let req = from_js::<GetDto>(request)?.core()?;
+            let ctx = from_js::<CallerDto>(caller)?.core()?;
+            let inner = self.inner()?;
+            let open: Vec<(u32, StoredPasskeyRef<'_>)> = inner
+                .items
+                .iter()
+                .filter_map(|(h, i)| {
+                    i.body.passkey.as_ref().map(|p| {
+                        (
+                            *h,
+                            StoredPasskeyRef {
+                                rp_id: &p.rp_id,
+                                cred_id: &p.cred_id,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            let refs: Vec<StoredPasskeyRef<'_>> = open.iter().map(|(_, r)| *r).collect();
+            let found = passkey_candidates_for(&ctx, &req, &refs)?;
+            let handles: Vec<u32> = found
+                .into_iter()
+                .filter_map(|i| open.get(i).map(|(h, _)| *h))
+                .collect();
+            to_js(&handles)
+        })
+    }
+
+    /// The site of a request as the chooser shows it: `{ origin,
+    /// host_unicode, rp_id, rp_id_unicode }`. The origin and the RP ID are the
+    /// canonical forms (A-labels) that are compared and written into
+    /// `clientDataJSON`; the Unicode forms are for reading, and a label that
+    /// mixes scripts stays an A-label in them. The checks are those of
+    /// `passkey_get`: `not_allowed` for a cross-origin caller and
+    /// `malformed_rp_id` for an RP ID the origin may not use. It reads
+    /// nothing from the vault; it is a method of it so that the check only
+    /// runs while the vault is unlocked.
+    pub fn passkey_site(&self, caller: JsValue, rp_id: Option<String>) -> Result<JsValue, JsValue> {
+        run(|| {
+            let ctx = from_js::<CallerDto>(caller)?.core()?;
+            self.inner()?;
+            let site = passkey_site(&ctx, rp_id.as_deref())?;
+            to_js(&SiteDto {
+                origin: &site.origin,
+                host_unicode: &site.host_unicode,
+                rp_id: &site.rp_id,
+                rp_id_unicode: &site.rp_id_unicode,
+            })
+        })
+    }
+}
+
+/// The site of a request: public text.
+#[derive(Serialize)]
+struct SiteDto<'a> {
+    origin: &'a str,
+    host_unicode: &'a str,
+    rp_id: &'a str,
+    rp_id_unicode: &'a str,
 }
 
 impl Shaped for CallerDto {
@@ -565,6 +673,7 @@ impl Shaped for CreateDto {
         ("exclude", &ANY),
         ("user_verification", &ANY),
         ("prf", &PrfDto::SHAPE),
+        ("cred_props", &ANY),
     ]);
 }
 

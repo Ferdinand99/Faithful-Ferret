@@ -46,7 +46,7 @@ use ferret_core::{
     export_encrypt, export_plain_csv, export_plain_json, import_decrypt, item_tag, make_checkpoint,
     make_tombstone, manifest_add_method, manifest_remove_method, opaque_login_finish,
     opaque_login_start, opaque_register_finish, opaque_register_start, parse_export_header,
-    parse_otpauth, passkey_candidates, passkey_create, passkey_get, passkey_site, prf_output,
+    parse_otpauth, passkey_candidates_for, passkey_create, passkey_get, passkey_site, prf_output,
     prf_salt_new, recovery_public_key, recovery_sign, totp_code, totp_seconds_left, unwrap_vk,
     validate_rp_id, verify_auth_proof, verify_checkpoint, verify_item_tag, verify_recovery_proof,
     verify_tombstone, wrap_vk,
@@ -1173,7 +1173,16 @@ fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Er
             .iter()
             .map(|(rp_id, cred_id)| StoredPasskeyRef { rp_id, cred_id })
             .collect();
-        let indexes = passkey_candidates(&ctx, i["rp_id"].as_str(), &hex_list(&i["allow"]), &refs)?;
+        // The validated form, as the binding calls it: the case carries no
+        // challenge, so the request gets a valid one.
+        let req = GetRequest {
+            challenge: vec![0; 32],
+            rp_id: i["rp_id"].as_str().map(str::to_owned),
+            allow: hex_list(&i["allow"]),
+            user_verification: UserVerification::Discouraged,
+            prf: None,
+        };
+        let indexes = passkey_candidates_for(&ctx, &req, &refs)?;
         return Ok(json!({ "indexes": indexes }));
     }
     if method == "passkey_site" {
@@ -1823,6 +1832,39 @@ impl Vault {
 
 #[wasm_bindgen]
 impl Vault {
+    /// Opens an item that holds a passkey with the given RP ID and credential
+    /// id and nothing else of one (no usable key), as a stored passkey the
+    /// candidate rule can be tried on: the RP ID is taken as it is, so that
+    /// a value that is not canonical can be tested. Returns its handle.
+    pub fn test_passkey_open(&mut self, rp_id: &str, cred_id: Vec<u8>) -> Result<u32, JsValue> {
+        let inner = self
+            .inner
+            .as_deref_mut()
+            .ok_or_else(|| JsValue::from_str("locked"))?;
+        let mut body = ItemBody::new(ferret_core::ItemType::Login, "test", 0);
+        body.passkey = Some(ferret_core::Passkey {
+            cred_id,
+            rp_id: rp_id.to_owned(),
+            user_handle: vec![1],
+            user_name: "test".to_owned(),
+            private_key: Vec::new(),
+            sign_count: 0,
+            created: 0,
+            prf_seed_uv: None,
+            prf_seed_nouv: None,
+            rp_name: None,
+            user_display_name: None,
+            extra: Vec::new(),
+        });
+        inner
+            .open(crate::vault::OpenItem {
+                item_id: ItemId::from_bytes([0xee; 16]),
+                envelope: Vec::new(),
+                body,
+            })
+            .map_err(|_| JsValue::from_str("open"))
+    }
+
     /// A secret of the passkey in an open item: `"scalar"` (the private
     /// scalar), `"pkcs8"` (the private key as stored), `"seed_uv"` or
     /// `"seed_nouv"` (the PRF seeds).
