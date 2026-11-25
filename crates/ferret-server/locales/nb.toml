@@ -113,3 +113,9 @@ time_days = "under {n} døgn"
 time_months = "under {n} måneder"
 time_years = "under {n} år"
 time_forever = "mer enn 1 000 år"
+
+[shell]
+admin = "Admin"
+vault = "Hvelv"
+operations = "Drift"
+access = "Tilgang"

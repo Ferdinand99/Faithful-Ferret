@@ -26,15 +26,15 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
   await page.waitForURL((url) => url.origin === adminUrl && url.pathname === "/settings/general", { timeout: SLOW });
 
   // Open another admin page by an htmx navigation (a boosted link): htmx snapshots the page it leaves.
-  await page.locator('.settings-nav a[href="/settings/users"]').click();
-  await expect(page.locator('.settings-nav a[href="/settings/users"][aria-current="page"]')).toBeVisible();
+  await page.locator('.side-nav a[href="/settings/users"]').click();
+  await expect(page.locator('.side-nav a[href="/settings/users"][aria-current="page"]')).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/settings/users");
   // The control: the cache holds a signed-in page now, so the empty cache below is the sign-out's doing.
   const before = await cachedPages(page);
   expect(JSON.stringify(before)).toContain("/settings/general");
 
   // Sign out from the account menu.
-  await page.locator('button.user-button').click();
+  await page.locator('button.side-account').click();
   await page.locator('form[action="/logout"] button[type="submit"]').click();
   await page.waitForURL((url) => url.origin === adminUrl && url.pathname === "/auth/signed-out", { timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "You are signed out" })).toBeVisible();
@@ -59,7 +59,7 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
     await page.waitForURL((url) => url.origin === vaultUrl, { timeout: 30_000 });
     await expect(page.locator('[data-role="credentials"]')).toBeVisible({ timeout: 20_000 });
   }
-  expect(await page.locator(".settings-nav, .topnav, .user-button, #user-menu").count()).toBe(0);
+  expect(await page.locator(".side-nav, .side-account, .user-button, #user-menu").count()).toBe(0);
   const html = await page.content();
   expect(html).not.toContain("/settings/users");
   expect(html).not.toContain("/settings/general");

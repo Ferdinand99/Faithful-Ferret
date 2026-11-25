@@ -93,6 +93,7 @@ async fn vault_headers(
 /// referrer ever leaves the origin.
 fn admin_referrer_policy(path: &str) -> &'static str {
     if path == "/setup"
+        || path == "/vault"
         || ["/auth/", "/api/", "/vault/"]
             .iter()
             .any(|prefix| path.starts_with(prefix))
@@ -155,6 +156,7 @@ mod tests {
             "/auth/handoff",
             "/api/auth/session",
             "/vault/login",
+            "/vault",
         ] {
             assert_eq!(admin_referrer_policy(path), "no-referrer", "{path}");
         }

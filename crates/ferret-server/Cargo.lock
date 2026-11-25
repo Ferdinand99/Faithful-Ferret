@@ -3428,8 +3428,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vole-kit"
-version = "0.9.1"
-source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.9.1#3474a0f7bb679c0e609d13fc638ff5d422f3563a"
+version = "0.10.0"
+source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.10.0#dfaa54458c6bc81a76c57d3209e3d9c1eb28e1ae"
 dependencies = [
  "argon2",
  "askama",
@@ -3465,8 +3465,8 @@ dependencies = [
 
 [[package]]
 name = "vole-kit-build"
-version = "0.9.1"
-source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.9.1#3474a0f7bb679c0e609d13fc638ff5d422f3563a"
+version = "0.10.0"
+source = "git+https://github.com/Ferdinand99/Vigilant-Vole?tag=vole-kit-v0.10.0#dfaa54458c6bc81a76c57d3209e3d9c1eb28e1ae"
 
 [[package]]
 name = "voprf"

@@ -791,7 +791,6 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
         ("GET", "/pkg-web/ferret_core_wasm_bg.wasm"),
         ("GET", "/js/vault.worker.mjs"),
         ("GET", "/app/boot.mjs"),
-        ("GET", "/vault"),
         ("GET", "/vault/items"),
     ] {
         let res = app
@@ -804,6 +803,13 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
             .await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{method} {path}");
     }
+
+    // `/vault` is the one path of that name that is answered: the side menu's switch to the
+    // web vault. It serves nothing of the vault, only a redirect to the vault origin.
+    let res = get(&app, "/vault").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.header("location"), format!("{VAULT_URL}/vault/"));
+    assert!(res.body.is_empty());
 }
 
 // ------------------------------------------------------- the signed-out page
