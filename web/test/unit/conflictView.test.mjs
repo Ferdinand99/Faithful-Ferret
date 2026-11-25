@@ -709,6 +709,12 @@ test("addresses_and_the_one_time_password_are_compared_as_text", async () => {
     const keys = all(root, "conflict-field").map((n) => n.getAttribute("data-key"));
     assert.ok(keys.indexOf("~urls") < keys.indexOf("username"));
     assert.ok(keys.indexOf("~totp") < keys.indexOf("username"));
+    // Both versions have one: the secrets are not compared, so the row is never "same".
+    const both = bankConflict();
+    both.local.view = loginView({ has_totp: true });
+    both.server.view = loginView({ has_totp: true, modified: MODIFIED_THEIRS });
+    const bothOpen = await open({ spec: both });
+    assert.equal(find(bothOpen.root, "conflict-field", "~totp").getAttribute("data-same"), "hidden");
 
     // Equal addresses, in another order, agree; a version without any says so.
     const same = bankConflict();
