@@ -12,6 +12,12 @@
 //           This is what U4-3 can do, and it proves the fixtures, the pages, the runner and the report.
 //   ferret  the extension answers (U4-8 and later). Not wired yet: every case is reported as not run.
 //
+// FERRET_PASSKEY_BRIDGE=1 (scripts/lanbox-ext.sh passkey-matrix --bridge) turns the test build's passkey scripts on before the
+// first case (the permission for https pages with a click in the extension's own page, the setting, and the fixture's vault as
+// the signed-in server). While the background hands every request back to the browser, the stub judgement then also shows that
+// the bridge leaves each ceremony as the browser alone would end it; the runner counts the requests that went through the
+// bridge, and a run in which none did proves nothing about it.
+//
 // A case that did not run counts as failed (UK125); nothing here ever turns "no result" into "passed".
 import { writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
@@ -20,7 +26,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFirefox } from "./driver.mjs";
 import { caseAddress, computeMatrix, loadCases, observe, specOf, writeReport } from "./passkeyCases.mjs";
-import { defaultManifest, xpiPath } from "./harness.mjs";
+import { BRIDGE_URL, defaultManifest, xpiPath } from "./harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +57,79 @@ export function fixtureCaFile() {
     writeFileSync(caFile, `${pem.trim()}\n`);
   }
   return caFile;
+}
+
+/** Whether the test build's passkey scripts are turned on before the first case (see the head of the file). */
+export const BRIDGE_ON = process.env.FERRET_PASSKEY_BRIDGE === "1";
+/** The server the extension counts as signed in to when the scripts are on: the fixture's vault origin (left out by them). */
+export const BRIDGE_SERVER = "https://vault-fixture.test";
+
+/**
+ * Turns the passkey scripts on in a tab of the extension's test bridge that stays open and counts the bridge's requests, and
+ * comes back to the tab the session was in.
+ * @param {import("./driver.mjs").Session} session
+ * @returns {Promise<string>} the handle of the bridge tab
+ */
+export async function turnOnPasskeyScripts(session) {
+  const back = await session.windowHandle();
+  const tab = await session.newTab();
+  await session.switchTo(tab);
+  await session.navigate(BRIDGE_URL);
+  await session.waitFor(() => session.content(() => document.documentElement.dataset.ready === "1"), 20_000, "the bridge page");
+  await session.content(() => {
+    const w = /** @type {any} */ (window);
+    w.passkeyRequests = 0;
+    browser.runtime.onMessage.addListener((/** @type {unknown} */ raw) => {
+      try {
+        if (JSON.parse(String(raw)).type === "passkey_request") w.passkeyRequests += 1;
+      } catch {
+        // Not a message of the bridge.
+      }
+      return undefined;
+    });
+    const button = document.createElement("button");
+    button.id = "pk-grant";
+    button.textContent = "grant";
+    button.addEventListener("click", () => {
+      browser.permissions.request({ origins: ["https://*/*"] }).then((ok) => { document.documentElement.dataset.pkGranted = String(ok); });
+    });
+    document.body.append(button);
+  });
+  const [button] = await session.findAll("#pk-grant");
+  await session.click(button);
+  const granted = await session.waitFor(() => session.content(() => document.documentElement.dataset.pkGranted), 15_000, "the permission for https pages");
+  if (granted !== "true") throw new Error("the permission for https pages was not granted");
+  await session.content((/** @type {string} */ server) => browser.storage.local.set({ use_passkeys: true, server }), BRIDGE_SERVER);
+  // The background has no storage listener: the test build's `passkey_reconcile` makes the registration agree now.
+  await session.content(() => new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-test-core" });
+    const timer = setTimeout(() => reject(new Error("passkey_reconcile did not answer")), 15_000);
+    port.onMessage.addListener((/** @type {any} */ reply) => {
+      clearTimeout(timer);
+      port.disconnect();
+      if (reply?.ok) resolve(true);
+      else reject(new Error(`passkey_reconcile: ${reply?.code}`));
+    });
+    port.postMessage({ id: "r1", op: "passkey_reconcile" });
+  }));
+  await session.waitFor(
+    () => session.content(async () => (await browser.scripting.getRegisteredContentScripts({ ids: ["ferret-passkey-main", "ferret-passkey-bridge"] })).length === 2),
+    15_000,
+    "both passkey scripts registered",
+  );
+  await session.switchTo(back);
+  return tab;
+}
+
+/** How many requests went through the bridge so far. @param {import("./driver.mjs").Session} session @param {string} tab */
+export async function bridgeRequests(session, tab) {
+  const back = await session.windowHandle();
+  await session.switchTo(tab);
+  try {
+    return Number(await session.content(() => /** @type {any} */ (window).passkeyRequests ?? 0));
+  } finally {
+    await session.switchTo(back);
+  }
 }
 
 /** The fixture container's base address, for the runner's own requests (reports). */
@@ -191,8 +270,11 @@ export function detectUnsafe(c, o, provider) {
 /**
  * Runs a set in one Firefox of one channel and writes the report.
  * @param {{ channel: "release" | "esr", manifest: "mv3" | "mv2", set: "fixtures" | "adversarial" | "holdout" | "demo", grep?: string, provider?: "stub" | "ferret", outDir: string, log?: (line: string) => void }} o
+ *   With BRIDGE_ON, `throughBridge` in the answer is the number of requests that went through the passkey bridge.
  */
 export async function runSet({ channel, manifest, set, grep = "", provider = "stub", outDir, log = () => {} }) {
+  /** The requests that went through the bridge (BRIDGE_ON), or null. @type {number | null} */
+  let throughBridge = null;
   const { cases, problems } = selectCases(set, grep);
   if (problems.length) throw new Error(`the cases of ${set} have problems: ${problems.join("; ")}`);
   /** @type {Map<string, import("./passkeyCases.mjs").CaseResult>} */
@@ -202,17 +284,19 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
   try {
     const runnable = cases.some((c) => c.set !== "demo" && c.needs !== "provider" && provider === "stub");
     if (runnable) session = await launchMatrixBrowser({ channel, manifest });
+    const bridgeTab = session && BRIDGE_ON ? await turnOnPasskeyScripts(session) : null;
     for (const c of cases) {
       const r = session ? await runCase(session, c, { channel, provider }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider });
       results.set(c.id, r);
       const failing = r.observed?.reports?.find((/** @type {any} */ x) => x.kind === "step" && !x.ok);
       log(`${set} ${c.id}: ${r.status === "ran" ? JSON.stringify({ ceremony: r.observed?.ceremony, error: r.observed?.error, route: r.observed?.route, ...(failing ? { step: failing.step, message: failing.error?.message } : {}) }) : `not run (${r.reason})`}`);
     }
+    if (session && bridgeTab !== null) throughBridge = await bridgeRequests(session, bridgeTab);
   } finally {
     if (session) await session.quit();
   }
   // A run of some cases (--grep) is not a run of the set: its gate is never met.
   const matrix = computeMatrix(cases, results, provider, grep === "");
   writeReport(outDir, matrix, { channel, manifest, set });
-  return { cases, results, matrix };
+  return { cases, results, matrix, throughBridge };
 }

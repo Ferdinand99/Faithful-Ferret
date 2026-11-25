@@ -169,10 +169,14 @@ if (typeof browser !== "undefined") fillProbe.listen({ runtime: browser.runtime 
  *   now: () => number,
  *   offers?: any,
  *   engine?: () => any,
- * }} deps `engine`: the sync engine of the open vault, or null; `offers`: the store of offers, or null
+ *   passkeys?: { reconcile: () => Promise<unknown> } | null,
+ * }} deps `engine`: the sync engine of the open vault, or null; `offers`: the store of offers, or null; `passkeys`: the
+ *   registry of the passkey scripts, or null
  */
-export function install({ browser, runtime, coreHost, now, offers = null, engine = () => null }) {
+export function install({ browser, runtime, coreHost, now, offers = null, engine = () => null, passkeys = null }) {
   coreHost.addOps(ops);
+  // The specs that write the passkey setting into storage themselves (the switch comes later) ask for a reconcile here.
+  if (passkeys) coreHost.addOps({ passkey_reconcile: { vault: false, worker: "none", run: async () => passkeys.reconcile() } });
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
   coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args), items: () => engine()?.list() ?? [] }).ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);

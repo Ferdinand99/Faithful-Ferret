@@ -57,7 +57,7 @@
 #                                 The reports (<channel>-<manifest>.json and matrix.md)
 #                                 are unpacked into test-results/out/u2-matrix/ (or $FERRET_EXT_OUT_DIR/u2-matrix/),
 #                                 also after a failure. Stack handling and limits are those of e2e.
-#   scripts/lanbox-ext.sh passkey-matrix [--channel release|esr] [--manifest mv3|mv2] [--set fixtures|adversarial|holdout|demo] [--provider stub|ferret] [--grep <case id>] [--headed] [--wasm lock|tree]
+#   scripts/lanbox-ext.sh passkey-matrix [--channel release|esr] [--manifest mv3|mv2] [--set fixtures|adversarial|holdout|demo] [--provider stub|ferret] [--bridge] [--grep <case id>] [--headed] [--wasm lock|tree]
 #                                 the passkey matrix (U4, plan section 11): the cases of extension/test/fixtures/passkey
 #                                 (--set holdout: passkey-holdout/; --set demo: the public demo pages, outside the test network)
 #                                 in a real Firefox that trusts the test CA of the fixture container and sits on its
@@ -65,7 +65,10 @@
 #                                 with ... down). Every run starts with a self-test of the virtual authenticator and the
 #                                 fixture's TLS. --provider stub (the default) lets the browser's own path answer where Ferret
 #                                 would, so the route cannot be seen and the cases that need Ferret are counted as not run;
-#                                 --provider ferret is for when the extension answers (U4-8). A case that did not run counts as
+#                                 --provider ferret is for when the extension answers (U4-8). --bridge turns the test build's
+#                                 passkey scripts on first (permission, setting, a signed-in server); while the background hands
+#                                 every request back to the browser, the stub judgement then also shows that the bridge leaves
+#                                 each ceremony as the browser alone would end it. A case that did not run counts as
 #                                 failed. The default manifest is mv2. The reports (<set>-<channel>-<manifest>.json and .md) are
 #                                 unpacked into test-results/out/u4-matrix/ (or $FERRET_EXT_OUT_DIR/u4-matrix/), also after a failure.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
@@ -154,7 +157,7 @@ usage() {
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  --wasm lock|tree  (e2e only: --no-up)" >&2
   echo "  options of gate: --channel release|esr  --manifest mv3|mv2  --wasm lock|tree" >&2
   echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up  --wasm lock|tree" >&2
-  echo "  options of passkey-matrix: --channel release|esr  --manifest mv3|mv2  --set fixtures|adversarial|holdout|demo  --provider stub|ferret  --grep <case id>  --headed  --wasm lock|tree" >&2
+  echo "  options of passkey-matrix: --channel release|esr  --manifest mv3|mv2  --set fixtures|adversarial|holdout|demo  --provider stub|ferret  --bridge  --grep <case id>  --headed  --wasm lock|tree" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N  --wasm lock|tree" >&2
   echo "  option of unit: --wasm lock|tree (the test variant only; lint is a release check and takes none)" >&2
   exit 2
@@ -174,6 +177,7 @@ matrix_part=all
 matrix_set=corpus
 passkey_set=fixtures
 passkey_provider=stub
+passkey_bridge=0
 headed=0
 no_up=0
 scenario_list=""
@@ -190,6 +194,7 @@ while [ "$#" -gt 0 ]; do
     matrix:--set) [ "$#" -ge 2 ] || usage; matrix_set="$2"; shift 2 ;;
     passkey-matrix:--set) [ "$#" -ge 2 ] || usage; passkey_set="$2"; shift 2 ;;
     passkey-matrix:--provider) [ "$#" -ge 2 ] || usage; passkey_provider="$2"; shift 2 ;;
+    passkey-matrix:--bridge) passkey_bridge=1; shift ;;
     firefox:--headed | e2e:--headed | matrix:--headed | passkey-matrix:--headed) headed=1; shift ;;
     e2e:--no-up | matrix:--no-up) no_up=1; shift ;;
     measure:--scenario) [ "$#" -ge 2 ] || usage; scenario_list="$2"; shift 2 ;;
@@ -534,6 +539,7 @@ make_run() {
     -e FERRET_MATRIX_GREP="$grep_name"
     -e FERRET_PASSKEY_SET="$passkey_set"
     -e FERRET_PASSKEY_PROVIDER="$passkey_provider"
+    -e FERRET_PASSKEY_BRIDGE="$passkey_bridge"
     -e FERRET_PASSKEY_GREP="$grep_name"
     -e FERRET_PASSKEY_CA_PEM="$passkey_ca"
     -e FERRET_HEADLESS="$((1 - headed))"

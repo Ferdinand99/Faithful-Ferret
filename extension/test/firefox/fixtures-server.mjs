@@ -15,7 +15,8 @@
 // pages) are served on three listeners: the main https port, a second https port
 // and plain http, so one host name can be tested on another port and over http.
 //
-// The detection corpus of test/fixtures/forms is served the same way, from any listed
+// The detection corpus of test/fixtures/forms (and the pages of the passkey bridge specs, test/fixtures/passkey-pages) is
+// served the same way, from any listed
 // host on any listener: `/<case id>/` is the case's index.html and `/<case id>/<file>`
 // another page or script of the case (GET, HEAD and POST, so a form may post to a page of
 // its own). `{{origin:<name>}}` in a file becomes the origin of a named origin of the
@@ -41,6 +42,8 @@ const HOLDOUT_FORMS_DIR = resolve(here, "..", "fixtures", "forms-holdout");
 export const CAPTURE_FORMS_DIR = resolve(here, "..", "fixtures", "forms-capture");
 /** The autofill-parity suite (extension/test/fixtures/forms-parity): own pages for the forms of a public catalogue. */
 export const PARITY_FORMS_DIR = resolve(here, "..", "fixtures", "forms-parity");
+/** The pages of the passkey bridge specs (extension/test/fixtures/passkey-pages), served the same way. */
+export const PASSKEY_PAGES_DIR = resolve(here, "..", "fixtures", "passkey-pages");
 const FORM_FILE_TYPES = /** @type {Record<string, string>} */ ({
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -210,7 +213,7 @@ export function makeCertificates(dir, hosts) {
  * @param {{ hosts?: string[], port?: number, altPort?: number, httpPort?: number, sseIntervalMs?: number, dir?: string, forms?: string[] }} [options]
  * @returns {Promise<Fixtures>}
  */
-export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir, forms = [FORMS_DIR, HOLDOUT_FORMS_DIR, CAPTURE_FORMS_DIR, PARITY_FORMS_DIR] } = {}) {
+export async function startFixtures({ hosts = readHosts().fixture, port = 0, altPort = 0, httpPort = 0, sseIntervalMs = 10_000, dir, forms = [FORMS_DIR, HOLDOUT_FORMS_DIR, CAPTURE_FORMS_DIR, PARITY_FORMS_DIR, PASSKEY_PAGES_DIR] } = {}) {
   const formCases = listFormCases(forms);
   const wanted = [port, altPort, httpPort].filter((p) => p !== 0);
   if (new Set(wanted).size !== wanted.length) throw new Error(`fixtures: two listeners want the same port (${port}, ${altPort}, ${httpPort})`);

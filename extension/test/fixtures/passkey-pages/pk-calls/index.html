@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey bridge: calls</title>
+<script src="/pk-calls/ceremony.js"></script>
+</head>
+<body>
+<button id="go" type="button">Register and sign in</button>
+<button id="other" type="button">Other calls</button>
+<iframe id="cross" title="another origin" allow="publickey-credentials-get *; publickey-credentials-create *"></iframe>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  document.documentElement.dataset.result = JSON.stringify(await window.ceremony());
+});
+document.getElementById("other").addEventListener("click", async () => {
+  document.documentElement.dataset.other = JSON.stringify(await window.otherCalls());
+});
+// The frame: the same page folder on the other fixture host, same scheme and port.
+document.getElementById("cross").src = `${location.protocol}//second.fixture.test${location.port ? `:${location.port}` : ""}/pk-calls/frame.html`;
+</script>
+</body>
+</html>

@@ -348,6 +348,36 @@ test("a_failed_sign_in_leaves_the_vault_locked_and_keeps_no_server", async () =>
   assert.equal((await world.page().request("state", {})).state, "signed_out");
 });
 
+test("the_session_tells_its_listeners_after_it_stored_or_forgot_the_server", async () => {
+  // What the passkey registry hears instead of a storage listener: a sign-in that stored the server, and "forget this server".
+  const world = await sessionWorld({ createSession: fakeSessions().create });
+  /** @type {Array<string | null>} */
+  const seen = [];
+  const stop = world.sessionHost.onServerChange(() => seen.push(world.local.data.get("server") ?? null));
+  assert.equal((await world.page().request("sign_in", { server: SERVER, email: EMAIL, mp: MP, sk: SK_CODE })).ok, true);
+  assert.deepEqual(seen, [SERVER], "after the server is stored");
+  await world.sessionHost.forget();
+  assert.deepEqual(seen, [SERVER, null], "after the server is removed");
+  stop();
+  await world.sessionHost.forget();
+  assert.equal(seen.length, 2, "a listener that stopped hears nothing");
+  // A sign-in that fails stores nothing and tells nobody.
+  const failed = await sessionWorld({ createSession: fakeSessions({ signIn: () => Promise.reject(Object.assign(new Error("x"), { code: "network" })) }).create });
+  let told = 0;
+  failed.sessionHost.onServerChange(() => { told += 1; });
+  assert.equal((await failed.page().request("sign_in", { server: SERVER, email: EMAIL, mp: MP })).ok, false);
+  assert.equal(told, 0);
+  // A forget whose storage write fails tells nobody (the server is still there).
+  const broken = await sessionWorld({ createSession: fakeSessions().create, server: SERVER, gate: async (label) => { if (label === "storage.local.remove") throw new Error("disk"); } });
+  broken.sessionHost.onServerChange(() => { told += 1; });
+  await assert.rejects(broken.sessionHost.forget());
+  assert.equal(told, 0);
+  // A listener that throws does not undo the sign-in.
+  const loud = await sessionWorld({ createSession: fakeSessions().create });
+  loud.sessionHost.onServerChange(() => { throw new Error("listener"); });
+  assert.equal((await loud.page().request("sign_in", { server: SERVER, email: EMAIL, mp: MP, sk: SK_CODE })).ok, true);
+});
+
 test("an_unlock_without_a_signed_in_device_says_signed_out_and_another_server_is_refused", async () => {
   const sessions = fakeSessions();
   const none = await sessionWorld({ createSession: sessions.create });

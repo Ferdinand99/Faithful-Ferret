@@ -19,7 +19,7 @@
 // at start (`deleteDatabase("ferret-unlock")`, in background/unlockCleanup.mjs).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
@@ -84,7 +84,7 @@ const PASSKEY_PATHS = Object.freeze({
   /** Package files of the feature: the one list, `PASSKEY_FILES` of the build (the guard test below finds a file that is missing from it). */
   files: PASSKEY_FILES,
   /** Message types of the feature: each change that adds a type adds it here. */
-  types: /** @type {readonly string[]} */ (Object.freeze([])),
+  types: /** @type {readonly string[]} */ (Object.freeze(["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping"])),
   /** The attribute every control of the feature carries (the popup's section included). */
   control: 'data-feature="passkeys"',
   controlInCode: /["']data-feature["']\s*:\s*["']passkeys["']|data-feature=\\?["']passkeys/,
@@ -834,11 +834,12 @@ test("the_passkeys_feature_is_off_in_release_and_on_in_test", async () => {
   assert.deepEqual([...PASSKEY_SCRIPT_IDS], ["ferret-passkey-main", "ferret-passkey-bridge"]);
   for (const id of PASSKEY_SCRIPT_IDS) assert.ok(id.startsWith(PASSKEY_SCRIPT_ID_PREFIX), id);
 
-  // A file of the feature for every path that a build does not write itself (the joined scripts are the build's).
+  // A file of the feature for every path that a build does not write itself (the joined scripts are the build's) and that
+  // the tree does not have yet (the real one is used where it exists).
   /** @type {Record<string, string>} */
   const stubs = {};
   for (const path of PASSKEY_PATHS.files) {
-    if (path.endsWith(".inject.js")) continue;
+    if (path.endsWith(".inject.js") || existsSync(join(extensionRoot, "src", ...path.split("/")))) continue;
     stubs[`src/${path}`] = path.endsWith(".html") ? "<!doctype html><title>x</title>\n" : "export {};\n";
   }
   const env = makeRoot(stubs);
@@ -1110,8 +1111,10 @@ test("a_build_with_passkeys_off_unregisters_a_left_over_main_world_script", asyn
     } finally {
       delete (/** @type {any} */ (globalThis)).browser;
     }
-    assert.deepEqual(ours(owned.calls.removed), [], "with passkeys on the cleanup does not run");
-    assert.deepEqual(owned.registered, ["ferret-passkey-main", "ferret-passkey-bridge"]);
+    // With passkeys on the cleanup does not run: the feature's own registry makes the registration agree with the setting,
+    // the permission and the sign-in, and this fake browser has none of them, so both scripts go, in one call.
+    assert.deepEqual(ours(owned.calls.removed), [["ferret-passkey-main", "ferret-passkey-bridge"]]);
+    assert.deepEqual(owned.registered, []);
   } finally {
     env.cleanup();
   }
@@ -1136,7 +1139,8 @@ test("a_build_with_passkeys_off_unregisters_a_left_over_main_world_script", asyn
 test("every_file_of_the_passkey_feature_in_the_tree_is_listed", () => {
   // The guard over the real sources: a file whose name says passkey or webauthn belongs to the feature and must be in
   // PASSKEY_FILES (so a release leaves it out and the release check refuses it), apart from the cleanup module, which a
-  // package without the feature keeps. Only code and pages are scanned (`.mjs` and `.html`): the strings and the styles
+  // package without the feature keeps, and the feature's message handler, which every package keeps and which refuses while
+  // the feature is off. Only code and pages are scanned (`.mjs` and `.html`): the strings and the styles
   // (locales/<lang>/*.json, styles/*.css) are merged into one catalog and one stylesheet and are not package files of their own.
   // A file that a joined script is built from is a build input and is listed too.
   const src = join(extensionRoot, "src");
@@ -1146,7 +1150,9 @@ test("every_file_of_the_passkey_feature_in_the_tree_is_listed", () => {
   const named = walk(src)
     .map((file) => file.slice(src.length + 1).replace(/\\/g, "/"))
     .filter((path) => /\.(?:mjs|html)$/.test(path) && /passkey|webauthn/i.test(path))
-    .filter((path) => path !== PASSKEY_CLEANUP_FILE);
+    .filter((path) => path !== PASSKEY_CLEANUP_FILE)
+    // A handler stays in every package and refuses while the feature is off (passkeyPathsIn checks that it does).
+    .filter((path) => !/^background\/handlers\/[A-Za-z]+\.handler\.mjs$/.test(path));
   const missing = named.filter((path) => !PASSKEY_FILES.includes(path));
   assert.deepEqual(missing, [], "a file named for the passkey feature that PASSKEY_FILES does not list");
   // The list holds each file once, and the joined scripts come as a pair with their sources.

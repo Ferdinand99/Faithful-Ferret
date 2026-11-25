@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey bridge: calls in a frame</title>
+<script src="/pk-calls/ceremony.js"></script>
+</head>
+<body>
+<button id="go" type="button">Register and sign in</button>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  document.documentElement.dataset.result = JSON.stringify(await window.ceremony());
+});
+</script>
+</body>
+</html>

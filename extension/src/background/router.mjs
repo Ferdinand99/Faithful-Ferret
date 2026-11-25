@@ -12,7 +12,8 @@
 //   Content       A content script sends `runtime.sendMessage`. The sender must
 //                 be a content script (`contentSender`), and the message is
 //                 decoded with CONTENT_TYPES only. A content script can report;
-//                 it can never ask for a value.
+//                 it can never ask for a value. The one answer a content script
+//                 gets is the passkey bridge's "taken" (`passkey_request`).
 //
 // A message is decoded and its sender checked before anything else happens. The
 // origin of a sender comes from the browser, never from the message. A handler
@@ -51,6 +52,12 @@ export const REPORT_OP = "fill_report";
 export const CAPTURE_OP = "capture_event";
 
 /**
+ * The one core operation the passkey bridge's reports may reach (the `passkeys` feature): like the capture's, the router
+ * names the type and the sender it checked, and the handler hands on only the body.
+ */
+export const PASSKEY_OP = "passkey_event";
+
+/**
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
@@ -63,6 +70,7 @@ export const CAPTURE_OP = "capture_event";
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   report?: (args: unknown) => Promise<void>,
  *   capture?: (body: unknown) => Promise<void>,
+ *   passkey?: (body: unknown) => Promise<void>,
  *   touch?: () => void,
  *   setSeconds?: (n: number) => Promise<void>,
  *   getSeconds?: () => Promise<number>,
@@ -72,7 +80,8 @@ export const CAPTURE_OP = "capture_event";
  *   `runtime` (UI only) is the extension's id and address of its own pages, for a handler that checks the sender again
  *   (`isTopLevelExtensionPage`).
  *   `report` (content only) hands a report to `REPORT_OP`. `capture` (content only) hands the body of a capture message to
- *   `CAPTURE_OP`, with the type and the sender the router has checked.
+ *   `CAPTURE_OP`, with the type and the sender the router has checked. `passkey` (content only) does the same for
+ *   `PASSKEY_OP`.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
 
@@ -267,11 +276,11 @@ export function createRouter({
 
   /**
    * A message from `runtime.onMessage`. Only a content script's message with a
-   * type of the content table is handled; the answer is always empty.
+   * type of the content table is handled; the answer is empty, except the reply of a type that has one (`passkey_request`).
    *
    * @param {unknown} raw
    * @param {any} sender
-   * @returns {Promise<undefined> | undefined}
+   * @returns {Promise<string | undefined> | undefined}
    */
   function onMessage(raw, sender) {
     const from = contentSender(sender, runtime);
@@ -300,13 +309,27 @@ export function createRouter({
         capture: async (/** @type {unknown} */ body) => {
           await call(CAPTURE_OP, { type: message.type, sender: from, body });
         },
+        passkey: async (/** @type {unknown} */ body) => {
+          await call(PASSKEY_OP, { type: message.type, sender: from, body });
+        },
       });
+      /** @type {unknown} */
+      let result;
       try {
-        await handler.handle(message.body, ctx);
+        result = await handler.handle(message.body, ctx);
       } catch {
         // A report that fails has no one to answer.
+        return undefined;
       }
-      return undefined;
+      // A content type with a reply (only `passkey_request`: "taken", so that a bridge whose request was not taken hands the
+      // page's call back to the browser) gets the handler's answer; every other report gets nothing.
+      const def = /** @type {any} */ (CONTENT_TYPES)[message.type];
+      if (!def.reply) return undefined;
+      try {
+        return encode(message.type, result, { reply: true, id: message.id });
+      } catch {
+        return undefined;
+      }
     })();
   }
 

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey bridge: first script in a frame</title>
+<script>
+(() => {
+  const native = (f) => typeof f === "function" && /\{\s*\[native code\]\s*\}\s*$/.test(Function.prototype.toString.call(f));
+  document.documentElement.dataset.first = JSON.stringify({
+    createNative: native(CredentialsContainer.prototype.create),
+    getNative: native(CredentialsContainer.prototype.get),
+    readyState: document.readyState,
+  });
+})();
+</script>
+</head>
+<body><p>frame</p></body>
+</html>

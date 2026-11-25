@@ -52,6 +52,24 @@ export const CAPTURE_BUNDLE = "content/capture.inject.js";
 export const CAPTURE_MAX_BYTES = 40 * 1024;
 
 /**
+ * The passkey scripts (the `passkeys` feature): the one in the page's own world, which may be built from nothing but the
+ * passkey files of its folder (no protocol, no shared module: it keeps the built-ins it uses at install, design § 10.8)
+ * and has a size budget, and the bridge of the isolated world, which also reads the message protocol and the wire form.
+ */
+export const PASSKEY_MAIN_ENTRY = "content/passkey.main.entry.mjs";
+export const PASSKEY_MAIN_BUNDLE = "content/passkey.main.inject.js";
+export const PASSKEY_MAIN_MAX_BYTES = 30 * 1024;
+export const PASSKEY_BRIDGE_ENTRY = "content/passkey.bridge.entry.mjs";
+export const PASSKEY_BRIDGE_BUNDLE = "content/passkey.bridge.inject.js";
+/** The bridge runs in every https page and frame, like the capture script: it has a size budget too. */
+export const PASSKEY_BRIDGE_MAX_BYTES = 48 * 1024;
+/** @param {string} path */
+export const passkeyMainMayInclude = (path) => /^content\/passkey[A-Za-z.]*\.mjs$/.test(path);
+/** @param {string} path */
+export const passkeyBridgeMayInclude = (path) =>
+  passkeyMainMayInclude(path) || path === "shared/protocol.mjs" || path === "shared/schema.mjs" || path === "shared/webauthnWire.mjs";
+
+/**
  * The files a content script may be built from: its own folder and the message
  * protocol with the schema checker. No other shared module, nothing of the
  * background, no store, no crypto.

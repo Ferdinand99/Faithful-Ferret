@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey bridge: a hostile page</title>
+<script>
+// The page's first script: it gets in the way of everything it can before the first request.
+(() => {
+  const root = document.documentElement;
+  const log = { handshakeEvents: 0, portsSeen: 0, windowMessages: 0, windowPostMessage: 0, foreignPortUse: 0, stolenMessages: 0, forgedTaken: 0, repliesToForged: 0 };
+  const save = () => { root.dataset.adv = JSON.stringify(log); };
+  const ownPorts = new WeakSet();
+  const isForeignPort = (x) => x instanceof MessagePort && !ownPorts.has(x);
+  const TYPE = "ferret.passkeys.handshake";
+  const grab = (event) => {
+    log.handshakeEvents += 1;
+    try {
+      for (const port of event.ports || []) {
+        if (ownPorts.has(port)) continue;
+        log.portsSeen += 1;
+        port.onmessage = () => { log.stolenMessages += 1; save(); };
+      }
+    } catch (_) { /* nothing */ }
+    save();
+  };
+  document.addEventListener(TYPE, grab, true);
+  window.addEventListener(TYPE, grab, true);
+  window.addEventListener("message", (event) => {
+    log.windowMessages += 1;
+    if (event.ports && event.ports.length) log.portsSeen += event.ports.length;
+    save();
+  }, true);
+  const windowPost = window.postMessage;
+  window.postMessage = function (...args) { log.windowPostMessage += 1; save(); return Reflect.apply(windowPost, this, args); };
+  const proto = MessagePort.prototype;
+  for (const name of ["postMessage", "start", "close"]) {
+    const original = proto[name];
+    proto[name] = function (...args) { if (isForeignPort(this)) { log.foreignPortUse += 1; save(); } return Reflect.apply(original, this, args); };
+  }
+  for (const name of ["addEventListener", "removeEventListener", "dispatchEvent"]) {
+    const original = EventTarget.prototype[name];
+    EventTarget.prototype[name] = function (...args) { if (isForeignPort(this)) { log.foreignPortUse += 1; save(); } return Reflect.apply(original, this, args); };
+  }
+  const call = Function.prototype.call;
+  const apply = Function.prototype.apply;
+  Function.prototype.call = function (self, ...args) { if (isForeignPort(self)) { log.foreignPortUse += 1; save(); } return Reflect.apply(this, self, args); };
+  Function.prototype.apply = function (self, args) { if (isForeignPort(self)) { log.foreignPortUse += 1; save(); } return Reflect.apply(this, self, args || []); };
+  void call; void apply;
+  Object.defineProperty(Object.prototype, "then", { get() { return undefined; }, configurable: true });
+  // Forged handshakes in both directions, and a forged request on each port the page made.
+  for (const data of ["bridge", "main"]) {
+    const channel = new MessageChannel();
+    ownPorts.add(channel.port1);
+    ownPorts.add(channel.port2);
+    channel.port1.onmessage = () => { log.repliesToForged += 1; save(); };
+    const taken = !document.dispatchEvent(new MessageEvent(TYPE, { data, ports: [channel.port2], cancelable: true }));
+    if (taken) log.forgedTaken += 1;
+    channel.port1.postMessage({ t: "request", n: 1, kind: "get", mediation: "optional", options: { challenge: new ArrayBuffer(16) } });
+  }
+  save();
+})();
+</script>
+<script src="/pk-calls/ceremony.js"></script>
+</head>
+<body>
+<button id="go" type="button">Register and sign in</button>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  document.documentElement.dataset.result = JSON.stringify(await window.ceremony());
+});
+</script>
+</body>
+</html>

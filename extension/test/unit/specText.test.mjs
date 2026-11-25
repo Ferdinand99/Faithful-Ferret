@@ -368,7 +368,7 @@ test("the_passkey_rules_are_in_the_spec", () => {
   for (const rule of [
     "no `window.postMessage` at all, not even for the handshake",
     "`scripting.registerContentScripts` (`world: \"MAIN\"` and the isolated world, `runAt: \"document_start\"`, `allFrames: true`, `matches: [\"https://*/*\"]`, `persistAcrossSessions: true`",
-    "The background registers them at start and in `onInstalled`, because an update of the extension clears the registrations.",
+    "The background registers them at every start of its page, and an install or an update starts it, so the registrations an update clears are made again at once.",
     "**The handshake is synchronous.** One script makes a `MessageChannel` and calls `document.dispatchEvent` with a cancelable `MessageEvent`",
     "**It does not depend on which script runs first:** both listen and both send",
     "**The MAIN script keeps every built-in it uses** when it is installed",

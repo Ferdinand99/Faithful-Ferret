@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey bridge: first script</title>
+<script>
+(() => {
+  const native = (f) => typeof f === "function" && /\{\s*\[native code\]\s*\}\s*$/.test(Function.prototype.toString.call(f));
+  document.documentElement.dataset.first = JSON.stringify({
+    createNative: native(CredentialsContainer.prototype.create),
+    getNative: native(CredentialsContainer.prototype.get),
+    readyState: document.readyState,
+    scripts: document.scripts.length,
+  });
+})();
+</script>
+</head>
+<body>
+<p>The first script of this page records whether create and get are the browser's own.</p>
+<iframe id="same" src="/pk-first/frame.html" title="same origin"></iframe>
+</body>
+</html>

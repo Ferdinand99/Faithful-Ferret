@@ -2,7 +2,7 @@
   "id": "origin-localhost-http",
   "set": "fixtures",
   "category": "origin-rpid",
-  "title": "http://localhost (as above)",
+  "title": "http://localhost (every build leaves it to the browser)",
   "rp": {
     "lib": "rs",
     "client": "manual"
@@ -36,7 +36,7 @@
   "gesture": "click",
   "expected": {
     "ceremony": "ok",
-    "route": "ferret"
+    "route": "browser"
   },
   "unsafe": [
     {
@@ -47,5 +47,6 @@
       "id": "response-to-other-frame",
       "definition": "a window or an answer for any frame or origin other than the one that asked"
     }
-  ]
+  ],
+  "note": "Changed after the set was frozen, with the reviewer's yes: the passkey scripts are registered for https pages only and the feature asks for no other permission, so http://localhost goes to the browser in the test variant too (design 9.2 c)."
 }
