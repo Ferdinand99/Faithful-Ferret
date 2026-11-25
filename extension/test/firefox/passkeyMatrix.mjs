@@ -192,10 +192,13 @@ export async function turnOnFerret(session, channel) {
  * the newest passkey Ferret offers (the one this case made; a page that lists no credentials gets the passkeys of earlier cases too),
  * or "Use the browser" when it offers none. When the window then asks the person to verify, the master password is given there. Windows already pressed in (`pressed`) and the ones that were
  * there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window.
+ * A case whose page aborts its own call while Ferret has nothing to offer (`browserWhenEmpty` false) is left waiting: the page's
+ * abort is what it is about.
  * @param {import("./driver.mjs").Session} session @param {Set<string>} baseline @param {Set<string>} pressed @param {string} main
+ * @param {{ browserWhenEmpty?: boolean }} [o]
  * @returns {Promise<Array<{ kind: string, role: string }>>}
  */
-export async function pressInChooser(session, baseline, pressed, main) {
+export async function pressInChooser(session, baseline, pressed, main, { browserWhenEmpty = true } = {}) {
   /** @type {Array<{ kind: string, role: string }>} */
   const done = [];
   try {
@@ -215,6 +218,10 @@ export async function pressInChooser(session, baseline, pressed, main) {
       await sleep(900);
       const candidates = await session.findAll('[data-role="passkey-candidate"]');
       const role = shown.kind === "create" ? "passkey-create-new" : candidates.length > 0 ? "passkey-candidate" : "passkey-browser";
+      if (role === "passkey-browser" && !browserWhenEmpty) {
+        pressed.add(handle);
+        continue;
+      }
       const [button] = role === "passkey-candidate" ? candidates.slice(-1) : await session.findAll(`[data-role="${role}"]`);
       if (!button) continue;
       await session.click(button);
@@ -353,7 +360,7 @@ export async function runCase(session, c, { channel, provider }) {
       await sleep(250);
       const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
       windowsOpened = Math.max(windowsOpened, handles.filter((h) => !baseline.has(h)).length);
-      if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) await pressInChooser(session, baseline, pressed, main);
+      if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) await pressInChooser(session, baseline, pressed, main, { browserWhenEmpty: c.expected.error !== "AbortError" });
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
     }

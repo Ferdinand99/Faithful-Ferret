@@ -479,12 +479,13 @@ test("discouraged_needs_only_the_click", async () => {
   assert.deepEqual(await w.choose(id), { ok: true });
   assert.deepEqual(w.state.signs.at(-1).uv, { user_present: true, user_verified: false });
   assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
-  // A mark that is there is not used, and is gone after.
+  // Nothing is asked; when the person was verified anyway (here a PIN, which also starts the five minutes), UV says so: a strict
+  // relying party compares it with the UV of the registration.
   const next = await w.ask({ user_verification: "discouraged" });
   assert.deepEqual(await w.verifyOp(next.id, { method: "pin", pin: "123456" }), { ok: true });
   assert.deepEqual(await w.choose(next.id), { ok: true });
-  assert.equal(w.state.signs.at(-1).uv.user_verified, false);
-  assert.equal(w.verify.take(w.ref(next.id)), false);
+  assert.equal(w.state.signs.at(-1).uv.user_verified, true);
+  assert.equal(w.verify.take(w.ref(next.id)), false, "the mark was used");
 });
 
 // ------------------------------------------------------------------------------------------------- the candidates

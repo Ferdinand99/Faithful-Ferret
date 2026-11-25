@@ -21,9 +21,9 @@
 // so or went backwards: setting the system clock back cannot stretch them, and neither can a machine asleep (a monotonic clock
 // may stand still then). A background page that was unloaded starts without one. Every lock forgets it.
 //
-// The decision for a request (`decide`), the same for a get and a create: `discouraged` gives the click only (a mark that is there
-// is dropped); otherwise the request's mark, or the recent unlock (which issues one), gives UV; without either, the window is told
-// to verify when there is a way to (`verification_needed`); when there is none, `preferred` is answered without UV after the click
+// The decision for a request (`decide`), the same for a get and a create: the request's mark, or the recent unlock (which issues
+// one), gives UV, whatever the page asked; without either, `discouraged` gives the click only (UV false, nothing is asked), and for
+// `required` and `preferred` the window is told to verify when there is a way to (`verification_needed`); when there is none, `preferred` is answered without UV after the click
 // and `required` is told `verification_unavailable` (the window offers the browser). A mark is used when it is taken; a create
 // whose write the server refused gives it back (`restore`), so the person's next try of the same request needs no new verification.
 //
@@ -236,13 +236,12 @@ export function createPasskeyVerify({
      */
     async decide(ref, level) {
       const wanted = level === "required" || level === "discouraged" ? level : "preferred";
-      if (wanted === "discouraged") {
-        // The click is enough. A mark that is there is not used for anything.
-        this.take(ref);
-        return { ok: true, uv: false };
-      }
+      // The mark of the request, or the recent unlock (which issues one): UV, whatever the page asked. It is true then, and a page
+      // that discouraged verification but registered the passkey with it (a strict relying party compares the two) is answered.
       if (this.take(ref)) return { ok: true, uv: true };
       if ((await this.verify(ref, "recent")).ok && this.take(ref)) return { ok: true, uv: true };
+      // `discouraged`: the click is enough, without asking.
+      if (wanted === "discouraged") return { ok: true, uv: false };
       const ways = await this.methods();
       if (ways.recent || ways.prf || ways.pin || ways.password) return { ok: false, reason: "verification_needed" };
       // No way to verify now: `preferred` is answered without UV after the click; `required` goes to the browser.

@@ -126,7 +126,11 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         assert.equal(result.steps[0].server.flags.uv, true, `${channel} ${lib}: the relying party saw UV`);
         assert.equal(result.steps[0].credential.attachment, "platform");
 
-        // 2. `discouraged`: the click only, and no UV.
+        // 2. `discouraged` with the "recent unlock" setting off: the click only, nothing asked, and no UV. (With the setting on, the
+        // verification of step 1 would make UV true, which is what a strict relying party wants after a registration with UV.)
+        await session.switchTo(bridgeTab);
+        await bridge.invoke("storage.local.set", { passkey_recent_unlock: false });
+        await session.switchTo(pageTab);
         handle = await startGet(session, { lib, sid: key.sid, uv: "discouraged" });
         shown = await readWindow(session);
         assert.equal(shown.candidates.length, 1);
@@ -137,11 +141,9 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         assert.equal(result.steps[0].server.flags.uv, false, `${channel} ${lib}: no UV without verification`);
 
         // 3. `required` again, within five minutes of the verification (and the setting on): the click is enough, with UV.
-        if (n === 1) {
-          await session.switchTo(bridgeTab);
-          await bridge.invoke("storage.local.set", { passkey_recent_unlock: true });
-          await session.switchTo(pageTab);
-        }
+        await session.switchTo(bridgeTab);
+        await bridge.invoke("storage.local.set", { passkey_recent_unlock: true });
+        await session.switchTo(pageTab);
         handle = await startGet(session, { lib, sid: key.sid, uv: "required" });
         shown = await readWindow(session);
         assert.equal(shown.recent, true, `${channel} ${lib}: the window says one click is enough`);

@@ -21,7 +21,8 @@
 //     that works offline, no recent unlock), `preferred` is answered with UV false after the click, as an authenticator without
 //     verification would, and `required` is told `verification_unavailable`: the window says why and offers the browser (the page gets
 //     NotAllowedError only when the person cancels).
-//   - `discouraged` needs only the click: UV is false (a mark that is there is dropped, not used).
+//   - `discouraged` needs only the click: nothing is asked, and UV is true only when the person was verified anyway (a mark, or a
+//     recent unlock).
 // The PRF results go to the page only when it asked for them, and the core picks the seed that follows UV.
 //
 // A get writes nothing: no counter, no "last used", no change of the item (design § 9.5). It works without the server.
