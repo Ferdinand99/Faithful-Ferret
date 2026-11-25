@@ -1,0 +1,12 @@
+{
+  "name": "ferret-passkey-rp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The fixture server of the passkey tests (U4-3): test pages and the SimpleWebAuthn relying party. A test tool; never ships.",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@simplewebauthn/browser": "14.0.0",
+    "@simplewebauthn/server": "14.0.0"
+  }
+}

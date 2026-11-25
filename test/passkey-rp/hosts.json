@@ -1,0 +1,17 @@
+{
+  "comment": "The host names of the passkey fixture container. Every one is a name inside the test network only: the test network has no route out (it is created with --internal), the names are Docker network aliases of the fixture container, and the test CA may sign for nothing else (name constraints). Names under .test are reserved and never resolve on the internet; user.github.io and evil.github.io are real-looking public-suffix names that the aliases take over inside the test network, and nothing else is ever sent to them. localhost is served on ports 80 and 443 of the runner itself (see forward.mjs).",
+  "network": "ferret-u4-passkey-rp-net",
+  "container": "ferret-u4-passkey-rp",
+  "hosts": [
+    "rp-a.test",
+    "login.rp-a.test",
+    "rp-b.test",
+    "attacker.test",
+    "vault-fixture.test",
+    "user.github.io",
+    "evil.github.io",
+    "xn--rp--8cd.test"
+  ],
+  "idn": { "xn--rp--8cd.test": "rp-а.test (Cyrillic a, a look-alike of rp-a.test)" },
+  "localhostNames": ["localhost"]
+}

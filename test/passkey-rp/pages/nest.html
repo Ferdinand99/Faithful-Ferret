@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey fixture frame</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<h1>Frame chain</h1>
+<p id="where"></p>
+<div id="frames"></div>
+<script>
+// /nest.html?next=<url>&allow=<permissions policy>&kind=iframe|srcdoc|blank|sandbox|sandbox-same
+// builds one iframe that loads `next` (or, for srcdoc and blank, a page of its own that loads it),
+// so a chain of origins is a chain of nest.html addresses. The page at the end of the chain is
+// ceremony.html. The runner finds the last frame through the run's reports.
+const q = new URLSearchParams(location.search);
+document.getElementById("where").textContent = location.origin;
+const next = q.get("next");
+if (next) {
+  const f = document.createElement("iframe");
+  f.id = "child";
+  f.style.width = "100%";
+  f.style.height = "300px";
+  const allow = q.get("allow");
+  if (allow) f.setAttribute("allow", allow);
+  const kind = q.get("kind") || "iframe";
+  if (kind === "sandbox") f.setAttribute("sandbox", "allow-scripts");
+  if (kind === "sandbox-same") f.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  if (kind === "srcdoc") {
+    // The frame has the origin of this page, and loads the next address inside itself.
+    f.srcdoc = `<!doctype html><title>srcdoc</title><iframe id="grandchild" ${allow ? `allow="${allow}"` : ""} src="${next.replace(/"/g, "&quot;")}" style="width:100%;height:260px"></iframe>`;
+  } else if (kind === "blank") {
+    document.getElementById("frames").appendChild(f);
+    // about:blank made by the page itself: it has this page's origin; the next address goes inside it.
+    const doc = f.contentDocument;
+    doc.open();
+    doc.write(`<!doctype html><title>blank</title><iframe id="grandchild" ${allow ? `allow="${allow}"` : ""} src="${next.replace(/"/g, "&quot;")}" style="width:100%;height:260px"></iframe>`);
+    doc.close();
+  } else {
+    f.src = next;
+  }
+  if (kind !== "blank") document.getElementById("frames").appendChild(f);
+}
+document.documentElement.dataset.ready = "1";
+</script>
+</body>
+</html>

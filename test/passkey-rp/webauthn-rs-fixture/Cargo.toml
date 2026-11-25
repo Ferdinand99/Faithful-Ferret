@@ -1,0 +1,28 @@
+# The strict relying-party fixture of the passkey tests (U4). A test tool in its own
+# workspace: it is not part of the Cargo workspace of the product, never ships in a
+# package or image of Faithful Ferret, and runs only in the test container
+# (test/passkey-rp/Dockerfile). webauthn-rs is MPL-2.0 (see test/passkey-rp/NOTICE).
+[workspace]
+
+[package]
+name = "ferret-passkey-rp-webauthn-rs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+
+[dependencies]
+# The verification core of webauthn-rs: the same checks as the `webauthn-rs` wrapper
+# (signature, RP ID hash, origin, crossOrigin, flags, backup state, counter), with the
+# options (user verification, resident key, attestation) left to the fixture, which is
+# what the matrix has to vary.
+webauthn-rs-core = "=0.6.2"
+webauthn-rs-proto = "=0.6.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+url = "2"
+base64 = "0.22"
+
+[profile.release]
+opt-level = 2
