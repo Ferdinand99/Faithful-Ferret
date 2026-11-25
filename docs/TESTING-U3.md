@@ -15,7 +15,7 @@ All data on the test instance is throwaway test data. Use made-up names, passwor
 
 | What | What it checks | Command |
 | --- | --- | --- |
-| Core (XC3) | The PIN wrap and its profile, the passkey wrap and the manifest entry, the epoch rules (`pinned_epoch_ahead` at a server unlock and at a recovery), the property tests, the test vectors natively and through WASM in Node, the constant-time harness | `scripts/lanbox.sh test -p ferret-core --locked --test pin --test props_pin --test wrap --test methods`, `scripts/lanbox-vectors.sh`, `scripts/lanbox-props.sh`, `scripts/lanbox-ct.sh` |
+| Core (XC3) | The PIN wrap and its profile, the passkey wrap and the manifest entry, the epoch rules (`pinned_epoch_ahead` at a server unlock and at a recovery), the property tests, the test vectors natively and through WASM in Node, the constant-time harness | `scripts/lanbox.sh test -p ferret-core --locked --test pin --test props_pin --test wrap --test methods --test pinning --test account`, `scripts/lanbox-vectors.sh`, `scripts/lanbox-props.sh`, `scripts/lanbox-ct.sh` |
 | The independent reference | The test vectors opened by a second implementation that shares no code with the core | the `xcheck` workflow (`tools/xcheck`, Node 24) |
 | Server | The admin rule (`Allow PIN`, `Allow PIN after restart`, the shortest PIN), the passkey routes, the flag-off build | `scripts/lanbox.sh test -p ferret-server --locked` (with and without `--features quick-unlock`) |
 | Extension unit tests and type check | The PIN store, the attempt counter and its waits, the PIN and passkey handlers, the popup, the settings section, the unlock window, the leak scans over every request and reply | `scripts/lanbox-ext.sh unit --wasm tree` |
@@ -33,14 +33,13 @@ pinned package, or the package of their own release run.
 | `61-pin.e2e` | `a_killed_worker_during_pin_unlock_counts_one_attempt` | A PIN unlock cut short by a lock while its Argon2id runs is one attempt, no more and no fewer |
 | `63-pin-unlock.e2e` | `pin_unlock_after_lock_in_release_and_esr` | The real popup: the rule is said before anything is sent, a wrong PIN counts and its wait is held, a right PIN gives the tries back, the master password is one click away, five wrong PINs delete the PIN |
 | `64-prf-unlock.e2e` | `prf_unlock_after_lock_in_release_and_esr` | The passkey made in the web vault opens the extension's vault in its own window, twice; the popup itself cannot send the result |
-| `65-unlock-matrix.e2e` | `the_unlock_matrix_passes_in_release_and_esr` | The cells in the matrix below that need a browser: six digits and eight characters with `æøå` (also decomposed), disk and session storage, an ended background, a restart of the browser, no network inside and after the seven days, a clock set back, a changed byte, an unknown profile, a later epoch, a record with an extra field, a revoked device, and a scan of the whole browser profile for the sentinel PINs |
+| `65-unlock-matrix.e2e` | `the_unlock_matrix_passes_in_release_and_esr` | The cells in the matrix below that need a browser: six digits and eight characters with `æøå` (also decomposed), disk and session storage, an ended background, a restart of the browser, no network inside and after the seven days, a clock set back, a changed byte (and the counter set back to zero), an unknown profile, a later epoch, a record with an extra field, a revoked device, and a scan of the whole browser profile for the sentinel PINs |
 | `66-unlock-adversarial.e2e` | `content_scripts_cannot_burn_pin_attempts`, `storage_session_is_not_readable_from_a_content_script` | A content script sends every message of the unlock (a flood of wrong PINs among them) on the runtime and on the extension pages' port: nothing is answered and the counter is untouched; it cannot see `storage.session` or the extension's databases; a copy of a PIN record that it writes to the local storage is no PIN |
 | `67-unlock-settings.e2e` | `set_change_and_turn_off_a_pin_from_settings`, `the_default_pin_survives_a_browser_restart_and_the_memory_choice_does_not` | The real settings page over the real background: the dialog, a wrong master password, two PINs that differ, the acknowledgement, set, change to memory, turn off, and two restarts |
 | `68-unlock-web.e2e` | `the_web_vault_unlock_methods_page_works_in_firefox`, `full_u3_flow_end_to_end` | The web vault's methods page and passkey unlock driven in Firefox (Playwright's Firefox has no virtual authenticator, so geckodriver's is used); then one account through PIN, passkey, removal of the passkey in the web vault, and the leak scan including what the passkey gives |
 | `69-pin-timing.e2e` | `pin_unlock_p95_is_within_budget` | Twenty PIN unlocks: the 95th percentile on the runner is within 8 seconds; the numbers are printed as `pin-unlock-timing {...}` |
 
-After an e2e run the script also reads the logs of every container of the stack and fails if a sentinel PIN (any text that starts
-with `ferret-sentinel-pin-`) is in one of them.
+After an `e2e` run and after the e2e step of a `gate` run the script also reads the logs of every container of the stack and fails if a sentinel PIN (any text that starts with `ferret-sentinel-pin-`) is in one of them, or if it finds no container to read.
 
 ### The matrix, cell by cell
 
@@ -50,7 +49,7 @@ with `ferret-sentinel-pin-`) is in one of them.
 | | six digits | `65-unlock-matrix`, `63-pin-unlock`, `67-unlock-settings` |
 | | eight characters with `æøå` | `65-unlock-matrix` (also typed in the decomposed Unicode form, which the core normalizes) |
 | Place | disk (the default) | `65-unlock-matrix`, `67-unlock-settings`, `61-unlock-store.spec` |
-| | `storage.session` (the choice, or the administrator turned off "after restart") | `65-unlock-matrix`, `67-unlock-settings`, `pinBackground.test.mjs` (a stricter rule moves a disk PIN away) |
+| | `storage.session` (the choice, or the administrator turned off "after restart") | `65-unlock-matrix`, `67-unlock-settings`, `pinBackground.test.mjs` (a stricter rule deletes a disk PIN at the next contact) |
 | Event | right and wrong tries, the waits (0, 0, 5, 15, 30 s), the fifth wrong try | `63-pin-unlock` (real time), `pinAttempts.test.mjs` |
 | | a killed worker, a cut fifth try | `61-pin`, `pinAttempts.test.mjs` |
 | | out of memory | `pinBackground.test.mjs` (an out-of-memory answer counts as a try and says that the device had too little memory, not that the PIN is wrong) |
@@ -58,26 +57,27 @@ with `ferret-sentinel-pin-`) is in one of them.
 | | restart of the background | `65-unlock-matrix` |
 | | update of the extension (the memory PIN goes, as expected) | By design: the session storage ends with the extension's instance; checked by hand below |
 | Network and time | on line | everywhere |
-| | no network inside seven days, and after them | `65-unlock-matrix` (the network is switched off in the browser), `pinAttempts.test.mjs` |
+| | no network inside seven days, and after them | `65-unlock-matrix` (the server is made unreachable through a proxy that nothing listens on; the browser's own offline switch also stops workers from starting), `pinAttempts.test.mjs` |
 | | the clock set back | `65-unlock-matrix`, `pinAttempts.test.mjs` |
 | Revocation | switch the PIN off, sign out (also with no network), forget the server | `pinBackground.test.mjs`, `67-unlock-settings` |
 | | a revoked device | `65-unlock-matrix` |
-| | master password changed on another device, recovery, restore epoch | The tokens end and the PIN goes (`pinBackground.test.mjs`); the core test of each flow |
+| | master password changed on another device, recovery | The tokens end and the PIN goes (`pinBackground.test.mjs`); the core test of each flow |
+| | restore epoch (a restore of the server) | A restore does not end the tokens by itself. The PIN goes when the restore took unlock methods back: the floor check refuses (`pinned_kek_generation`) and any refusal after an unlock deletes the PIN. If the restore changed none, the PIN rightly stays. Core tests and `pinBackground.test.mjs` |
 | | a stricter rule, "Allow PIN" off, "Allow PIN after restart" off, an unknown profile | `pinBackground.test.mjs`, `65-unlock-matrix` (unknown profile), the server's rule tests |
 | | a swapped blob (another vault key) | `pinBackground.test.mjs` (`pinned_auth_key` deletes the PIN); the core refuses a vault key that does not give the pinned `pk_a` |
 | Passkey | the virtual authenticator | `64-prf-unlock`, `68-unlock-web`, `30-unlock-passkey` (web vault, Chromium) |
 | | Windows Hello, a phone through a QR code, Touch ID on a Mac | By hand below |
 | | a YubiKey or another security key | Not tested by hand |
 | Web vault | passkey with a living session | `68-unlock-web`, `30-unlock-passkey` |
-| | an expired session asks for the master password | `30-unlock-passkey`, `68-unlock-web` |
+| | an expired session asks for the master password | `30-unlock-passkey` (`68-unlock-web` shows only a living session, a reload and a lock) |
 | | a method removed on another device | `68-unlock-web` (`full_u3_flow_end_to_end`) |
 | | "synced" or "this device only" | `29-unlock-methods`; by hand below |
 | Attack | a content script sends PIN or passkey messages | `66-unlock-adversarial`, `sender.test.mjs`, `router.test.mjs` |
 | | a framed extension page | `70-phishing` (no extension page loads in a frame of a web page), `sender.test.mjs` |
-| | a tampered record (a byte, the profile, the epoch, an extra field) | `65-unlock-matrix`, `localUnlock.test.mjs` |
+| | a tampered record (a byte, the profile, the epoch, an extra field, the counter set to zero) | `65-unlock-matrix`, `localUnlock.test.mjs`. A changed byte counts as a wrong PIN; the profile, the epoch and an extra field delete the PIN. The counter lies in the record in the clear, so whoever can write the profile can set it to zero: that is an accepted limit (see below), and the spec shows it |
 | | `storage.session` read from a content script | `66-unlock-adversarial` |
 | | a flood of tries | `66-unlock-adversarial`, `pinAttempts.test.mjs` |
-| Leak | a sentinel PIN or passkey output in storage, messages, the browser profile, the stack's logs | `65-unlock-matrix`, `68-unlock-web` (the profile and the logs); the leak scans of `pinBackground.test.mjs`, `pinUnlockPopup.test.mjs`, `prfUnlock.test.mjs` and `web/test/unit` (every request and reply, `console`, storage) |
+| Leak | a sentinel PIN or passkey output in storage, messages, `console`, the network, the browser profile, the stack's logs | The browser profile: `65-unlock-matrix` (PINs) and `68-unlock-web` (the PIN and the passkey's output). The stack's logs: the `e2e` and `gate` runs of `scripts/lanbox-ext.sh` (the PIN prefix only, and a scan that reads no container fails). Messages, `console`, requests and storage: the leak scans of `pinBackground.test.mjs`, `pinUnlockPopup.test.mjs`, `prfUnlock.test.mjs` and `web/test/unit` |
 | Time and memory | the PIN unlock within 3 seconds on a developer machine and 8 on the weak reference | `69-pin-timing` (the reference); by hand below (the developer machine) |
 | | the worker ends when the vault locks | `pinBackground.test.mjs`, `61-pin` |
 
@@ -106,6 +106,10 @@ with `ferret-sentinel-pin-`) is in one of them.
   offline PIN usable for as long as they hold it still.
 - **Another password manager** that takes over the browser's passkeys can answer the passkey call instead of the browser. The unlock
   window says what to check when the browser refuses at once (check 6 below).
+- **The network and `console` are not captured in the browser.** geckodriver has no HAR. The PIN and the passkey's output are never sent to the server by design, and the unit leak scans read every request, reply, `console` call and storage write. The stack-log scan looks for the sentinel PIN, not for the passkey's output.
+- **Memory growth of the vault's worker** was measured once, in the PIN probe, not in every run. That the worker ends when the vault locks is shown by the unit tests, and the end-to-end specs read that the vault is locked.
+- **The try counter** is in the PIN record in the clear and outside what the wrap is bound to. Anyone who can write the browser profile can set it back to zero; the limit of five tries holds against everyone who cannot, and a copy of the profile is attacked offline anyway.
+- **The end-to-end specs run on the MV2 build** (the Firefox build). A Chrome build on MV3 needs `65` and `66` run again, because the access level of `storage.session` and the sender rules differ there.
 - **Playwright's Firefox** cannot drive a virtual authenticator, so the web vault's own specs cover passkeys in Chromium. The
   Firefox side of the same page is driven through geckodriver by `68-unlock-web`.
 - **The unbranded Release build of Firefox that the runner uses expires** (`extension/test/firefox/README.md`).
@@ -166,7 +170,7 @@ Reload every open vault tab after a deploy.
     *Expected:* it opens the vault. Switch the network on again.
 11. In the web vault, Devices, revoke the extension. In the extension, unlock with the PIN.
     *Expected:* the PIN is deleted and the popup says the device is signed out.
-12. Update the extension to a newer build if you have one (or reload it in about:debugging) with a memory-only PIN set.
+12. Update the extension to a newer build if you have one (or, with the test build loaded as a temporary add-on, reload it in about:debugging) with a memory-only PIN set.
     *Expected:* the memory PIN is gone after the update (by design); a disk PIN stays.
 13. With a PIN set on a device, turn "Allow PIN" off in the admin pages (check 1), and let the device sync.
     *Expected:* the device deletes its PIN at its next contact and the settings say the administrator turned PIN off.
