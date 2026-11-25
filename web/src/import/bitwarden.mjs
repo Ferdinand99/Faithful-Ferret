@@ -23,7 +23,7 @@
 // the newer bank account, driver's licence and passport items).
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
-import { bitwardenPasskeys } from "./passkeys.mjs";
+import { bitwardenPasskeys, wipeInput } from "./passkeys.mjs";
 import { addFolders, cardDraft, createReport, identityDraft, loginDraft, noteDraft, resolveLabels, scalar, warn } from "./map.mjs";
 
 /**
@@ -112,6 +112,7 @@ export function fromBitwardenJson(data, options = {}) {
   /** @type {PasskeyTask[]} */
   const passkeys = [];
   const now = Number.isSafeInteger(options.now) ? /** @type {number} */ (options.now) : Date.now();
+  try {
   root.items.forEach((entry, index) => {
     const item = asObject(entry);
     if (item === null) throw new ImportError("import_bad_format");
@@ -191,6 +192,11 @@ export function fromBitwardenJson(data, options = {}) {
       }
     }
   });
+  } catch (error) {
+    // A later item that does not read: the keys decoded so far are wiped before the error goes on.
+    for (const task of passkeys) wipeInput(task.input);
+    throw error;
+  }
   return { drafts, report, passkeys };
 }
 

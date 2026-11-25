@@ -79,7 +79,7 @@ const states = new WeakMap();
  * their site again (and the first few of those sites), how many lost their PRF key, how many got an item of their own.
  * @typedef {{
  *   skipped: Record<"not_discoverable" | "other_key" | "bad_site" | "unreadable" | "duplicate", number>,
- *   registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string>,
+ *   registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string>, siteCount: number,
  * }} PasskeyReport
  *
  * @typedef {{ id: Uint8Array, rev: number, envelope: Uint8Array, tag: Uint8Array }} Sealed
@@ -184,7 +184,7 @@ function readPasskeys(source) {
   const p = source !== null && typeof source === "object" ? /** @type {Record<string, any>} */ (source) : {};
   const skipped = /** @type {PasskeyReport["skipped"]} */ (numbersOf(p.skipped, Object.fromEntries(PASSKEY_SKIP_REASONS.map((reason) => [reason, 0]))));
   const sites = (Array.isArray(p.sites) ? p.sites : []).filter((site) => typeof site === "string" && SITE.test(site)).slice(0, MAX_SITES);
-  return { skipped, registerAgain: count(p.registerAgain), prfDropped: count(p.prfDropped), extra: count(p.extra), sites };
+  return { skipped, registerAgain: count(p.registerAgain), prfDropped: count(p.prfDropped), extra: count(p.extra), sites, siteCount: count(p.siteCount) };
 }
 
 /**

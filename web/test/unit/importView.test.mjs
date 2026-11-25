@@ -110,7 +110,7 @@ function page(options = {}) {
 test("the_preview_says_what_passkeys_are_imported_left_out_and_to_be_registered_again", async () => {
   await withDom(async () => {
     const passkeys = {
-      skipped: { not_discoverable: 2, other_key: 1, bad_site: 0, unreadable: 3, duplicate: 1 }, registerAgain: 2, prfDropped: 1, extra: 1, sites: ["github.com", "rp-a.test"],
+      skipped: { not_discoverable: 2, other_key: 1, bad_site: 0, unreadable: 3, duplicate: 1 }, registerAgain: 2, prfDropped: 1, extra: 1, sites: ["github.com", "rp-a.test"], siteCount: 2,
     };
     const preview = bitwarden({
       counts: { ...COUNTS, passkeys: 4 },
@@ -134,11 +134,17 @@ test("the_preview_says_what_passkeys_are_imported_left_out_and_to_be_registered_
     assert.match(textOf(find(box, "warning-passkey_prf_dropped")), /1 passkey\(s\) had a PRF key/);
     assert.match(textOf(find(box, "warning-passkey_extra_item")), /1 passkey\(s\) belonged to a login/);
     // A list of sites that is cut says so.
-    const cut = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 30, sites: ["a.test"] } }) });
+    const cut = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 30, siteCount: 30, sites: ["a.test"] } }) });
     await choose(cut.root);
     assert.match(textOf(find(find(cut.root, "preview"), "passkey-register-again")), /30 imported passkey\(s\).*the first ones are: a\.test/);
+    // Two used passkeys of one site: the list is complete, so it does not say it is cut.
+    const same = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 2, siteCount: 1, sites: ["a.test"] } }) });
+    await choose(same.root);
+    const sameText = textOf(find(find(same.root, "preview"), "passkey-register-again"));
+    assert.match(sameText, /2 imported passkey\(s\) had been used before.*at these sites: a\.test/);
+    assert.doesNotMatch(sameText, /the first ones/);
     // With no passkey to register again there is no note; with the import off the old line says passkeys are not imported.
-    const none = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 0, sites: [] } }) });
+    const none = page({ preview: bitwarden({ passkeys: { ...passkeys, registerAgain: 0, siteCount: 0, sites: [] } }) });
     await choose(none.root);
     assert.equal(find(find(none.root, "preview"), "passkey-register-again"), null);
     const off = page({ preview: bitwarden() });
@@ -150,7 +156,7 @@ test("the_preview_says_what_passkeys_are_imported_left_out_and_to_be_registered_
 
 test("the_page_still_says_what_to_register_again_when_the_import_is_done", async () => {
   await withDom(async () => {
-    const passkeys = { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 1, prfDropped: 0, extra: 0, sites: ["rp-a.test"] };
+    const passkeys = { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 1, prfDropped: 0, extra: 0, sites: ["rp-a.test"], siteCount: 1 };
     const engine = fakeImportEngine({ status: { queued: 0, sent: 0, total: 0 } });
     const { root } = page({ preview: bitwarden({ passkeys, counts: { ...COUNTS, passkeys: 1 } }), engine });
     await choose(root);

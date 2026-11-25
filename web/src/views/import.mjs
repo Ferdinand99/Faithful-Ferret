@@ -72,7 +72,7 @@ export function importErrorText(t, error, { continuing = false } = {}) {
 /**
  * @typedef {{
  *   kind: string, counts: Record<string, number> | null, skipped: Record<string, number> | null,
- *   passkeys?: { skipped: Record<string, number>, registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string> } | null,
+ *   passkeys?: { skipped: Record<string, number>, registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string>, siteCount: number } | null,
  *   warnings: ReadonlyArray<{ code: string, count: number }>, warningsDropped: number,
  *   free: number, used: number, vaultEmpty: boolean, fits: boolean, createdAt: number | null,
  * }} Preview
@@ -216,7 +216,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
    */
   function registerAgainNote(passkeys) {
     if (passkeys.registerAgain <= 0) return null;
-    const all = passkeys.sites.length >= passkeys.registerAgain;
+    const all = passkeys.sites.length >= passkeys.siteCount;
     return el("p", { class: "notice notice-warning", role: "note", "data-role": "passkey-register-again" },
       t(all ? "import.passkey.register_again" : "import.passkey.register_again_more", { count: passkeys.registerAgain, sites: passkeys.sites.join(", ") }));
   }

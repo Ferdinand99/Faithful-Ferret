@@ -26,7 +26,7 @@
 // (map.mjs), never to `urls`.
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
-import { aliasVaultPasskeys } from "./passkeys.mjs";
+import { aliasVaultPasskeys, wipeInput } from "./passkeys.mjs";
 import { addAddresses, addCustomFields, addField, addFolders, addTotp, createReport, resolveLabels, scalar, startDraft, warn } from "./map.mjs";
 
 /**
@@ -298,6 +298,7 @@ export function fromAvuxManifest(data, options = {}) {
   /** @type {PasskeyTask[]} */
   const passkeys = [];
   const now = Number.isSafeInteger(options.now) ? /** @type {number} */ (options.now) : Date.now();
+  try {
   root.items.forEach((entry, index) => {
     const item = members(entry);
     if (item === null) throw bad();
@@ -372,6 +373,11 @@ export function fromAvuxManifest(data, options = {}) {
     if (typeof folderId === "string" && folderPaths.has(folderId)) addFolders(draft, [folderPaths.get(folderId)], { report, index, labels });
     drafts.push(draft);
   });
+  } catch (error) {
+    // A later item that does not read: the keys decoded so far are wiped before the error goes on.
+    for (const task of passkeys) wipeInput(task.input);
+    throw error;
+  }
   return { drafts, report, passkeys };
 }
 

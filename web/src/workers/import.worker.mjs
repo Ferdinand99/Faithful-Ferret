@@ -171,8 +171,9 @@ const PASSKEY_REFUSALS = Object.freeze({
   malformed_webauthn_options: "unreadable",
   malformed_item_body: "unreadable",
   too_large: "unreadable",
-  invalid_input: "unreadable",
 });
+// `invalid_input` is not here: the readers make everything the vault checks that way, so it means a worker that does not know
+// `passkey_import` on the import port (an older package) or a mistake, never the content of a file, and it stops the import.
 
 /**
  * One item the worker seals: a draft, and perhaps the passkey that goes into it.
@@ -239,6 +240,8 @@ function sealAll(drafts, tasks, report, port, labels, deps) {
     let settled = 0;
     let requestId = 1;
     let over = false;
+    /** The sites of the passkeys that must be registered again, each once. @type {Set<string>} */
+    const seenSites = new Set();
 
     /** The key of a passkey is wiped as soon as its item is sealed or its passkey is left out. @param {Job} job */
     const spend = (job) => {
@@ -332,7 +335,12 @@ function sealAll(drafts, tasks, report, port, labels, deps) {
       }
       if (value.notes.register_again === true) {
         report.passkeys.registerAgain++;
-        if (report.passkeys.sites.length < MAX_SITES && !report.passkeys.sites.includes(value.rp_id)) report.passkeys.sites.push(value.rp_id);
+        // The sites are counted once each; the report names the first few.
+        if (!seenSites.has(value.rp_id)) {
+          seenSites.add(value.rp_id);
+          report.passkeys.siteCount++;
+          if (report.passkeys.sites.length < MAX_SITES) report.passkeys.sites.push(value.rp_id);
+        }
         warn(report, "passkey_register_again", task.index);
       }
       spend(entry.job);

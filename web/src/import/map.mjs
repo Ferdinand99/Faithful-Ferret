@@ -108,7 +108,7 @@ export function resolveLabels(custom) {
  *   },
  *   passkeys: {
  *     skipped: { not_discoverable: number, other_key: number, bad_site: number, unreadable: number, duplicate: number },
- *     registerAgain: number, prfDropped: number, extra: number, sites: string[],
+ *     registerAgain: number, prfDropped: number, extra: number, sites: string[], siteCount: number,
  *   },
  *   warnings: { code: string, index: number }[],
  *   warningsDropped: number,
@@ -127,7 +127,7 @@ export function createReport() {
   return {
     counts: { items: 0, login: 0, note: 0, card: 0, identity: 0, urls: 0, totp: 0, customFields: 0, matchNull: 0, http: 0, textAddresses: 0, sealed: 0, passkeys: 0 },
     skipped: { passkeys: 0, folders: 0, linked: 0, unknownKeys: 0, otherTypes: 0, trashed: 0, tooLarge: 0, passwordHistory: 0, reprompt: 0, attachments: 0, fieldHistory: 0, tags: 0 },
-    passkeys: { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 0, prfDropped: 0, extra: 0, sites: [] },
+    passkeys: { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 0, prfDropped: 0, extra: 0, sites: [], siteCount: 0 },
     warnings: [],
     warningsDropped: 0,
   };

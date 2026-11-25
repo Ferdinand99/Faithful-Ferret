@@ -382,6 +382,13 @@ test("a_counter_above_zero_says_register_again", async () => {
   assert.equal(big.report.passkeys.registerAgain, 30);
   assert.equal(big.report.passkeys.sites.length, 20);
   assert.equal(new Set(big.report.passkeys.sites).size, 20);
+  assert.equal(big.report.passkeys.siteCount, 30, "the sites are counted past the 20 that are named");
+  // Two used passkeys of one site are one site.
+  const same = [credential({ counter: "3" }), credential({ counter: "4", credentialId: `b64.${b64u(new Uint8Array(16).fill(9))}` })];
+  const oneSite = await handler()(request(bitwardenFile(same), passkeyPort()));
+  assert.equal(oneSite.report.passkeys.registerAgain, 2);
+  assert.equal(oneSite.report.passkeys.siteCount, 1);
+  assert.deepEqual(oneSite.report.passkeys.sites, ["rp-a.test"]);
 });
 
 test("prf_is_dropped_with_a_warning_when_the_formula_differs", async () => {
@@ -496,7 +503,7 @@ test("without_passkey_import_passkeys_are_skipped_as_before", async () => {
     assert.equal(reply.report.skipped.passkeys, count);
     assert.equal(reply.report.counts.passkeys, 0);
     assert.equal(reply.report.warnings.filter((w) => w.code === "passkey_skipped").length, count);
-    assert.deepEqual(reply.report.passkeys, { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 0, prfDropped: 0, extra: 0, sites: [] });
+    assert.deepEqual(reply.report.passkeys, { skipped: { not_discoverable: 0, other_key: 0, bad_site: 0, unreadable: 0, duplicate: 0 }, registerAgain: 0, prfDropped: 0, extra: 0, sites: [], siteCount: 0 });
     assert.equal(reply.sealed.length, count);
     const text = JSON.stringify(port.snapshots);
     assert.equal(text.includes("keyValue"), false);
@@ -662,4 +669,36 @@ test("the_engine_names_the_passkeys_of_the_vault_and_of_the_trash", async () => 
   assert.equal(JSON.stringify(await d.engine.passkeyKeys()).includes("KEY-SENTINEL"), false);
   d.engine.stop();
   await assert.rejects(() => d.engine.passkeyKeys(), (e) => e.code === "stopped");
+});
+
+test("a_passkey_the_vault_refuses_as_invalid_input_stops_the_import_instead_of_counting_it", async () => {
+  // The readers make everything the vault checks that way, so this is a worker that does not know the call (an older package) or a bug.
+  for (const login of [{}, { totp: "GEZDGNBVGY3TQOJQ" }]) {
+    const port = passkeyPort({ refuse: (m) => (m.method === "passkey_import" ? "invalid_input" : undefined) });
+    const reply = await handler()(request(bitwardenFile([credential()], login), port));
+    assert.deepEqual(reply, { id: 3, ok: false, error: "import_seal_failed" }, JSON.stringify(login));
+    for (const m of port.sent) if (m.method === "passkey_import") assert.ok(m.args[3].key_pkcs8.every((b) => b === 0), "wiped when the import stops");
+  }
+});
+
+test("keys_decoded_before_a_reader_throws_are_wiped", () => {
+  const wiped = [];
+  const fill = Uint8Array.prototype.fill;
+  Uint8Array.prototype.fill = function (value, ...rest) {
+    if (value === 0) wiped.push(this.length);
+    return fill.call(this, value, ...rest);
+  };
+  try {
+    // A passkey, then an item that is no object: the reader refuses the file.
+    const text = JSON.stringify({ encrypted: false, folders: [], items: [{ type: 1, name: "Site", login: { fido2Credentials: [credential()] } }, 7] });
+    assert.throws(() => fromBitwardenJson(safeJsonParse(text), { passkeys: true, now: NOW }), (e) => e.code === "import_bad_format");
+    assert.ok(wiped.includes(138), "the PKCS#8 bytes of the first passkey are wiped");
+    wiped.length = 0;
+    const manifest = safeJsonParse(manifestText());
+    manifest.items.push(7);
+    assert.throws(() => fromAvuxManifest(safeJsonParse(JSON.stringify(manifest)), { passkeys: true, now: NOW }), (e) => e.code === "import_bad_format");
+    assert.ok(wiped.includes(32), "the PRF seeds of the AliasVault passkey are wiped");
+  } finally {
+    Uint8Array.prototype.fill = fill;
+  }
 });
