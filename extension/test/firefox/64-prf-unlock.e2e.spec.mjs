@@ -13,7 +13,7 @@
 // The stack must be fresh (`e2e-up`), as for the other end-to-end specs; the account is the one the first channel made.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { POPUP_URL, SLOW, VAULT_HOST, extensionSignIn, helpers, webVaultAccount } from "./e2e.mjs";
+import { KEEP_BACKGROUND, POPUP_URL, SLOW, VAULT_HOST, extensionSignIn, helpers, webVaultAccount } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, stopFixtures } from "./harness.mjs";
 import { addPasskey } from "./unlock.mjs";
 
@@ -52,7 +52,7 @@ test("prf_unlock_after_lock_in_release_and_esr", async () => {
     // The soft token answers the virtual authenticator; the default profile uses the USB token, which a container has none of.
     const session = await launch({
       channel,
-      prefs: { "security.webauth.webauthn_enable_softtoken": true, "security.webauth.webauthn_enable_usbtoken": false },
+      prefs: { ...KEEP_BACKGROUND, "security.webauth.webauthn_enable_softtoken": true, "security.webauth.webauthn_enable_usbtoken": false },
     });
     try {
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
@@ -93,7 +93,13 @@ test("prf_unlock_after_lock_in_release_and_esr", async () => {
       // One press: the one WebAuthn call, the 32 bytes to the background in one message, and the vault is open.
       await win.click('[data-role="passkey-unlock"]');
       await session.waitFor(
-        async () => (await session.content(() => document.body?.dataset.done === "1" || document.querySelector('[data-role="passkey-error"]') !== null)) === true,
+        // The window builds its error line hidden next to the button, so "an error line exists" is true before the press has been
+        // answered: the end is the done mark or an error line that is shown.
+        async () =>
+          (await session.content(() => {
+            const shown = /** @type {HTMLElement | null} */ (document.querySelector('[data-role="passkey-error"]'));
+            return document.body?.dataset.done === "1" || (shown !== null && !shown.hidden);
+          })) === true,
         SLOW,
         "the end of the passkey unlock",
       );

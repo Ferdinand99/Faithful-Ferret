@@ -176,9 +176,22 @@ test("the_popup_shows_copies_and_fills_the_one_time_code_and_offers_it_after_the
       await openCopyMenu(1);
       assert.equal(await page.visible('[data-e2e-row="1"] [data-role="copy-totp"]'), false, `${channel}: no code entry for an item without a code`);
       // The row of the item with a code copies it.
-      await openCopyMenu(0);
-      assert.equal(await page.visible('[data-e2e-row="0"] [data-role="copy-totp"]'), true, `${channel}: the code entry for an item with a code`);
-      await page.click('[data-e2e-row="0"] [data-role="copy-totp"]');
+      // The list can draw its rows again between the menu showing and the press (the mark is lost with the row): open the menu and
+      // press again.
+      await session.waitFor(
+        async () => {
+          await openCopyMenu(0);
+          try {
+            if (!(await page.visible('[data-e2e-row="0"] [data-role="copy-totp"]'))) return false;
+            await page.click('[data-e2e-row="0"] [data-role="copy-totp"]');
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        SLOW,
+        `${channel}: the code entry for an item with a code`,
+      );
       await page.waitVisible('[data-role="toast"]', 20_000);
       assert.match(await page.text('[data-role="toast"]'), /^One-time code copied\. Ferret clears the clipboard after 30 seconds/);
     } finally {
