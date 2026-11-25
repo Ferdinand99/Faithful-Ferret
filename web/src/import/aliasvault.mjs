@@ -12,7 +12,8 @@
 // plain values and returns Faithful Ferret's item drafts and a report (see map.mjs) instead of AliasVault's
 // own item rows, the folder of an item becomes its folder (map.mjs `addFolders`; a folder inside another is
 // named by its path, `Parent/Child`, as AliasVault's CSV writes it), and everything else that is not text of an
-// item (attachments, logos, passkeys, tags, the earlier values of a field) is counted and left out.
+// item (attachments, logos, tags, the earlier values of a field; passkeys too, unless the import of them is on, which
+// passkeys.mjs reads) is counted and left out.
 //
 // Reads an AliasVault export: the manifest of an unencrypted `.avux` file (a ZIP file; the worker unpacks
 // `manifest.json` with zip.mjs and nothing else of it) or the CSV file. It reads; it stores nothing and
@@ -25,12 +26,15 @@
 // (map.mjs), never to `urls`.
 
 import { ImportError, MAX_ITEMS } from "./limits.mjs";
+import { aliasVaultPasskeys, wipeInput } from "./passkeys.mjs";
 import { addAddresses, addCustomFields, addField, addFolders, addTotp, createReport, resolveLabels, scalar, startDraft, warn } from "./map.mjs";
 
 /**
  * @typedef {import("./map.mjs").ImportReport} ImportReport
  * @typedef {import("./map.mjs").ItemDraft} ItemDraft
- * @typedef {{ labels?: unknown }} ReadOptions
+ * @typedef {import("./passkeys.mjs").PasskeyTask} PasskeyTask
+ * @typedef {{ labels?: unknown, passkeys?: boolean, now?: number }} ReadOptions `passkeys`: read the passkeys of the items (the vault has them
+ *   imported; `now` is the time a passkey without a date is given); without it they are counted and left out
  */
 
 /** The one version of the `.avux` manifest that is read. */
@@ -254,7 +258,7 @@ function draftOf(v, context) {
  * Reads the manifest of an unencrypted `.avux` file.
  * @param {unknown} data the parsed `manifest.json` (the result of `safeJsonParse`)
  * @param {ReadOptions} [options]
- * @returns {{ drafts: ItemDraft[], report: ImportReport }}
+ * @returns {{ drafts: ItemDraft[], report: ImportReport, passkeys: PasskeyTask[] }}
  * @throws {ImportError} `import_bad_format` for anything that is not a manifest of version 1.0.0 or has a value of the wrong
  *   type, `import_empty`, `import_too_many`
  */
@@ -291,6 +295,10 @@ export function fromAvuxManifest(data, options = {}) {
 
   /** @type {ItemDraft[]} */
   const drafts = [];
+  /** @type {PasskeyTask[]} */
+  const passkeys = [];
+  const now = Number.isSafeInteger(options.now) ? /** @type {number} */ (options.now) : Date.now();
+  try {
   root.items.forEach((entry, index) => {
     const item = members(entry);
     if (item === null) throw bad();
@@ -346,10 +354,17 @@ export function fromAvuxManifest(data, options = {}) {
       v.totps.push(address ?? secret);
     }
 
-    const passkeys = objects(item, "passkeys").length;
-    if (passkeys > 0) {
-      report.skipped.passkeys += passkeys;
-      warn(report, "passkey_skipped", index);
+    const itemPasskeys = objects(item, "passkeys");
+    if (itemPasskeys.length > 0) {
+      if (options.passkeys === true) {
+        const made = Date.parse(text(item, "createdat") ?? "");
+        passkeys.push(...aliasVaultPasskeys(itemPasskeys, {
+          report, index, now, userName: v.username.find((name) => name.trim() !== "") ?? "", created: Number.isSafeInteger(made) && made > 0 ? made : 0,
+        }, drafts.length, type === "login"));
+      } else {
+        report.skipped.passkeys += itemPasskeys.length;
+        warn(report, "passkey_skipped", index);
+      }
     }
     report.skipped.attachments += objects(item, "attachments").length;
     report.skipped.fieldHistory += objects(item, "fieldhistories").length;
@@ -358,7 +373,12 @@ export function fromAvuxManifest(data, options = {}) {
     if (typeof folderId === "string" && folderPaths.has(folderId)) addFolders(draft, [folderPaths.get(folderId)], { report, index, labels });
     drafts.push(draft);
   });
-  return { drafts, report };
+  } catch (error) {
+    // A later item that does not read: the keys decoded so far are wiped before the error goes on.
+    for (const task of passkeys) wipeInput(task.input);
+    throw error;
+  }
+  return { drafts, report, passkeys };
 }
 
 /**
