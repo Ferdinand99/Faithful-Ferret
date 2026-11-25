@@ -141,6 +141,45 @@ export const WASM_FILES = [
   "pkg-web/ferret_core_wasm.js", "pkg-web/ferret_core_wasm_bg.wasm",
 ];
 
+/**
+ * What the code of the `unlock` feature calls in the WASM package, by file: a release that has the feature on is built only
+ * from a package that has all of it (a package from before the feature has none, and every PIN or passkey unlock in a
+ * build made with it would fail at run time). Each entry is the name of an export that the glue file has as a function
+ * or a method.
+ */
+export const UNLOCK_WASM_EXPORTS = Object.freeze({
+  "pkg-web/ferret_core_wasm.js": Object.freeze(["argon2_pin_key", "confirm_password", "pin_unlock", "prf_methods", "prf_salt_new", "unlock_prf", "wrap_pin", "wrap_pin_key", "wrap_prf"]),
+  "js/client.mjs": Object.freeze(["pinWrap"]),
+});
+
+/** The build refused the WASM package: it lacks what the feature needs. Exit status 3, so that a caller can tell it from any other failure. */
+export class WasmLacksUnlockError extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = "WasmLacksUnlockError";
+    this.exitCode = 3;
+  }
+}
+
+/**
+ * The names of UNLOCK_WASM_EXPORTS that a WASM package does not have.
+ * @param {Map<string, Uint8Array>} tar the files of the package
+ * @returns {string[]} `<file>: <name>` for each missing one
+ */
+export function wasmUnlockProblems(tar) {
+  /** @type {string[]} */
+  const missing = [];
+  for (const [file, names] of Object.entries(UNLOCK_WASM_EXPORTS)) {
+    const text = tar.has(file) ? Buffer.from(/** @type {Uint8Array} */ (tar.get(file))).toString("utf8") : "";
+    for (const name of names) {
+      // A function declaration, a method (a name at the start of a line, then its parameters) or a constant.
+      if (!new RegExp(String.raw`function\s+${name}\s*\(|^[ \t]*(?:async\s+)?${name}\s*\(|\b${name}\s*=`, "m").test(text)) missing.push(`${file}: ${name}`);
+    }
+  }
+  return missing;
+}
+
 /** Where the WASM package can come from (see the top of this file). */
 export const WASM_SOURCES = Object.freeze(["lock", "tree"]);
 
@@ -1064,6 +1103,14 @@ export async function build({
   for (const file of WASM_FILES) {
     if (!tar.has(file)) throw new Error(`wasm package: ${file} is missing`);
   }
+  // A release with `unlock` on is signed and shipped to every installed copy: it must not be built against a package
+  // that lacks the functions the feature calls (the lock is moved to a release that has them before a release is built).
+  if (variant === "release" && on.includes("unlock")) {
+    const lacking = wasmUnlockProblems(tar);
+    if (lacking.length > 0) {
+      throw new WasmLacksUnlockError(`wasm package: a release with the unlock feature on needs a package that has what it calls, and this one (${record.source} ${record.version ?? record.commit}) lacks ${lacking.join(", ")}; move web/wasm.lock.json to a release that has them`);
+    }
+  }
 
   // 2. The sources: src/, the generated catalogs and style sheet, the test files.
   /** @type {Map<string, Buffer>} */
@@ -1229,6 +1276,6 @@ async function main(args) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((error) => {
     console.error(`build: ${error.message}`);
-    process.exit(1);
+    process.exit(error.exitCode ?? 1);
   });
 }

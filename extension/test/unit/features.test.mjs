@@ -27,10 +27,11 @@ import { CONTENT_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
 import { readGraph } from "./importGraph.mjs";
 import {
   build, DEFAULT_FEATURES, FEATURE_FILES, FEATURES, FEATURES_FILE, featuresModule, featureProblems, isTestOnlyPath, parseFeatures, RELEASE_FEATURES,
-  releaseProblems, readInternalHosts, SAVE_FILES, UNLOCK_FILES, UNLOCK_STORE_FILE, unlockStoreModule, WASM_FILES,
+  releaseProblems, readInternalHosts, SAVE_FILES, sha256, UNLOCK_FILES, UNLOCK_STORE_FILE, UNLOCK_WASM_EXPORTS, unlockStoreModule, WASM_FILES,
+  WasmLacksUnlockError, wasmUnlockProblems,
 } from "../../scripts/build.mjs";
 import { boot } from "./bootBackground.mjs";
-import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
+import { extensionRoot, makeRoot, makeTar, wasmFiles } from "./buildHelpers.mjs";
 
 /** What belongs to the `save` feature. */
 const SAVE_PATHS = Object.freeze({
@@ -699,6 +700,63 @@ test("the_release_check_refuses_a_use_of_the_unlock_database_other_than_the_dele
     const files = new Map(release.files);
     files.set("background/deleteProbe.mjs", Buffer.from('export const drop = (idb) => idb.deleteDatabase("ferret-unlock");\n'));
     assert.deepEqual(releaseProblems(files, hosts), []);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a_release_with_unlock_on_is_not_built_against_a_package_that_lacks_what_unlock_calls", async () => {
+  // A package from before the feature (the lock names one until the lock is moved to a release that has the feature): the
+  // stand-in has the files, but none of the functions that the PIN and passkey unlock call.
+  const old = makeTar(wasmFiles({ unlock: false }));
+  const current = makeTar(wasmFiles());
+  const env = makeRoot();
+  try {
+    const lockFile = join(env.webRoot, "wasm.lock.json");
+    /** @param {Buffer} tar */
+    const pin = (tar) => {
+      writeFileSync(join(env.dir, "wasm.tar.gz"), tar);
+      writeFileSync(lockFile, `${JSON.stringify({ version: "0.8.0", url: "https://example.invalid/wasm.tar.gz", sha256: sha256(tar) })}\n`);
+    };
+    const options = { root: env.root, webRoot: env.webRoot, wasmTar: join(env.dir, "wasm.tar.gz") };
+
+    // The old package: a release is refused, naming every missing function, with the status that tells a caller why.
+    pin(old);
+    for (const manifest of ["mv2", "mv3"]) {
+      await assert.rejects(
+        build({ ...options, out: join(env.out, `old-${manifest}`), manifest, variant: "release" }),
+        (error) => {
+          assert.ok(error instanceof WasmLacksUnlockError);
+          assert.equal(error.exitCode, 3);
+          for (const [file, names] of Object.entries(UNLOCK_WASM_EXPORTS)) {
+            for (const name of names) assert.ok(error.message.includes(`${file}: ${name}`), `${manifest}: ${file}: ${name}`);
+          }
+          assert.match(error.message, /argon2_pin_key/);
+          assert.match(error.message, /move web\/wasm\.lock\.json/);
+          return true;
+        },
+      );
+    }
+    assert.deepEqual(wasmUnlockProblems(new Map(Object.entries(wasmFiles({ unlock: false })).map(([path, text]) => [path, Buffer.from(text)]))).length,
+      Object.values(UNLOCK_WASM_EXPORTS).reduce((sum, names) => sum + names.length, 0));
+
+    // The same package is fine where the unlock feature is off, and in the test variant (which takes a package of the tree).
+    const off = await build({ ...options, out: join(env.out, "old-test"), manifest: "mv2", variant: "test", features: ["save"] });
+    assert.deepEqual({ ...(await featuresOf(off.dir)) }, { save: true, unlock: false });
+
+    // A package that has them: the release is built.
+    pin(current);
+    const release = await build({ ...options, out: join(env.out, "current"), manifest: "mv2", variant: "release" });
+    assert.deepEqual(release.features, ["save", "unlock"]);
+    assert.deepEqual(wasmUnlockProblems(new Map(Object.entries(wasmFiles()).map(([path, text]) => [path, Buffer.from(text)]))), []);
+
+    // One function missing is enough.
+    const withoutOne = Object.fromEntries(Object.entries(wasmFiles()).map(([path, text]) => [path, text.replace("export function confirm_password() {}\n", "")]));
+    pin(makeTar(withoutOne));
+    await assert.rejects(
+      build({ ...options, out: join(env.out, "one"), manifest: "mv2", variant: "release" }),
+      /lacks pkg-web\/ferret_core_wasm\.js: confirm_password; move/,
+    );
   } finally {
     env.cleanup();
   }

@@ -239,6 +239,11 @@ if [ "$FERRET_EXT_MODE" = unit ]; then
       # The release variant takes the locked package whatever the test variant does.
       flags="--wasm lock"
       if [ "$variant" = test ] && [ -n "$FERRET_EXT_TEST_WASM" ]; then flags="$FERRET_EXT_TEST_WASM"; fi
+      if [ "$variant" = release ]; then
+        # Status 10: the lock is behind the release that has the unlock functions, so the release build is refused on purpose.
+        bash scripts/release-build.sh "$mv" >&2 || [ $? -eq 10 ]
+        continue
+      fi
       # shellcheck disable=SC2086
       node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant" $flags >&2
     done
@@ -246,12 +251,14 @@ if [ "$FERRET_EXT_MODE" = unit ]; then
   npm exec --no -- tsc -p jsconfig.json --noEmit >&2
   node --test "test/unit/*.test.mjs" >&2
 else
-  for mv in mv3 mv2; do
-    node scripts/build.mjs --browser firefox --manifest "$mv" --variant release >&2
-    npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors --self-hosted >&2
-  done
+  bash scripts/lint-release.sh >&2
   cd /work
-  bash scripts/check-ext-release.sh >&2
+  if [ -f extension/dist/.release-skipped ]; then
+    cat extension/dist/.release-skipped >&2
+    echo "lanbox-ext.sh: no release package to check while the locked WASM package is behind" >&2
+  else
+    bash scripts/check-ext-release.sh >&2
+  fi
 fi'
 
   # What the test variant's build takes in the unit step (the release variant always takes the lock).

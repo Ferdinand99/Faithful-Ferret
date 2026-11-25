@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { sha256, WASM_FILES } from "../../scripts/build.mjs";
+import { sha256, UNLOCK_WASM_EXPORTS, WASM_FILES } from "../../scripts/build.mjs";
 
 /** The real extension folder. */
 export const extensionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -80,9 +80,23 @@ export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/background/sync.mjs": "export {};\n",
 });
 
-/** The files of a fake WASM package. @returns {Record<string, string>} */
-export function wasmFiles() {
-  return Object.fromEntries(WASM_FILES.map((p) => [p, `// fake ${p}\n`]));
+/**
+ * The files of a fake WASM package. With `unlock` (the default) the stand-ins hold what the build looks for in a package
+ * that has the functions the unlock feature calls; without it they are a package from before the feature.
+ * @param {{ unlock?: boolean }} [options]
+ * @returns {Record<string, string>}
+ */
+export function wasmFiles({ unlock = true } = {}) {
+  return Object.fromEntries(WASM_FILES.map((p) => [p, `// fake ${p}\n${unlock ? standInFor(p) : ""}`]));
+}
+
+/**
+ * A function or a method of each name that the build looks for in a file of the package (a constant in the client).
+ * @param {string} path
+ */
+function standInFor(path) {
+  const names = /** @type {Record<string, readonly string[]>} */ (UNLOCK_WASM_EXPORTS)[path] ?? [];
+  return names.map((name) => (path.endsWith("client.mjs") ? `const ${name} = async () => {};\n` : `export function ${name}() {}\n`)).join("");
 }
 
 /**
