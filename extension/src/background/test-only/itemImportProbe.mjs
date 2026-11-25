@@ -8,8 +8,17 @@
 //
 // It answers with the new item's id: never a key, a value or a handle. The key is the test's own, made for a test site.
 
-import { b64u, hex16 } from "../../shared/b64.mjs";
-import { encodeWireBytes } from "../../shared/wire.mjs";
+// The shared modules are copied into the package by the build (the unit tests load this file from the sources, where they are
+// not): the encoder of the wire is loaded when the operation runs, and the byte forms are written here.
+
+/** @param {Uint8Array} bytes */
+const hexOf = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+/** @param {string} hex */
+const bytesOfHex = (hex) => Uint8Array.from(hex.match(/../g) ?? [], (h) => parseInt(h, 16));
+/** @param {Uint8Array} bytes */
+const toB64u = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/[+]/g, "-").replace(/[/]/g, "_").replace(/=+$/, "");
+/** @param {string} text */
+const fromB64u = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
 /** @param {string} code */
 const fail = (code) => Object.assign(new Error(code), { code });
@@ -25,7 +34,7 @@ export function createItemImportProbe({ engine, api, now, random = (bytes) => gl
   /** @param {unknown} text */
   const bytesOf = (text) => {
     if (typeof text !== "string" || text === "" || text.length > 4096) throw fail("invalid_input");
-    return b64u.decode(text);
+    return fromB64u(text);
   };
   /** @type {Readonly<Record<string, import("../coreHost.mjs").CoreOp>>} */
   const ops = Object.freeze({
@@ -40,16 +49,17 @@ export function createItemImportProbe({ engine, api, now, random = (bytes) => gl
         const rpId = typeof args?.rp_id === "string" && /^[a-z0-9.-]{1,253}$/.test(args.rp_id) ? args.rp_id : null;
         const userName = typeof args?.user_name === "string" && args.user_name.length <= 256 ? args.user_name : null;
         if (name === null || rpId === null || userName === null) throw fail("invalid_input");
-        const id = hex16.encode(random(new Uint8Array(16)));
+        const id = hexOf(random(new Uint8Array(16)));
         const made = await client.vault.passkey_import(
-          hex16.decode(id),
+          bytesOfHex(id),
           1,
           { item_type: "login", name },
           { cred_id: bytesOf(args.cred_id), rp_id: rpId, user_handle: bytesOf(args.user_handle), user_name: userName, created: now(), key_pkcs8: bytesOf(args.key_pkcs8) },
           now(),
         );
-        const idem = hex16.encode(random(new Uint8Array(16)));
-        const body = encodeWireBytes("put_item_req", { base_rev: 0, blob: b64u.encode(made.item.envelope), tag: b64u.encode(made.item.tag), idem });
+        const idem = hexOf(random(new Uint8Array(16)));
+        const { encodeWireBytes } = await import("../../shared/wire.mjs");
+        const body = encodeWireBytes("put_item_req", { base_rev: 0, blob: toB64u(made.item.envelope), tag: toB64u(made.item.tag), idem });
         await http.put(`/api/sync/items/${id}`, body, { shape: "put_item_res" });
         await Promise.resolve(running.verifyNow?.()).catch(() => {});
         const until = Date.now() + LISTED_WITHIN_MS;

@@ -167,7 +167,8 @@ test("the_matrix_counts_a_case_that_did_not_run_as_failed", async () => {
   assert.equal(r2.status, "not-run");
   const r3 = await runCase(/** @type {any} */ (undefined), plain, { channel: "release", provider: "ferret" });
   assert.equal(r3.status, "not-run");
-  assert.match(r3.reason ?? "", /not wired/);
+  // Ferret as the provider needs a signed-in extension (or says what else the case needs that the runner cannot do yet).
+  assert.match(r3.reason ?? "", /not signed in for the Ferret provider|create side|cut off|popup|second browser profile/);
   // ... and the numbers of such a run say so: nothing passed, the stub's needs-provider cases are counted.
   const stubResults = new Map(cases.filter((c) => c.set === "fixtures").map((c) => [c.id, c.needs === "provider" ? r1 : { status: /** @type {const} */ ("not-run"), reason: "x" }]));
   const stubMatrix = computeMatrix(cases.filter((c) => c.set === "fixtures"), stubResults, "stub");
@@ -247,6 +248,9 @@ test("what a run saw is judged against the case, per provider", () => {
   const failed = observe([{ kind: "step", step: "create", ok: false, stage: "client", error: { name: "SecurityError" } }], { windowShown: false });
   assert.equal(failed.ceremony, "client-error");
   assert.equal(failed.error, "SecurityError");
+  // Without a window of Ferret's, a call that ended was answered by the browser (an error too).
+  assert.equal(failed.route, "browser");
+  assert.equal(observe([{ kind: "step", step: "get", ok: false, stage: "client", error: { name: "NotAllowedError" } }], { windowShown: true }).route, "ferret");
   const refused = observe([{ kind: "step", step: "get", ok: false, stage: "server-finish", error: { name: "ServerRefused" } }], { windowShown: false });
   assert.equal(refused.ceremony, "server-refused");
   // A page that never reported is "none", not a pass.

@@ -400,6 +400,15 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
     const bridgeTab = session && BRIDGE_ON && provider === "stub" ? await turnOnPasskeyScripts(session) : null;
     const ferret = session && provider === "ferret" ? await signInForFerret(session, channel) : null;
     for (const c of cases) {
+      if (session && ferret !== null) {
+        // A tab of its own for each case: Ferret's calm period (several requests of a tab that ended without an answer) is per
+        // tab, and the cases that end without an answer on purpose must not change how the next case is shown.
+        const old = await session.windowHandle();
+        const fresh = await session.newTab();
+        await session.switchTo(old);
+        await session.closeTab();
+        await session.switchTo(fresh);
+      }
       const r = session ? await runCase(session, c, { channel, provider, ferret }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider, ferret });
       results.set(c.id, r);
       const failing = r.observed?.reports?.find((/** @type {any} */ x) => x.kind === "step" && !x.ok);
