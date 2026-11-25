@@ -23,7 +23,7 @@
 > the web vault, makes the side menu's "Import and export" reach both pages, and teaches the Firefox extension to
 > work out what a form is for before it fills. v0.10.0 lets you show or hide the password while you edit an item in the
 > web vault, and the Firefox extension 0.8.0, built from v0.10.0, is the first signed build that offers to save a new password or update a
-> changed one and has a password generator in its popup. v0.11.0 adds quick unlock and one-time codes: a PIN and a passkey (Windows Hello, Touch ID or a phone) open
+> changed one and has a password generator in its popup. v0.11.0 adds quick unlock and one-time codes: a PIN and a passkey (Windows Hello or Touch ID) open
 > the locked vault in the Firefox extension 0.9.0, a passkey also opens it in the web vault, the web vault has a generator page,
 > and one-time codes (TOTP) are stored in an item and shown by the web vault and the extension. The extension is
 > not on the Firefox add-ons store. A health check is next. Ferret is a single-author project and is **not for real
@@ -90,14 +90,14 @@ These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, an
   shows a preview. The secret is stored encrypted inside the item like any other field. Counter-based (HOTP) and Steam
   codes are not supported.
 - **Passkey unlock in the web vault.** Under Unlock methods in the account menu you can add a passkey (a fingerprint, a face,
-  a device PIN or a phone, through the WebAuthn PRF extension; at most 10 per account) and remove it again. While the
-  session lives, the passkey opens the vault in place of the master password; once the session has ended the master
-  password is asked for. The list says whether a passkey can be synced between devices (it is then as safe as the
+  a device PIN or a phone, through the WebAuthn PRF extension; at most 10 per account) and remove it again. In the web
+  vault, the passkey opens the vault in place of the master password while the session lives; once the session has ended the
+  master password is asked for. The list says whether a passkey can be synced between devices (it is then as safe as the
   cloud account it lives in) or stays on this device. The page is there only when the server offers passkeys.
 - **Unlock rules for the administrator.** Settings, Unlock (administrators only) has three switches: allow PIN, allow PIN
   after a restart of the browser, and the shortest PIN (4 to 64, 6 by default). The page says in words how long every PIN of
-  the shortest length takes to try offline. The rule is read by every client and enforced when a PIN is set, at every unlock
-  and at every sync.
+  the shortest length takes to try offline. The rule is read by every client and enforced when a PIN is set, at every PIN unlock, when the vault is opened,
+  when the popup is opened and at least once an hour.
 - **Previous passwords.** When the password of an item is changed in the web vault, the old one is kept in the item
   (encrypted with it) and listed under "Previous passwords" on the item page, newest first, with the date each one was
   replaced. An item keeps up to five. Each value is hidden until you ask for that one, and only one secret on the page
@@ -172,8 +172,9 @@ this one). [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes ho
   device is revoked, when the master password changes and when the administrator turns PIN off. Ferret never stores the
   PIN itself or its length.
 - **Passkey unlock.** A passkey made in the web vault (see above) also opens the extension's vault, in a small window of
-  its own: Windows Hello, Touch ID with a passkey provider, or a phone through a QR code. It needs the network and a signed-in
-  device. Ferret never sees biometric data; the operating system confirms that it is you. A security key (YubiKey) is not tested.
+  its own: Windows Hello, or Touch ID with a passkey provider. A phone through a QR code should work too, but it has not been
+  tested by hand yet. It needs the network and a signed-in device (living tokens), and it works whether or not a web vault
+  session is open. Ferret never sees biometric data; the operating system confirms that it is you. A security key (YubiKey) is not tested.
 - **Auto-lock.** The vault locks after 15 seconds to 24 hours without use of Ferret's own pages (15 minutes by
   default). Activity in a web page does not count, and the vault also locks when the browser closes.
 - **Frame and phishing rules.** The extension fills only a frame that matches the item's saved address and that is
@@ -270,7 +271,7 @@ Ferret aims to be a password manager that is light to run and gets the everyday 
 - **Autofill that notices.** Reliable detection of new and changed passwords, tested before release
   against our own test forms, modelled on common sign-in, sign-up and change-password patterns, in Firefox Release and
   ESR.
-- **Unlock the way you want.** A passkey (Windows Hello, Touch ID, a phone) and an optional local PIN, in the Firefox
+- **Unlock the way you want.** A passkey (Windows Hello, Touch ID) and an optional local PIN, in the Firefox
   extension (since v0.11.0) and for the passkey in the web vault too, and on the phone apps later. Ferret never collects or stores
   biometric data; the operating system confirms it is you.
 - **Small to run.** One container with SQLite and a Rust core, like the other Hedgerow apps, and an extension that

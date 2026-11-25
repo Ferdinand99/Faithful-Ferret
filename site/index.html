@@ -201,7 +201,7 @@
             <li class="card feature problem reveal d1">
               <span class="list-icon status-info"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
               <h3>Unlock the way you want</h3>
-              <p>A <strong>passkey</strong> (Windows Hello, Touch ID or a phone, with a fingerprint, a face or a device PIN) and an optional local <strong>PIN</strong>, in the Firefox extension and, for the passkey, in the web vault. The phone apps come later. Ferret never sees or stores your biometrics: the operating system confirms that it is you.</p>
+              <p>A <strong>passkey</strong> (Windows Hello or Touch ID, with a fingerprint, a face or a device PIN) and an optional local <strong>PIN</strong>, in the Firefox extension and, for the passkey, in the web vault. The phone apps come later. Ferret never sees or stores your biometrics: the operating system confirms that it is you.</p>
             </li>
             <li class="card feature problem reveal d2">
               <span class="list-icon status-none"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#server"></use></svg></span>
@@ -293,7 +293,7 @@
             <li class="card feature reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#key"></use></svg></span>
               <h3>Passkey unlock</h3>
-              <p>Under &ldquo;Unlock methods&rdquo; you can add a passkey to your vault (up to 10; a fingerprint, a face, a device PIN or a phone, through the WebAuthn PRF extension) and remove it again. While the session lives the passkey opens the vault in place of the master password, in the web vault and in the Firefox extension. Once the session has ended, the master password is asked for. The list says whether a passkey can be synced between devices (it is then as safe as the cloud account it lives in) or stays on this device.</p>
+              <p>Under &ldquo;Unlock methods&rdquo; you can add a passkey to your vault (up to 10; a fingerprint, a face, a device PIN or a phone, through the WebAuthn PRF extension) and remove it again. In the web vault, the passkey opens the vault in place of the master password while the session lives; once the session has ended, the master password is asked for. The Firefox extension opens its vault with the same passkey when the device is signed in and there is a network. The list says whether a passkey can be synced between devices (it is then as safe as the cloud account it lives in) or stays on this device.</p>
             </li>
             <li class="card feature reveal d1">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
@@ -329,12 +329,12 @@
             <li class="card feature reveal d2">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#lock"></use></svg></span>
               <h3>Unlock with a PIN or a passkey</h3>
-              <p>A PIN opens the locked vault. It is set on the settings page (this asks for the master password again and needs the network) and has the length the administrator&rsquo;s rule asks for. By default it is kept on the computer, encrypted, so it works after a restart of the browser and, for seven days after the last contact with the server, without a network; &ldquo;Require master password after restart&rdquo; keeps it in memory only. Five wrong tries delete it, with a wait of 5, 15 and 30 seconds before the third to fifth try. A PIN is weaker than the master password: someone who gets a copy of the browser profile can try PINs on their own computer, where the limit of five does not apply, so the settings page warns every time you set or change one, and it is best used with a long PIN on a computer you trust that has an encrypted disk. A passkey made in the web vault opens the vault in a small window of its own (Windows Hello, Touch ID with a passkey provider, or a phone through a QR code); it needs the network. A security key (YubiKey) is not tested.</p>
+              <p>A PIN opens the locked vault. It is set on the settings page (this asks for the master password again and needs the network) and has the length the administrator&rsquo;s rule asks for. By default it is kept on the computer, encrypted, so it works after a restart of the browser and, for seven days after the last contact with the server, without a network; &ldquo;Require master password after restart&rdquo; keeps it in memory only. Five wrong tries delete it, with a wait of 5, 15 and 30 seconds before the third to fifth try. A PIN is weaker than the master password: someone who gets a copy of the browser profile can try PINs on their own computer, where the limit of five does not apply, so the settings page warns every time you set or change one, and it is best used with a long PIN on a computer you trust that has an encrypted disk. A passkey made in the web vault opens the vault in a small window of its own (Windows Hello, or Touch ID with a passkey provider; a phone through a QR code should work too, but it has not been tested by hand yet); it needs the network. A security key (YubiKey) is not tested.</p>
             </li>
             <li class="card feature reveal">
               <span class="list-icon status-accent"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#clock"></use></svg></span>
               <h3>One-time codes in the extension</h3>
-              <p>The popup shows the code of an item and the seconds left, copies it (the clipboard is cleared after 30 seconds) or fills it into a page that asks only for a one-time code or into the code field of a sign-in form, never into an unencrypted page.</p>
+              <p>The popup shows the code of an item and the seconds left, copies it (the clipboard is cleared after 30 seconds) or fills it into a page that asks only for a one-time code or into the code field of a sign-in form. On its own, a code is never filled into an unencrypted page; only the explicit &ldquo;Fill anyway&rdquo; on such a page fills it, together with the login.</p>
             </li>
           </ul>
 
