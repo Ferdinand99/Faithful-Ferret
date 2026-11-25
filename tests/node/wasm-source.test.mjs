@@ -1,7 +1,7 @@
-// Where the WebAssembly package of a build comes from: test builds may use one built from the tree
-// (scripts/wasm-tree.sh, scripts/wasm-source.mjs, .github/workflows/wasm-tree.yml), release builds
-// use the locked package or the package of their own release run and nothing else. These tests read
-// the scripts and the workflows (no WASM build needed).
+// Where the WebAssembly package of a build comes from: CI and release builds use the locked package
+// (web/wasm.lock.json) or, for the server image, the package of their own release run; a test build
+// run by hand may use one built from the tree (scripts/wasm-tree.sh). These tests read the scripts
+// and the workflows (no WASM build needed).
 // Run: node --test tests/node/wasm-source.test.mjs
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -9,7 +9,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { chooseSource, sourceFor, workspaceVersion } from "../../scripts/wasm-source.mjs";
 import { root } from "./paths.mjs";
 
 const read = (/** @type {string} */ path) => readFileSync(join(root, ...path.split("/")), "utf8");
@@ -24,54 +23,31 @@ function job(text, job) {
   return next < 0 ? rest : rest.slice(0, next);
 }
 
-test("ci_uses_the_tree_wasm_while_the_lock_is_behind_the_tree", () => {
-  // The decision: the package of the tree while the lock names an older version than the core in the tree.
-  assert.equal(chooseSource("0.8.0", "0.10.0"), "tree", "a number is not a text: 8 is less than 10");
-  assert.equal(chooseSource("0.9.9", "0.10.0"), "tree");
-  assert.equal(chooseSource("0.10.0", "0.10.1"), "tree");
-  assert.equal(chooseSource("0.10.0", "1.0.0"), "tree");
-  assert.equal(chooseSource("0.10.0", "0.10.0"), "lock", "the pin pull request has moved the lock to the tree's version");
-  assert.equal(chooseSource("0.11.0", "0.10.9"), "lock");
-  for (const bad of ["", "main", "1.2", "1.2.3-rc.1", "v1.2.3"]) {
-    assert.throws(() => chooseSource(bad, "0.10.0"), /not a version/, bad);
-    assert.throws(() => chooseSource("0.8.0", bad), /not a version/, bad);
-  }
-  assert.equal(workspaceVersion('[workspace]\nmembers = []\n\n[workspace.package]\nversion = "0.10.0"\nedition = "2024"\n\n[workspace.dependencies]\nversion = "9.9.9"\n'), "0.10.0");
-  assert.throws(() => workspaceVersion("[package]\nversion = \"1.0.0\"\n"), /no \[workspace\.package\] version/);
-  // On this very tree it is the rule applied to the two files.
-  const lock = JSON.parse(read("web/wasm.lock.json"));
-  assert.equal(sourceFor(root), chooseSource(lock.version, workspaceVersion(read("Cargo.toml"))));
-  assert.equal(execFileSync("node", [join(root, "scripts", "wasm-source.mjs")], { encoding: "utf8" }).trim(), sourceFor(root));
-
-  // The workflows that test the web vault and the extension ask for it, and take the package it built.
-  const called = workflow("wasm-tree.yml");
-  assert.match(called, /workflow_call:/);
-  assert.match(called, /node scripts\/wasm-source\.mjs/);
-  assert.match(job(called, "build"), /if: needs\.decide\.outputs\.source == 'tree'/);
-  assert.match(called, /scripts\/wasm-tree\.sh/);
-  assert.match(called, /actions\/cache\/restore@/, "the packages are cached by the hash of what the build reads");
-  assert.match(called, /name: wasm-tree/);
-  for (const [name, jobs] of [["web.yml", ["unit", "e2e"]], ["extension.yml", ["unit"]], ["extension-firefox.yml", ["firefox"]]]) {
+test("ci_takes_the_locked_wasm_package", () => {
+  // The rule that built the package of the commit while the lock was behind the core is gone: no workflow has the job,
+  // the reusable workflow or the script that decided it.
+  assert.ok(!existsSync(join(root, ".github", "workflows", "wasm-tree.yml")));
+  assert.ok(!existsSync(join(root, "scripts", "wasm-source.mjs")));
+  for (const name of ["web.yml", "extension.yml", "extension-firefox.yml", "release.yml"]) {
     const text = workflow(name);
-    assert.match(job(text, "wasm"), /uses: \.\/\.github\/workflows\/wasm-tree\.yml/, name);
-    for (const one of jobs) {
-      const body = job(text, one);
-      assert.match(body, /needs: wasm/, `${name} ${one}`);
-      assert.match(body, /if: needs\.wasm\.outputs\.source == 'tree'\n\s+uses: actions\/download-artifact@[0-9a-f]{40}[^\n]*\n\s+with:\n\s+name: wasm-tree/, `${name} ${one} takes the package`);
-    }
+    assert.doesNotMatch(text, /wasm-tree|wasm-source|--wasm tree|--wasm-commit|WASM_SOURCE=tree|needs\.wasm\./, name);
   }
-  for (const [name, jobs] of [["web.yml", ["unit", "e2e"]], ["extension.yml", ["unit"]]]) {
-    for (const one of jobs) assert.match(job(workflow(name), one), /--wasm tree[\s\S]*--wasm-commit/, `${name} ${one} builds against it`);
-  }
-  assert.match(job(workflow("extension-firefox.yml"), "firefox"), /FERRET_WASM_SOURCE=\$\{\{ needs\.wasm\.outputs\.source \}\}/);
-  // The extension's release variant never takes it, in CI as anywhere.
-  assert.match(job(workflow("extension.yml"), "unit"), /scripts\/release-build\.sh/);
-  assert.match(read("extension/scripts/release-build.sh"), /--variant release --wasm lock/);
-  assert.doesNotMatch(job(workflow("extension.yml"), "lint"), /wasm-tree|--wasm tree/);
-  // The pins of the recipe are the release's own.
-  const pins = (/** @type {string} */ text) => ["WASM_PACK_VERSION", "WASM_BINDGEN_CLI_VERSION", "BINARYEN_VERSION", "BINARYEN_SHA256", "NODE_VERSION", "NODE_SHA256"].map((k) => new RegExp(`^  ${k}: (\\S+)$`, "m").exec(text)?.[1]);
-  assert.deepEqual(pins(called), pins(workflow("release.yml")));
-  assert.ok(pins(called).every(Boolean));
+  // The lock is a published release (its URL and version agree), and the web vault and the extension build against it.
+  const lock = JSON.parse(read("web/wasm.lock.json"));
+  assert.match(lock.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(lock.url, `https://github.com/Ferdinand99/Faithful-Ferret/releases/download/v${lock.version}/ferret-core-wasm-web-${lock.version}.tar.gz`);
+  assert.match(job(workflow("web.yml"), "unit"), /run: node scripts\/build\.mjs\n/);
+  assert.match(job(workflow("web.yml"), "e2e"), /run: node scripts\/build\.mjs\n/);
+  assert.match(job(workflow("extension.yml"), "unit"), /--variant "\$variant" --wasm lock/);
+  assert.match(job(workflow("extension-firefox.yml"), "firefox"), /jq -r \.url web\/wasm\.lock\.json/);
+  // The release variant of the extension is built and linted in full, with no way to skip it.
+  const lint = job(workflow("extension.yml"), "lint");
+  assert.match(lint, /--variant release\n\s+npm exec --no -- web-ext lint[^\n]*--warnings-as-errors/);
+  assert.match(lint, /run: bash scripts\/check-ext-release\.sh/);
+  assert.doesNotMatch(lint, /release-skipped|\|\| \[ \$\? -eq 10 \]/);
+  assert.ok(!existsSync(join(root, "extension", "scripts", "release-build.sh")));
+  assert.ok(!existsSync(join(root, "extension", "scripts", "lint-release.sh")));
+  for (const file of ["scripts/lanbox-ext.sh", "extension/scripts/build.mjs"]) assert.doesNotMatch(read(file), /GATE_LOCK_VERSION|release-skipped|-eq 10/, file);
 });
 
 test("the_release_image_web_vault_uses_this_releases_wasm", () => {
@@ -148,7 +124,8 @@ test("a_tree_package_is_recorded_with_the_commit_it_was_built_from", (t) => {
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(scratch, { recursive: true });
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
-  const version = workspaceVersion(read("Cargo.toml"));
+  const version = /^\[workspace\.package\]\s*$[\s\S]*?^version\s*=\s*"([^"]+)"/m.exec(read("Cargo.toml"))?.[1] ?? "";
+  assert.match(version, /^\d+\.\d+\.\d+$/);
   const web = join(scratch, `ferret-core-wasm-web-${version}.tar.gz`);
   writeFileSync(web, "a package");
   const sha = createHash("sha256").update("a package").digest("hex");

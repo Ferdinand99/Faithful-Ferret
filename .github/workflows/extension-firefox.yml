@@ -2,9 +2,7 @@
 # Firefox ESR, through geckodriver), in the runner image docker/ext-runner.Dockerfile.
 # The image is built here from the Dockerfile, whose every download is pinned by
 # version and SHA-256. The test step runs with --network none: the WASM package is
-# fetched and checked before it, in its own step, and goes in with the source tree. While the
-# lock is behind the core in the tree, the package of this commit (wasm-tree.yml) takes the place of
-# the fetched one.
+# fetched and checked before it, in its own step, and goes in with the source tree.
 # Nothing is signed or submitted anywhere, and the workflow has read access only.
 name: Extension Firefox
 
@@ -21,13 +19,8 @@ permissions:
   contents: read
 
 jobs:
-  wasm:
-    name: WASM package
-    uses: ./.github/workflows/wasm-tree.yml
-
   firefox:
     name: Firefox ${{ matrix.channel }}
-    needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -40,24 +33,12 @@ jobs:
           persist-credentials: false
       - name: Build the runner image
         run: docker build -t ferret-ext-runner - < docker/ext-runner.Dockerfile
-      - name: The WASM package of this commit
-        if: needs.wasm.outputs.source == 'tree'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wasm-tree
-          path: wasm-package
       - name: Fetch the published WASM package and check its SHA-256
-        if: needs.wasm.outputs.source != 'tree'
         run: |
           url="$(jq -r .url web/wasm.lock.json)"
           sha="$(jq -r .sha256 web/wasm.lock.json)"
           curl -fsSL -o wasm.tar.gz "$url"
           echo "$sha  wasm.tar.gz" | sha256sum -c -
-      - name: Take the package of this commit
-        if: needs.wasm.outputs.source == 'tree'
-        run: |
-          cp wasm-package/ferret-core-wasm-web-*.tar.gz wasm.tar.gz
-          echo "WASM_COMMIT=$(jq -r .commit wasm-package/wasm-tree.json)" >> "$GITHUB_ENV"
       - name: Run the probes (no network)
         run: |
           tar -cf in.tar --exclude='extension/node_modules' --exclude='extension/dist' extension web/wasm.lock.json web/src
@@ -69,8 +50,6 @@ jobs:
             --security-opt no-new-privileges:true \
             -e CI=1 \
             -e FERRET_EXT_STEP=firefox \
-            -e FERRET_WASM_SOURCE=${{ needs.wasm.outputs.source }} \
-            -e FERRET_WASM_COMMIT="${WASM_COMMIT:-}" \
             -e FERRET_CHANNELS=${{ matrix.channel }} \
             -e FERRET_MANIFEST=mv3 \
             -e FERRET_GREP= \
