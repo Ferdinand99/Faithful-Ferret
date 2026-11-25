@@ -295,6 +295,8 @@ async function enterFrames(session, frames) {
  */
 export async function runCase(session, c, { channel, provider }) {
   if (c.set === "demo") return { status: "not-run", reason: "the demo pages have no driver yet (the end-to-end spec of U4-13 brings it)" };
+  // No browser: the provider's setup did not run (nothing that ran can be judged).
+  if (!session && c.needs !== "provider") return { status: "not-run", reason: "no browser session: the provider was not set up" };
   if (c.needs === "provider") {
     return provider === "ferret"
       ? { status: "not-run", reason: "the case needs a driver step of its own (a lock, a navigation, the network, a verification) that the runner does not have yet" }
