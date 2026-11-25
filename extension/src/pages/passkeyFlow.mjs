@@ -271,6 +271,15 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
   const outcome = (reply) => (reply?.ok === true ? { ok: true } : { ok: false, reason: named(reply?.reason) });
   return Object.freeze({
     /**
+     * Whether the request is still there: `passkey_pending` alone. It works while the vault is locked and does not count as a use
+     * of the vault, so the window can ask it on a timer without keeping the vault from locking.
+     * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+     */
+    async alive() {
+      const pending = await ask("passkey_pending");
+      return pending?.ok === true ? { ok: true } : { ok: false, reason: named(pending?.reason) };
+    },
+    /**
      * What the window shows now: the request (works locked), the site the core checked (needs the open vault: without it the
      * window asks for the unlock), and for an open vault what Ferret has for the request.
      * @returns {Promise<{ ok: true, view: View } | { ok: false, reason: string }>}

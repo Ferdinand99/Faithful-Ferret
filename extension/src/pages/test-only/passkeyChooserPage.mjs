@@ -16,7 +16,7 @@ const SITE = { origin: "https://www.example.com", host_unicode: "www.example.com
 const IDN = { origin: "https://xn--bcher-kva.example", host_unicode: "bücher.example", rp_id: "xn--bcher-kva.example", rp_id_unicode: "bücher.example" };
 
 /** @param {Record<string, unknown>} over */
-const base = (over) => ({ ok: true, kind: "get", state: "ready", origin: SITE.origin, site: SITE, rp_name: "Example", user: {}, online: true, foreign: false, candidates: [], targets: [], existing: null, folders: [], recent: false, ...over });
+const base = (over) => ({ ok: true, kind: "get", state: "ready", origin: SITE.origin, site: SITE, rp_name: null, user: {}, online: true, foreign: false, candidates: [], targets: [], existing: null, folders: [], recent: false, ...over });
 
 const CANDIDATES = [
   { item_id: ID(3), name: "Example (work)", user_name: "anna@example.com", created: Date.UTC(2026, 9, 21) },
@@ -30,20 +30,27 @@ const SCENARIOS = {
   get2: base({ candidates: CANDIDATES.slice(0, 2) }),
   get3: base({ candidates: CANDIDATES }),
   none: base({}),
-  create: base({ kind: "create", user: { name: "anna@example.com", display_name: "Anna Nordmann" }, folders: [{ id: ID(9), name: "Work" }, { id: ID(8), name: "Private" }] }),
+  create: base({ kind: "create", rp_name: "Example", user: { name: "anna@example.com", display_name: "Anna Nordmann" }, folders: [{ id: ID(9), name: "Work" }, { id: ID(8), name: "Private" }] }),
   create_attach: base({
     kind: "create",
+    rp_name: "Example",
     user: { name: "anna@example.com", display_name: "Anna Nordmann" },
     targets: [
       { item_id: ID(5), name: "Example login", user_name: "anna@example.com", same_user: true },
       { item_id: ID(6), name: "Example (shared)", user_name: "team@example.com", same_user: false },
     ],
   }),
+  attach_many: base({
+    kind: "create",
+    rp_name: "Example",
+    user: { name: "anna@example.com", display_name: "Anna Nordmann" },
+    targets: [1, 2, 3, 4, 5].map((n) => ({ item_id: ID(20 + n), name: `Example login ${n}`, user_name: `user${n}@example.com`, same_user: n === 1 })),
+  }),
   create_existing: base({ kind: "create", user: { name: "anna@example.com", display_name: "Anna Nordmann" }, existing: { item_id: ID(5), name: "Example login" } }),
   offline: base({ kind: "create", user: { name: "anna@example.com", display_name: "" }, online: false }),
   locked: base({ state: "locked", site: null }),
   foreign: base({ foreign: true, candidates: CANDIDATES.slice(0, 1) }),
-  idn: base({ site: IDN, origin: IDN.origin, rp_name: "Bücher", candidates: CANDIDATES.slice(0, 1) }),
+  idn: base({ site: IDN, origin: IDN.origin, candidates: CANDIDATES.slice(0, 1) }),
   hostile: base({
     site: IDN,
     origin: IDN.origin,
@@ -82,6 +89,7 @@ async function main() {
   };
   const backend = {
     view: async () => view(),
+    alive: async () => ({ ok: true }),
     choose: async (/** @type {any} */ choice) => {
       probe.calls.push({ call: "choose", arg: choice });
       publish();
@@ -116,7 +124,7 @@ async function main() {
     formatDate: (ms) => new Intl.DateTimeFormat(texts.lang, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(ms)),
   });
   mount(root, chooser.root);
-  window.addEventListener("focus", () => chooser.touch());
+  window.addEventListener("focus", () => chooser.focused());
   await chooser.loaded;
   chooser.focus();
   document.body.dataset.ready = "1";

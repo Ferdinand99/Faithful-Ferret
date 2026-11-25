@@ -39,7 +39,7 @@ async function setup() {
 
 /** The raw view the broker's answers make, before the window cleans it. @param {Record<string, unknown>} [over] */
 const raw = (over = {}) => ({
-  ok: true, kind: "get", state: "ready", origin: SITE.origin, site: SITE, rp_name: "Example", user: {}, online: true, foreign: false,
+  ok: true, kind: "get", state: "ready", origin: SITE.origin, site: SITE, rp_name: null, user: {}, online: true, foreign: false,
   candidates: [], targets: [], existing: null, folders: [], recent: false, ...over,
 });
 const CANDIDATES = [
@@ -91,6 +91,10 @@ function fakeBackend(flow, state) {
   return {
     calls,
     backend: {
+      alive: async () => {
+        calls.push({ call: "alive" });
+        return state.fail ? { ok: false, reason: state.fail } : { ok: true };
+      },
       view: async () => {
         calls.push({ call: "view" });
         if (state.fail) return { ok: false, reason: state.fail };
@@ -167,19 +171,19 @@ test("the_window_shows_ferrets_host_and_rp_id_above_the_sites_texts", async () =
   assert.ok(site && texts, "the site and the website's texts are there");
   assert.ok(order(root, site) < order(root, texts), "the site comes first");
   assert.equal(one(root, "passkey-host").textContent, "evil.example", "the host is the core's");
-  assert.equal(one(root, "passkey-rp-id").textContent, "evil.example", "the RP ID is the core's");
-  assert.equal(one(root, "passkey-origin").textContent, "https://evil.example");
+  assert.equal(one(root, "passkey-rp-id").textContent, "Passkey for evil.example", "the RP ID is the core's");
+  assert.equal(one(root, "passkey-origin"), null, "the exact address is added only when it is more than https and the host");
   assert.equal(site.textContent.includes("paypal"), false, "nothing the website wrote is in the site's part");
   // The host and the RP ID are read left to right, each in its own isolation.
   for (const node of every(site).filter((n) => n.tagName === "BDI")) assert.equal(node.getAttribute("dir"), "ltr");
   // The website's texts are named as the website's, in a part of their own.
-  assert.match(texts.textContent, /Written by the website, not checked by Ferret/);
+  assert.match(texts.textContent, /From the website \(unchecked\)/);
   assert.equal(one(texts, "passkey-rp-name").textContent, "paypal.com");
   assert.equal(one(texts, "passkey-user-name").textContent, "anna@paypal.com");
   // An IDN host: the Unicode form and its A-label both show, left to right.
   const idn = await open(world, { view: raw({ site: { origin: "https://xn--bcher-kva.example", host_unicode: "bücher.example", rp_id: "xn--bcher-kva.example", rp_id_unicode: "bücher.example" }, origin: "https://xn--bcher-kva.example" }) });
   assert.equal(one(idn.root, "passkey-host").textContent, "bücher.example");
-  assert.match(one(idn.root, "passkey-rp-id").textContent, /xn--bcher-kva\.example/);
+  assert.match(one(idn.root, "passkey-rp-id").textContent, /Passkey for bücher\.example \(xn--bcher-kva\.example\)/);
   assert.equal(one(idn.root, "passkey-origin").textContent, "https://xn--bcher-kva.example");
 });
 
@@ -230,7 +234,7 @@ test("site_texts_are_labelled_ltr_isolated_and_stripped_of_controls", async () =
   assert.match(one(claims, "passkey-rp-name").textContent, /^Your bank moc\.knab very long/);
   assert.equal(one(claims, "passkey-rp-name").textContent.endsWith("…"), true, "a long text ends with an ellipsis");
   // The label names whose text it is.
-  assert.match(claims.textContent, /The website calls itself/);
+  assert.match(claims.textContent, /Site name/);
   assert.match(claims.textContent, /User name/);
   // The cleaning on its own: what is left of a name made of nothing, the length, the plain text.
   assert.equal(world.flow.siteText(`${RLO}${ZWSP}`), "");
@@ -309,13 +313,14 @@ test("clicks_count_400_ms_after_focus_and_after_each_content_change_and_only_whe
   await tap(byRole(again.root, "passkey-candidate")[0]);
   assert.equal(again.fake.calls.filter((c) => c.call === "choose").length, 1, "a click after the guard, from the person, counts");
   assert.deepEqual(again.fake.calls.find((c) => c.call === "choose")?.arg, { kind: "get", itemId: ID(3) }, "only the item's id is sent, and no claim of presence or verification");
-  // A change of content while the window is open starts the guard again (the poll found a new list).
+  // A change of content while the window is open starts the guard again (the window got the focus and read a new list).
   const live = { view: raw({ candidates: CANDIDATES.slice(0, 1) }) };
   const polled = await open(world, live, { pollMs: 2000 });
   await polled.time.tick(400);
   assert.equal(polled.root.getAttribute("data-guarded"), null);
   live.view = raw({ candidates: CANDIDATES });
-  await polled.time.tick(2000);
+  polled.chooser.focused();
+  await polled.time.tick(0);
   assert.equal(byRole(polled.root, "passkey-candidate").length, 2, "the new list is on screen");
   assert.equal(polled.root.getAttribute("data-guarded"), "1", "the guard started again");
   await tap(byRole(polled.root, "passkey-candidate")[0]);
@@ -380,7 +385,8 @@ test("a_locked_vault_unlocks_in_the_window_and_that_counts_as_verification", asy
   assert.equal(one(root, "passkey-rp-id"), null, "the RP ID is not shown before the core says it");
   assert.equal(byRole(root, "passkey-candidate").length, 0);
   assert.equal(one(root, "passkey-title").textContent, "Unlock Ferret");
-  assert.ok(one(root, "passkey-browser") && one(root, "passkey-never") && one(root, "passkey-cancel"), "the browser, never and cancel need no unlock");
+  assert.ok(one(root, "passkey-browser") && one(root, "passkey-cancel"), "the browser and cancel need no unlock");
+  assert.equal(one(root, "passkey-never"), null, "\"never\" is not offered while locked: the core says the RP ID only with the vault open");
   const password = one(root, "passkey-password");
   box = password;
   password.value = "correct horse";
@@ -390,7 +396,7 @@ test("a_locked_vault_unlocks_in_the_window_and_that_counts_as_verification", asy
   assert.equal(password.value, "", "the master password is not left in the page");
   // The window reads the view again: the site from the core, the passkeys, and the note that one click is enough.
   assert.equal(root.getAttribute("data-state"), "ready");
-  assert.equal(one(root, "passkey-rp-id").textContent, "example.com");
+  assert.equal(one(root, "passkey-rp-id").textContent, "Passkey for example.com");
   assert.equal(byRole(root, "passkey-candidate").length, 2);
   assert.match(one(root, "passkey-recent").textContent, /one click is enough/);
   // The click is the person's, after the guard; the window says nothing of verification: it is the background's to decide.
@@ -444,7 +450,8 @@ test("no_match_still_shows_the_window_with_the_browser_choice", async () => {
   const { root, fake } = await open(world, { view: raw({ candidates: [] }) });
   assert.equal(root.getAttribute("data-state"), "ready");
   assert.equal(one(root, "passkey-none").textContent, "No Ferret passkey for this website");
-  assert.match(one(root, "passkey-ferret").textContent, /cannot tell that Ferret has none/);
+  assert.match(one(root, "passkey-ferret").textContent, /It may be in the browser, on your phone or on a security key/);
+  assert.match(one(root, "passkey-more").textContent, /cannot tell that Ferret has none/, "the privacy line is in the disclosure");
   assert.equal(byRole(root, "passkey-candidate").length, 0);
   const browser = one(root, "passkey-browser");
   assert.equal(browser.textContent, "Use the browser or a security key");
@@ -514,7 +521,7 @@ test("the_window_closes_on_answer_abort_timeout_and_navigation", async () => {
     live.fail = reason;
     await w.time.tick(2000);
     assert.equal(w.root.getAttribute("data-state"), "ended", reason);
-    assert.equal(one(w.root, "passkey-title").textContent, "This request has ended. The window closes.", reason);
+    assert.equal(one(w.root, "passkey-title").textContent, "This request has ended.", reason);
     assert.equal(byRole(w.root, "passkey-candidate").length, 0, "nothing can be chosen any more");
     await w.time.tick(world.view.CLOSE_AFTER_MS);
     assert.equal(w.closed.n, 1, reason);
@@ -534,7 +541,7 @@ test("the_window_closes_on_answer_abort_timeout_and_navigation", async () => {
   await busy.time.tick(400);
   await tap(byRole(busy.root, "passkey-candidate")[0]);
   assert.equal(busy.root.getAttribute("data-state"), "ready", "the window stays");
-  assert.equal(one(busy.root, "passkey-error").textContent, "Ferret is busy. Try again in a moment.");
+  assert.equal(one(busy.root, "passkey-error").textContent, "Ferret is busy. Try again.");
   // The vault locked while the window waited: what was typed goes, and the unlock shows.
   const lockState = { view: raw({ kind: "create", user: { name: "anna", display_name: "" } }) };
   const lock = await open(world, lockState, { pollMs: 2000 });
@@ -542,7 +549,8 @@ test("the_window_closes_on_answer_abort_timeout_and_navigation", async () => {
   typed.value = "half written";
   fire(typed, "input");
   lockState.view = raw({ kind: "create", state: "locked", site: null });
-  await lock.time.tick(2000);
+  lock.chooser.focused();
+  await lock.time.tick(0);
   assert.equal(lock.root.getAttribute("data-state"), "locked");
   assert.equal(typed.value, "", "a lock empties the fields");
   assert.equal(one(lock.root, "passkey-name"), null);
@@ -637,6 +645,87 @@ test("texts_exist_in_en_and_nb", async () => {
   assert.match(nb["passkeys.foreign"], /nettstedet selv/);
   // The texts of a build are those the window uses: it throws on a missing key in the test world's own `textsOf`.
   const { root } = await open(world, { view: raw({ foreign: true, candidates: CANDIDATES }) });
-  assert.match(one(root, "passkey-foreign").textContent, /Another password manager or the site itself also handles passkeys/);
+  assert.match(one(root, "passkey-foreign").textContent, /Another password manager or the site itself also handles passkeys here/);
   assert.equal(root.textContent.includes("passkeys."), false, "no key shows as a text");
+});
+
+test("the_poll_asks_only_pending_and_never_the_site_so_an_open_window_does_not_keep_the_vault_awake", async () => {
+  const world = await setup();
+  const state = { view: raw({ candidates: CANDIDATES }), fail: /** @type {string | null} */ (null) };
+  const w = await open(world, state, { pollMs: 2000 });
+  const before = w.fake.calls.filter((c) => c.call === "view").length;
+  for (let i = 0; i < 5; i += 1) await w.time.tick(2000);
+  assert.equal(w.fake.calls.filter((c) => c.call === "alive").length, 5, "each tick asks whether the request is still there");
+  assert.equal(w.fake.calls.filter((c) => c.call === "view").length, before, "and nothing reads the site or the vault again");
+  // The backend's `alive` is the one lock-exempt message, and only that.
+  const requests = [];
+  const backend = world.flow.createChooserBackend(async (/** @type {string} */ type, /** @type {any} */ body) => {
+    requests.push({ type, body });
+    return { ok: true, request: {} };
+  }, REQUEST, { has: () => true });
+  assert.deepEqual(await backend.alive(), { ok: true });
+  assert.deepEqual(requests, [{ type: "passkey_pending", body: { request_id: REQUEST } }]);
+  // The window reads the view again when it gets the focus, and builds again only if something changed.
+  const refreshed = w.fake.calls.filter((c) => c.call === "view").length;
+  w.chooser.focused();
+  await w.time.tick(0);
+  assert.equal(w.fake.calls.filter((c) => c.call === "view").length, refreshed + 1);
+});
+
+test("a_pin_offer_does_not_take_the_focus_and_enter_may_submit_the_unlock_forms", async () => {
+  const world = await setup();
+  const offer = { allowed: true, afterRestart: true, minLength: 6, set: true, location: "disk", failuresLeft: 5, waitMs: 0, offlineOk: true, lastContactAt: null };
+  const unlock = {
+    unlock: async () => ({ result: { ok: true }, view: {} }),
+    pinPolicy: async () => offer,
+    passkeyOffer: async () => false,
+    openPasskeyWindow: async () => true,
+    pinUnlock: async () => ({ result: { ok: false, reason: "wrong_pin", keys: [], left: 4, waitMs: 0, ended: false }, view: {} }),
+  };
+  const { root, chooser } = await open(world, { view: raw({ state: "locked", site: null }) }, { unlock });
+  chooser.focus();
+  await settle();
+  assert.ok(one(root, "pin-unlock-form"), "the PIN part is there");
+  assert.equal(one(root, "passkey-unlock-form").hidden, true, "and takes the master password's place");
+  assert.equal(/** @type {any} */ (globalThis).document.activeElement?.getAttribute("data-role"), "passkey-title", "the focus stays on the heading: nothing the person types lands in the PIN field");
+  // Enter in a field of an unlock form is not swallowed (it submits that form); anywhere else on the window it is.
+  const keydown = (/** @type {any} */ target) => {
+    const event = { type: "keydown", key: "Enter", target, defaultPrevented: false, preventDefault() { event.defaultPrevented = true; } };
+    for (let at = target; at; at = at.parentNode) for (const [type, fn] of at.listeners ?? []) if (type === "keydown") fn(event);
+    return event;
+  };
+  assert.equal(keydown(one(root, "passkey-password")).defaultPrevented, false, "Enter in the master password field");
+  assert.equal(keydown(byRole(root, "pin-input")[0] ?? one(root, "passkey-password")).defaultPrevented, false, "Enter in the PIN field");
+  assert.equal(keydown(one(root, "passkey-title")).defaultPrevented, true, "Enter on the heading");
+});
+
+test("the_other_choices_are_one_button_one_row_and_one_disclosure_and_the_rows_are_short", async () => {
+  const world = await setup();
+  const get = await open(world, { view: raw({ candidates: CANDIDATES }) });
+  const others = one(get.root, "passkey-others");
+  assert.equal(byRole(get.root, "passkey-more").length, 1, "the explanations are in one disclosure");
+  assert.equal(byRole(others, "passkey-more").length, 1);
+  assert.match(one(get.root, "passkey-more").textContent, /Windows Hello/);
+  assert.match(one(get.root, "passkey-more").textContent, /Never: Ferret leaves passkeys/);
+  // No lead paragraph, no "Or".
+  assert.equal(one(get.root, "passkey-lead"), null);
+  assert.equal(/\bOr\b/.test(get.root.textContent), false);
+  // A row: the item and, on one muted line, the user name and the date (the date only when there are several passkeys).
+  const row = byRole(get.root, "passkey-candidate")[0];
+  assert.match(row.textContent, /anna@example\.com \u00b7 2023-11-14/);
+  const single = await open(world, { view: raw({ candidates: CANDIDATES.slice(0, 1) }) });
+  assert.equal(/\u00b7/.test(byRole(single.root, "passkey-candidate")[0].textContent), false, "no date for a single passkey");
+  // A long list scrolls inside itself: it is focusable, so the keyboard reaches it.
+  const many = await open(world, { view: raw({ kind: "create", targets: [1, 2, 3, 4].map((n) => ({ item_id: ID(40 + n), name: "Item " + n, user_name: "u" + n, same_user: false })) }) });
+  assert.equal(one(many.root, "passkey-targets").getAttribute("tabindex"), "0");
+  assert.equal(one(get.root, "passkey-candidates").getAttribute("tabindex"), null, "a short list does not need it");
+  // The mark is in the title row, there is no brand header, and the heading has no ring style of its own to show.
+  const head = every(get.root).find((n) => n.getAttribute("class") === "ff-pk-head");
+  assert.ok(head && every(head).some((n) => n.getAttribute("class") === "ff-mark"), "the mark sits in the title row");
+  const css = readFileSync(join(world.dir, "assets", "app.css"), "utf8");
+  assert.doesNotMatch(css, /ff-pk-title:focus-visible/, "the heading shows no focus ring");
+  // Name and folder share a row.
+  const create = await open(world, { view: raw({ kind: "create", user: { name: "a", display_name: "" }, folders: [{ id: ID(9), name: "Work" }] }) });
+  const namerow = every(create.root).find((n) => n.getAttribute("class") === "ff-pk-namerow");
+  assert.ok(namerow && one(namerow, "passkey-name") && one(namerow, "passkey-folder"));
 });

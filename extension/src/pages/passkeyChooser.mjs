@@ -3,7 +3,7 @@
 // passkeyFlow.mjs; this file builds the page with `el()` (no markup from strings, ever).
 //
 // What the window shows, top to bottom:
-//   1. the site: its host and its exact address as the core says them, and the RP ID the passkeys are tied to (each left to
+//   1. the site: its host as the core says it (and its exact address when that is more), and the RP ID the passkeys are tied to (each left to
 //      right, in isolation). This is the identity. Nothing a website wrote ever stands in its place;
 //   2. what the website wrote, apart, under a label that says whose it is and that Ferret did not check it (the name it calls
 //      itself, the user name and display name of the account), each in `<bdi>` and cleaned of control and direction characters;
@@ -59,7 +59,7 @@ const reasonKey = (reason) => `session.error.${typeof reason === "string" && /^[
  * }} deps
  *   `unlock`: the popup's flow, for a vault that is locked (null: only the master password is offered through it, so nothing).
  *   `now`, `schedule`, `cancel`: the clock and the timers (the tests set them). `closeWindow`: closes this window.
- * @returns {{ root: HTMLElement, loaded: Promise<void>, focus: () => void, touch: () => void, wipe: () => void, stop: () => void }}
+ * @returns {{ root: HTMLElement, loaded: Promise<void>, focus: () => void, touch: () => void, focused: () => void, refresh: () => Promise<void>, wipe: () => void, stop: () => void }}
  */
 export function createChooser({
   texts,
@@ -168,36 +168,39 @@ export function createChooser({
 
   // ------------------------------------------------------------ the parts
 
-  /** @param {string} key */
+  /**
+   * The title row: the small mark and the heading. The heading takes the focus (programmatically, never shown as a ring) so a
+   * screen reader starts there.
+   * @param {string} key
+   */
   function heading(key) {
     titleNode = el("h1", { id: "ff-pk-title", class: "ff-pk-title", tabindex: "-1", "data-role": "passkey-title" }, t(key));
-    return titleNode;
+    return el("div", { class: "ff-pk-head" }, el("span", { class: "ff-mark", "aria-hidden": "true" }), titleNode);
   }
 
-  /** The site: its identity as the core says it. @param {View} v */
+  /**
+   * The site: its identity as the core says it, in two lines. The host (bold) and "Passkey for <RP ID>", with the exact address
+   * (its A-label form) added only when it is more than \`https://\` and the host.
+   * @param {View} v
+   */
   function siteBlock(v) {
     const site = v.site;
     if (site === null) {
-      // The vault is locked: the core cannot say the site yet. What the browser gave (the calling frame's origin) is shown, with
-      // the way on.
+      // The vault is locked: the core cannot say the site yet. What the browser gave (the calling frame's origin) is shown.
       return el(
         "section",
         { class: "ff-pk-site", "data-role": "passkey-site", "aria-label": t("passkeys.site.label") },
-        el("p", { class: "ff-pk-eyebrow" }, t("passkeys.site.label")),
         el("p", { class: "ff-pk-host", "data-role": "passkey-origin", dir: "ltr" }, ltr(v.origin)),
-        el("p", { class: "ff-hint", "data-role": "passkey-site-unknown" }, t("passkeys.site.unknown")),
       );
     }
-    // The host as the core shows it; the exact address (its A-label form) under it; the RP ID the passkeys are tied to.
     const aLabelRp = site.rpIdUnicode !== site.rpId ? el("span", { class: "ff-pk-ascii" }, " (", ltr(site.rpId), ")") : null;
+    const plain = site.origin === `https://${site.hostUnicode}`;
     return el(
       "section",
       { class: "ff-pk-site", "data-role": "passkey-site", "aria-label": t("passkeys.site.label") },
-      el("p", { class: "ff-pk-eyebrow" }, t("passkeys.site.label")),
       el("p", { class: "ff-pk-host", "data-role": "passkey-host", dir: "ltr" }, ltr(site.hostUnicode)),
-      el("p", { class: "ff-hint ff-pk-origin", "data-role": "passkey-origin" }, ltr(site.origin)),
-      el("p", { class: "ff-pk-eyebrow" }, t("passkeys.site.rp_id")),
-      el("p", { class: "ff-pk-rp", "data-role": "passkey-rp-id" }, ltr(site.rpIdUnicode), aLabelRp),
+      plain ? null : el("p", { class: "ff-hint ff-pk-origin", "data-role": "passkey-origin" }, ltr(site.origin)),
+      el("p", { class: "ff-pk-rp", "data-role": "passkey-rp-id" }, t("passkeys.site.rp"), " ", ltr(site.rpIdUnicode), aLabelRp),
     );
   }
 
@@ -213,6 +216,7 @@ export function createChooser({
     if (v.kind === "create" && v.userName !== "") rows.push(["user-name", t("passkeys.claims.user_name"), v.userName]);
     if (v.kind === "create" && v.displayName !== "" && v.displayName !== v.userName) rows.push(["display-name", t("passkeys.claims.display_name"), v.displayName]);
     if (rows.length === 0) return null;
+    // One line for each text; a longer one ends with an ellipsis and has its full text in the title.
     return el(
       "section",
       { class: "ff-pk-claims", "data-role": "passkey-site-texts", "aria-label": t("passkeys.claims.label") },
@@ -220,7 +224,7 @@ export function createChooser({
       el(
         "dl",
         { class: "ff-pk-claim-list" },
-        ...rows.flatMap(([role, label, value]) => [el("dt", null, label), el("dd", { "data-role": `passkey-${role}` }, bdi(value))]),
+        ...rows.flatMap(([role, label, value]) => [el("dt", null, label), el("dd", { "data-role": `passkey-${role}` }, el("bdi", { "data-site-text": "", title: value }, value))]),
       ),
     );
   }
@@ -248,30 +252,46 @@ export function createChooser({
       "",
       run,
     );
+    // The user name and the extra word (the date, "same user name") share one muted line.
     button.append(
-      el("span", { class: "ff-pk-row-main" }, el("span", { class: "ff-pk-row-name" }, name), el("span", { class: "ff-pk-row-sub" }, user), extra !== "" ? el("span", { class: "ff-pk-row-meta" }, extra) : null),
+      el(
+        "span",
+        { class: "ff-pk-row-main" },
+        el("span", { class: "ff-pk-row-name" }, name),
+        el("span", { class: "ff-pk-row-sub" }, user, extra !== "" ? ` · ${extra}` : null),
+      ),
       el("span", { class: "ff-pk-row-go", "aria-hidden": "true" }, verb),
     );
     return button;
   }
 
-  /** The choices that sit beside Ferret's: the browser, "Never on this site", Cancel. @param {View} v */
-  function others(v) {
+  /**
+   * The choices beside Ferret's: the browser (the clear way on when Ferret has nothing), then one row with "Never on this site"
+   * and Cancel, then the explanations in one disclosure. "Never" is left out while the vault is locked: the core says the RP ID
+   * it would keep only with the vault open.
+   * @param {View} v @param {string[]} [notes] the i18n keys of the explanations that belong to this window, before the common ones
+   */
+  function others(v, notes = []) {
     const browserLabel = v.kind === "get" ? t("passkeys.browser.get") : t("passkeys.browser.new");
     const primary = v.state === "ready" && (v.kind === "get" ? v.candidates.length === 0 : !v.online);
     const browserButton = action({ class: primary ? "ff-button ff-primary" : "ff-button", "data-role": "passkey-browser" }, browserLabel, () =>
       send(() => backend.browser(), "passkeys.done.browser"),
     );
-    const never = action({ class: "ff-button", "data-role": "passkey-never" }, t("passkeys.never"), () => send(() => backend.never(), "passkeys.done.never"));
-    const cancelButton = action({ class: "ff-button", "data-role": "passkey-cancel" }, t("passkeys.cancel"), () => send(() => backend.cancel(), "passkeys.done.cancel"));
+    const never =
+      v.state === "locked" ? null : action({ class: "ff-pk-link", "data-role": "passkey-never" }, t("passkeys.never"), () => send(() => backend.never(), "passkeys.done.never"));
+    const cancelButton = action({ class: "ff-pk-link", "data-role": "passkey-cancel" }, t("passkeys.cancel"), () => send(() => backend.cancel(), "passkeys.done.cancel"));
+    const keys = [...notes, "passkeys.more.browser", ...(v.state === "locked" ? [] : ["passkeys.more.never"])];
     return el(
-      "section",
-      { class: "ff-pk-others", "data-role": "passkey-others", "aria-label": t("passkeys.others.label") },
-      el("p", { class: "ff-pk-eyebrow" }, t("passkeys.others.label")),
+      "div",
+      { class: "ff-pk-others", "data-role": "passkey-others" },
       browserButton,
-      el("p", { class: "ff-hint", "data-role": "passkey-browser-help" }, t("passkeys.browser.help")),
-      el("div", { class: "ff-pk-quiet" }, never, cancelButton),
-      el("p", { class: "ff-hint", "data-role": "passkey-never-help" }, t("passkeys.never.help")),
+      el("div", { class: "ff-pk-foot" }, never, cancelButton),
+      el(
+        "details",
+        { class: "ff-pk-more", "data-role": "passkey-more" },
+        el("summary", null, t("passkeys.more")),
+        ...keys.map((key) => el("p", { class: "ff-hint" }, t(key))),
+      ),
     );
   }
 
@@ -293,11 +313,12 @@ export function createChooser({
             el("h2", { class: "ff-pk-h2", id: "ff-pk-ferret-title" }, list.length === 1 ? t("passkeys.get.one") : t("passkeys.get.many")),
             el(
               "div",
-              { class: "ff-pk-rows", "data-role": "passkey-candidates" },
-              ...list.map((c) => itemRow(c, c.created === null ? "" : t("passkeys.get.created", { date: formatDate(c.created) }), t("passkeys.get.use"), "passkey-candidate", choose(c))),
+              { class: "ff-pk-rows", "data-role": "passkey-candidates", tabindex: list.length > 3 ? "0" : null },
+              // The date shows only when there is more than one passkey to tell apart.
+              ...list.map((c) => itemRow(c, list.length > 1 && c.created !== null ? formatDate(c.created) : "", t("passkeys.get.use"), "passkey-candidate", choose(c))),
             ),
           );
-    return [ferret, verifySlot(v), others(v)];
+    return [ferret, verifySlot(v), others(v, list.length === 0 ? ["passkeys.more.private"] : [])];
   }
 
   /** @param {View} v */
@@ -307,6 +328,7 @@ export function createChooser({
       return [el("p", { class: "ff-notice", role: "status", "data-role": "passkey-offline" }, t("passkeys.make.offline")), others(v)];
     }
     const name = field({ id: "ff-pk-name", label: t("passkeys.make.name"), role: "passkey-name", autocomplete: "off" });
+    name.row.classList.add("ff-pk-name");
     name.input.setAttribute("maxlength", String(NAME_MAX));
     name.input.value = nameDraft !== "" ? nameDraft : defaultItemName(v.site?.hostUnicode ?? "");
     nameDraft = name.input.value;
@@ -332,7 +354,7 @@ export function createChooser({
       folder.addEventListener("change", () => {
         folderDraft = /** @type {HTMLSelectElement} */ (folder).value;
       });
-      folderRow = el("div", { class: "ff-field" }, el("label", { for: "ff-pk-folder", class: "ff-label" }, t("passkeys.make.folder")), folder);
+      folderRow = el("div", { class: "ff-field ff-pk-folder" }, el("label", { for: "ff-pk-folder", class: "ff-label" }, t("passkeys.make.folder")), folder);
     }
     const make = action({ class: "ff-button ff-primary", "data-role": "passkey-create-new" }, t("passkeys.make.make"), () => {
       const chosen = name.input.value.trim();
@@ -344,12 +366,11 @@ export function createChooser({
       const folderId = folder !== null && folder.value !== "" ? folder.value : null;
       return send(() => backend.choose({ kind: "create", mode: "new", name: chosen, folderId }), "passkeys.done.created");
     });
+    // Name and folder share a row; the box has no visible heading (the button says what it does) but a name for a screen reader.
     const fresh = el(
       "section",
-      { class: "ff-pk-ferret", "data-role": "passkey-new", role: "group", "aria-labelledby": "ff-pk-new-title" },
-      el("h2", { class: "ff-pk-h2", id: "ff-pk-new-title" }, t("passkeys.make.new")),
-      name.row,
-      folderRow,
+      { class: "ff-pk-ferret", "data-role": "passkey-new", role: "group", "aria-label": t("passkeys.make.new") },
+      el("div", { class: "ff-pk-namerow" }, name.row, folderRow),
       make,
     );
     const attach =
@@ -359,10 +380,9 @@ export function createChooser({
             "section",
             { class: "ff-pk-ferret", "data-role": "passkey-attach", role: "group", "aria-labelledby": "ff-pk-attach-title" },
             el("h2", { class: "ff-pk-h2", id: "ff-pk-attach-title" }, t("passkeys.make.attach")),
-            el("p", { class: "ff-hint" }, t("passkeys.make.attach_hint")),
             el(
               "div",
-              { class: "ff-pk-rows", "data-role": "passkey-targets" },
+              { class: "ff-pk-rows", "data-role": "passkey-targets", tabindex: v.targets.length > 3 ? "0" : null },
               ...v.targets.map((target) =>
                 itemRow(target, target.sameUser ? t("passkeys.make.same_user") : "", t("passkeys.make.add"), "passkey-target", () =>
                   send(() => backend.choose({ kind: "create", mode: "attach", itemId: target.itemId }), "passkeys.done.added"),
@@ -374,7 +394,7 @@ export function createChooser({
       v.existing === null
         ? null
         : el("p", { class: "ff-notice", role: "status", "data-role": "passkey-existing" }, t("passkeys.make.existing", { item: v.existing.name !== "" ? v.existing.name : t("passkeys.unnamed") }));
-    return [existing, fresh, attach, verifySlot(v), others(v)];
+    return [existing, fresh, attach, verifySlot(v), others(v, v.targets.length > 0 ? ["passkeys.more.attach"] : [])];
   }
 
   /**
@@ -384,8 +404,15 @@ export function createChooser({
   function noEnter(event) {
     if (event?.key === "Enter") event.preventDefault();
   }
+  /** The roles of the forms that unlock the vault: typing a secret there is not a choice, and Enter may submit it. */
+  const UNLOCK_FORMS = ["passkey-unlock-form", "pin-unlock-form"];
+  /** @param {any} node */
+  const inUnlockForm = (node) => {
+    for (let at = node; at; at = at.parentNode) if (UNLOCK_FORMS.includes(at.getAttribute?.("data-role"))) return true;
+    return false;
+  };
   root.addEventListener("keydown", (/** @type {any} */ event) => {
-    if (event?.key === "Enter" && event.target?.tagName !== "BUTTON") event.preventDefault();
+    if (event?.key === "Enter" && event.target?.tagName !== "BUTTON" && !inUnlockForm(event.target)) event.preventDefault();
   });
 
   // ------------------------------------------------------------ a locked vault
@@ -430,7 +457,7 @@ export function createChooser({
       }
       password.input.focus();
     });
-    const parts = [el("p", { class: "ff-lead", "data-role": "passkey-locked-lead" }, t("passkeys.locked.lead")), form];
+    const parts = [form];
     if (unlock !== null && FEATURES.unlock) {
       const flow = unlock;
       void flow.pinPolicy().then((offer) => {
@@ -472,9 +499,10 @@ export function createChooser({
           previous?.();
           pin.wipe();
         };
+        // The PIN part takes the master password's place, but not the focus: the window opens under the person's hand, and what
+        // they type must not land in a field before they chose to click it.
         if (password.input.value === "" && secretKey.input.value === "") {
           form.hidden = true;
-          pin.focus();
         } else {
           pin.root.setAttribute("hidden", "");
         }
@@ -514,7 +542,6 @@ export function createChooser({
     alertNode = el("p", { class: "ff-error", role: "alert", tabindex: "-1", "data-role": "passkey-error", hidden: true });
     const v = view;
     const key = v.state === "locked" ? "passkeys.title.locked" : v.kind === "get" ? "passkeys.title.get" : "passkeys.title.make";
-    const lead = v.state === "locked" ? null : el("p", { class: "ff-lead", "data-role": "passkey-lead" }, v.kind === "get" ? t("passkeys.lead.get") : t("passkeys.lead.make"));
     const parts =
       v.state === "locked"
         ? lockedParts(v)
@@ -523,13 +550,13 @@ export function createChooser({
     root.setAttribute("data-state", v.state);
     root.setAttribute("aria-busy", "false");
     busy = false;
-    mount(root, /** @type {HTMLElement} */ (heading(key)), ...(/** @type {HTMLElement[]} */ ([lead, ...parts, alertNode].filter((part) => part !== null))));
+    mount(root, heading(key), ...(/** @type {HTMLElement[]} */ ([...parts, alertNode].filter((part) => part !== null))));
   }
 
   /** The request is over: the window says so and closes. @param {string} key */
   function ended(key) {
     stop();
-    mount(root, el("h1", { id: "ff-pk-title", class: "ff-pk-title", tabindex: "-1", "data-role": "passkey-title" }, t(key)));
+    mount(root, heading(key));
     root.setAttribute("data-state", "ended");
     root.setAttribute("aria-busy", "false");
     root.removeAttribute("data-guarded");
@@ -607,26 +634,47 @@ export function createChooser({
     titleNode?.focus?.();
   }
 
-  /** The poll: is the request still there and is the vault still as it was? Builds again only when the content changed. */
+  /**
+   * Reads the view again and builds the window only when what it shows changed (the content, not the person's typing). Used when
+   * the window gets the focus again. It asks the core for the site, which is a use of the vault: not something to do on a timer.
+   */
+  async function refresh() {
+    if (closed || busy) return;
+    const answer = await backend.view();
+    if (closed || busy) return;
+    if (!answer.ok) {
+      if (isGone(answer.reason)) finished(answer.reason);
+      return;
+    }
+    if (signature(answer.view) === shownSignature) return;
+    // A lock empties what was typed.
+    if (answer.view.state === "locked" && view?.state !== "locked") wipe();
+    view = answer.view;
+    render();
+  }
+
+  /**
+   * The poll: is the request still there? It asks the one message that does not count as a use of the vault (the background
+   * closes the window itself on a lock, so the vault is not asked here and an open window does not keep it from locking).
+   */
   async function poll() {
     pollTimer = null;
     if (closed) return;
     if (!busy) {
-      const answer = await backend.view();
+      const answer = await backend.alive();
       if (closed) return;
-      if (!answer.ok) {
-        if (isGone(answer.reason)) {
-          finished(answer.reason);
-          return;
-        }
-      } else if (!busy && signature(answer.view) !== shownSignature) {
-        const locking = answer.view.state === "locked" && view?.state !== "locked";
-        if (locking) wipe();
-        view = answer.view;
-        render();
+      if (!answer.ok && isGone(answer.reason)) {
+        finished(answer.reason);
+        return;
       }
     }
     if (!closed) pollTimer = schedule(() => void poll(), pollMs);
+  }
+
+  /** The window got the focus (again): the 400 ms start again, and what it shows is read again. */
+  function focused() {
+    touch();
+    void refresh();
   }
 
   /** @type {Promise<void>} */
@@ -645,6 +693,8 @@ export function createChooser({
       titleNode?.focus?.();
     },
     touch,
+    focused,
+    refresh,
     wipe,
     stop,
   };

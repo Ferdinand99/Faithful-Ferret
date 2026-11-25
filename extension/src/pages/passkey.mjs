@@ -62,10 +62,10 @@ async function main() {
     },
   });
   mount(root, chooser.root);
-  // The 400 ms start again each time the window gets the focus again.
-  window.addEventListener("focus", () => chooser.touch());
+  // The 400 ms start again each time the window gets the focus again, and what it shows is read again.
+  window.addEventListener("focus", () => chooser.focused());
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) chooser.touch();
+    if (!document.hidden) chooser.focused();
   });
   // The page goes away: the port closes with it, and nothing typed is left in the page.
   window.addEventListener(

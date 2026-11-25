@@ -44,6 +44,20 @@ function shotsDir(channel) {
   return dir;
 }
 
+/** The most a window of the broker's size shows (640 high, less its title bar). */
+const WINDOW_HEIGHT = 600;
+/**
+ * How tall the page is when it is laid out 460 px wide, as the window is (the test browser's own window cannot be that narrow): the
+ * bottom of the card and the page's padding. Not the viewport, which has the browser's own toolbars in it.
+ * @param {import("./driver.mjs").Session} session
+ */
+const contentHeight = (session) =>
+  session.content(() => {
+    document.documentElement.style.width = "460px";
+    const card = /** @type {HTMLElement} */ (document.getElementById("root"));
+    return Math.ceil(card.getBoundingClientRect().bottom + 12);
+  });
+
 /** What the page draws: the window's width against what it holds, and the isolation of the texts. @param {import("./driver.mjs").Session} session */
 const layout = (session) =>
   session.content(() => {
@@ -66,28 +80,46 @@ test("the_chooser_window_flow_in_release_and_esr", async () => {
     const session = await launch({ channel });
     try {
       await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
-      await session.setWindowSize(520, 760).catch(() => {});
+      // The size the background opens the window with (the contract of the broker): 460 x 640.
+      await session.setWindowSize(460, 640);
 
       // A get with two passkeys: the site first, Ferret's choices, then the browser, "Never" and Cancel.
       await open(session, "get2");
       const shape = await session.content(() => {
         const nodes = [...document.querySelectorAll("[data-role]")].map((n) => n.getAttribute("data-role"));
         return {
-          order: ["passkey-site", "passkey-site-texts", "passkey-ferret", "passkey-others"].map((r) => nodes.indexOf(r)),
+          order: ["passkey-site", "passkey-ferret", "passkey-others"].map((r) => nodes.indexOf(r)),
           host: document.querySelector('[data-role="passkey-host"]')?.textContent,
           rpId: document.querySelector('[data-role="passkey-rp-id"]')?.textContent,
           forms: document.querySelectorAll("form").length,
           focused: document.activeElement?.getAttribute("data-role"),
+          ring: document.activeElement ? getComputedStyle(document.activeElement).outlineStyle : "",
           rows: [...document.querySelectorAll('[data-role="passkey-candidate"]')].map((n) => n.getAttribute("data-item")),
         };
       });
       assert.deepEqual(shape.order, [...shape.order].sort((a, b) => a - b), `${channel}: the order of the parts`);
       assert.ok(shape.order.every((i) => i >= 0), `${channel}: every part is there`);
       assert.equal(shape.host, "www.example.com", channel);
-      assert.equal(shape.rpId, "example.com", channel);
+      assert.equal(shape.rpId, "Passkey for example.com", channel);
       assert.equal(shape.forms, 0, `${channel}: no form, no default button`);
       assert.equal(shape.focused, "passkey-title", `${channel}: the focus starts on the heading`);
+      assert.equal(shape.ring, "none", `${channel}: the heading has the focus and shows no ring`);
       assert.equal(shape.rows.length, 2, channel);
+      // The window is 460 x 640 and the common cases fit it without a scroll bar: the page does not scroll.
+      for (const scenario of ["get1", "get2", "none", "create", "offline", "locked", "foreign"]) {
+        await open(session, scenario);
+        const height = await contentHeight(session);
+        assert.ok(height <= WINDOW_HEIGHT, `${channel}: ${scenario} fits the window without scrolling (${height} of ${WINDOW_HEIGHT})`);
+      }
+      // A long list scrolls inside itself; the page does not, and the choices below it stay in sight.
+      await open(session, "attach_many");
+      const inner = await session.content(() => {
+        const list = /** @type {HTMLElement} */ (document.querySelector('[data-role="passkey-targets"]'));
+        const others = /** @type {HTMLElement} */ (document.querySelector('[data-role="passkey-others"]'));
+        return { listScrolls: list.scrollHeight > list.clientHeight, othersBottom: Math.round(others.getBoundingClientRect().bottom), inner: window.innerHeight };
+      });
+      assert.equal(inner.listScrolls, true, `${channel}: a long list scrolls inside itself`);
+      await open(session, "get2");
       const drawn = await layout(session);
       assert.equal(drawn.overflow, false, `${channel}: nothing is drawn wider than the window`);
       assert.ok(drawn.widest <= drawn.width, `${channel}: nothing sticks out (${drawn.widest} of ${drawn.width})`);
@@ -178,11 +210,13 @@ test("the_chooser_window_flow_in_release_and_esr", async () => {
       // The screenshots: a new passkey, a get with two passkeys, a get with none; each dark and light (and a few more in dark).
       const dir = shotsDir(channel);
       for (const theme of /** @type {const} */ (["dark", "light"])) {
-        for (const scenario of ["create", "get2", "none", "create_attach", "locked", "offline", "foreign", "hostile"]) {
+        for (const scenario of ["create", "get2", "none", "get1", "create_attach", "attach_many", "locked", "offline", "foreign", "hostile"]) {
           if (theme === "light" && !["create", "get2", "none"].includes(scenario)) continue;
           await open(session, scenario, theme);
           await new Promise((resolve) => setTimeout(resolve, 700));
           await session.fullScreenshot(join(dir, `u4-6-${scenario}-${theme}.png`));
+          const height = await contentHeight(session);
+          console.error(`shot ${channel} ${scenario} ${theme} height ${height}`);
         }
       }
     } finally {
