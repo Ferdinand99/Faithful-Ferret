@@ -465,6 +465,8 @@ export function createPasskeyWrite({
         folder: attach === null ? (args.folder ?? null) : null, inflight: null,
       };
 
+      // A page that stopped waiting while the passkey was made gets nothing, and nothing is sent.
+      if (stopped || !wanted()) return { kind: "late" };
       started();
       const until = now() + saveMs;
       /** @type {Outcome} */
