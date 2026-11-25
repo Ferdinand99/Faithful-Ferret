@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passkey answer objects</title>
+<script src="/pk-response/compare.js"></script>
+</head>
+<body>
+<button id="go" type="button">Compare</button>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  let result;
+  try {
+    result = await window.compareAnswers();
+  } catch (error) {
+    result = { error: String(error && error.stack ? error.stack : error) };
+  }
+  document.documentElement.dataset.result = JSON.stringify(result);
+});
+</script>
+</body>
+</html>
