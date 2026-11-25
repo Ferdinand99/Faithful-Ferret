@@ -80,6 +80,7 @@ export const LOCK_EXEMPT = Object.freeze([
   "passkey_pending",
   "passkey_cancel",
   "passkey_browser",
+  "passkey_settings",
 ]);
 
 export const LOCK_AT_KEY = "lock_at";

@@ -261,7 +261,7 @@ test("the_browsers_events_reach_the_offers_and_a_removed_permission_ends_capture
   assert.equal(w.offers.size(), 0);
 });
 
-test("the_grant_of_https_access_turns_capture_on_by_the_browsers_news_with_no_page_open", async () => {
+test("the_grant_of_https_access_that_the_switch_marked_turns_capture_on_by_the_browsers_news_with_no_page_open", async () => {
   const w = await world();
   assert.equal(w.listeners.permissionAdded.length, 1, "the host listens for a grant");
   assert.equal(w.local.offer_to_save, undefined);
@@ -270,7 +270,17 @@ test("the_grant_of_https_access_turns_capture_on_by_the_browsers_news_with_no_pa
   w.listeners.permissionAdded[0]({ origins: ["https://vault.example.test/*"] });
   await flush();
   assert.equal(w.state.registered, false);
-  // The https grant, whose popup was closed by the prompt: the setting goes on and the script is registered.
+  // The https grant that nobody here asked for (the passkeys' switch, the browser's add-on page) switches nothing on: the permission
+  // is shared.
+  w.listeners.permissionAdded[0]({ origins: ["https://*/*"] });
+  await flush();
+  assert.equal(w.state.registered, false);
+  assert.equal(w.local.offer_to_save, undefined);
+  // The https grant whose popup was closed by the prompt, marked by the switch (through the settings message): the setting goes on and
+  // the script is registered.
+  const page = createPort(UI_PORT, extensionPageSender(w.fake, "pages/settings.html"));
+  w.router.onConnect(page);
+  await page.send(encode("capture_settings", { pending: true }));
   w.listeners.permissionAdded[0]({ origins: ["https://*/*"] });
   await flush();
   assert.equal(w.state.registered, true);

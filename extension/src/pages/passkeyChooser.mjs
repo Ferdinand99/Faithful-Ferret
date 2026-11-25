@@ -287,6 +287,7 @@ export function createChooser({
       "div",
       { class: "ff-pk-others", "data-role": "passkey-others" },
       browserButton,
+      el("p", { class: "ff-hint ff-pk-again", "data-role": "passkey-browser-again" }, t("passkeys.browser.again")),
       el("div", { class: "ff-pk-foot" }, never, cancelButton),
       el(
         "details",

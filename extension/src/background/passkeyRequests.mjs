@@ -48,6 +48,7 @@
 // every request is handed to the browser, as before the window existed.
 
 import { encode } from "../shared/protocol.mjs";
+import { PASSKEY_PASS_ONCE_MS, createPassOnce } from "./passkeyHandover.mjs";
 import { PASSKEY_ORIGINS, PASSKEY_SETTING_KEY } from "./passkeyRegistry.mjs";
 
 /** The core operation the router hands a message of the bridge to. */
@@ -67,8 +68,7 @@ export const PASSKEY_WINDOW_OPS = Object.freeze([
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
 export const PASSKEY_GUARD_MS = 400;
-/** After "use the browser" with `once`, the next call of the same kind from the same document goes through within this. */
-export const PASSKEY_PASS_ONCE_MS = 60_000;
+export { PASSKEY_PASS_ONCE_MS };
 /** The calm period: this many modal requests of a tab ended without an answer within `windowMs` give `quietMs` of marks only. */
 export const PASSKEY_QUIET = Object.freeze({ cancels: 3, windowMs: 60_000, quietMs: 300_000 });
 /** The delay of every NotAllowedError (cancel, no match, deadline): `min` plus a random part below `spread`. */
@@ -81,7 +81,6 @@ const MAX_ABORTS_PER_TAB = 32;
 /** The most requests that wait at once, over all tabs (one modal and one conditional per tab in practice). */
 const MAX_PENDING = 256;
 const MAX_TABS_KEPT = 256;
-const MAX_PASSES = 64;
 /** The most frames of a tab that are looked at; a tab with more is left to the browser. */
 const MAX_FRAMES = 1024;
 const MAX_URL = 8192;
@@ -236,7 +235,7 @@ export function chooserWindows({ windows, getURL, page }) {
 
 /**
  * @param {{
- *   tabs: { sendMessage(tabId: number, message: unknown, options: { frameId: number, documentId: string }): Promise<unknown> },
+ *   tabs: { sendMessage(tabId: number, message: unknown, options: { frameId: number, documentId: string }): Promise<unknown>, update?(tabId: number, props: { active: true }): Promise<unknown> },
  *   frames?: Frames | null,
  *   windows?: Windows | null,
  *   badge?: { passkey(tabId: number, on: boolean): void } | null,
@@ -244,6 +243,7 @@ export function chooserWindows({ windows, getURL, page }) {
  *   storageLocal?: { get(key: string): Promise<Record<string, unknown>> } | null,
  *   permissions?: { contains(wanted: { origins: string[] }): Promise<boolean> } | null,
  *   never?: { has(host: string): Promise<boolean>, add?(rpId: string, options: { incognito?: boolean }): Promise<unknown> } | null,
+ *   passStorage?: { get(key: string): Promise<Record<string, unknown>>, set(items: Record<string, unknown>): Promise<void> } | null,
  *   listen?: { start(): void, stop(): void } | null,
  *   release?: boolean,
  *   now?: () => number,
@@ -252,7 +252,7 @@ export function chooserWindows({ windows, getURL, page }) {
  * }} deps
  *   `frames`: webNavigation; `windows`: the chooser window, null in a build without it (every request then goes to the
  *   browser); `badge`: the toolbar button's passkey mark; `servers`: the signed-in server; `storageLocal` and `permissions`:
- *   the setting and the permission, read at every request; `never`: the "never on this site" list; `listen`: starts the
+ *   the setting and the permission, read at every request; `never`: the "never on this site" list; `passStorage`: where the one-time passes of "use the browser" are also kept (the session storage); `listen`: starts the
  *   navigation, tab and window listeners while a request waits and stops them when none does (so they never wake an event
  *   page); `release`: a release leaves localhost and the loopback addresses to the browser.
  */
@@ -265,6 +265,7 @@ export function createPasskeyRequests({
   storageLocal = null,
   permissions = null,
   never = null,
+  passStorage = null,
   listen = null,
   release = true,
   now = () => Date.now(),
@@ -287,8 +288,10 @@ export function createPasskeyRequests({
   const aborts = new Map();
   /** The requests whose NotAllowedError waits for its delay (a ping must not answer them early), by sender and bridge id. */
   const ending = new Set();
-  /** "Use the browser" once: the next call of that kind from that document. @type {Array<{ tabId: number, frameId: number, documentId: string, origin: string, kind: string, until: number }>} */
-  let passes = [];
+  /** "Use the browser" once: the next call of that kind from that document goes to the browser (passkeyHandover.mjs). */
+  const passes = createPassOnce({ now, storage: passStorage });
+  /** The timers that take a pass's mark off the toolbar button when the pass ends, by tab. @type {Map<number, unknown>} */
+  const passTimers = new Map();
   /** Per tab: the moments its modal requests ended without an answer, and the end of its calm period. @type {Map<number, { ended: number[], until: number }>} */
   const calm = new Map();
   /** The one-time marks that the user was verified for a request (UV), by request id. Gone with the request and at every lock. */
@@ -379,6 +382,8 @@ export function createPasskeyRequests({
     if (badge === null) return;
     let on = false;
     for (const r of requests.values()) if (r.sender.tabId === tabId && r.state !== "window") on = true;
+    // A pass waits for the person's next click on the page ("click the page again"): the mark stays until it is used or ends.
+    if (passes.pendingIn(tabId) !== null) on = true;
     try {
       badge.passkey(tabId, on);
     } catch {
@@ -615,11 +620,8 @@ export function createPasskeyRequests({
 
   /** Takes the "use the browser once" of a sender, if one is there for this kind. @param {Sender} s @param {string} kind */
   const takePass = (s, kind) => {
-    const at = now();
-    passes = passes.filter((p) => p.until > at && p.until - at <= PASSKEY_PASS_ONCE_MS);
-    const i = passes.findIndex((p) => p.tabId === s.tabId && p.frameId === s.frameId && p.documentId === s.documentId && p.origin === s.origin && p.kind === kind);
-    if (i < 0) return false;
-    passes.splice(i, 1);
+    if (s.origin === null || !passes.take({ tabId: s.tabId, frameId: s.frameId, documentId: s.documentId, origin: s.origin, kind })) return false;
+    mark(s.tabId);
     return true;
   };
 
@@ -683,7 +685,10 @@ export function createPasskeyRequests({
     if ((kind !== "create" && kind !== "get") || typeof body[kind] !== "object" || body[kind] === null) return handOver("invalid");
     const key = keyOf(s, bridgeId);
     if (byBridge.has(key)) return { error: "duplicate" };
-    if (s.origin !== null && takePass(s, kind)) return handOver("pass_once");
+    await passes.ready();
+    // A conditional get (a site's autofill UI, started again after a failed modal call) never takes the pass: it is meant for the
+    // modal call the person makes by clicking the page's button.
+    if (body.mediation !== "conditional" && takePass(s, kind)) return handOver("pass_once");
     const checked = await checkPage(s, body);
     if ("refuse" in checked) return handOver(checked.refuse);
     if (malformedOptions(kind, body[kind])) {
@@ -814,12 +819,41 @@ export function createPasskeyRequests({
     else if (type === "passkey_ping") ping(s, body?.request_ids);
   };
 
-  /** @param {Request} req @param {{ once: boolean }} how */
-  const handoverReq = (req, { once }) => {
+  /**
+   * The browser answers instead. With `once` (the person chose "the browser" or "never on this site" in the window) the page's
+   * call that is open ends as the browser ends a call the person left, and the tab is brought to the front. With `pass` (the
+   * default with `once`: "the browser") the next call of the same kind from the same document goes to the browser untouched,
+   * once, within a minute, and the toolbar button is marked until it does. "Never on this site" has no pass: the site is on the
+   * list now, so the next call goes to the browser by the list.
+   * @param {Request} req @param {{ once: boolean, pass?: boolean }} how
+   */
+  const handoverReq = (req, { once, pass = once }) => {
     if (!end(req, false)) return false;
     if (once === true) {
-      passes.push({ tabId: req.sender.tabId, frameId: req.sender.frameId, documentId: req.sender.documentId, origin: req.origin, kind: req.kind, until: now() + PASSKEY_PASS_ONCE_MS });
-      if (passes.length > MAX_PASSES) passes.shift();
+      const tabId = req.sender.tabId;
+      if (pass === true) {
+        const until = passes.grant({ tabId, frameId: req.sender.frameId, documentId: req.sender.documentId, origin: req.origin, kind: req.kind });
+        mark(tabId);
+        const old = passTimers.get(tabId);
+        if (old !== undefined) {
+          try {
+            timers.clearTimeout(old);
+          } catch {
+            // Nothing to clear.
+          }
+        }
+        // When the pass ends, the mark goes (a pass nobody used leaves nothing on the button).
+        const timer = later(() => {
+          passTimers.delete(tabId);
+          mark(tabId);
+        }, Math.max(0, until - now()) + 1);
+        if (timer !== null) passTimers.set(tabId, timer);
+      }
+      try {
+        void Promise.resolve(tabs.update?.(tabId, { active: true })).catch(() => {});
+      } catch {
+        // A tab that is gone needs no focus.
+      }
     }
     void pushHandover(req.sender, req.bridgeId, once === true);
     return true;
@@ -909,7 +943,8 @@ export function createPasskeyRequests({
     for (const req of [...requests.values()]) if (req.sender.tabId === tabId) end(req, false);
     foreign.delete(tabId);
     calm.delete(tabId);
-    passes = passes.filter((p) => p.tabId !== tabId);
+    passes.forgetTab(tabId);
+    passTimers.delete(tabId);
   };
 
   /** The user closed Ferret's window. @param {unknown} windowId */
@@ -946,8 +981,10 @@ export function createPasskeyRequests({
    */
   const endAll = () => {
     verified.clear();
-    passes = [];
+    const marked = [...passTimers.keys()];
+    passes.clear();
     for (const req of [...requests.values()]) void endWithError(req, "NotAllowedError", false);
+    for (const tabId of marked) mark(tabId);
   };
 
   /** The view of the tab's request of the given kind of waiting. @param {unknown} tabId @param {(r: Request) => boolean} which */
@@ -1104,6 +1141,12 @@ export function createPasskeyRequests({
     conditionalFor: (tabId) => viewIn(tabId, (r) => r.mediation === "conditional"),
     /** The tab's modal request that waits without a window (the popup's card), or null. @param {number} tabId */
     waitingFor: (tabId) => viewIn(tabId, (r) => r.state === "waiting"),
+    /**
+     * What waits for the person's next click on the page after "use the browser" (the one-time pass): the kind of call and when
+     * the pass ends, or null. For the popup's line "click the button on the page again".
+     * @param {number} tabId
+     */
+    passPendingFor: (tabId) => (isIndex(tabId) ? passes.pendingIn(tabId) : null),
     /** How many requests wait. */
     size: () => requests.size,
     /**
@@ -1141,7 +1184,7 @@ export function createPasskeyRequests({
         worker: /** @type {const} */ ("none"),
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
           const req = ownedBy(args);
-          return req !== null && handoverReq(req, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
+          return req !== null && handoverReq(req, { once: true }) ? { ok: true } : { ok: false, reason: "gone" };
         },
       },
       // "Never on this site", from the window: the RP ID the core checked (never the page's unchecked one) goes on the never list, in
@@ -1171,7 +1214,9 @@ export function createPasskeyRequests({
           } catch {
             return { ok: false, reason: "internal_error" };
           }
-          return handoverReq(req, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
+          // The site is on the list now, so the page's next call goes to the browser at once, by the list; this one ends like the
+          // browser's own ends when the window closed (no pass is needed).
+          return handoverReq(req, { once: true, pass: false }) ? { ok: true } : { ok: false, reason: "gone" };
         },
       },
       passkey_site: {

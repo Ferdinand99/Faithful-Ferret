@@ -1,7 +1,7 @@
 // The settings view (design document, sections 7.2 and 10.9): a main screen of groups, each row an icon, a title, what is true now
 // and a chevron, and a sub-page for each row with a back button at its top. The groups are "Filling and saving" (in a build with
-// saving passwords on: the offers and the never list), "Unlocking" (in a build with unlock on: the PIN and the passkeys), "Security"
-// (the lock) and "About" (the credits). A group with no row is not built, so a flag that is off leaves no trace. One module builds
+// saving passwords on: the offers and the never list), "Unlocking" (in a build with unlock on: the PIN and the passkeys), "Passkeys on
+// websites" (in a build with the passkeys feature on: the switch, and the sites that use the browser), "Security" (the lock) and "About" (the credits). A group with no row is not built, so a flag that is off leaves no trace. One module builds
 // the view for both places that show it, so there is one source of the logic and of the texts: the settings page (the add-on's
 // options page, pages/settings.html) and the "Settings" part of the open popup (popupTabs.mjs). It talks to the background through
 // the flow it is given (settingsFlow.mjs) and never sees a key or a captured value.
@@ -10,6 +10,7 @@ import { el } from "../shared/dom.mjs";
 import { createCaptureSection } from "./captureSettings.mjs";
 import { createCredits } from "./credits.mjs";
 import { errorBox, showError } from "./page.mjs";
+import { createProviderSection } from "./providerSettings.mjs";
 import { LOCK_CHOICES, choiceKey, errorKey } from "./settingsFlow.mjs";
 import { createMore, createNavRow, createSummary, note } from "./settingsParts.mjs";
 import { createUnlockSection } from "./unlockSettings.mjs";
@@ -81,10 +82,14 @@ export function createSettingsView({ texts, flow }) {
   // Only a build with unlock on has these pages (the module asks the build flag).
   const unlock = createUnlockSection(flow, texts);
 
+  // Only a build with the passkeys feature on has these pages (the module asks the build flag).
+  const provider = createProviderSection(flow, texts);
+
   /** @type {Array<{ id: string, title: string, pages: Page[] }>} */
   const groups = [
     { id: "fill", title: t("settings.group.fill"), pages: capture?.pages ?? [] },
     { id: "unlock", title: t("settings.group.unlock"), pages: unlock?.pages ?? [] },
+    { id: "passkeys", title: t("passkeys.settings.group"), pages: provider?.pages ?? [] },
     { id: "security", title: t("settings.group.security"), pages: [{ id: "lock", title: t("settings.lock.title"), icon: "clock", node: lockPage, summary: lockSummary }] },
     { id: "about", title: t("settings.group.about"), pages: [{ id: "credits", title: t("settings.credits.title"), icon: "info", node: createCredits(texts), summary: createSummary("credits-summary") }] },
   ].filter((group) => group.pages.length > 0);
@@ -150,6 +155,7 @@ export function createSettingsView({ texts, flow }) {
     else showError(error, texts, errorKey(first.reason));
     if (capture !== null) await capture.refresh();
     if (unlock !== null) await unlock.refresh();
+    if (provider !== null) await provider.refresh();
   };
   return { nodes: [root], ready: refresh(), refresh, wipe: () => unlock?.wipe(), open, current: () => current };
 }

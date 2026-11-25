@@ -196,9 +196,16 @@ test("the_never_list_keeps_a_label_at_most_500_hosts_and_reads_only_hosts", asyn
 
 test("a_grant_that_lands_after_the_popup_closed_turns_capture_on_and_a_second_enable_registers_nothing_twice", async () => {
   const w = browserWorld();
-  // Firefox closed the popup that asked; the user said yes in the prompt: the browser tells the background, which finishes it.
+  // A grant nobody marked (the passkeys' switch, the browser's add-on page) switches nothing on: the permission is shared.
   w.state.granted = true;
+  assert.equal(await w.registry.onAdded({ origins: ["https://*/*"] }), false);
+  assert.equal(w.state.registered, false);
+  assert.equal(SETTING_KEY in w.data, false);
+  // Firefox closed the popup that asked; the user said yes in the prompt: the switch marked its grant, the browser tells the
+  // background, which finishes it (once: the mark is used up).
+  await w.registry.markPending();
   assert.equal(await w.registry.onAdded({ origins: ["https://*/*"] }), true);
+  assert.equal(await w.registry.onAdded({ origins: ["https://*/*"] }), false, "the mark was used");
   assert.equal(w.state.registered, true);
   assert.equal(w.data[SETTING_KEY], true);
   assert.deepEqual(await w.registry.status(), { on: true, permission: true, registered: true });
@@ -210,19 +217,22 @@ test("a_grant_that_lands_after_the_popup_closed_turns_capture_on_and_a_second_en
   assert.equal(w.state.definitions.length, 1);
   // The same two in the other order.
   const other = browserWorld({ granted: true });
+  await other.registry.markPending();
   assert.deepEqual(await other.registry.enable(), { ok: true });
   other.state.calls.length = 0;
-  assert.equal(await other.registry.onAdded({ origins: ["https://*/*"] }), true);
+  assert.equal(await other.registry.onAdded({ origins: ["https://*/*"] }), false, "the page's own enable finished it and used the mark");
   assert.deepEqual(other.state.calls, []);
   assert.equal(other.state.definitions.length, 1);
   // Another grant (the origin of a server or a frame), none at all, or a grant the browser does not hold now: nothing is switched on.
   for (const added of [{ origins: ["https://vault.example.test/*"] }, { origins: [] }, {}, undefined]) {
     const none = browserWorld({ granted: true });
+    await none.registry.markPending();
     assert.equal(await none.registry.onAdded(/** @type {any} */ (added)), false);
     assert.equal(none.state.registered, false);
     assert.equal(SETTING_KEY in none.data, false);
   }
   const gone = browserWorld({ granted: false });
+  await gone.registry.markPending();
   assert.equal(await gone.registry.onAdded({ origins: ["https://*/*"] }), false, "the permission is checked, not believed");
   assert.equal(gone.state.registered, false);
 });

@@ -645,7 +645,7 @@ const ALLOWED_WRITES = Object.freeze({
 /** The same for files of a feature that is off in a release (the `passkeys` feature): checked where the package has them. */
 const ALLOWED_FEATURE_WRITES = Object.freeze({
   // The passkey chooser window (one at a time).
-  "background/passkeyRequests.mjs": ["windows.create"],
+  "background/passkeyRequests.mjs": ["tabs.update", "windows.create"],
   // The passkey writer: never the engine's create (a new passkey goes to the server directly), only an ordinary change after the
   // server's yes: a passkey nobody got leaves its item again, and the folder the person chose goes on a new item.
   "background/passkeyWrite.mjs": ["engine.update", "engine.update"],

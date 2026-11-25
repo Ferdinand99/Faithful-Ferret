@@ -15,6 +15,8 @@ const ALLOWED = {
   "runtime.getURL": (/** @type {any[]} */ args) => browser.runtime.getURL(args[0]),
   "runtime.getPlatformInfo": () => browser.runtime.getPlatformInfo(),
   "permissions.getAll": () => browser.permissions.getAll(),
+  // What the browser's add-on page does when the person takes the access back (the spec for the shared https permission).
+  "permissions.remove": (/** @type {any[]} */ args) => browser.permissions.remove(args[0]),
   "tabs.query": (/** @type {any[]} */ args) => browser.tabs.query(args[0] ?? {}),
   // What the toolbar button shows on one tab (the badge of the offers).
   "action.getBadgeText": (/** @type {any[]} */ args) => (browser.action ?? browser.browserAction).getBadgeText({ tabId: args[0]?.tab_id }),
