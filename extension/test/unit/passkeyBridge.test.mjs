@@ -313,6 +313,14 @@ test("the_page_abort_and_a_modal_request_end_a_waiting_one", async () => {
   assert.equal(page.page("out.done"), false);
 });
 
+test("a_flood_beyond_the_waiting_limit_goes_to_the_browser", async () => {
+  const page = createPasskeyPage();
+  page.page(`globalThis.flood = []; for (let i = 0; i < 70; i += 1) navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16) } }).then((v) => flood.push(v), (e) => flood.push(e.name));`);
+  await page.flush();
+  assert.equal(page.sent.filter((m) => m.type === "passkey_request").length, 64, "64 wait for the background");
+  assert.equal(page.nativeCalls.length, 6, "the rest go to the browser, untouched");
+});
+
 test("the_bridge_pings_only_while_a_request_waits", async () => {
   const page = createPasskeyPage();
   assert.deepEqual(page.intervals(), [], "no timer at rest");

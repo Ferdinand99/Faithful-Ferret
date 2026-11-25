@@ -28,7 +28,7 @@ import { optionsToWire, responseFromWire } from "../shared/webauthnWire.mjs";
 const HANDSHAKE = "ferret.passkeys.handshake";
 /** The ping of the background while a request waits. */
 const PING_MS = 20_000;
-/** The most requests of one document that wait at once; one more ends with NotAllowedError. */
+/** The most requests of one document that wait at once; one more goes to the browser, which ends a flood as it always does. */
 const MAX_WAITING = 64;
 
 /** @param {any} runtime the extension's `runtime` (the isolated world's own) */
@@ -123,7 +123,7 @@ function startBridge(runtime) {
     if (kind !== "create" && kind !== "get") return;
     const handover = () => toPage({ n, outcome: "handover", once: false });
     if (mediation !== "optional" && mediation !== "required" && mediation !== "conditional") return handover();
-    if (waiting.size >= MAX_WAITING) return toPage({ n, outcome: "error", name: "NotAllowedError" });
+    if (waiting.size >= MAX_WAITING) return handover();
     const options = optionsToWire(kind, d.options);
     if (options === null) return handover();
     const id = newId();
