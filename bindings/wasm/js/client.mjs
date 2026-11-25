@@ -221,8 +221,11 @@
 // import worker (transfer it there). It answers only
 // `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
 // with `{ id, ok: true, value: { rev, envelope, tag } }` or `{ id, ok: false,
-// code }`: it seals new items and does nothing else, so the drafts of an import
-// never pass through the page. It is closed (a last message `{ closed: true }`
+// code }`, and the import of a passkey into a new login
+// (`{ id, method: "passkey_import", args: [itemId, 1, draft, passkey, nowMs] }`,
+// answered as `vault.passkey_import` answers; the key and seeds are wiped in the
+// vault worker): it seals new items and does nothing else, so the drafts and
+// keys of an import never pass through the page. It is closed (a last message `{ closed: true }`
 // where the worker is still there to send it) when the vault is locked or
 // another vault is opened, and with `lock()`. A port asked for while no vault
 // is open is closed at once.
