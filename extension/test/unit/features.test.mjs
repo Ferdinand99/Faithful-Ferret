@@ -1136,16 +1136,17 @@ test("a_build_with_passkeys_off_unregisters_a_left_over_main_world_script", asyn
 test("every_file_of_the_passkey_feature_in_the_tree_is_listed", () => {
   // The guard over the real sources: a file whose name says passkey or webauthn belongs to the feature and must be in
   // PASSKEY_FILES (so a release leaves it out and the release check refuses it), apart from the cleanup module, which a
-  // package without the feature keeps, and the strings of the passkey unlock (locales/<lang>/passkey.json), which belong
-  // to the `unlock` feature. A file that a joined script is built from is a build input and is listed too.
+  // package without the feature keeps. Only code and pages are scanned (`.mjs` and `.html`): the strings and the styles
+  // (locales/<lang>/*.json, styles/*.css) are merged into one catalog and one stylesheet and are not package files of their own.
+  // A file that a joined script is built from is a build input and is listed too.
   const src = join(extensionRoot, "src");
   /** @param {string} dir @returns {string[]} */
   const walk = (dir) =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]));
   const named = walk(src)
     .map((file) => file.slice(src.length + 1).replace(/\\/g, "/"))
-    .filter((path) => /passkey|webauthn/i.test(path))
-    .filter((path) => path !== PASSKEY_CLEANUP_FILE && !/^locales\/[a-z]{2}\/passkey\.json$/.test(path));
+    .filter((path) => /\.(?:mjs|html)$/.test(path) && /passkey|webauthn/i.test(path))
+    .filter((path) => path !== PASSKEY_CLEANUP_FILE);
   const missing = named.filter((path) => !PASSKEY_FILES.includes(path));
   assert.deepEqual(missing, [], "a file named for the passkey feature that PASSKEY_FILES does not list");
   // The list holds each file once, and the joined scripts come as a pair with their sources.
