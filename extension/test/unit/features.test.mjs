@@ -19,7 +19,7 @@
 // at start (`deleteDatabase("ferret-unlock")`, in background/unlockCleanup.mjs).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
@@ -27,7 +27,7 @@ import { PASSKEY_SCRIPT_IDS, removePasskeyScripts } from "../../src/background/p
 import { CONTENT_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
 import { readGraph } from "./importGraph.mjs";
 import {
-  build, DEFAULT_FEATURES, FEATURE_FILES, FEATURES, FEATURES_FILE, featuresModule, featureProblems, isTestOnlyPath, PASSKEY_CLEANUP_FILE, PASSKEY_FILES,
+  build, DEFAULT_FEATURES, FEATURE_FILES, FEATURES, FEATURES_FILE, featuresModule, featureProblems, isTestOnlyPath, PAGE_WORLD_PATTERN, PASSKEY_CLEANUP_FILE, PASSKEY_FILES,
   PASSKEY_SCRIPT_ID_PREFIX, parseFeatures, RELEASE_FEATURES, releaseProblems, readInternalHosts, SAVE_FILES, sha256, UNLOCK_FILES, UNLOCK_STORE_FILE, UNLOCK_WASM_EXPORTS, unlockStoreModule, WASM_FILES,
   WasmLacksUnlockError, wasmUnlockProblems,
 } from "../../scripts/build.mjs";
@@ -81,13 +81,8 @@ const UNLOCK_PATHS = Object.freeze({
  * scripts the feature registers, in background/passkeyCleanup.mjs, which removes a registration an older build left.
  */
 const PASSKEY_PATHS = Object.freeze({
-  /** Package files of the feature. */
-  files: Object.freeze([
-    "content/passkey.main.inject.js", "content/passkey.bridge.inject.js", "content/passkey.main.entry.mjs", "content/passkey.bridge.entry.mjs",
-    "content/passkeyResponse.mjs", "background/passkeyRegistry.mjs", "background/passkeyRequests.mjs", "background/passkeyFlow.mjs",
-    "background/passkeyWrite.mjs", "background/passkeyVerify.mjs", "background/passkeyHandover.mjs", "pages/passkey.html", "pages/passkey.mjs",
-    "pages/passkeyFlow.mjs", "pages/passkeyVerify.mjs", "pages/popupPasskeys.mjs",
-  ]),
+  /** Package files of the feature: the one list, `PASSKEY_FILES` of the build (the guard test below finds a file that is missing from it). */
+  files: PASSKEY_FILES,
   /** Message types of the feature: each change that adds a type adds it here. */
   types: /** @type {readonly string[]} */ (Object.freeze([])),
   /** The attribute every control of the feature carries (the popup's section included). */
@@ -821,7 +816,7 @@ async function passkeyPathsIn(dir, files, extraTypes = []) {
       found.push(`control in ${path} without FEATURES`);
     }
     if (/\.(?:mjs|js|html)$/.test(path)) {
-      if (/world\s*:\s*["'`]MAIN["'`]/.test(text)) found.push(`script in the page's own world in ${path}`);
+      if (PAGE_WORLD_PATTERN.test(text)) found.push(`script in the page's own world in ${path}`);
       if (/CredentialsContainer/.test(text)) found.push(`credentials container in ${path}`);
       if (path !== PASSKEY_PATHS.cleanup && text.includes(PASSKEY_PATHS.scriptIds)) found.push(`script id in ${path}`);
     }
@@ -834,7 +829,6 @@ test("the_passkeys_feature_is_off_in_release_and_on_in_test", async () => {
   assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"], "a release has passkeys off until it is released");
   assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock", "passkeys"], "the test variant has it on");
   assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"]);
-  assert.deepEqual([...PASSKEY_FILES], [...PASSKEY_PATHS.files]);
   assert.deepEqual(Object.keys(FEATURE_FILES).sort(), ["passkeys", "save", "unlock"]);
   assert.equal(PASSKEY_CLEANUP_FILE, "background/passkeyCleanup.mjs");
   assert.deepEqual([...PASSKEY_SCRIPT_IDS], ["ferret-passkey-main", "ferret-passkey-bridge"]);
@@ -934,6 +928,8 @@ test("the_release_check_refuses_a_release_build_with_passkeys_on", async () => {
     /** @type {Array<[string, string, RegExp]>} */
     const traces = [
       ["background/probeWorld.mjs", 'export const register = (s) => s.registerContentScripts([{ id: "x", world: "MAIN", js: ["a.js"] }]);\n', /background\/probeWorld\.mjs: registers a script in the page's own world/],
+      ["background/probeWorld3.mjs", 'export const options = { "world": "MAIN", "id": "x" };\n', /background\/probeWorld3\.mjs: registers a script in the page's own world/],
+      ["background/probeWorld4.mjs", "export const options = { id: 'x', world: browser.scripting.ExecutionWorld.MAIN };\n", /background\/probeWorld4\.mjs: registers a script in the page's own world/],
       ["background/probeWorld2.mjs", "export const register = (s) => s.registerContentScripts([{ id: 'x', world: 'MAIN' }]);\n", /background\/probeWorld2\.mjs: registers a script in the page's own world/],
       ["content/probeOverride.mjs", "export const keep = CredentialsContainer.prototype.get;\n", /content\/probeOverride\.mjs: names the browser's credentials container/],
       ["background/probeId.mjs", 'export const id = "ferret-passkey-main";\n', /background\/probeId\.mjs: names the ids of the passkeys scripts/],
@@ -1135,4 +1131,24 @@ test("a_build_with_passkeys_off_unregisters_a_left_over_main_world_script", asyn
   });
   assert.equal(await removePasskeyScripts(noisy), true);
   assert.deepEqual(removed, [["ferret-passkey-bridge"]]);
+});
+
+test("every_file_of_the_passkey_feature_in_the_tree_is_listed", () => {
+  // The guard over the real sources: a file whose name says passkey or webauthn belongs to the feature and must be in
+  // PASSKEY_FILES (so a release leaves it out and the release check refuses it), apart from the cleanup module, which a
+  // package without the feature keeps, and the strings of the passkey unlock (locales/<lang>/passkey.json), which belong
+  // to the `unlock` feature. A file that a joined script is built from is a build input and is listed too.
+  const src = join(extensionRoot, "src");
+  /** @param {string} dir @returns {string[]} */
+  const walk = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]));
+  const named = walk(src)
+    .map((file) => file.slice(src.length + 1).replace(/\\/g, "/"))
+    .filter((path) => /passkey|webauthn/i.test(path))
+    .filter((path) => path !== PASSKEY_CLEANUP_FILE && !/^locales\/[a-z]{2}\/passkey\.json$/.test(path));
+  const missing = named.filter((path) => !PASSKEY_FILES.includes(path));
+  assert.deepEqual(missing, [], "a file named for the passkey feature that PASSKEY_FILES does not list");
+  // The list holds each file once, and the joined scripts come as a pair with their sources.
+  assert.equal(new Set(PASSKEY_FILES).size, PASSKEY_FILES.length);
+  assert.ok(PASSKEY_FILES.includes("shared/webauthnWire.mjs"));
 });

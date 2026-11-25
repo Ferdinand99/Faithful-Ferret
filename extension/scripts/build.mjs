@@ -153,7 +153,13 @@ export const PASSKEY_FILES = Object.freeze([
   "pages/passkeyFlow.mjs",
   "pages/passkeyVerify.mjs",
   "pages/popupPasskeys.mjs",
+  "shared/webauthnWire.mjs",
 ]);
+/**
+ * What a script registered in the page's own world looks like in code, in every spelling: `world: "MAIN"`, a quoted key as
+ * JSON has it, and the enum `ExecutionWorld.MAIN`. A release without `passkeys` holds none of them.
+ */
+export const PAGE_WORLD_PATTERN = /["'`]?world["'`]?\s*:\s*(?:["'`]MAIN["'`]|[\w.]*\bMAIN\b)|ExecutionWorld\s*\.\s*MAIN/;
 /** The ids under which the background registers the scripts of the `passkeys` feature. */
 export const PASSKEY_SCRIPT_ID_PREFIX = "ferret-passkey-";
 /** The one module that may name them in a package without the feature: it removes a registration an older build left. */
@@ -1023,7 +1029,7 @@ export function featureProblems(files) {
     for (const [path, bytes] of files) {
       if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path)) continue;
       const text = bytes.toString("utf8");
-      if (/world\s*:\s*["'`]MAIN["'`]/.test(text)) {
+      if (PAGE_WORLD_PATTERN.test(text)) {
         problems.push(`${path}: registers a script in the page's own world, which a release without the passkeys feature may not do`);
       }
       if (/CredentialsContainer/.test(text)) {

@@ -289,7 +289,7 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "`preferred` answers with `UV = 0` after the click, like an authenticator without verification; `required` says why and offers the browser, and the page gets `NotAllowedError` only if the user cancels.",
     "**The result is a one-time token** in the background's memory, bound to the request id, used at signing and then deleted.",
     "**PRF exists only for a passkey whose `create` asked for `prf`** (as CTAP `hmac-secret`)",
-    "`authenticatorAttachment: \"platform\"` and `getTransports()` = `[\"internal\", \"hybrid\"]`",
+    "`authenticatorAttachment: \"platform\"` and `getTransports()` = `[\"hybrid\", \"internal\"]`",
     "`credProps: { rk: true }`",
     "`NotAllowedError` for cancelled, no match, timeout, verification impossible and a wrong RP at signing (the same type, and a cancellation is answered no sooner than a normal answer would be",
     "`InvalidStateError` only for `excludeCredentials`, **after** the user's click; `SecurityError` for an RP ID the page cannot use; `AbortError` with the page's `signal.reason`; `TypeError` for malformed options",
@@ -404,6 +404,10 @@ test("the_passkey_rules_are_in_the_spec", () => {
   ]) {
     assert.ok(threats.includes(rule), rule);
   }
+  // The row has as many cells as the table's header, or the renderer drops the rest.
+  const cells = (/** @type {string} */ prefix) => (threats.split("\n").find((line) => line.startsWith(prefix)) ?? "").split("|").length;
+  assert.equal(cells("| A10 |"), cells("| # |"), "the A10 row has the cells of the header");
+  assert.equal(cells("| A9 |"), cells("| # |"), "the A9 row has the cells of the header");
 
   // 11: the server's build feature and the policy answer.
   const server = section("## 11. Server and vole-kit – limits");

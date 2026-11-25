@@ -41,10 +41,11 @@ const UNLOCK_MARKERS: [&str; 4] = [
     "prf_routes",
 ];
 
-/// Bytes whose presence in a binary means that the passkey import is in it: the feature name. Each part of the feature that
+/// Bytes whose presence in a binary means that the passkey import is in it: the feature name. The underscore form is the
+/// name of the core's import function, which the server links whatever its features are, so it is not a marker. Each part of the feature that
 /// has a route or a page of its own adds its path here, in the change that adds it. A build with the feature off holds none.
 #[cfg(not(feature = "passkey-import"))]
-const PASSKEY_IMPORT_MARKERS: [&str; 2] = ["passkey-import", "passkey_import"];
+const PASSKEY_IMPORT_MARKERS: [&str; 1] = ["passkey-import"];
 
 /// The features line that this build must print, in the order of `active_features`.
 fn expected_features() -> String {
