@@ -342,6 +342,12 @@ fn jwk_reading_is_strict_about_the_key_and_lenient_about_other_members() {
         format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":\"a\nb\"}}"),
         String::new(),
         "null".to_owned(),
+        // A skipped value with its brackets mismatched, missing, or unclosed.
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":[1}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":{{\"a\":[1]]}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":,\"m\":1}}"),
+        format!("{{\"crv\":\"P-256\",\"d\":\"{d}\",\"n\":[1,2"),
     ] {
         assert_eq!(ok(&text).err(), Some(BAD_KEY), "{text}");
     }

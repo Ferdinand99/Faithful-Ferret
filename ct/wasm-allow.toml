@@ -481,24 +481,6 @@ max = 1
 reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
 
 [[allow]]
-function = "^ferret_core::passkey::import::parse_jwk::\\{closure#0\\}$"
-instruction = "br_table"
-max = 1
-reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
-
-[[allow]]
-function = "^ferret_core::passkey::import::Scan>::members$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 8
-reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
-
-[[allow]]
-function = "^ferret_core::passkey::import::Scan>::skip_value$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 7
-reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
-
-[[allow]]
 function = "^ferret_core::passkey::import::Scan>::string$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 2
@@ -957,14 +939,14 @@ reason = "This is the export shim that wasm-bindgen makes (multivalue and extern
 [[allow]]
 function = "^vault_passkey_import externref shim multivalue shim$"
 instruction = "br_table"
-max = 2
-reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument (serde-wasm-bindgen, whose jump table is on the field names, and a match on the tag of the key form and of the PRF form that the caller chose), the JWK reader of ferret_core::passkey::import and the draft. The three indexed loads read one byte of a text at its position (skipping white space and testing for a brace in the JWK, and the loop over the quoted text): the address is the pointer plus a position that counts the characters, never a value of the key, and the branches on the characters of the private scalar are on quote, backslash and control characters, which no valid base64url text holds, so they go the same way for every key. The scalar itself is read by ct/harness/base64url.rs (no hit in the scan) and by p256, counted under other crates."
+max = 7
+reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument by serde-wasm-bindgen (a jump table on the field names and on the kind of each value), a match on the tag of the key form and of the PRF form that the caller chose, and the whole JWK reader of ferret_core::passkey::import. In the reader the jump tables are the comparison of the length of a member name with those of kty, crv, alg, x, y and d, and the match on the character that opens, closes or separates a value that is skipped (members the reader does not know, never the text of d). The indexed loads read one byte of the text at a position that counts characters (white space, the quote, the loop over the quoted text): the address is the pointer plus a position and never a value of the key. The characters of the private scalar are tested only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key; the scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan, and by p256, counted under other crates."
 
 [[allow]]
 function = "^vault_passkey_import externref shim multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
-max = 3
-reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument (serde-wasm-bindgen, whose jump table is on the field names, and a match on the tag of the key form and of the PRF form that the caller chose), the JWK reader of ferret_core::passkey::import and the draft. The three indexed loads read one byte of a text at its position (skipping white space and testing for a brace in the JWK, and the loop over the quoted text): the address is the pointer plus a position that counts the characters, never a value of the key, and the branches on the characters of the private scalar are on quote, backslash and control characters, which no valid base64url text holds, so they go the same way for every key. The scalar itself is read by ct/harness/base64url.rs (no hit in the scan) and by p256, counted under other crates."
+max = 13
+reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument by serde-wasm-bindgen (a jump table on the field names and on the kind of each value), a match on the tag of the key form and of the PRF form that the caller chose, and the whole JWK reader of ferret_core::passkey::import. In the reader the jump tables are the comparison of the length of a member name with those of kty, crv, alg, x, y and d, and the match on the character that opens, closes or separates a value that is skipped (members the reader does not know, never the text of d). The indexed loads read one byte of the text at a position that counts characters (white space, the quote, the loop over the quoted text): the address is the pointer plus a position and never a value of the key. The characters of the private scalar are tested only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key; the scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan, and by p256, counted under other crates."
 
 [[allow]]
 function = "^vault_prf_methods externref shim multivalue shim$"

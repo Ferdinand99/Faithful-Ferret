@@ -56,7 +56,7 @@ const MAX_PKCS8: usize = 1024;
 /// The longest JWK text accepted, in bytes.
 const MAX_JWK: usize = 4096;
 /// How deep a member that is skipped may nest.
-const MAX_JSON_DEPTH: u32 = 8;
+const MAX_JSON_DEPTH: usize = 8;
 /// The length of a P-256 scalar or coordinate, in bytes.
 const COORD: usize = 32;
 /// The latest creation time accepted, in unix milliseconds: 2^53 - 1, the
@@ -212,89 +212,46 @@ impl<'a> Scan<'a> {
         Ok((s, escaped))
     }
 
-    /// Skips one value of any kind.
-    fn skip_value(&mut self, depth: u32) -> Result<(), Error> {
-        if depth > MAX_JSON_DEPTH {
-            return Err(bad_key());
-        }
-        self.skip_ws();
-        match self.peek() {
-            Some(b'"') => self.string().map(|_| ()),
-            Some(b'{') => {
-                self.pos = self.pos.saturating_add(1);
-                self.members(depth, &mut |scan, _key, _escaped| {
-                    scan.skip_value(depth.saturating_add(1))
-                })
-            }
-            Some(b'[') => {
-                self.pos = self.pos.saturating_add(1);
-                self.skip_ws();
-                if self.peek() == Some(b']') {
-                    self.pos = self.pos.saturating_add(1);
-                    return Ok(());
-                }
-                loop {
-                    self.skip_value(depth.saturating_add(1))?;
-                    self.skip_ws();
-                    match self.peek() {
-                        Some(b',') => self.pos = self.pos.saturating_add(1),
-                        Some(b']') => {
-                            self.pos = self.pos.saturating_add(1);
-                            return Ok(());
-                        }
-                        _ => return Err(bad_key()),
-                    }
-                }
-            }
-            // A number, `true`, `false` or `null`: a run of letters, digits and
-            // the signs of a number. A skipped value is checked for its
-            // structure (quotes, brackets, commas), not for every rule of
-            // JSON's numbers; the members that are read are checked fully.
-            Some(b'-' | b'+' | b'.' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z') => {
-                while matches!(
-                    self.peek(),
-                    Some(b'-' | b'+' | b'.' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
-                ) {
-                    self.pos = self.pos.saturating_add(1);
-                }
-                Ok(())
-            }
-            _ => Err(bad_key()),
-        }
-    }
-
-    /// The members of an object whose `{` has been read: for each, `member`
-    /// is called with the key (as written, and whether it has an escape) and
-    /// must read the value.
-    fn members(
-        &mut self,
-        depth: u32,
-        member: &mut dyn FnMut(&mut Self, &'a str, bool) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        if depth > MAX_JSON_DEPTH {
-            return Err(bad_key());
-        }
-        self.skip_ws();
-        if self.peek() == Some(b'}') {
-            self.pos = self.pos.saturating_add(1);
-            return Ok(());
-        }
+    /// Skips one value of any kind: a string, or anything up to the `,` or
+    /// `}` that ends it, with the brackets and the strings inside it matched. A
+    /// skipped value is checked for its structure (quotes, brackets, commas),
+    /// not for every rule of JSON's numbers and words; the members that are read
+    /// are checked fully.
+    fn skip_value(&mut self) -> Result<(), Error> {
+        // The closing bracket that each open one waits for.
+        let mut open = [0u8; MAX_JSON_DEPTH];
+        let mut depth = 0usize;
+        let mut seen = false;
         loop {
-            self.skip_ws();
-            let (key, escaped) = self.string()?;
-            self.skip_ws();
-            self.expect(b':')?;
-            self.skip_ws();
-            member(self, key, escaped)?;
-            self.skip_ws();
             match self.peek() {
-                Some(b',') => self.pos = self.pos.saturating_add(1),
-                Some(b'}') => {
-                    self.pos = self.pos.saturating_add(1);
-                    return Ok(());
+                None => return Err(bad_key()),
+                Some(b'"') => {
+                    self.string()?;
+                    seen = true;
+                    continue;
                 }
-                _ => return Err(bad_key()),
+                Some(c @ (b'{' | b'[')) => {
+                    let slot = open.get_mut(depth).ok_or_else(bad_key)?;
+                    *slot = if c == b'{' { b'}' } else { b']' };
+                    depth = depth.saturating_add(1);
+                }
+                Some(c @ (b'}' | b']')) => match depth.checked_sub(1) {
+                    Some(inner) if open.get(inner) == Some(&c) => depth = inner,
+                    Some(_) => return Err(bad_key()),
+                    None if seen => return Ok(()),
+                    None => return Err(bad_key()),
+                },
+                Some(b',') if depth == 0 => {
+                    return if seen { Ok(()) } else { Err(bad_key()) };
+                }
+                Some(b' ' | b'\t' | b'\n' | b'\r') => {
+                    self.pos = self.pos.saturating_add(1);
+                    continue;
+                }
+                Some(_) => {}
             }
+            seen = true;
+            self.pos = self.pos.saturating_add(1);
         }
     }
 }
@@ -320,20 +277,36 @@ fn parse_jwk(text: &str) -> Result<Jwk<'_>, Error> {
     let mut scan = Scan { text, pos: 0 };
     scan.skip_ws();
     scan.expect(b'{')?;
-    scan.members(0, &mut |s, key, escaped| {
-        if escaped {
-            return s.skip_value(1);
+    scan.skip_ws();
+    if scan.peek() == Some(b'}') {
+        scan.pos = scan.pos.saturating_add(1);
+    } else {
+        loop {
+            scan.skip_ws();
+            let (key, escaped) = scan.string()?;
+            scan.skip_ws();
+            scan.expect(b':')?;
+            scan.skip_ws();
+            // A key with an escape is not one of ours.
+            match (escaped, key) {
+                (false, "kty") => text_member(&mut scan, &mut jwk.kty)?,
+                (false, "crv") => text_member(&mut scan, &mut jwk.crv)?,
+                (false, "alg") => text_member(&mut scan, &mut jwk.alg)?,
+                (false, "x") => text_member(&mut scan, &mut jwk.x)?,
+                (false, "y") => text_member(&mut scan, &mut jwk.y)?,
+                (false, "d") => text_member(&mut scan, &mut jwk.d)?,
+                _ => scan.skip_value()?,
+            }
+            scan.skip_ws();
+            let next = scan.peek();
+            scan.pos = scan.pos.saturating_add(1);
+            match next {
+                Some(b',') => {}
+                Some(b'}') => break,
+                _ => return Err(bad_key()),
+            }
         }
-        match key {
-            "kty" => text_member(s, &mut jwk.kty),
-            "crv" => text_member(s, &mut jwk.crv),
-            "alg" => text_member(s, &mut jwk.alg),
-            "x" => text_member(s, &mut jwk.x),
-            "y" => text_member(s, &mut jwk.y),
-            "d" => text_member(s, &mut jwk.d),
-            _ => s.skip_value(1),
-        }
-    })?;
+    }
     scan.skip_ws();
     if scan.peek().is_some() {
         return Err(bad_key());
