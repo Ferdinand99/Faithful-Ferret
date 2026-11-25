@@ -40,6 +40,8 @@ function runExt(args) {
       '  case "$arg" in',
       '    run) cat > /dev/null; if grep -qx "FERRET_EXT_STEP=fetch" "$STUB_CALLS/call-$n"; then printf wasm; fi; exit 0 ;;',
       "    build) cat > /dev/null; exit 0 ;;",
+      // The log scan of an e2e run asks for the ids of the stack's containers: it needs one to read.
+      '    ps) if grep -qx -- -q "$STUB_CALLS/call-$n"; then echo stubcontainer; fi; exit 0 ;;',
       "  esac",
       "done",
       "exit 0",
