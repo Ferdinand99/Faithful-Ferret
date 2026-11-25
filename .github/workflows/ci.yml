@@ -179,6 +179,10 @@ jobs:
       - name: No notice of another project in the core or the mobile sources
         run: node scripts/check-core-headers.mjs
 
+      # The server and the Firefox extension carry the same version number (release-please bumps both).
+      - name: Server and extension have the same version
+        run: node scripts/check-shared-version.mjs
+
       # --fail is what makes an unreadable licence stop the check; this test proves it.
       - name: cargo-about stops on a crate with an unreadable licence
         run: scripts/test-notices-fail.sh

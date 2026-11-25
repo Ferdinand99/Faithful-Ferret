@@ -20,7 +20,10 @@
         { "type": "toml", "path": "crates/ferret-server/Cargo.toml", "jsonpath": "$.package.version" },
         { "type": "toml", "path": "crates/ferret-server/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-core')].version" },
         { "type": "toml", "path": "crates/ferret-server/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-server-auth')].version" },
-        { "type": "toml", "path": "crates/ferret-server/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-server')].version" }
+        { "type": "toml", "path": "crates/ferret-server/Cargo.lock", "jsonpath": "$.package[?(@.name.value=='ferret-server')].version" },
+        { "type": "json", "path": "extension/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "extension/package-lock.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "extension/package-lock.json", "jsonpath": "$.packages[''].version" }
       ]
     }
   }

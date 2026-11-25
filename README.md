@@ -140,7 +140,7 @@ These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, an
 
 The first version of the Firefox extension came in v0.7.0. Version 0.8.0 of the extension, from v0.10.0 of the
 repository, was the first signed build with saving and the password generator, and version 0.9.0, from v0.11.0, adds unlock
-with a PIN or a passkey and one-time codes. It needs Firefox 153 or newer and is early: it fills logins from its popup,
+with a PIN or a passkey and one-time codes. From the release after v0.11.0 the extension has the same version number as the server (server 0.12.0 comes with extension 0.12.0); the versions above are history. It needs Firefox 153 or newer and is early: it fills logins from its popup,
 offers to save and update passwords, makes passwords and fills one-time codes, but it cannot handle
 passkeys as logins yet. It is **not on the Firefox add-ons store**. A build that Mozilla has
 signed as an unlisted add-on is made by a manually started workflow, and the release downloads of v0.10.0 do not
