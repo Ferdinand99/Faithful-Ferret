@@ -523,6 +523,59 @@ body.ff-popup[data-view="unlocked"] .ff-popup-body {
   overflow-wrap: anywhere;
 }
 
+/* The live one-time code of an item: the code, the seconds it still holds and its actions. */
+.ff-code-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.ff-code-card .ff-value-label {
+  flex: 0 0 100%;
+  width: auto;
+}
+
+.ff-code-next {
+  margin-top: 4px;
+  border-color: var(--brand);
+}
+
+.ff-code-line {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ff-code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ff-code-left {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ff-code-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.ff-suggest {
+  display: flex;
+  flex-direction: column;
+}
+
 .ff-urls {
   margin: 0;
   padding: 0 0 0 12px;

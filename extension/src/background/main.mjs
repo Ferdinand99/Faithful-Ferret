@@ -72,6 +72,9 @@ const pinHost = pinStore
 // What Ferret filled where, for a change form submitted afterwards (memory only, cleared at every lock); only with
 // saving passwords, a build feature (the flag `save`, on in a release).
 const fillContext = FEATURES.save ? createFillContext({ now }) : null;
+// The popup's offer of a one-time code after a sign-in was filled does not depend on saving passwords: without the flag the
+// fill flow keeps its own memory of what it filled (item ids, five minutes, cleared at every lock), which nothing else reads.
+const codeOfferContext = fillContext ?? createFillContext({ now });
 
 // The capture host (the store of offers, the registration of the capture script, the setting); only with saving passwords.
 // The sync and the capture host need each other (the sync reads the offers it writes, the store asks the sync whether a
@@ -157,7 +160,7 @@ let coreHostRef = null;
 const fillHost = createFillHost({
   // The engine's list and items (the sync's `items()`; the sync engine is the web vault's, typed there).
   syncHost: { engine: () => /** @type {any} */ (syncHost.items()) },
-  fillContext,
+  fillContext: codeOfferContext,
   generator: generatorHost,
   // A generated password that went into a page is offered for saving by the capture host's store of offers.
   offers: captureHost !== null ? { onGenerated: (meta) => /** @type {NonNullable<typeof captureHost>} */ (captureHost).offers.onGenerated(meta) } : null,

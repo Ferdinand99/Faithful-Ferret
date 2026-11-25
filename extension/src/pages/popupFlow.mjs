@@ -512,6 +512,7 @@ export const ACTION_ERRORS = Object.freeze([
   "wrong_kind",
   "covered",
   "frame_hidden",
+  "insecure_page",
   "vault_locked",
   "not_filled",
   "no_site",
@@ -528,8 +529,8 @@ export const actionErrorKey = (reason) =>
 /**
  * @typedef {{
  *   ref: string, name: string, username: string, favorite: boolean, type: string, site: boolean, insecure: boolean,
- *   frameId: number | null,
- * }} Row
+ *   frameId: number | null, next?: true,
+ * }} Row `next`: the item was filled in this tab a short while ago and holds a one-time code, so the page may ask for it next
  * @typedef {{ rows: Row[], total: number }} Section
  * @typedef {{ origin: string, host: string }} Grant a frame of the page's site that waits for its host permission
  * @typedef {{ host: string, insecure: boolean, rows: Row[], grant: Grant[] }} PageSection `host` is "" when the tab shows no web page
@@ -552,6 +553,7 @@ export function rowsOf(reply) {
       type: typeof h.type === "string" ? h.type : "other",
       site: h.site === true,
       insecure: h.insecure === true,
+      ...(h.next === true ? { next: /** @type {const} */ (true) } : {}),
       frameId: Number.isSafeInteger(h.frame_id) && h.frame_id >= 0 ? h.frame_id : null,
     }));
 }
@@ -622,15 +624,22 @@ export function createListFlow(request) {
     },
 
     /**
-     * "Fill" on a candidate of the page.
-     * @param {Row} row @param {number} tabId
+     * "Fill" on a candidate of the page. `only: "totp"` fills the one-time code field alone.
+     * @param {Row} row @param {number} tabId @param {{ only?: "totp" }} [o]
      * @returns {Promise<{ ok: boolean, reason?: string }>}
      */
-    fill(row, tabId) {
+    fill(row, tabId, { only } = {}) {
       if (row.frameId === null) return Promise.resolve({ ok: false, reason: "not_offered" });
-      // No frame named: the background fills the first of the item's frames that has a sign-in form.
-      return request("fill", { ref: row.ref, tab_id: tabId });
+      // No frame named: the background fills the first of the item's frames that has a sign-in form (or, for the code, a code field).
+      return request("fill", { ref: row.ref, tab_id: tabId, ...(only !== undefined ? { only } : {}) });
     },
+
+    /**
+     * The current one-time code of an item and the seconds it still holds.
+     * @param {string} ref @param {boolean} [automatic] the open popup asks again by itself at the end of a period (not the user)
+     * @returns {Promise<{ ok: boolean, reason?: string, code?: string, seconds_left?: number }>}
+     */
+    itemCode: (ref, automatic = false) => request("item_code", { ref, ...(automatic ? { automatic: true } : {}) }),
 
     /** @param {string} ref @param {string} field @returns {Promise<{ ok: boolean, reason?: string }>} */
     copy: (ref, field) => request("copy", { ref, field }),

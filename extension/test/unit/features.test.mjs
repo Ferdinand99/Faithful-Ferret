@@ -336,7 +336,7 @@ test("every_message_type_is_a_u1_type_or_listed_as_a_type_of_the_save_feature", 
   // Fail closed: a message type that someone adds must either be listed under the feature (and so be checked to refuse
   // with the feature off) or be added here on purpose as a type of the first release.
   const FIRST_RELEASE_TYPES = Object.freeze([
-    "candidates", "copy", "fill", "forget_preview", "forget_server", "frame_report", "fill_result", "grant_check", "item", "lock",
+    "candidates", "copy", "fill", "forget_preview", "forget_server", "frame_report", "fill_result", "grant_check", "item", "item_code", "lock",
     "open_site", "search", "server_check", "settings", "sign_in", "state", "sync_accept_older", "sync_older_preview", "sync_retry",
     "sync_state", "unlock",
   ]);

@@ -102,6 +102,27 @@ export function createFillContext({ now = Date.now } = {}) {
       return null;
     },
 
+    /**
+     * The items whose user name or password Ferret filled in tab `tabId` within the last five minutes, and whether it also
+     * filled that item's one-time code there since. The popup uses it to offer the code on the page that follows the
+     * sign-in. Item ids only, in memory.
+     * @param {number} tabId
+     * @returns {Array<{ itemId: string, codeFilled: boolean }>}
+     */
+    filledIn(tabId) {
+      prune();
+      /** @type {Map<string, { signIn: number, code: number }>} */
+      const seen = new Map();
+      entries.forEach((entry, order) => {
+        if (entry.tabId !== tabId) return;
+        const known = seen.get(entry.itemId) ?? { signIn: -1, code: -1 };
+        if (entry.fieldKind === "totp") known.code = Math.max(known.code, order);
+        else known.signIn = Math.max(known.signIn, order);
+        seen.set(entry.itemId, known);
+      });
+      return [...seen].filter(([, k]) => k.signIn >= 0).map(([itemId, k]) => ({ itemId, codeFilled: k.code > k.signIn }));
+    },
+
     /** Forgets everything (every lock of the vault). */
     clear() {
       entries = [];
