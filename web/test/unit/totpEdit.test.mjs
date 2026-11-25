@@ -103,7 +103,6 @@ test("an_invalid_or_hotp_or_steam_secret_is_refused_with_one_error", async () =>
     ["a digit that Base32 does not have", "JBSWY3DP1"],
     ["a counter on a totp address", `otpauth://totp/x?secret=${RFC_SECRET}&counter=1`],
     ["a web address", "https://example.test"],
-    ["an unknown parameter", `otpauth://totp/x?secret=${RFC_SECRET}&image=x`],
   ];
   for (const [what, text] of refused) {
     await withDom(async () => {
@@ -123,6 +122,72 @@ test("an_invalid_or_hotp_or_steam_secret_is_refused_with_one_error", async () =>
       assert.equal(find(root, "totp").value, text);
     });
   }
+});
+
+test("parameters_the_core_does_not_read_are_dropped_and_the_rest_is_kept", async () => {
+  await withDom(async () => {
+    const { root, engine } = await edit({ id: null, withTotp: false });
+    await type(root, "name", "Mail");
+    await type(root, "totp", `otpauth://totp/Acme:ada?secret=${RFC_SECRET}&image=https%3A%2F%2Fx.example%2Fa.png&issuer=Acme&color=red&digits=8`);
+    assert.equal(find(root, "totp-error"), null, "a real QR code with an image is accepted");
+    assert.equal(facts(root).issuer, 'vault.edit.totp_issuer {"value":"Acme"}');
+    await submit(find(root, "edit-form"));
+    assert.equal(engine.calls[0][1].totp.uri, `otpauth://totp/Acme:ada?secret=${RFC_SECRET}&issuer=Acme&digits=8`, "only what the core reads is saved");
+  });
+});
+
+test("the_facts_follow_the_name_of_the_item_while_the_field_holds_a_bare_secret", async () => {
+  await withDom(async () => {
+    const { root } = await edit({ id: null, withTotp: false });
+    await type(root, "name", "First");
+    await type(root, "totp", RFC_SECRET);
+    assert.equal(facts(root).account, 'vault.edit.totp_account {"value":"First"}');
+    await type(root, "name", "Second");
+    assert.equal(facts(root).account, 'vault.edit.totp_account {"value":"Second"}');
+  });
+});
+
+test("a_worker_that_fails_is_not_reported_as_a_refused_address", async () => {
+  await withDom(async () => {
+    const { root } = await edit({
+      id: null, withTotp: false,
+      client: (e) => {
+        const full = fakeTotpClient(e);
+        full.vault.totp_parse = async () => Promise.reject(Object.assign(new Error("x"), { code: "worker_failed" }));
+        return full;
+      },
+    });
+    await type(root, "totp", RFC_SECRET);
+    assert.equal(textOf(find(root, "totp-error")).trim(), "vault.error.worker_failed");
+    assert.equal(find(root, "totp").getAttribute("aria-invalid"), "false");
+  });
+});
+
+test("the_preview_closes_its_item_when_the_code_cannot_be_made", async () => {
+  await withDom(async () => {
+    const { root, client } = await edit({
+      id: null, withTotp: false,
+      client: (e) => {
+        const full = fakeTotpClient(e);
+        full.vault.totp_code = async () => Promise.reject(Object.assign(new Error("x"), { code: "internal" }));
+        return full;
+      },
+    });
+    await type(root, "name", "Bank");
+    await type(root, "totp", RFC_SECRET);
+    assert.equal(textOf(find(root, "totp-preview-left")).trim(), "vault.item.totp_error");
+    assert.equal(client.calls.filter((c) => c[0] === "close_item").length, 1, "the throwaway item was closed");
+    assert.equal(client.previews.size, 0);
+  });
+});
+
+test("the_field_asks_password_managers_to_stay_away", async () => {
+  await withDom(async () => {
+    const { root } = await edit({ id: null, withTotp: false });
+    const input = find(root, "totp");
+    assert.equal(input.getAttribute("autocomplete"), "off");
+    for (const hint of ["data-1p-ignore", "data-lpignore", "data-bwignore"]) assert.equal(input.getAttribute(hint), "true", hint);
+  });
 });
 
 test("an_empty_field_keeps_the_stored_secret", async () => {

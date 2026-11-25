@@ -170,6 +170,27 @@ test("the_secret_is_never_on_the_item_page", async () => {
   });
 });
 
+test("a_page_that_is_never_put_on_the_screen_stops_asking_after_a_while", async () => {
+  await withDom(async () => {
+    const engine = fakeEngine({ items: [ENTRY], views: { [ID]: VIEW }, secrets: { [ID]: ["ada", "pw-SECRET-1"] } });
+    const client = fakeTotpClient(engine, { uris: { [ID]: RFC_URI } });
+    const clock = fakeClock(59_000);
+    const root = await itemView({ engine, sync: engine, client, id: ID, t, clock });
+    root.isConnected = false; // built, and the route was replaced before it was mounted
+    await settle();
+    for (let i = 0; i < 100; i += 1) {
+      clock.advance(1_000); // a code is made again at each end of a period, which takes a turn of the event loop
+      await settle(3);
+    }
+    assert.equal(clock.pending, 0, "the ticker ended");
+    const asked = client.calls.length;
+    clock.advance(200_000);
+    await settle();
+    assert.equal(client.calls.length, asked);
+    assert.ok(asked <= 8, `only a few codes were made for a page nobody saw (${asked} calls)`);
+  });
+});
+
 test("a_screen_that_is_off_the_page_stops_asking_at_its_next_tick", async () => {
   await withDom(async () => {
     const { root, clock, client } = await open();

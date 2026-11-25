@@ -198,6 +198,8 @@ export async function editView({
   });
   totp.input.value = "";
   totp.input.setAttribute("aria-describedby", "edit-totp-help edit-totp-info");
+  // Not a login password: browsers' and third-party managers' offers to save it are asked to stay away.
+  for (const hint of ["data-1p-ignore", "data-lpignore", "data-bwignore", "data-form-type"]) totp.input.setAttribute(hint, hint === "data-form-type" ? "other" : "true");
   const totpInfo = el("div", { class: "totp-info", id: "edit-totp-info", "data-role": "totp-info" });
   totp.row.appendChild(totpInfo);
   const previewCodeText = el("span", { class: "totp-code", "data-role": "totp-preview-code" }, CODE_DOTS);
@@ -304,14 +306,20 @@ export async function editView({
         previewUri = uri;
         void previewTicker.start();
       }
-    } catch {
+    } catch (error) {
       if (mine !== totpChecks || settled) return;
-      totp.input.setAttribute("aria-invalid", "true");
-      mount(totpInfo, el("p", { class: "error", "data-role": "totp-error" }, t("vault.error.malformed_otpauth")));
+      // Only the core's refusals say "not a one-time password"; a worker that failed or a vault that was locked says what it is.
+      const refused = TOTP_REFUSALS.has(codeOf(error));
+      totp.input.setAttribute("aria-invalid", refused ? "true" : "false");
+      mount(totpInfo, el("p", { class: "error", "data-role": "totp-error" }, refused ? t("vault.error.malformed_otpauth") : describeError(t, error)));
     }
   }
   totp.input.addEventListener("input", () => {
     if (!frozen && !settled) void refreshTotp();
+  });
+  // A bare secret is labelled with the name of the item, so the facts follow the name while the field holds one.
+  name.input.addEventListener("input", () => {
+    if (!frozen && !settled && !removeTotp && readInput(totp.input.value).kind === "secret") void refreshTotp();
   });
 
   totpToggle.addEventListener("click", async () => {

@@ -21,6 +21,27 @@ export function groupCode(code) {
   return digits;
 }
 
+/** The parameters of an address that the core reads; `counter` is kept so that a counter-based address stays refused. */
+const READ_PARAMS = new Set(["secret", "issuer", "algorithm", "digits", "period", "counter"]);
+
+/**
+ * A time-based address without the parameters the core does not read (`image`, `color`, ...: real QR codes carry them), which
+ * are dropped. Everything else is left to the core, which still refuses `counter`, HOTP and other schemes.
+ * @param {string} uri
+ */
+export function withoutUnknownParams(uri) {
+  if (!uri.startsWith("otpauth://totp/")) return uri;
+  const at = uri.indexOf("?");
+  const hash = uri.indexOf("#");
+  if (at < 0 || (hash >= 0 && hash < at)) return uri;
+  const end = hash < 0 ? uri.length : hash;
+  const kept = uri.slice(at + 1, end).split("&").filter((pair) => {
+    const eq = pair.indexOf("=");
+    return pair === "" || eq < 1 || READ_PARAMS.has(pair.slice(0, eq));
+  });
+  return `${uri.slice(0, at)}?${kept.join("&")}${uri.slice(end)}`;
+}
+
 /**
  * What the field holds: nothing, a bare Base32 secret (any case, with spaces, with or without the `=` fill), or something else
  * that is passed to the core as an address (`otpauth://totp/...`; anything that is not one, like `otpauth://hotp/...` or
@@ -32,7 +53,7 @@ export function readInput(text) {
   const trimmed = String(text ?? "").trim();
   if (trimmed === "") return { kind: "empty" };
   if (/^[A-Za-z2-7\s]+=*$/.test(trimmed)) return { kind: "secret", secret: trimmed.replace(/\s+/g, "").toUpperCase() };
-  return { kind: "uri", uri: trimmed };
+  return { kind: "uri", uri: withoutUnknownParams(trimmed) };
 }
 
 /**
@@ -42,8 +63,12 @@ export function readInput(text) {
 export function labelOf(name) {
   // eslint-disable-next-line no-control-regex
   let label = String(name ?? "").replace(/[\u0000-\u001f\u007f-\u009f:]+/g, " ").replace(/\s+/g, " ").trim();
+  // Cut by characters first (a byte is at least a character, so 200 characters is the most that can fit), then by bytes: at most
+  // 200 short passes, however long the name is.
+  const chars = [...label.slice(0, MAX_LABEL_BYTES * 2)].slice(0, MAX_LABEL_BYTES);
   const encoder = new TextEncoder();
-  while (encoder.encode(label).length > MAX_LABEL_BYTES) label = [...label].slice(0, -1).join("").trim();
+  while (chars.length > 0 && encoder.encode(chars.join("")).length > MAX_LABEL_BYTES) chars.pop();
+  label = chars.join("").trim();
   return label === "" ? FALLBACK_LABEL : label;
 }
 

@@ -3,7 +3,7 @@
 // RFC 6238 vectors first, so every other test can trust it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { groupCode, labelOf, namesOwnHost, readInput, uriFromSecret } from "../../src/views/totpModel.mjs";
+import { groupCode, labelOf, namesOwnHost, readInput, uriFromSecret, withoutUnknownParams } from "../../src/views/totpModel.mjs";
 import { codeTicker } from "../../src/views/totpTicker.mjs";
 import { RFC_SECRET, encodeBase32, parseUri, reference } from "./totpHelpers.mjs";
 import { fakeClock, settle } from "./vaultHelpers.mjs";
@@ -56,6 +56,25 @@ test("a_bare_secret_becomes_an_address_with_the_defaults_and_the_name_as_label",
   assert.equal(labelOf("   "), "account");
   assert.ok(new TextEncoder().encode(labelOf("å".repeat(300))).length <= 200);
   assert.equal(parseUri(uriFromSecret("JBSWY3DP", "A:b (c) 'd' *!")).issuer, null, "no issuer from a colon in the name");
+});
+
+test("unknown_parameters_are_dropped_but_counter_and_other_types_stay_refused_by_the_core", () => {
+  assert.equal(withoutUnknownParams("otpauth://totp/x?secret=ABC&image=u&issuer=I&color=red"), "otpauth://totp/x?secret=ABC&issuer=I");
+  assert.equal(withoutUnknownParams("otpauth://totp/x?image=u"), "otpauth://totp/x?");
+  assert.equal(withoutUnknownParams("otpauth://totp/x?secret=ABC&counter=1"), "otpauth://totp/x?secret=ABC&counter=1", "counter is kept: the core refuses it");
+  assert.equal(withoutUnknownParams("otpauth://hotp/x?secret=ABC&image=u"), "otpauth://hotp/x?secret=ABC&image=u", "another type is not touched");
+  assert.equal(withoutUnknownParams("steam://ABC?image=u"), "steam://ABC?image=u");
+  assert.equal(withoutUnknownParams("otpauth://totp/x"), "otpauth://totp/x");
+  // The parser still refuses a duplicate, since a repeated known parameter is kept as it is.
+  assert.equal(withoutUnknownParams("otpauth://totp/x?secret=A&secret=B"), "otpauth://totp/x?secret=A&secret=B");
+});
+
+test("a_very_long_name_is_cut_at_once", () => {
+  const started = performance.now();
+  const label = labelOf("x".repeat(2_000_000));
+  assert.equal(label.length, 200);
+  assert.ok(performance.now() - started < 500, "no pass per character of the whole name");
+  assert.ok(new TextEncoder().encode(labelOf("😀".repeat(500))).length <= 200);
 });
 
 test("the_host_warning_matches_the_issuer_or_the_label_ignoring_case", () => {

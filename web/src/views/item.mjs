@@ -34,6 +34,9 @@ const DOTS = "••••••••";
 /** What the code looks like until the worker has made it. */
 const CODE_DOTS = "••• •••";
 
+/** A page that is still not on the screen after this many ticks (seconds) is not coming: its code stops. */
+const MAX_TICKS_BEFORE_SHOWN = 30;
+
 /** From this many seconds left the countdown is marked, so it can be drawn in another colour (the number says it too). */
 const LOW_SECONDS = 5;
 
@@ -237,6 +240,8 @@ export async function itemView({
 
   /** Whether the page has been on the screen, so that one that has left it is told apart from one that is not on it yet. */
   let shownOnce = false;
+  /** How many ticks the code has run for a page that is still not on the screen. */
+  let ticksBeforeShown = 0;
 
   /**
    * The card of the one-time password: the code in two groups, the seconds it still holds, and Copy. The ticker is started by
@@ -275,8 +280,10 @@ export async function itemView({
       },
       active: () => {
         const connected = /** @type {any} */ (root).isConnected;
-        if (connected === true) shownOnce = true;
-        return !(shownOnce && connected === false);
+        if (connected !== false) shownOnce = true; // (a stand-in DOM without `isConnected` counts as shown)
+        // A page that has left the screen stops; so does one that was built and never put on it (a fast navigation).
+        ticksBeforeShown += shownOnce ? 0 : 1;
+        return !(shownOnce && connected === false) && ticksBeforeShown <= MAX_TICKS_BEFORE_SHOWN;
       },
     });
     copy.addEventListener("click", async () => {
