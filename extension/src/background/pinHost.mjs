@@ -10,6 +10,12 @@
 //   pin_unlock     opens the vault with the PIN: the rule, the window, the attempt (counted before the Argon2id), and
 //                  then the checks that follow every unlock when the server answers
 //   pin_off        deletes the PIN
+//   prf_options    what the unlock window needs for its one WebAuthn call (the vault's host and each passkey's id and salt), read
+//                  from the server now: it needs the device's live tokens and the network, and nothing is kept
+//   prf_window     opens the unlock window (the page that makes the one WebAuthn call), or brings the open one to the front
+//   prf_unlock     opens the vault with the 32 bytes a passkey gave the window: the list read again, the core's `unlock_prf`
+//                  and the checks that follow every unlock, all online. It touches no PIN record (a refusal after the core
+//                  opened locks the vault again), and the 32 bytes are wiped here as soon as the core has had them
 //
 // What the store's caller must do (the header of the PIN store, "What the caller must do"), and where it is done:
 //
@@ -82,7 +88,10 @@ const refused = (reply) => reply;
  *   timers?: { setTimeout: (fn: () => void, ms: number) => unknown, clearTimeout: (id: any) => void },
  *   unlockTimeoutMs?: number,
  *   policyTimeoutMs?: number,
- * }} options
+ *   windows?: { create: (info: any) => Promise<{ id?: number } | undefined>, update: (id: number, info: any) => Promise<unknown> } | null,
+ *   getURL?: ((path: string) => string) | null,
+ *   windowPage?: string | null,
+ * }} options `windows`, `getURL` and `windowPage` (the generated module's name of the unlock window's page) open that window
  */
 export function createPinHost({
   store,
@@ -93,6 +102,9 @@ export function createPinHost({
   timers = { setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms), clearTimeout: (id) => globalThis.clearTimeout(id) },
   unlockTimeoutMs = PIN_UNLOCK_TIMEOUT_MS,
   policyTimeoutMs = POLICY_TIMEOUT_MS,
+  windows = null,
+  getURL = null,
+  windowPage = null,
 }) {
   /** The core host's lock, set by `attach`. @type {((reason: "manual" | "sign_out") => Promise<void>) | null} */
   let hostLock = null;
@@ -588,7 +600,136 @@ export function createPinHost({
     },
   };
 
-  const ops = Object.freeze({ unlock_policy: unlockPolicy, pin_set: pinSet, pin_unlock: pinUnlock, pin_off: pinOff });
+  // ------------------------------------------------------------------ the passkey
+
+  /**
+   * The reason a passkey operation gives for a refusal, or null when the error is for the handler to map (a refusal of the
+   * core about what this device has pinned is the session's `attack_warning`).
+   * @param {unknown} error
+   * @returns {string | null}
+   */
+  function prfReasonOf(error) {
+    const code = codeOf(error);
+    if (code === "prf_unavailable" || code === "pinned_missing") return "prf_unavailable";
+    if (code === "prf_failed" || code === "method_removed") return "prf_failed";
+    if (code === "signed_out" || code === "session_ended") return "signed_out";
+    const status = statusOf(error);
+    if (status === 0 || (status !== null && status >= 500)) return "network";
+    return null;
+  }
+
+  /**
+   * The checks every passkey operation starts with: this server's device, tokens that are alive (a device whose tokens ended
+   * has its PIN deleted) and the administrator's rule, read now (a server that cannot be reached is `network`: a passkey
+   * unlock is online only), which must still allow passkeys.
+   * @param {string | null} server
+   * @returns {Promise<{ ok: true, server: string, session: any } | { ok: false, reason: string }>}
+   */
+  async function prfGround(server) {
+    if (server === null) return { ok: false, reason: "prf_unavailable" };
+    const session = await sessionOf(server);
+    const state = await session.deviceState().catch(() => null);
+    if (state === "revoked" || state === "signed_out") {
+      await wipeServer(server, state === "revoked" ? "device_revoked" : "signed_out");
+      return { ok: false, reason: "signed_out" };
+    }
+    if (state !== "ok") return { ok: false, reason: "prf_unavailable" };
+    /** @type {Awaited<ReturnType<typeof fetchPolicy>>} */
+    const fetched = await within(fetchPolicy(server), policyTimeoutMs, /** @type {const} */ ({ kind: "offline" })).catch(() => /** @type {const} */ ({ kind: "offline" }));
+    if (fetched.kind === "offline") return { ok: false, reason: "network" };
+    if (fetched.kind === "ended") return { ok: false, reason: "signed_out" };
+    if (fetched.kind === "none" || fetched.policy.prf.enabled !== true) return { ok: false, reason: "prf_unavailable" };
+    return { ok: true, server, session };
+  }
+
+  /** The window that was opened last, to bring to the front instead of opening a second. @type {number | null} */
+  let unlockWindowId = null;
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const prfWindow = {
+    vault: false,
+    worker: "vault",
+    async run() {
+      if (windows === null || getURL === null || typeof windowPage !== "string") return { ok: false, reason: "prf_unavailable" };
+      if (unlockWindowId !== null) {
+        try {
+          await windows.update(unlockWindowId, { focused: true });
+          return { ok: true };
+        } catch {
+          // It was closed: a new one is opened.
+          unlockWindowId = null;
+        }
+      }
+      const created = await windows.create({ url: getURL(windowPage), type: "popup", width: 480, height: 600 });
+      unlockWindowId = typeof created?.id === "number" ? created.id : null;
+      return { ok: true };
+    },
+  };
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const prfOptions = {
+    vault: false,
+    worker: "vault",
+    async run() {
+      try {
+        const ground = await prfGround(await sessionHost.storedServer());
+        if (!ground.ok) return { ok: false, reason: ground.reason };
+        const options = await ground.session.prfOptions();
+        return { ok: true, rp_id: options.rpId, credentials: options.credentials };
+      } catch (error) {
+        const reason = prfReasonOf(error);
+        if (reason === null) throw error;
+        return { ok: false, reason };
+      }
+    },
+  };
+
+  /** @param {string} text @returns {Uint8Array | null} the 32 bytes of a base64url text, or null */
+  function outputOf(text) {
+    try {
+      const bytes = Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+      if (bytes.length === 32) return bytes;
+      bytes.fill(0);
+    } catch {
+      // Not base64url.
+    }
+    return null;
+  }
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const prfUnlock = sessionHost.opener(async (args, context) => {
+    const output = typeof args.prf_output === "string" ? outputOf(args.prf_output) : null;
+    // The text of the request cannot be wiped; the bytes are, whatever happens.
+    try {
+      if (output === null || typeof args.credential_id !== "string") return refused({ ok: false, reason: "prf_failed" });
+      const ground = await prfGround(await sessionHost.storedServer());
+      if (!ground.ok) return refused({ ok: false, reason: ground.reason });
+      const { server, session } = ground;
+      /** @type {{ accountId: string, email: string, checked: boolean }} */
+      let done;
+      try {
+        done = await session.prfUnlock({ credentialId: args.credential_id, output });
+      } catch (error) {
+        // A refusal at any step leaves no vault open.
+        await lockHost().catch(() => {});
+        if (statusOf(error) === 401) {
+          await endedAfter(server, codeOf(error));
+          return refused({ ok: false, reason: "signed_out" });
+        }
+        const reason = prfReasonOf(error);
+        if (reason === null) throw error;
+        return refused({ ok: false, reason });
+      }
+      // The session opens the vault for the rest of the background (the sync starts); a lock in the meantime refuses it.
+      await sessionHost.open(context, server, session);
+      await store.markOnline(server, done.accountId).catch(() => {});
+      return { ok: true, account_email: done.email, server };
+    } finally {
+      output?.fill(0);
+    }
+  });
+
+  const ops = Object.freeze({ unlock_policy: unlockPolicy, pin_set: pinSet, pin_unlock: pinUnlock, pin_off: pinOff, prf_options: prfOptions, prf_unlock: prfUnlock, prf_window: prfWindow });
 
   // The alarm's listener is added now, so the alarm that wakes an unloaded page reaches it.
   alarms?.onAlarm.addListener((alarm) => {

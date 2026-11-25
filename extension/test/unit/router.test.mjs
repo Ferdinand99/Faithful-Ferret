@@ -65,6 +65,9 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("capture_settings", { ok: true, on: false, permission: false, never: [] }),
     record("pin_unlock", { ok: false, reason: "pin_unavailable" }),
     record("pin_off", { ok: true }),
+    record("prf_options", { ok: false, reason: "prf_unavailable" }),
+    record("prf_window", { ok: true }),
+    record("prf_unlock", { ok: false, reason: "prf_failed" }),
     record("unlock_policy", { pin: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false, count: 0 } }),
     record("form_capture", undefined),
     record("form_gone", undefined),
@@ -99,6 +102,9 @@ const requests = {
   pin_unlock: () => encode("pin_unlock", { pin: "123456" }),
   unlock_policy: () => encode("unlock_policy", {}),
   pin_off: () => encode("pin_off", {}),
+  prf_options: () => encode("prf_options", {}),
+  prf_window: () => encode("prf_window", {}),
+  prf_unlock: () => encode("prf_unlock", { credential_id: "AQID", prf_output: "a".repeat(43) }),
 };
 
 /** The refusal as the page decodes it: a typed reply of the UI channel. @param {string} text */

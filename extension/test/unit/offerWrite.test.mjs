@@ -630,7 +630,8 @@ function writesIn(text) {
 const ALLOWED_WRITES = Object.freeze({
   "background/clipboard.mjs": ["alarms.create"],
   "background/lock.mjs": ["alarms.create"],
-  "background/pinHost.mjs": ["alarms.create"],
+  // The alarm of the renewal of the tokens, and the unlock window (opened once, brought forward when it is open).
+  "background/pinHost.mjs": ["alarms.create", "windows.create", "windows.update"],
   "background/menus.mjs": ["menus.create"],
   "background/fillFlow.mjs": ["tabs.create"],
   // The popup and the settings page open the web vault in a tab ("Manage in the web vault").

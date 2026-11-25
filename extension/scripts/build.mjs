@@ -111,7 +111,8 @@ export const FEATURES_FILE = "shared/features.mjs";
  */
 export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", CAPTURE_ENTRY]);
 /**
- * The package files of the `unlock` feature: the window for a passkey unlock and the one module that owns the PIN
+ * The package files of the `unlock` feature: the window for a passkey unlock (its page, its script and the steps the script
+ * runs, the one place with a WebAuthn call) and the one module that owns the PIN
  * store (the only code that opens the unlock database). A package with `unlock` off never holds one, and a release
  * that has the feature on always does (the release check). No file may import one of them by name: the build leaves
  * them out of a package with the feature off and refuses a package with a dangling import, and an import() with a
@@ -119,7 +120,7 @@ export const SAVE_FILES = Object.freeze([CAPTURE_BUNDLE, "content/capture.mjs", 
  * build generates, `background/unlockStore.gen.mjs` (unlockStoreModule): it re-exports the store when the feature is
  * on and says `null` when it is off. The handlers of the feature stay in the package and refuse when it is off.
  */
-export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "background/localUnlock.mjs"]);
+export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "pages/unlockWindowFlow.mjs", "background/localUnlock.mjs"]);
 /** The package files of each feature that has files of its own. */
 export const FEATURE_FILES = Object.freeze({ save: SAVE_FILES, unlock: UNLOCK_FILES });
 

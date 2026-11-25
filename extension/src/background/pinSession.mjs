@@ -17,6 +17,12 @@
 //                    the session is opened all the same: the PIN works without the server for a window (the caller
 //                    bounds it: the PIN store does). A refusal ends in a thrown error, and the caller locks.
 //   renewTokens      one renewal of the device's tokens, now: the way to learn that the device is still not revoked.
+//   prfOptions       what the unlock window needs for its one WebAuthn call: the vault's exact host and, from the server's list
+//                    as it is now, each passkey's credential id and salt. Live tokens and the network; nothing is kept.
+//   prfUnlock        the core's `unlock_prf` with the passkey's wrap and the record this device has pinned (no first use), and
+//                    then the checks that follow every unlock, which a passkey unlock always makes against the list it just
+//                    read (it is only done online). The OPAQUE server key handed to the core is the record's own, as in the
+//                    web vault; no response of the server is a source for it.
 //
 // Neither the PIN nor the master password is kept, logged or put in an error here: the bytes go to the core and the
 // client wipes them.
@@ -36,6 +42,10 @@ import { encodeWire } from "../shared/wire.mjs";
 function sameBytes(a, b) {
   return a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((n, i) => n === b[i]);
 }
+
+/** The method type of a passkey on the wire, and the length of the salt of its PRF. */
+const PRF_TYPE = 3;
+const PRF_SALT_LENGTH = 32;
 
 /**
  * The PIN's steps over the environment of a device session.
@@ -66,6 +76,64 @@ export function pinSessionMethods(inner) {
       throw new AccountError("pinned_missing");
     }
     return { db, accountId, email, record };
+  }
+
+  /**
+   * The passkey wraps of the server's list, with what an evaluation needs (a credential id and a 32-byte salt).
+   * @param {Record<string, any>} methods
+   * @returns {Array<Record<string, any>>}
+   */
+  function passkeyWraps(methods) {
+    return methods.methods.filter(
+      (/** @type {Record<string, any>} */ m) =>
+        m.method_type === PRF_TYPE && typeof m.credential_id === "string" && typeof m.prf_salt === "string" && b64u.decode(m.prf_salt).length === PRF_SALT_LENGTH,
+    );
+  }
+
+  /**
+   * A device whose tokens are alive (a passkey unlock is only offered and only runs for one). In device mode there is no
+   * cookie session to ask; the device's own state is the check.
+   */
+  async function livingDevice() {
+    const tokens = await /** @type {NonNullable<typeof device>} */ (device).tokens();
+    if (tokens === null || tokens.state !== "ok") throw new AccountError("signed_out");
+  }
+
+  /** @param {{ accountId: string, vaultId: string, vkEpoch: number, email: string, pinned: Record<string, any> }} ready @param {{ known?: Record<string, any> }} [options] */
+  async function finish(ready, { known } = {}) {
+    let checked = false;
+    /** @type {Record<string, any> | null} */
+    let methods = known ?? null;
+    if (methods === null) {
+      try {
+        methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+      } catch (error) {
+        // No answer (no network, a server that is down): the PIN works without the server for its window.
+        if (!(error instanceof ApiError) || !(error.status === 0 || error.status >= 500)) throw error;
+      }
+    }
+    if (methods !== null) {
+      // Below the epoch this device has pinned is a downgrade (an attack); above it, the vault was rekeyed since.
+      if (num(methods.vk_epoch) < num(ready.vkEpoch)) throw new AccountError("pinned_epoch_downgrade");
+      if (num(methods.vk_epoch) > num(ready.vkEpoch)) throw new AccountError("epoch_mismatch");
+      const manifest = rowToCore(methods.manifest);
+      const seeded = await env.client.vault.seed_pinned(ready.pinned, manifest);
+      await env.client.vault.check_server_methods(manifest, serverMethods(methods.methods));
+      // The account key the server lists must be the one the vault pins.
+      if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
+      await env.store.savePinned(await env.store.open(), env.server, ready.accountId, ready.email, seeded);
+      checked = true;
+    }
+    await inner.opened({
+      accountId: ready.accountId,
+      vaultId: ready.vaultId,
+      vkEpoch: ready.vkEpoch,
+      email: ready.email,
+      pinned: ready.pinned,
+      secretKey: "unchanged",
+      purpose: "unlock",
+    });
+    return { checked };
   }
 
   return {
@@ -145,41 +213,14 @@ export function pinSessionMethods(inner) {
      * a request the server refused (the device was revoked). The generation floors of the unlock methods are those of
      * `seed_pinned` (from the manifest) and `check_server_methods` (the server's list against the manifest), the same
      * calls as after a master password; the password wrap itself is not opened here, which is what the PIN replaces.
+     * `known`: the server's list the caller has just read (a passkey unlock reads it for the wrap); it is used as it is and
+     * a missing answer is then impossible, so the checks are always made.
      * @param {{ accountId: string, vaultId: string, vkEpoch: number, email: string, pinned: Record<string, any> }} ready
+     * @param {{ known?: Record<string, any> }} [options]
      * @returns {Promise<{ checked: boolean }>}
      */
-    async finishLocalUnlock(ready) {
-      let checked = false;
-      /** @type {Record<string, any> | null} */
-      let methods = null;
-      try {
-        methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
-      } catch (error) {
-        // No answer (no network, a server that is down): the PIN works without the server for its window.
-        if (!(error instanceof ApiError) || !(error.status === 0 || error.status >= 500)) throw error;
-      }
-      if (methods !== null) {
-        // Below the epoch this device has pinned is a downgrade (an attack); above it, the vault was rekeyed since.
-        if (num(methods.vk_epoch) < num(ready.vkEpoch)) throw new AccountError("pinned_epoch_downgrade");
-        if (num(methods.vk_epoch) > num(ready.vkEpoch)) throw new AccountError("epoch_mismatch");
-        const manifest = rowToCore(methods.manifest);
-        const seeded = await env.client.vault.seed_pinned(ready.pinned, manifest);
-        await env.client.vault.check_server_methods(manifest, serverMethods(methods.methods));
-        // The account key the server lists must be the one the vault pins.
-        if (!sameBytes(seeded.pk_a, b64u.decode(methods.pk_a))) throw new AccountError("pinned_auth_key");
-        await env.store.savePinned(await env.store.open(), env.server, ready.accountId, ready.email, seeded);
-        checked = true;
-      }
-      await inner.opened({
-        accountId: ready.accountId,
-        vaultId: ready.vaultId,
-        vkEpoch: ready.vkEpoch,
-        email: ready.email,
-        pinned: ready.pinned,
-        secretKey: "unchanged",
-        purpose: "unlock",
-      });
-      return { checked };
+    async finishLocalUnlock(ready, options) {
+      return finish(ready, options);
     },
 
     /**
@@ -192,6 +233,56 @@ export function pinSessionMethods(inner) {
       const tokens = await device.tokens();
       if (tokens === null) throw new ApiError(401, "signed_out");
       await tokens.refresh();
+    },
+
+    /**
+     * What the unlock window needs for its WebAuthn call. Needs live tokens (a device whose tokens have ended has nothing
+     * to unlock) and the network: the list is read now and kept nowhere. Rejects with an `AccountError` of `signed_out`,
+     * `pinned_missing` or `prf_unavailable` (no passkey is an unlock method), or the `ApiError` of the read.
+     * @returns {Promise<{ rpId: string, credentials: Array<{ id: string, salt: string }> }>}
+     */
+    async prfOptions() {
+      const { accountId } = await ownAccount();
+      await livingDevice();
+      const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+      const credentials = passkeyWraps(methods).map((wrap) => ({ id: wrap.credential_id, salt: wrap.prf_salt }));
+      if (credentials.length === 0) throw new AccountError("prf_unavailable");
+      // The relying party id of every passkey is the exact host of the vault, never a parent domain.
+      return { rpId: new URL(env.server).hostname, credentials };
+    },
+
+    /**
+     * Opens the vault in the worker with the 32 bytes a passkey gave for its salt, and makes the checks that follow every
+     * unlock against the list read for the wrap. `output` is wiped by the client (and again by the caller). The session is
+     * opened here (`finishLocalUnlock`'s last step); a refusal at any step is thrown and the caller locks. There is no first
+     * use: the record this device pinned for its account must exist.
+     * @param {{ credentialId: string, output: Uint8Array }} args
+     * @returns {Promise<{ accountId: string, email: string, checked: boolean }>}
+     */
+    async prfUnlock({ credentialId, output }) {
+      const { accountId, email, record } = await ownAccount();
+      await livingDevice();
+      if (!(record.vault_id instanceof Uint8Array)) throw new AccountError("pinned_missing");
+      /** @type {Record<string, any>} */
+      const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
+      const wrap = passkeyWraps(methods).find((m) => m.credential_id === credentialId);
+      // The passkey was removed since the window asked: nothing is tried with it.
+      if (wrap === undefined) throw new AccountError("method_removed");
+      const ctx = { account_id: hex16.decode(accountId), vault_id: record.vault_id, vk_epoch: methods.vk_epoch };
+      // No OPAQUE exchange runs here, so the server shows no key to check: the record's own key is handed back so that the
+      // core's server-key pin is neutral (it never pins a new one). Never a key from a response.
+      const pinned = { kind: "pinned", record, ...(record.server_public_key instanceof Uint8Array ? { server_public_key: record.server_public_key } : {}) };
+      /** @type {{ pinned: Record<string, any> }} */
+      let opened;
+      try {
+        opened = await env.client.vault.unlock_prf(env.server, ctx, output, wrapToCore(wrap, 0), pinned);
+      } catch (error) {
+        // A key that does not open the wrap has no more to say than a missing one.
+        throw /** @type {{ code?: unknown }} */ (error)?.code === "decrypt" ? new AccountError("prf_failed") : error;
+      }
+      const ready = { accountId, vaultId: hex16.encode(record.vault_id), vkEpoch: num(methods.vk_epoch), email, pinned: opened.pinned };
+      const { checked } = await finish(ready, { known: methods });
+      return { accountId, email, checked };
     },
 
     /** The account of this device from its own records, or null. @returns {Promise<string | null>} */

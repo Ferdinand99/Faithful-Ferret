@@ -85,6 +85,9 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   pin_unlock: Object.freeze(["pin"]),
   // The reply of `unlock_policy` has an object named `pin` (the rule and the state of the PIN: flags and numbers, nothing typed).
   unlock_policy: Object.freeze(["pin"]),
+  // The 32 bytes a passkey gave the unlock window, on their one way to the background (a request from the window, never a
+  // reply). The window wipes its copy as soon as the message is sent.
+  prf_unlock: Object.freeze(["prf_output"]),
 });
 
 /**
@@ -102,6 +105,8 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   // `pin` is a forbidden name, so SECRET_KEY_EXCEPTIONS names exactly these two types for it.
   pin_set: Object.freeze(["mp", "sk", "pin"]),
   pin_unlock: Object.freeze(["pin"]),
+  // Not typed, but it travels the same way: from the unlock window to the background, one way, in this one type.
+  prf_unlock: Object.freeze(["prf_output"]),
 });
 
 /** The type of the background's refusal. No table may define it. */
@@ -130,6 +135,7 @@ export const FRAME_UNCHECKED = "frame_unchecked";
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const REASON = /^[a-z][a-z0-9_]*$/;
+const B64U = /^[A-Za-z0-9_-]+$/;
 
 const requestId = string({ min: 1, max: 64, pattern: ID });
 const ref = string({ min: 1, max: 64, pattern: ID });
@@ -341,6 +347,31 @@ export const UI_TYPES = defineTypes({
   },
   // Turns the PIN off: the record is deleted. It needs no password.
   pin_off: { request: empty, reply: okReply },
+  // Unlocking with a passkey (design document, sections 7.2 and 7.3), only from the extension's own unlock window.
+  // `prf_options`: what the window needs for its one WebAuthn call, read from the server now (never kept): the host the
+  // passkeys belong to (the vault's exact host) and, for each passkey, its credential id and salt (base64url). It needs the
+  // network and live tokens. `prf_unlock`: the credential that answered and the 32 bytes it gave for its salt (base64url);
+  // the background opens the vault with them or says why not. Neither answer carries a key or a text of the core.
+  prf_options: {
+    request: empty,
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        rp_id: string({ min: 1, max: 253 }),
+        credentials: array(object({ id: string({ min: 1, max: 1024, pattern: B64U }), salt: string({ min: 43, max: 43, pattern: B64U }) }), { max: 16 }),
+      },
+      { optional: ["reason", "rp_id", "credentials"] },
+    ),
+  },
+  // `prf_window`: opens the unlock window (or brings the open one to the front); the popup asks for it, because a popup that
+  // makes the call itself closes when the system's dialog takes the focus. It carries nothing and the answer says only whether
+  // the window could be opened.
+  prf_window: { request: empty, reply: okReply },
+  prf_unlock: {
+    request: object({ credential_id: string({ min: 1, max: 1024, pattern: B64U }), prf_output: string({ min: 43, max: 43, pattern: B64U }) }),
+    reply: object({ ok: boolean(), reason, account_email: email, server: serverUrl }, { optional: ["reason", "account_email", "server"] }),
+  },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
   // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`

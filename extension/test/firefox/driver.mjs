@@ -201,6 +201,23 @@ ${this.log.slice(-4000)}`);
     await Promise.race([exited, sleep(10_000).then(() => child.kill("SIGKILL"))]);
   }
 
+  /**
+   * Adds a virtual authenticator to the session (WebDriver's Web Authentication extension): a platform authenticator that
+   * verifies the user and holds resident keys. It only answers when the profile has the soft token on and the USB token off
+   * (security.webauth.webauthn_enable_softtoken and ..._usbtoken); the PRF extension works on it.
+   * @returns {Promise<string>} the id of the authenticator
+   */
+  async addVirtualAuthenticator() {
+    return wire("POST", `${this.#s()}/webauthn/authenticator`, {
+      protocol: "ctap2",
+      transport: "internal",
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserConsenting: true,
+      isUserVerified: true,
+    });
+  }
+
   /** @param {"content" | "chrome"} context */
   async setContext(context) {
     await wire("POST", `${this.#s()}/moz/context`, { context });

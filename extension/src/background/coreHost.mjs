@@ -42,7 +42,7 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * feature. The capture ops (`capture_event`, `capture_settings`, and the popup's `offer_list`,
  * `offer_dismiss`, `offer_reveal`) are the capture
  * host's (captureHost.mjs); a build without the feature does not have them. The PIN ops (`unlock_policy`, `pin_set`,
- * `pin_unlock`, `pin_off`) are the PIN host's (pinHost.mjs); a build without the `unlock` feature does not have them.
+ * `pin_unlock`, `pin_off`) and the passkey's (`prf_options`, `prf_unlock`) are the PIN host's (pinHost.mjs); a build without the `unlock` feature does not have them.
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -97,6 +97,9 @@ export const CORE_OPS = Object.freeze([
   "pin_set",
   "pin_unlock",
   "pin_off",
+  "prf_options",
+  "prf_unlock",
+  "prf_window",
 ]);
 
 /**

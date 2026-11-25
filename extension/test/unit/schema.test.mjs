@@ -145,7 +145,7 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
   }
   assert.deepEqual(
     [...seenTyped].sort(),
-    ["pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
+    ["pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "prf_unlock.prf_output", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
   );
   assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "vk", "pin", "prf_output"]);
 
@@ -323,6 +323,9 @@ test("every UI request and reply round-trips with a sample body", () => {
     pin_set: [{ mp: "p", sk: "FFS1-X", pin: "123456", location: "disk", acknowledged: true }, { ok: false, reason: "wrong_credentials" }],
     pin_unlock: [{ pin: "123456" }, { ok: false, reason: "wrong_pin", left: 3, wait_ms: 5000 }],
     pin_off: [{}, { ok: true }],
+    prf_options: [{}, { ok: true, rp_id: "vault.example.com", credentials: [{ id: "AQID", salt: "a".repeat(43) }] }],
+    prf_window: [{}, { ok: true }],
+    prf_unlock: [{ credential_id: "AQID", prf_output: "b".repeat(43) }, { ok: false, reason: "prf_failed" }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {
@@ -338,7 +341,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
   assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, {
     fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"],
-    pin_set: ["pin"], pin_unlock: ["pin"], unlock_policy: ["pin"],
+    pin_set: ["pin"], pin_unlock: ["pin"], unlock_policy: ["pin"], prf_unlock: ["prf_output"],
   });
   /** @type {string[]} */
   const holders = [];
@@ -355,6 +358,7 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "ui/offer_reveal/reply/value",
     "ui/pin_set/request/pin",
     "ui/pin_unlock/request/pin",
+    "ui/prf_unlock/request/prf_output",
     "ui/unlock_policy/reply/pin",
   ]);
   // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
