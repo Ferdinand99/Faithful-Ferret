@@ -4,6 +4,7 @@
 // off switch look different) and a real Space and Enter on a focused row.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { shotPath } from "./adversary.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, openSettingsPage, stopFixtures } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -90,10 +91,12 @@ test("the_settings_view_shows_groups_opens_a_page_and_its_switches_tell_on_from_
         feature: document.querySelector('[data-page="provider"]')?.getAttribute("data-feature"),
       }));
       assert.deepEqual(provider.switches, [["passkeys-switch", "false"], ["passkeys-recent-switch", "true"]], channel);
-      assert.equal(provider.title, "Use Ferret for passkeys", channel);
+      assert.equal(provider.title, "Passkeys in Ferret", channel);
       assert.equal(provider.feature, "passkeys", channel);
+      await session.screenshot(shotPath(channel, "ext-settings-passkeys"));
       await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="provider"] [data-role="settings-back"]')).click());
       await openSettingsPage(session, "provider-never");
+      await session.screenshot(shotPath(channel, "ext-settings-passkeys-never"));
       assert.equal(await session.content(() => document.querySelector('[data-role="passkeys-never-empty"]')?.getClientRects().length > 0), true, `${channel}: an empty list says so`);
       await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="provider-never"] [data-role="settings-back"]')).click());
 

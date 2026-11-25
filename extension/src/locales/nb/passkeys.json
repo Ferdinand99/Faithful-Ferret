@@ -79,7 +79,7 @@
   "passkeys.settings.signed_out": "Ferret er logget ut, så passkeys på nettsteder blir hos nettleseren til du logger inn.",
   "passkeys.settings.switch": "Bruk Ferret til passkeys",
   "passkeys.settings.switch.desc": "Ferret kan lagre og bruke passkeys på nettsteder.",
-  "passkeys.settings.title": "Bruk Ferret til passkeys",
+  "passkeys.settings.title": "Passkeys i Ferret",
   "passkeys.settings.why": "For å tilby passkeys må Ferret kjøre et lite skript på alle https-sider, og derfor ber den nettleseren om tilgang til https-sider. Skriptet sender ingenting før et nettsted ber om en passkey. Ferret svarer først når du har valgt den i sitt eget vindu, og nettleseren er alltid ett av valgene.",
   "passkeys.site.label": "Nettsted",
   "passkeys.site.rp": "Passkey for",
