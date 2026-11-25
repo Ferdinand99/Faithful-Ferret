@@ -47,7 +47,8 @@
 // * The result of `ferret.job.argon2_export_key` is `K_exp`. The caller passes
 //   it on to `export_finish` or `import_open`, which wipe it, or `fill(0)`s it.
 //
-// Passkeys (the vault methods `passkey_create`, `passkey_get`):
+// Passkeys (the vault methods `passkey_create`, `passkey_get`, `passkey_candidates`,
+// `passkey_site`):
 //
 // * `passkey_create` returns `{ item, item_id, pending }` and does not answer
 //   the page. Upload `item`; when the server has accepted it, call
@@ -58,6 +59,15 @@
 //   `passkey.cred_id`; an empty array is `invalid_input`.
 // * PRF results depend on user verification (two seeds, spec § 9.3): the same
 //   salt gives different outputs with and without it.
+// * `passkey_candidates(caller, request)` takes the request of `passkey_get` and
+//   returns the handles of the open passkey items that may answer it (the core
+//   checks the whole request first). `passkey_site(caller, rp_id)` returns
+//   `{ origin, host_unicode, rp_id, rp_id_unicode }`; `rp_id` is a string or
+//   `null`. Both are for Ferret's own windows; neither result goes to the page.
+// * The answers carry `authenticator_attachment`; the answer of `create` also
+//   `transports` and, when the site asked for it, `cred_props` (`{ rk }`).
+//   `item_view`'s `passkey` has `rp_name` and `user_display_name` (`null` when
+//   the site gave none): text a site chose, never the identity of the site.
 //
 // Encrypted export: `export_begin(rows, now_ms, kdf, token)` needs the same
 // one-time token as the plaintext export (the file holds every secret of the

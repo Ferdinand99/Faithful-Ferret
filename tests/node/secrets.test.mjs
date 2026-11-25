@@ -504,6 +504,8 @@ test("no_reply_holds_key_material", () => {
   }
   call("passkey_get", () => vault.passkey_get(ph, { challenge: fill(32, 3), rp_id: "example.com", allow: [], user_verification: "required" }, caller, uv));
   call("item_view (passkey)", () => vault.item_view(ph));
+  call("passkey_candidates", () => vault.passkey_candidates(caller, { challenge: fill(32, 3), rp_id: "example.com", allow: [], user_verification: "required" }));
+  call("passkey_site", () => vault.passkey_site(caller, "example.com"));
 
   // ---- export and import
   const rows = [row(id, newItem), row(pkId, made.item)];

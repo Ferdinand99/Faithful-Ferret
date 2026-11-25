@@ -12,6 +12,7 @@
 use crate::convert::{ANY, Shape, Shaped, bytes};
 use crate::error::{Fail, Res};
 use ferret_core::item::view::ItemView;
+use ferret_core::passkey::{optional_site_text, site_text};
 use ferret_core::{Field, FieldKind, ItemBody, ItemType, Totp, UrlEntry, UrlMatch, parse_otpauth};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -43,13 +44,20 @@ struct UrlViewDto<'a> {
 #[derive(Serialize)]
 struct PasskeyViewDto<'a> {
     rp_id: &'a str,
-    user_name: &'a str,
+    user_name: String,
     created: u64,
     has_prf: bool,
     #[serde(with = "bytes")]
     cred_id: &'a [u8],
     #[serde(with = "bytes")]
     user_handle: &'a [u8],
+    /// What the site called itself and the account, as it gave it, without
+    /// the characters the core refuses in names (`null` for a passkey that
+    /// has none). The same filter is applied to `user_name`. Text a site
+    /// chose: show it in an isolated element and never as the identity of the
+    /// site (`rp_id` is).
+    rp_name: Option<String>,
+    user_display_name: Option<String>,
 }
 
 /// What JavaScript may see of an item: no private key, no PRF seed, no TOTP
@@ -91,6 +99,18 @@ impl<'a> ViewDto<'a> {
         let (cred_id, user_handle) = body.passkey.as_ref().map_or((NONE, NONE), |p| {
             (p.cred_id.as_slice(), p.user_handle.as_slice())
         });
+        // Names an older body or an import may hold are cleaned here, on the
+        // way out, so that every window that reads the view gets clean text.
+        let rp_name = body
+            .passkey
+            .as_ref()
+            .and_then(|p| p.rp_name.as_deref())
+            .and_then(optional_site_text);
+        let user_display_name = body
+            .passkey
+            .as_ref()
+            .and_then(|p| p.user_display_name.as_deref())
+            .and_then(optional_site_text);
         Self {
             item_type: &v.item_type,
             name: &v.name,
@@ -115,11 +135,13 @@ impl<'a> ViewDto<'a> {
             has_totp: v.has_totp,
             passkey: v.passkey.as_ref().map(|p| PasskeyViewDto {
                 rp_id: &p.rp_id,
-                user_name: &p.user_name,
+                user_name: site_text(&p.user_name),
                 created: p.created,
                 has_prf: p.has_prf,
                 cred_id,
                 user_handle,
+                rp_name,
+                user_display_name,
             }),
             has_notes: v.has_notes,
             created: v.created,

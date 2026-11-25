@@ -13,7 +13,7 @@ import {
   runExternal,
   runVectorFile,
 } from "../../bindings/wasm/js/vector-runner.mjs";
-import { root, wasm } from "./helpers.mjs";
+import { fill, newAccount, root, wasm } from "./helpers.mjs";
 
 const vectors = join(root, "vectors");
 const ops = parseOps(readFileSync(join(vectors, "OPS.md"), "utf8"));
@@ -85,4 +85,55 @@ test("a changed expectation fails the runner", () => {
   assert.equal(r.failures.length, 1);
   const unknown = runVectorFile(wasm, { cases: [{ ...valid, op: "not.an.op" }] }, ops);
   assert.equal(unknown.failures.length, 1);
+});
+
+test("binding_passkey_agrees_with_the_core_vectors", () => {
+  // The candidate and site cases of the vectors, through the methods of the
+  // vault itself: the stored passkeys of a case are opened as items (with the
+  // RP ID as it is, canonical or not), and the handles that come back are
+  // mapped to the indexes the vector expects.
+  const file = JSON.parse(readFileSync(join(vectors, "internal", "passkey.json"), "utf8"));
+  const hex = (s) => new Uint8Array(Buffer.from(s, "hex"));
+  const code = (fn) => {
+    try {
+      fn();
+    } catch (e) {
+      assert.equal(e.name, "FerretError", "an error that is a code");
+      return e.code;
+    }
+    return null;
+  };
+  let ran = 0;
+  for (const c of file.cases) {
+    if (c.op !== "passkey.candidates" && c.op !== "passkey.site") continue;
+    const i = c.input;
+    const { vault } = newAccount(`vectors-${c.id}`);
+    const caller = { origin: i.origin, top_origin_is_same: i.top_origin_is_same };
+    let got;
+    let error = null;
+    if (c.op === "passkey.site") {
+      error = code(() => {
+        got = vault.passkey_site(caller, i.rp_id);
+      });
+    } else {
+      const handles = i.stored.map((s) => vault.test_passkey_open(s.rp_id, hex(s.id)));
+      const request = {
+        challenge: fill(32, 0),
+        rp_id: i.rp_id,
+        allow: i.allow.map(hex),
+        user_verification: "discouraged",
+      };
+      error = code(() => {
+        got = { indexes: vault.passkey_candidates(caller, request).map((h) => handles.indexOf(h)).sort((a, b) => a - b) };
+      });
+    }
+    if (c.status === "invalid") {
+      assert.equal(error, c.expect_error, c.id);
+    } else {
+      assert.equal(error, null, c.id);
+      assert.deepEqual(got, c.expect, c.id);
+    }
+    ran++;
+  }
+  assert.ok(ran >= 30, `${ran} cases`);
 });

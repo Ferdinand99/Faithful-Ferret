@@ -264,6 +264,145 @@ test("passkey_rules_hold_in_the_binding", () => {
   assert.equal(code(() => passkeyCreate(vault, fill(16, 0x55), 1, "E", { ...CREATE, extra: 1 }, CALLER, UV, NO_EXISTING, NOW, undefined)), "invalid_input");
 });
 
+test("candidates_return_handles_of_open_items_only", () => {
+  const { vault } = newAccount("pk-candidates");
+  const make = (n, caller, request = CREATE) =>
+    passkeyCreate(vault, fill(16, n), 1, `Item ${n}`, request, caller, UV, NO_EXISTING, NOW, undefined);
+  const a = make(0x61, CALLER);
+  const b = make(0x62, CALLER, { ...CREATE, user_id: fill(8, 2), user_name: "bob" });
+  const other = { origin: "https://other.com", top_origin_is_same: true };
+  const c = make(0x63, other, { ...CREATE, rp_id: "other.com" });
+  const plain = vault.encrypt_item(fill(16, 0x64), 1, LOGIN_DRAFT, undefined, NOW);
+  const login = open(vault, fill(16, 0x64), plain);
+  const sorted = (list) => [...list].sort((x, y) => x - y);
+  const handles = (request, caller = CALLER) => vault.passkey_candidates(caller, request);
+
+  // The passkeys of the RP ID, as plain numbers; a login without a passkey and a passkey of another site are not in it.
+  const both = handles(GET);
+  assert.ok(Array.isArray(both) && both.every((h) => typeof h === "number"));
+  assert.deepEqual(sorted(both), sorted([a.handle, b.handle]));
+  assert.ok(!both.includes(c.handle) && !both.includes(login));
+  assert.deepEqual(handles({ ...GET, rp_id: null }), both, "no rp_id means the host of the origin");
+  assert.deepEqual(handles({ ...GET, rp_id: undefined }), both);
+  assert.deepEqual(handles({ ...GET, rp_id: "other.com" }, other), [c.handle]);
+
+  // allowCredentials narrows by credential id; an id of another site gives nothing.
+  assert.deepEqual(handles({ ...GET, allow: [a.response.id] }), [a.handle]);
+  assert.equal(handles({ ...GET, allow: [a.response.id, b.response.id] }).length, 2);
+  assert.deepEqual(handles({ ...GET, allow: [c.response.id] }), []);
+  assert.deepEqual(handles({ ...GET, allow: [fill(32, 0x99)] }), []);
+
+  // The RP ID is matched exactly: a sub-domain with no rp_id gets nothing, and the parent's passkeys are reached only by naming it.
+  const sub = { origin: "https://login.example.com", top_origin_is_same: true };
+  assert.deepEqual(handles({ ...GET, rp_id: null }, sub), []);
+  assert.deepEqual(sorted(handles(GET, sub)), sorted([a.handle, b.handle]));
+  // A trailing dot is the same site.
+  assert.deepEqual(sorted(handles({ ...GET, rp_id: "example.com." })), sorted([a.handle, b.handle]));
+
+  // A passkey that is made but not confirmed is not open, and one that is closed is gone.
+  const waiting = vault.passkey_create(fill(16, 0x65), 1, "Waiting", { ...CREATE, user_id: fill(8, 3) }, CALLER, UV, NO_EXISTING, NOW, undefined);
+  assert.deepEqual(sorted(handles(GET)), sorted([a.handle, b.handle]));
+  vault.passkey_create_abort(waiting.pending);
+  vault.close_item(b.handle);
+  assert.deepEqual(handles(GET), [a.handle]);
+
+  // A request the core refuses gives the error of passkey_get, and says nothing of the vault.
+  assert.equal(code(() => handles(GET, { ...CALLER, top_origin_is_same: false })), "not_allowed");
+  assert.equal(code(() => handles({ ...GET, rp_id: "com" })), "malformed_rp_id");
+  assert.equal(code(() => handles({ ...GET, rp_id: "other.com" })), "malformed_rp_id");
+  assert.equal(code(() => handles({ ...GET, challenge: new Uint8Array(2048) })), "too_large");
+  assert.equal(code(() => handles({ ...GET, allow: Array.from({ length: 201 }, (_, i) => fill(32, i)) })), "too_large");
+  // The whole request is checked first, as passkey_get checks it (the input of prf names a credential that is not allowed).
+  const prfBad = { ...GET, prf: { eval_by_credential: [{ id: fill(32, 0x98), first: fill(4, 1) }] } };
+  assert.equal(code(() => handles(prfBad)), code(() => vault.passkey_get(a.handle, prfBad, CALLER, UV)));
+  assert.equal(code(() => handles({ ...GET, user_verification: "maybe" })), "invalid_input");
+  assert.equal(code(() => handles({ ...GET, extra: 1 })), "invalid_input");
+  assert.equal(code(() => handles(GET, { origin: "https://example.com" })), "invalid_input");
+  const empty = newAccount("pk-candidates-empty").vault;
+  for (const bad of [{ ...GET, rp_id: "com" }, { ...GET, challenge: new Uint8Array(2048) }]) {
+    assert.equal(code(() => empty.passkey_candidates(CALLER, bad)), code(() => handles(bad)));
+  }
+  assert.deepEqual(empty.passkey_candidates(CALLER, GET), []);
+  // A locked vault answers nothing.
+  vault.lock();
+  assert.equal(code(() => vault.passkey_candidates(CALLER, GET)), "vault_locked");
+  assert.equal(code(() => vault.passkey_site(CALLER, null)), "vault_locked");
+});
+
+test("passkey_site_gives_the_site_the_chooser_shows", () => {
+  const { vault } = newAccount("pk-site");
+  assert.deepEqual(vault.passkey_site(CALLER, null), {
+    origin: "https://example.com", host_unicode: "example.com", rp_id: "example.com", rp_id_unicode: "example.com",
+  });
+  assert.deepEqual(vault.passkey_site({ origin: "https://login.example.com.", top_origin_is_same: true }, "example.com."), {
+    origin: "https://login.example.com", host_unicode: "login.example.com", rp_id: "example.com", rp_id_unicode: "example.com",
+  });
+  const idn = vault.passkey_site({ origin: "https://xn--bcher-kva.example", top_origin_is_same: true }, undefined);
+  assert.equal(idn.rp_id, "xn--bcher-kva.example");
+  assert.equal(idn.rp_id_unicode, "bücher.example");
+  assert.equal(code(() => vault.passkey_site({ ...CALLER, top_origin_is_same: false }, null)), "not_allowed");
+  assert.equal(code(() => vault.passkey_site(CALLER, "com")), "malformed_rp_id");
+  assert.equal(code(() => vault.passkey_site(CALLER, "other.com")), "malformed_rp_id");
+  assert.equal(code(() => vault.passkey_site(CALLER, "x".repeat(2000))), "too_large");
+  assert.equal(code(() => vault.passkey_site({ ...CALLER, extra: 1 }, null)), "invalid_input");
+});
+
+test("the_new_response_fields_cross_the_binding", () => {
+  const { vault } = newAccount("pk-fields");
+  const plain = passkeyCreate(vault, fill(16, 0x66), 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  // The attachment and the transports are always there, as text; credProps only when the site asked for it.
+  assert.equal(plain.response.authenticator_attachment, "platform");
+  assert.deepEqual(plain.response.transports, ["hybrid", "internal"]);
+  assert.ok(plain.response.transports.every((t) => typeof t === "string"));
+  assert.equal(plain.response.cred_props, null);
+  const asked = passkeyCreate(vault, fill(16, 0x67), 1, "Example", { ...CREATE, user_id: fill(8, 4), cred_props: true }, CALLER, UV, NO_EXISTING, NOW, undefined);
+  assert.deepEqual(asked.response.cred_props, { rk: true });
+  assert.equal(asked.response.authenticator_attachment, "platform");
+  assert.deepEqual(asked.response.transports, ["hybrid", "internal"]);
+  assert.equal(code(() => vault.passkey_create(fill(16, 0x68), 1, "x", { ...CREATE, cred_props: "yes" }, CALLER, UV, NO_EXISTING, NOW, undefined)), "invalid_input");
+  // The answer of a get has the attachment too.
+  const got = vault.passkey_get(asked.handle, GET, CALLER, UV);
+  assert.equal(got.authenticator_attachment, "platform");
+  assertSignature(asked, got);
+  // The names the site gave are in the view of the item, as text.
+  const view = vault.item_view(plain.handle);
+  assert.equal(view.passkey.rp_name, "Example");
+  assert.equal(view.passkey.user_display_name, "Alice");
+  // A passkey without them shows null.
+  const bare = vault.test_passkey_open("example.com", fill(32, 0x77));
+  assert.equal(vault.item_view(bare).passkey.rp_name, null);
+  assert.equal(vault.item_view(bare).passkey.user_display_name, null);
+  // Names that an older body or an import holds are cleaned on the way out (bidi controls, separators, zero-width space, byte order mark).
+  const dirty = vault.test_passkey_open(
+    "example.com", fill(32, 0x78), "al‮ice ", "Ex‮moc.elgoog​", "⁦Al﻿ice⁩",
+  );
+  const shown = vault.item_view(dirty).passkey;
+  assert.equal(shown.user_name, "alice");
+  assert.equal(shown.rp_name, "Exmoc.elgoog");
+  assert.equal(shown.user_display_name, "Alice");
+  // A name that is nothing but refused characters is no name; the zero-width joiner of an emoji stays.
+  const empty = vault.test_passkey_open("example.com", fill(32, 0x79), "⁦", "‮‬", "👩‍💻");
+  assert.equal(vault.item_view(empty).passkey.rp_name, null);
+  assert.equal(vault.item_view(empty).passkey.user_name, "");
+  assert.equal(vault.item_view(empty).passkey.user_display_name, "👩‍💻");
+});
+
+test("item_view_still_hides_priv_and_seeds", () => {
+  const { vault } = newAccount("pk-view-hides");
+  const made = passkeyCreate(vault, fill(16, 0x69), 1, "Example", CREATE, CALLER, UV, NO_EXISTING, NOW, undefined);
+  const view = vault.item_view(made.handle);
+  // Exactly the public side of the passkey, and nothing that signs.
+  assert.deepEqual(Object.keys(view.passkey).sort(), [
+    "created", "cred_id", "has_prf", "rp_id", "rp_name", "user_display_name", "user_handle", "user_name",
+  ]);
+  const secrets = ["scalar", "pkcs8", "seed_uv", "seed_nouv"].map((w) => vault.test_passkey_secret(made.handle, w));
+  assert.ok(secrets.every((s) => s && s.length >= 32));
+  const hexes = secrets.map((s) => Buffer.from(s).toString("hex"));
+  const walk = (v) => (v instanceof Uint8Array ? [Buffer.from(v).toString("hex")] : v && typeof v === "object" ? Object.values(v).flatMap(walk) : []);
+  const shown = [view, vault.passkey_candidates(CALLER, GET)].flatMap(walk).join(" ") + JSON.stringify(view);
+  for (const hex of hexes) assert.ok(!shown.includes(hex), "a secret of the passkey is in what JavaScript gets");
+});
+
 test("a_passkey_is_released_only_after_the_item_is_confirmed_stored", () => {
   const { vault } = newAccount("pk-pending");
   const id = fill(16, 0x56);

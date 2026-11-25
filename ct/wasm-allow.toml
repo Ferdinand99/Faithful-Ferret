@@ -45,8 +45,8 @@ reason = "The check of the shape of a JavaScript argument before it is read: a m
 [[allow]]
 function = "^ferret_core_wasm::convert::from_js$"
 instruction = "br_table"
-max = 7
-reason = "serde-wasm-bindgen's reading of a JS value into a Rust type, inlined: a match on the kind of each value (number, string, array, object) and on field names; the structure of a call from JavaScript, not key bytes: key material arrives as byte arrays that are copied."
+max = 8
+reason = "APPROVED: Same code as the entry already there: serde-wasm-bindgen reading a JavaScript value into a Rust type, inlined. The entry went from 7 to 8 when GetDto got a second caller (passkey_candidates reads the same request type as passkey_get): that stopped wasm-opt from inlining the read into the passkey_get shim, so the match on the kind of a value, which was counted in that shim, is now counted here. This is the structure of a call from JavaScript; key material arrives as byte arrays that are copied."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::from_js_list$"
@@ -131,6 +131,12 @@ function = "^ferret_core_wasm::methods::MethodChangeDto>::of$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 2
 reason = "APPROVED: The two loads read the static name of the operation (unlock-method.add or unlock-method.remove) from a table indexed by the operation, which is a public tag chosen by the caller; the rest of the function copies the sealed row, the request body and the public key pk_a, which are public."
+
+[[allow]]
+function = "^ferret_core_wasm::passkey::GetDto>::core$"
+instruction = "i32\\.div_u"
+max = 3
+reason = "APPROVED: Turning the request of a get into the core request: element-size divisions of the lists of allowed credential ids and of the PRF inputs by credential, whose lengths are public counters. passkey_get and passkey_candidates now share this function, so the divisions that were inside the passkey_get shim are here. The ids and the salts are only copied; none is used as an address or a divisor."
 
 [[allow]]
 function = "^ferret_core_wasm::passkey::user_verification$"
@@ -901,16 +907,16 @@ max = 1
 reason = "APPROVED: The export shim of Vault.match_page, into which wasm-opt inlined the method. The three hits are the walk over the saved addresses of the open items and the match on the result of url_match. The indexed load reads the next handle from the list of handles that JavaScript passed in, at the start of the list plus the loop counter; the division is the length of the list of saved addresses of an item divided by the size of one entry (36 bytes), the jump table is the match on the result of the comparison (none, host, domain, exact). The search of the map of open items by the handle is a call to another function, not one of these hits. Every operand is public: handles are counters that JavaScript holds, the lengths are counts of saved addresses, and the saved addresses and the page address are public text. No password, key or field value is read, and the reply holds a handle and one of three words."
 
 [[allow]]
-function = "^vault_passkey_get externref shim multivalue shim$"
-instruction = "br_table"
-max = 1
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+function = "^vault_passkey_candidates externref shim multivalue shim$"
+instruction = "i32\\.div_u"
+max = 2
+reason = "APPROVED: The export shim of Vault.passkey_candidates, into which wasm-opt inlined the method. The loads and divisions are the walk over the open items and the list of found indexes: the indexed load reads the next entry of the map of handles, the divisions are the lengths of the lists of stored references and of handles divided by the size of one entry, all counts that are public. The RP IDs and credential ids are compared by the core and never used as an address or a divisor; no key, seed or signature is read, and the reply is a list of handles."
 
 [[allow]]
-function = "^vault_passkey_get externref shim multivalue shim$"
-instruction = "i32\\.div_u"
-max = 3
-reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+function = "^vault_passkey_candidates externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The export shim of Vault.passkey_candidates, into which wasm-opt inlined the method. The loads and divisions are the walk over the open items and the list of found indexes: the indexed load reads the next entry of the map of handles, the divisions are the lengths of the lists of stored references and of handles divided by the size of one entry, all counts that are public. The RP IDs and credential ids are compared by the core and never used as an address or a divisor; no key, seed or signature is read, and the reply is a list of handles."
 
 [[allow]]
 function = "^vault_passkey_get externref shim multivalue shim$"
