@@ -57,8 +57,8 @@
   --on-inverse: light-dark(#ffffff, #0b0b0d);
 
   /* Brand (the family's) — links, focus, selection. Use sparingly. */
-  --brand: light-dark(#6656e8, #8b7dff);
-  --brand-ring: light-dark(rgba(102, 86, 232, 0.22), rgba(139, 125, 255, 0.32));
+  --brand: light-dark(#0b7467, #59d9c7);
+  --brand-ring: light-dark(rgba(11, 116, 103, 0.22), rgba(89, 217, 199, 0.32));
 
   /* Accent: the ferret's mint (#59d9c7, provisional). Mint on a light
      background fails contrast (1.5:1), so text uses a deep teal there (5.9:1

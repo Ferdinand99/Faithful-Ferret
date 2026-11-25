@@ -2,7 +2,7 @@
 // 3:1 for the focus ring). The colours are read from the style sheets themselves, so a token that is changed later is
 // checked without anyone remembering to update a list.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -136,6 +136,19 @@ for (const theme of /** @type {const} */ (["light", "dark"])) {
     }
   });
 
+  test(`${theme}_a_fill_of_the_brand_colour_carries_its_text_and_its_tick_at_aa`, () => {
+    // The avatar, the badge and a primary button of the brand colour use --on-inverse; the tick of a ticked box is the
+    // mark that is drawn on the fill (white on the light theme's teal, dark on the dark theme's turquoise).
+    const fill = token("--brand", theme);
+    assert.ok(ratio(token("--on-inverse", theme), fill) >= 4.5, `${theme}: --on-inverse on --brand`);
+    const ticks = [...readFileSync(join(styles, "base.css"), "utf8").matchAll(/--i-tick:\s*url\([^)]*stroke=%27(white|%23[0-9a-f]{6})%27/gi)].map((m) => m[1]);
+    assert.deepEqual(ticks, ["white", "%230b0b0d", "%230b0b0d"], "white for the light theme, dark for the dark one (chosen by the system, and forced by data-theme)");
+    const tick = colour(theme === "light" ? "#ffffff" : "#0b0b0d", theme);
+    assert.ok(ratio(tick, fill) >= 4.5, `${theme}: the tick on --brand is ${ratio(tick, fill).toFixed(2)}:1`);
+    // The radio's dot and the bar of a half-ticked box are --on-inverse, the same pair.
+    assert.ok(readFileSync(join(styles, "base.css"), "utf8").includes("radial-gradient(circle, var(--on-inverse) 0 3.5px, var(--brand) 4px)"));
+  });
+
   test(`${theme}_the_edge_of_a_field_and_of_a_box_reaches_3_to_1_on_every_surface_it_sits_on`, () => {
     const bg = token("--bg", theme);
     for (const edge of ["--field-line"]) {
@@ -159,3 +172,22 @@ for (const theme of /** @type {const} */ (["light", "dark"])) {
     }
   });
 }
+
+test("the_brand_is_the_logos_turquoise_in_the_dark_theme_and_a_darker_teal_in_the_light_one", () => {
+  const brand = TOKENS.get("--brand");
+  assert.ok(brand);
+  assert.equal(brand.dark, "#59d9c7", "the colour of the logo");
+  assert.ok(luminance(colour(brand.light, "light")) < luminance(colour(brand.dark, "dark")), "darker in the light theme");
+  // Teal, not another hue: green and blue above red, in both themes.
+  for (const [value, theme] of /** @type {const} */ ([[brand.light, "light"], [brand.dark, "dark"]])) {
+    const c = colour(value, theme);
+    assert.ok(c.g > c.r * 2 && c.b > c.r * 2 && Math.abs(c.g - c.b) < 30, `${theme}: ${value} is turquoise`);
+  }
+});
+
+test("no_style_sheet_of_the_web_vault_still_paints_the_old_purple", () => {
+  const purple = /6656e8|8b7dff|a99fff|102,\s*86,\s*232|139,\s*125,\s*255/i;
+  for (const file of readdirSync(styles).filter((name) => name.endsWith(".css"))) {
+    assert.ok(!purple.test(readFileSync(join(styles, file), "utf8")), `${file} has no purple brand colour`);
+  }
+});

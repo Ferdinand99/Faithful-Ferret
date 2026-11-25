@@ -7,6 +7,7 @@
 //! The admin listener never has a password field, never loads WASM and serves
 //! no vault route.
 
+pub mod brand;
 pub mod codes;
 pub mod guard;
 pub mod handoff_page;
@@ -40,6 +41,7 @@ where
     Origins: FromRef<S>,
 {
     Router::new()
+        .merge(brand::routes())
         .merge(redirects::routes())
         .merge(handoff_page::routes())
         .merge(signed_out_page::routes())

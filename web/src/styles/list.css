@@ -4,8 +4,8 @@
    Nothing is shown by colour alone: a mark has its words, a chosen filter its ticked box and a pressed button. */
 :root {
   --row-h: 3.5rem;
-  --tint-login: light-dark(#6656e8, #8b7dff);
-  --tint-note: light-dark(#0a7d6a, #5fe0c3);
+  --tint-login: light-dark(#0b7467, #59d9c7);
+  --tint-note: light-dark(#b3254d, #ff8fa3);
   --tint-card: light-dark(#9a5700, #ffb86b);
   --tint-identity: light-dark(#1a6fa8, #7cc4ff);
   --tint-other: light-dark(#6e6e73, #a1a1a6);
@@ -430,7 +430,7 @@
 .vault-ui input[type="checkbox"].row-check:indeterminate {
   border-color: var(--brand);
   background-color: var(--brand);
-  background-image: linear-gradient(#fff, #fff);
+  background-image: linear-gradient(var(--on-inverse), var(--on-inverse));
   background-size: 10px 2px;
 }
 
