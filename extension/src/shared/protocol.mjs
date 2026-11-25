@@ -173,13 +173,15 @@ const handle = object(
     type: itemType,
     // The item has a web address that "Open the site" can open.
     site: boolean(),
+    // The item holds a one-time code (a mark only: the row's copy menu offers the code; never the code itself).
+    has_totp: boolean(),
     // The item has a one-time code and was filled in this tab a short while ago: the page may ask for the code next.
     next: boolean(),
     // A candidate of a page: the first frame it was matched in, and every frame it may be filled in (the top first).
     frame_id: frameId,
     frame_ids: array(frameId, { max: 4 }),
   },
-  { optional: ["username", "insecure", "favorite", "type", "site", "next", "frame_id", "frame_ids"] },
+  { optional: ["username", "insecure", "favorite", "type", "site", "has_totp", "next", "frame_id", "frame_ids"] },
 );
 const empty = object({});
 // A generation: a random name for a value that the background keeps for a while.

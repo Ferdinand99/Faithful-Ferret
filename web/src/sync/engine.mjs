@@ -112,6 +112,7 @@ export { SyncError };
  * @property {boolean} favorite
  * @property {string[]} urls
  * @property {string} username the plain user name field, for the list and its search ("" when the item has none)
+ * @property {boolean} hasTotp the item holds a one-time code (only that it does, never the code)
  * @property {number} modified
  * @property {boolean} pending a write of this item is waiting for the server
  * @property {boolean} damaged the server's newest row could not be opened (the last good version is shown)
@@ -466,6 +467,7 @@ export function createSyncEngine({
       favorite: view.favorite === true,
       urls: Array.isArray(view.urls) ? view.urls.map((/** @type {any} */ u) => String(u?.url ?? "")) : [],
       username: usernameOf(view),
+      hasTotp: view.has_totp === true,
       modified: Number.isSafeInteger(view.modified) ? view.modified : 0,
       readOnly: view.read_only === true,
       // The core has checked the names and put them in NFC; a view without the key (an older core) has none.
@@ -3643,6 +3645,7 @@ export function createSyncEngine({
           favorite: s.favorite,
           urls: [...s.urls],
           username: s.username,
+          hasTotp: s.hasTotp,
           modified: s.modified,
           pending: runner.entriesOf(id).length > 0,
           damaged: flag?.kind === "damaged",

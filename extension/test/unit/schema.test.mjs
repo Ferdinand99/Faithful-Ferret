@@ -159,6 +159,12 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
       decode(raw("copy", { ref: "h", field: "password", [key]: "x" }), UI_TYPES),
     );
   }
+  // The one-time code mark of a row is a boolean and nothing else: never the code or its seed.
+  const rowReply = (/** @type {unknown} */ mark) => raw("search", { handles: [{ ref: "h2", name: "n", has_totp: mark }], total: 1 });
+  assert.equal(decode(rowReply(true), UI_TYPES, { reply: true }).type, "search");
+  assert.equal(decode(rowReply(false), UI_TYPES, { reply: true }).type, "search");
+  for (const mark of ["492039", 1, null, { code: "492039" }]) refusesShape(() => decode(rowReply(mark), UI_TYPES, { reply: true }));
+  refusesShape(() => decode(raw("search", { handles: [{ ref: "h2", name: "n", totp_secret: "JBSWY3DP" }], total: 1 }), UI_TYPES, { reply: true }));
   // A reply to the page never has a value, only references, names and flags.
   refusesShape(() =>
     decode(
@@ -243,7 +249,7 @@ test("every UI request and reply round-trips with a sample body", () => {
       { origin: "https://sso.example.net" },
       { ok: true, origin: "https://sso.example.net", host: { a_label: "sso.example.net", unicode: "sso.example.net" }, pattern: "https://sso.example.net/*" },
     ],
-    search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example" }], total: 41 }],
+    search: [{ query: "ex", favorites: true, type: "login", offset: 40, automatic: true }, { handles: [{ ref: "h2", name: "Example", has_totp: true }], total: 41 }],
     fill: [{ ref: "h1", tab_id: 1, frame_id: 0, only: "totp" }, { ok: true }],
     item_code: [{ ref: "h1", automatic: true }, { ok: true, code: "081804", seconds_left: 21 }],
     copy: [{ ref: "h1", field: "totp" }, { ok: true }],

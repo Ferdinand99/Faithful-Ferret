@@ -219,7 +219,7 @@ export async function itemWorld({ items = ITEMS, frames, source = true, reportTi
   const opens = [];
   const engine = {
     list: () =>
-      items.map((item) => ({ id: item.id, rev: 1, name: item.name, username: item.username, favorite: item.favorite, type: item.type, urls: [...item.urls] })),
+      items.map((item) => ({ id: item.id, rev: 1, name: item.name, username: item.username, favorite: item.favorite, type: item.type, urls: [...item.urls], hasTotp: item.totp })),
     async open(/** @type {string} */ id) {
       const item = items.find((i) => i.id === id);
       if (!item) throw Object.assign(new Error("not found"), { code: "not_found" });

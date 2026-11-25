@@ -245,7 +245,7 @@ const isWebAddress = (url) => typeof url === "string" && url.length <= 2048 && /
 
 /**
  * @typedef {{
- *   id: string, name: string, username: string, favorite: boolean, type: string, urls: string[],
+ *   id: string, name: string, username: string, favorite: boolean, type: string, urls: string[], hasTotp?: boolean,
  * }} Summary the part of the engine's item summary this module reads
  * @typedef {{
  *   list(): Summary[],
@@ -396,6 +396,8 @@ export function createFillHost({
       name: listText(s.name),
       ...(username !== "" ? { username } : {}),
       favorite: s.favorite === true,
+      // Whether the item holds a one-time code (the row's copy menu offers it); never the code.
+      has_totp: s.hasTotp === true,
       type: typeOf(s.type),
       site: Array.isArray(s.urls) && s.urls.some(isWebAddress),
       ...extra,

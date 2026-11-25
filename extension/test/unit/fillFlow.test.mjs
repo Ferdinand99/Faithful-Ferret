@@ -37,7 +37,7 @@ test("fill_never_passes_a_value_through_the_popup", async () => {
   const popup = world.popup();
   const [row, ...more] = await suggestions(popup);
   assert.equal(more.length, 0);
-  assert.deepEqual(Object.keys(row).sort(), ["favorite", "frameId", "insecure", "name", "ref", "site", "type", "username"]);
+  assert.deepEqual(Object.keys(row).sort(), ["favorite", "frameId", "hasTotp", "insecure", "name", "ref", "site", "type", "username"]);
   assert.equal(row.name, "Example");
   assert.equal(row.frameId, 0);
 
