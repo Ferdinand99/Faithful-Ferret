@@ -21,7 +21,10 @@
 // * A passkey that Ferret already has (the same site and credential id, in the vault, in the trash, or earlier
 //   in this file) is left out; the dedupe key is `passkeyKey`.
 
+import { passkeyKey } from "../sync/passkeyKey.mjs";
 import { scalar, warn } from "./map.mjs";
+
+export { passkeyKey };
 
 /**
  * @typedef {{
@@ -90,22 +93,6 @@ export function guidBytes(text) {
   const out = new Uint8Array(16);
   for (let i = 0; i < 16; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
-}
-
-/** @param {Uint8Array} bytes */
-function toHex(bytes) {
-  let out = "";
-  for (const b of bytes) out += b.toString(16).padStart(2, "0");
-  return out;
-}
-
-/**
- * The identity of a passkey for the dedupe: the site (as the core stores it, canonical) and the credential id.
- * @param {string} rpId
- * @param {Uint8Array} credId
- */
-export function passkeyKey(rpId, credId) {
-  return `${rpId}\n${toHex(credId)}`;
 }
 
 /**

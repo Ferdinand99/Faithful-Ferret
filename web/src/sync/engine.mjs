@@ -89,10 +89,10 @@
 //   holds every lane and stops the engine with `server_restored` (the write was not stored; it is made again, with a new key and the
 //   new epoch, only after the user has accepted the older state). The bytes of a write that may have been stored never change.
 import { b64u, hex16 } from "../b64.mjs";
-import { passkeyKey } from "../import/passkeys.mjs";
 import { rowOfChange } from "../store/cache.mjs";
 import { encodeWireBytes } from "../wire.mjs";
 import { codeOf, isFatal, SyncError } from "./errors.mjs";
+import { passkeyKey } from "./passkeyKey.mjs";
 import {
   checkListingPage, checkpointBody, checkRestoreRowsPage, entriesOf, entryMap, escalate, failingIds, fetchCheckpoint, hardWarningOf, MAX_PAGE, STOP_CODES,
   UPLOAD_EVERY_MS, VERIFY_AFTER_MS, VERIFY_RETRY_MS, VERIFY_WARNINGS, warningRank,
