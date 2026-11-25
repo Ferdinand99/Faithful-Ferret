@@ -191,6 +191,8 @@ ops['account.recover'] = ({ input, rng }) => {
   const opened = wrapOpen('recovery', { accountId, vaultId, methodId: rkMethodId, vkEpoch: epoch, kekGeneration: BigInt(w.kek_generation) }, kekRecovery(accountId, oldRk), unhex(w.wrap));
   if (!equal(opened.vk, vk)) fail('decrypt');
   checkPinnedVault(pinned, epoch, keys.pkA);
+  // no rekey proof is checked yet, so a recovery does not follow a higher epoch
+  if (pinned && epoch > BigInt(pinned.vk_epoch_max)) fail('pinned_epoch_ahead');
   if (pinned && floors.rk > BigInt(w.kek_generation)) fail('pinned_kek_generation');
   const hasSk = input.input_secret_key !== null && input.input_secret_key !== undefined;
   checkRegistration(pinned, input, hasSk, undefined);

@@ -650,8 +650,10 @@ impl Recovered {
     ///
     /// * With `old` (a device that holds a record): the password and
     ///   recovery floors are the new wraps' generations, the KSF profile is
-    ///   the new one. `old` must be for this account and vault, at this
-    ///   epoch or an earlier one; `server_url` is ignored.
+    ///   the new one. `old` must be for this account and vault and at this
+    ///   epoch (a record that has seen a later epoch, or an epoch above the
+    ///   record's, is refused: this release checks no rekey proof);
+    ///   `server_url` is ignored.
     /// * Without it (a new device, trust on first use): a new record with
     ///   both wraps at their generations, the SK bit of the new input and the
     ///   OPAQUE server key the registration showed. Compare
@@ -686,6 +688,9 @@ impl Recovered {
                 }
                 if old.vault_id != ctx.vault_id {
                     return Err(Error::Pinned(PinnedField::VaultId));
+                }
+                if ctx.vk_epoch > old.vk_epoch_max {
+                    return Err(Error::Pinned(PinnedField::EpochAhead));
                 }
                 if ctx.vk_epoch == old.vk_epoch_max && pk_a != old.pk_a {
                     return Err(Error::Pinned(PinnedField::AuthKey));
@@ -786,7 +791,12 @@ pub fn recover<R: SecureRng>(
         if ctx.vk_epoch < pinned.vk_epoch_max {
             return Err(Error::Pinned(PinnedField::VkEpoch));
         }
-        if ctx.vk_epoch == pinned.vk_epoch_max && vault.auth_public_key() != pinned.pk_a {
+        // A recovery does not follow a higher epoch either: no rekey proof is
+        // checked yet, so there is no `pk_a` to hold the vault key against.
+        if ctx.vk_epoch > pinned.vk_epoch_max {
+            return Err(Error::Pinned(PinnedField::EpochAhead));
+        }
+        if vault.auth_public_key() != pinned.pk_a {
             return Err(Error::Pinned(PinnedField::AuthKey));
         }
         password_floor = pinned.floor(&MethodKey::Password);

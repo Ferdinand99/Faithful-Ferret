@@ -1458,6 +1458,54 @@
       "expect_error": "malformed_entries"
     },
     {
+      "id": "account/recover/012",
+      "title": "the recovery wrap shows epoch 2 and the device has pinned epoch 1: no rekey proof, so it is not followed",
+      "op": "account.recover",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "account_id": "11111111111111111111111111111111",
+        "input_secret_key": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "ksf_profile": 1,
+        "manifest": {
+          "envelope": "010102a9d0538f01186958875bb34c2e62f5983326a397099dabd4d90987fff618bbceea0d75bd2c9ab20fb0fddc39475a787c0874d0d53f072c2fd1a8d6432be0fc139617efd0db972319bdfc34757d6e66bd08f49de4f095724ecbc0be26f862fec38c71dab08621dd5e1ad721c99a1c0665c687bb43f1175e164a9711f59a07d4f8cdc0661a5843584c9bc5cfe88624219b868ff556440cd95b7d0cca487c6a9dbcd8d60a26d8e82192990359305866b4781743506283e65ae36c63d8080008bf098861c4a446d551127a8715c091c2ce7ec9b4d3fed32bcb1378451dd363a84f6c4938de3c4553d88a7ec118f6589a162c9cdfb4103fa451e1553c35f807c08587e87d19f6d54f6eecd7af2a644acbf7e3ff2da46636302e5152561e692284c1e388d5d7f5975a80a4",
+          "rev": "1",
+          "tag": "e79215999ae55a56cb40b70e0bee9c7d4df6268d6f71e0b04c8089e6d03c2a0a"
+        },
+        "password": "tr0ub4dor and three more words",
+        "pinned": {
+          "ksf_profile": 1,
+          "password_floor": "1",
+          "pk_a": "321393f6b780ee8422dc9cd249e45f94cf5ac0ea876ea1c878657c9f4bd26264",
+          "recovery_floor": "1",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677",
+          "server_url": "https://ferret.example",
+          "sk_bit": true,
+          "vk_epoch_max": "1"
+        },
+        "policy": "with_secret_key",
+        "registration": {
+          "export_key": "bf1cf120e233ebf40c3c8167e9fff928dfd4fd7ca342b435e0c9252f436fccef141e94cdfb764c70a469c03cbc0b8c824bcc4c0c85de767f090b4c8249c93750",
+          "record": "0441591df9c3189109aa71e407d15c244ea28637cc2f09ae69bb6b56843c9409430a3d009fb5230e55f3824076099d1e683f5728f5d80601fb4ea97bae0dac44a52e4d7cab998cd4203a033bd3ebd4e0ea5e0ed2cabd56109d8e1acfa68f5b32aca874e9e71f0c990b3f9834b946233d0e38bafb5bfb316b5a27c3808422378254843b310a654db12759b64883090b53537b0fde10cd947e0b97999d5a75112134035b8b4d219234fcb3520d41a7fe2e302997c089a4d416ec8c502e33a83906",
+          "server_public_key": "fc1d4ff41f648d5c9017ab94fc41029c2e0b8e3490adef5474b0a0f5fab28677"
+        },
+        "rk_code": "FFR1-RG53-MYTZ-JCF1-X9W5-E9D3-JTE6-70VR-ZT79-TX3F-R0NY-QH7G-3WHD-1BJG-VXG1",
+        "rk_wrap": {
+          "kek_generation": "1",
+          "method_id": "71717171717171717171717171717171",
+          "type": "recovery",
+          "wrap": "5a982c77a95d65899c604d9caf09b022273f853cf755fc718ff3926d2de99a4d921a47b816de4d3178123b7dc656110b4d4c6e78a7854b4f727feffa460194c1070d36ecaaee6d97"
+        },
+        "sign": null,
+        "vault_id": "22222222222222222222222222222222",
+        "vk": "dba67c23e3462c1ea2405e06b3c2d576c816aa25df0163f0bde652f61e78428a",
+        "vk_epoch": "2"
+      },
+      "expect_error": "pinned_epoch_ahead"
+    },
+    {
       "id": "account/verify-recovery/001",
       "title": "the recovery key typed in full opens the recovery wrap",
       "op": "account.verify_recovery",

@@ -679,6 +679,56 @@ pub(crate) fn account() -> Result<Vec<u8>, Error> {
         ),
         "malformed_entries",
     )?;
+    // The recovery wrap shows epoch 2 (sealed under the recovery key, so it
+    // opens) while the device has pinned epoch 1: no rekey proof is checked, so
+    // the device does not follow it. The manifest is never opened.
+    let rk_epoch_two = {
+        let ctx2 = ferret_core::VaultContext {
+            account_id: ferret_core::AccountId::from_bytes(ACCOUNT),
+            vault_id: ferret_core::VaultId::from_bytes(VAULT),
+            vk_epoch: 2,
+        };
+        let rk = RecoveryKey::from_test_bytes(
+            ferret_core::testing::hex_decode(created["rk"].as_str().ok_or("rk")?)
+                .map_err(|_| "rk is not hex")?
+                .try_into()
+                .map_err(|_| "rk is not 32 bytes")?,
+        );
+        let vk = ferret_core::VaultKey::from_test_bytes(
+            ferret_core::testing::hex_decode(&vk_hex)
+                .map_err(|_| "vk is not hex")?
+                .try_into()
+                .map_err(|_| "vk is not 32 bytes")?,
+        );
+        let kek =
+            ferret_core::Kek::from_recovery_key(&ctx2.account_id, &rk).map_err(|e| e.code())?;
+        let wrap = ferret_core::wrap_vk(
+            &mut TestRng::new(b"account/recover/epoch-two"),
+            &ctx2,
+            &vk,
+            &kek,
+            ferret_core::MethodId::from_bytes([0x71; 16]),
+            1,
+            ferret_core::Method::Recovery,
+        )
+        .map_err(|e| e.code())?;
+        json!({
+            "method_id": h(&[0x71; 16]),
+            "kek_generation": "1",
+            "type": "recovery",
+            "wrap": h(&wrap.wrap),
+        })
+    };
+    m.err(
+        "account/recover/012",
+        "the recovery wrap shows epoch 2 and the device has pinned epoch 1: no rekey proof, so it is not followed",
+        "account.recover",
+        merge(
+            recover_input(&rk_code, &reg_new, Some(&good_pin), false),
+            json!({ "vk_epoch": "2", "rk_wrap": rk_epoch_two }),
+        ),
+        "pinned_epoch_ahead",
+    )?;
 
     // ---- confirmation at setup
     let verify_rk = |entered: &str, wrap: &Value, vk: &str| {

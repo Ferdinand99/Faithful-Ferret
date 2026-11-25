@@ -75,7 +75,7 @@ share the single code `decrypt`, with no cause.
 | `pinned_account_id` | The account differs from the one pinned on this device. |
 | `pinned_kek_generation` | A wrap has a lower `kek_generation` than the highest seen on this device. |
 | `pinned_vk_epoch` | The vault has a lower `vk_epoch` than the highest seen on this device. |
-| `pinned_epoch_ahead` | A server unlock shows a higher `vk_epoch` than the highest seen on this device. Only a full rekey raises the epoch, and its proof (signed with the previous `sk_a`) is not checked yet, so the device does not follow it. A first unlock, which has no pinned record, is not affected. |
+| `pinned_epoch_ahead` | A server unlock or a recovery with the recovery key shows a higher `vk_epoch` than the highest seen on this device. Only a full rekey raises the epoch, and its proof (signed with the previous `sk_a`) is not checked yet, so the device does not follow it. A first unlock, which has no pinned record, is not affected. |
 | `pinned_sk_bit` | The secret key (SK) bit differs from the one pinned on this device. |
 | `pinned_server_key` | The OPAQUE server public key differs from the pinned one, or is missing. |
 | `pinned_auth_key` | The vault's `pk_a` differs from the pinned one within the same `vk_epoch`. |
