@@ -47,6 +47,8 @@ const EXPECTED_LIST = [
   "dom.mjs",
   "flows/deviceSecret.mjs",
   "flows/forgetServer.mjs",
+  "flows/passkeyAnswer.mjs",
+  "flows/prfUnlock.mjs",
   "flows/setupQr.mjs",
   "flows/signin.mjs",
   "i18n.mjs",
@@ -148,6 +150,33 @@ test("every_shared_file_is_byte_equal_to_its_source_in_web", async () => {
   } finally {
     env.cleanup();
   }
+});
+
+test("the_shared_flow_is_the_same_file_in_the_extension", async () => {
+  // The passkey unlock flow is written once, in web/src, and the extension carries that very file (and the answer checks
+  // it uses): any edit of a copy is caught by the hashes, as for every shared file.
+  const flow = ["flows/prfUnlock.mjs", "flows/passkeyAnswer.mjs"];
+  const env = realRoot();
+  try {
+    for (const variant of ["release", "test"]) {
+      const result = await buildRealIn(env, { variant });
+      const manifest = JSON.parse(readFileSync(join(result.dir, "shared", "MANIFEST.json"), "utf8"));
+      for (const path of flow) {
+        const source = readFileSync(join(WEB_SRC, ...path.split("/")));
+        assert.deepEqual(readFileSync(join(result.dir, "shared", ...path.split("/"))), source, `${variant}: ${path} is the web vault's file`);
+        assert.equal(manifest[path], sha256(source), `${variant}: ${path} has its hash in the manifest`);
+      }
+    }
+  } finally {
+    env.cleanup();
+  }
+  // It is on the list, and it reaches nothing that is not.
+  const list = new Set(realList());
+  for (const path of flow) assert.ok(list.has(path), path);
+  const files = new Map([...list].map((path) => [path, readFileSync(join(WEB_SRC, ...path.split("/")))]));
+  const edges = readGraph(files).edges.get("flows/prfUnlock.mjs") ?? [];
+  assert.ok(edges.length > 0);
+  for (const { specifier, target } of edges) assert.ok(target !== null && list.has(target), `${specifier} is shared`);
 });
 
 test("a_shared_file_edited_in_dist_fails_the_build", async () => {

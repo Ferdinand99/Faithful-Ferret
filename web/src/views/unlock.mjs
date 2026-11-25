@@ -13,6 +13,13 @@
 //     checks, or a secret key that is not there, gives way to the full sign-in
 //     page, which shows the refusal.
 //
+// With the session valid, a passkey that is one of the account's unlock methods opens the vault too (spec Fase 1 § 7.3):
+// a second button, offered only when `session.preparePasskeyUnlock` found a passkey method (see `flows/prfUnlock.mjs`).
+// A browser lets a page make one WebAuthn call for each click, so the click itself starts the call and nothing is awaited
+// before it. A refusal that comes at once (another password manager's passkey provider has taken over, no provider is set
+// up on a Mac, Windows Hello is not set up) says what to check. An ended session has no passkey button: the password is
+// asked for, as before.
+//
 // Anything else goes to the sign-in page.
 //
 // The password leaves the input before the slow call starts, so a failed
@@ -23,12 +30,33 @@ import { entryPage, holdRefusal, leavesUnlock } from "../flows/rememberedAccount
 import { codeOf } from "./common.mjs";
 import { describeError as unlockErrorText, OLDER_METHOD_ERRORS, restoreTextApplies } from "./form.mjs";
 
+/** The codes of a passkey unlock that have a text of their own under `vault.unlock.passkey_error.`. */
+export const PASSKEY_UNLOCK_ERRORS = Object.freeze([
+  "method_changed", "method_removed", "passkey_bad_answer", "passkey_blocked", "passkey_cancelled", "passkey_failed",
+  "passkey_not_verified", "passkey_other_credential", "passkey_security", "passkey_sequence", "passkey_unlock_failed",
+  "passkey_unsupported",
+]);
+
+/** The codes after which the passkey is no longer on offer: the list it was read from is out of date. */
+const PASSKEY_GONE = Object.freeze(["method_changed", "method_removed"]);
+
+/**
+ * The text of a failed passkey unlock: the passkey's own codes have their texts, every other code is the unlock page's.
+ * Only the code is used; the message of an error is never shown.
+ * @param {import("./common.mjs").Translate} t
+ * @param {unknown} error
+ * @param {Parameters<typeof unlockErrorText>[2]} [options]
+ */
+export function passkeyUnlockErrorText(t, error, options) {
+  const code = codeOf(error);
+  return PASSKEY_UNLOCK_ERRORS.includes(code) ? t(`vault.unlock.passkey_error.${code}`) : unlockErrorText(t, error, options);
+}
 /** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<import("../store/restoreNote.mjs").RestoreNote | null>} FindRestoreNote */
 /** @typedef {(who: { accountId?: string | null, email?: string | null }) => Promise<void>} ClearRestoreNote */
 
 /**
  * @typedef {{ signedIn: false, remembered?: false }
- *   | { signedIn: true, email: string, accountId: string, skRequired: boolean }
+ *   | { signedIn: true, email: string, accountId: string, skRequired: boolean, passkey: import("../flows/prfUnlock.mjs").PasskeyOffer | null }
  *   | { signedIn: false, remembered: true, email: string, accountId: string, skRequired: false }} UnlockFacts
  */
 
@@ -40,10 +68,13 @@ import { describeError as unlockErrorText, OLDER_METHOD_ERRORS, restoreTextAppli
  *   info(): Promise<{ accountId: string, email: string } | null>,
  *   deviceStatus?(email: string): Promise<{ pinned: boolean, skBit: boolean | null, skStored: boolean }>,
  *   remembered?(): Promise<import("../flows/rememberedAccount.mjs").Remembered | null>,
+ *   preparePasskeyUnlock?(): Promise<import("../flows/prfUnlock.mjs").PasskeyOffer | null>,
  * }} session
+ * @param {{ passkey?: boolean }} [options] `passkey: false` leaves the passkey offer out (the screen asks for it itself, after it
+ *   has been drawn, so the three reads do not hold the page back)
  * @returns {Promise<UnlockFacts>}
  */
-export async function prepareUnlock(session) {
+export async function prepareUnlock(session, { passkey: withPasskey = true } = {}) {
   const info = await session.info();
   if (!info) {
     /** @type {import("../flows/rememberedAccount.mjs").Remembered | null} */
@@ -67,13 +98,25 @@ export async function prepareUnlock(session) {
   } catch {
     skRequired = false;
   }
-  return { signedIn: true, email: info.email, accountId: info.accountId, skRequired };
+  // A passkey is offered only while the session is valid and the account has a passkey method; nothing is asked of the
+  // passkey now. A failure of the check is "not offered".
+  /** @type {import("../flows/prfUnlock.mjs").PasskeyOffer | null} */
+  let passkey = null;
+  if (withPasskey && typeof session.preparePasskeyUnlock === "function") {
+    try {
+      passkey = (await session.preparePasskeyUnlock()) ?? null;
+    } catch {
+      passkey = null;
+    }
+  }
+  return { signedIn: true, email: info.email, accountId: info.accountId, skRequired, passkey };
 }
 
 /**
  * @param {{
  *   session: {
  *     unlock(args: { password: string, skCode?: string }): Promise<unknown>,
+ *     unlockWithPasskey?(offer: import("../flows/prfUnlock.mjs").PasskeyOffer): Promise<unknown>,
  *     signIn?(args: { email: string, password: string }): Promise<unknown>,
  *     signOut?(): Promise<unknown>,
  *     forgetRemembered?(accountId?: string): Promise<unknown>,
@@ -83,6 +126,7 @@ export async function prepareUnlock(session) {
  *   email: string,
  *   accountId?: string,
  *   skRequired: boolean,
+ *   passkey?: import("../flows/prfUnlock.mjs").PasskeyOffer | null,
  *   remembered?: boolean,
  *   onUnlocked: () => unknown,
  *   onLeave?: (error: unknown) => void,
@@ -91,11 +135,11 @@ export async function prepareUnlock(session) {
  *   locale?: string,
  * }} options `restoreNote` finds the local note about an accepted restore; it is asked only after the core has refused with
  * an older unlock method, and only picks the text (the refusal stands). `clearRestoreNote` removes the note after a successful unlock.
- * `remembered`: the server session has ended and `email` is the one this browser remembers; the password runs a full
+ * `passkey`: what `preparePasskeyUnlock` found (null: no passkey is offered). `remembered`: the server session has ended and `email` is the one this browser remembers; the password runs a full
  * sign-in. `onLeave` takes such a page to the full sign-in page with a refusal to show (by default it hands the refusal
  * to the sign-in page and goes there). `onUnlocked` may return a promise; a failure of it is shown.
  */
-export function unlockView({ session, t, go, email, accountId, skRequired, remembered = false, onUnlocked, onLeave, restoreNote: findRestoreNote, clearRestoreNote, locale }) {
+export function unlockView({ session, t, go, email, accountId, skRequired, passkey = null, remembered = false, onUnlocked, onLeave, restoreNote: findRestoreNote, clearRestoreNote, locale }) {
   const root = el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock", "data-mode": remembered ? "remembered" : "session" });
   const password = /** @type {HTMLInputElement} */ (el("input", {
     id: "unlock-password", name: "password", type: "password", autocomplete: "current-password", required: true, "data-role": "password",
@@ -136,14 +180,31 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
   }
   if (skRequired) showSecretKeyField();
 
-  /** @param {boolean} on */
-  function busy(on) {
+  // The passkey button: only with a passkey method and a live session (never on the page of an ended session).
+  const passkeyButton = /** @type {HTMLButtonElement} */ (el("button", {
+    type: "button", class: "btn btn-secondary btn-block", "data-role": "passkey-unlock",
+  }, t("vault.unlock.passkey.button")));
+  /** @type {HTMLElement | null} */
+  let passkeyBox = null;
+  // What to check when the browser refuses the passkey at once, before it has asked the user anything.
+  const blockedHelp = el("ul", { class: "help", "data-role": "passkey-blocked-help" },
+    el("li", null, t("methods.blocked.other_manager")),
+    el("li", null, t("methods.blocked.mac")),
+    el("li", null, t("methods.blocked.windows")));
+  blockedHelp.hidden = true;
+
+  /**
+   * @param {boolean} on
+   * @param {string} [text] the key of the text of the status line
+   */
+  function busy(on, text = "vault.unlock.busy") {
     submit.disabled = on;
     password.disabled = on;
+    passkeyButton.disabled = on;
     if (sk) sk.disabled = on;
     if (notYou) notYou.disabled = on;
     root.setAttribute("aria-busy", on ? "true" : "false");
-    mount(status, document.createTextNode(on ? t("vault.unlock.busy") : ""));
+    mount(status, document.createTextNode(on ? t(text) : ""));
   }
 
   /** @param {string} text */
@@ -205,6 +266,76 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
     go("/login");
   });
 
+  /**
+   * The page after a failed unlock: the session has ended (the sign-in page), a field is missing, the way out after a
+   * restore of the server, or the text of the refusal (the warning that it can be an attack included).
+   * @param {unknown} error
+   * @param {string} code
+   * @param {{ passkey?: boolean }} [how] `passkey`: the unlock was a passkey's
+   */
+  async function showFailure(error, code, { passkey: byPasskey = false } = {}) {
+    if (code === "session_ended" || code === "sk_answer_required") {
+      go("/login");
+      showError(unlockErrorText(t, { code: "session_ended" }));
+      return;
+    }
+    if (code === "sk_required") showSecretKeyField();
+    const offer = /** @type {any} */ (error)?.recoveryOffer;
+    if (code === "pinned_kek_generation" && (offer === "recover" || offer === "old_sheet")) {
+      showOffer(offer);
+      return;
+    }
+    let restoreNote = null;
+    if (findRestoreNote && OLDER_METHOD_ERRORS.includes(code)) {
+      try {
+        restoreNote = await findRestoreNote({ accountId, email });
+      } catch {
+        restoreNote = null;
+      }
+    }
+    showError(byPasskey ? passkeyUnlockErrorText(t, error, { restoreNote, locale }) : unlockErrorText(t, error, { restoreNote, locale }));
+    forgetRow.hidden = !restoreTextApplies(error, restoreNote);
+    if (byPasskey) {
+      // A refusal at once says what to check; a method that is gone is no longer offered.
+      blockedHelp.hidden = code !== "passkey_blocked";
+      if (PASSKEY_GONE.includes(code) && passkeyBox) passkeyBox.hidden = true;
+      /** @type {any} */ (PASSKEY_GONE.includes(code) ? password : passkeyButton).focus?.();
+      return;
+    }
+    /** @type {any} */ (sk ?? password).focus?.();
+  }
+
+  // The click on the passkey button. The call of the session is the first thing the handler does: a browser lets a
+  // page make one WebAuthn call for each click, and it has to come from the click.
+  passkeyButton.addEventListener("click", () => {
+    if (leaving || passkeyBox === null || passkey === null || typeof session.unlockWithPasskey !== "function") return;
+    const attempt = session.unlockWithPasskey(passkey);
+    errorBox.hidden = true;
+    blockedHelp.hidden = true;
+    forgetRow.hidden = true;
+    offerBox.hidden = true;
+    busy(true, "vault.unlock.passkey.busy");
+    void attempt.then(
+      async () => {
+        busy(false);
+        try {
+          await clearRestoreNote?.({ accountId, email });
+        } catch {
+          // The note expires by itself.
+        }
+        try {
+          await onUnlocked();
+        } catch (error) {
+          showError(unlockErrorText(t, error, { locale }));
+        }
+      },
+      async (/** @type {unknown} */ error) => {
+        busy(false);
+        await showFailure(error, codeOf(error), { passkey: true });
+      },
+    );
+  });
+
   const form = el("form", {
     class: "stack",
     "data-role": "unlock-form",
@@ -244,28 +375,7 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
           await leave(error);
           return;
         }
-        if (code === "session_ended" || code === "sk_answer_required") {
-          go("/login");
-          showError(unlockErrorText(t, { code: "session_ended" }));
-          return;
-        }
-        if (code === "sk_required") showSecretKeyField();
-        const offer = /** @type {any} */ (error)?.recoveryOffer;
-        if (code === "pinned_kek_generation" && (offer === "recover" || offer === "old_sheet")) {
-          showOffer(offer);
-          return;
-        }
-        let restoreNote = null;
-        if (findRestoreNote && OLDER_METHOD_ERRORS.includes(code)) {
-          try {
-            restoreNote = await findRestoreNote({ accountId, email });
-          } catch {
-            restoreNote = null;
-          }
-        }
-        showError(unlockErrorText(t, error, { restoreNote, locale }));
-        forgetRow.hidden = !restoreTextApplies(error, restoreNote);
-        /** @type {any} */ (sk ?? password).focus?.();
+        await showFailure(error, code);
         return;
       }
       busy(false);
@@ -287,18 +397,38 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
   skSlot,
   status,
   errorBox,
+  blockedHelp,
   forgetRow,
   offerBox,
   el("div", { class: "actions" }, submit));
+
+  const recoverRow = el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link")));
 
   mount(root,
     el("h1", null, t("vault.unlock.heading")),
     el("p", null, remembered ? t("vault.unlock.ended") : t("vault.unlock.as", { email })),
     form,
     // The way to account recovery from the lock screen: a forgotten master password, or a restore of the server (see above).
-    el("p", { class: "recover-link" }, el("a", { href: "#/recover", "data-role": "recover-link" }, t("recover.link"))),
+    recoverRow,
     // A live session of another account: the sign-in page (with "Sign out"). An ended one has "Not you? Sign out" above.
     ...(remembered ? [] : [el("p", { class: "aside" }, el("a", { href: "#/login", "data-role": "other-account" }, t("vault.unlock.other")))]));
+  /**
+   * Shows the passkey button for an offer (what `preparePasskeyUnlock` found), below the form. Nothing happens on the page of an
+   * ended session, for a second offer or for no offer.
+   * @param {import("../flows/prfUnlock.mjs").PasskeyOffer | null} offer
+   */
+  function offerPasskey(offer) {
+    if (offer === null || remembered || passkeyBox !== null) return;
+    passkey = offer;
+    passkeyBox = el("div", { class: "stack passkey-unlock", "data-role": "passkey-section" },
+      el("p", { class: "aside" }, t("vault.unlock.passkey.or")),
+      passkeyButton,
+      el("small", { class: "help", "data-role": "passkey-help" }, t("vault.unlock.passkey.help")));
+    root.insertBefore(passkeyBox, recoverRow);
+  }
+  offerPasskey(passkey);
+  // A screen that learns of the offer after it was drawn (see `unlockScreen`).
+  /** @type {any} */ (root).offerPasskey = offerPasskey;
   return root;
 }
 
@@ -320,7 +450,7 @@ export function unlockView({ session, t, go, email, accountId, skRequired, remem
 export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale }) {
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
     el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
-  prepareUnlock(session).then(
+  prepareUnlock(session, { passkey: false }).then(
     (found) => {
       if (found.signedIn === false && found.remembered !== true) {
         mount(box, el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" },
@@ -330,10 +460,19 @@ export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRes
         go("/login");
         return;
       }
-      mount(box, unlockView({
-        session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired, remembered: found.signedIn === false,
+      const view = unlockView({
+        session, t, go, email: found.email, accountId: found.accountId, skRequired: found.skRequired,
+        remembered: found.signedIn === false,
         onUnlocked, restoreNote, clearRestoreNote, locale,
-      }));
+      });
+      mount(box, view);
+      // The page is drawn first; the button comes when the three reads of the offer are done (a failed read is no offer).
+      if (found.signedIn === true && typeof session.preparePasskeyUnlock === "function") {
+        Promise.resolve().then(() => session.preparePasskeyUnlock?.()).then(
+          (offer) => /** @type {any} */ (view).offerPasskey(offer ?? null),
+          () => undefined,
+        );
+      }
     },
     (error) => {
       mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },

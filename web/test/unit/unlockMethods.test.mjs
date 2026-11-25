@@ -865,7 +865,7 @@ test("every_text_of_the_page_is_in_both_languages_and_every_error_code_has_one",
   assert.ok(unknown.startsWith(en["vault.error.unknown"]) && !unknown.includes("secret message"), unknown);
   assert.equal(methodsErrorText(i18n("en").t, Object.assign(new Error("x"), { code: "write_conflict" })), en["methods.error.write_conflict"]);
   // The route and the page use no inline style and no script.
-  for (const file of ["views/unlockMethods.mjs", "flows/unlockMethods.mjs", "flows/passkeyCeremony.mjs", "routes/unlock-methods.route.mjs"]) {
+  for (const file of ["views/unlockMethods.mjs", "flows/unlockMethods.mjs", "flows/passkeyCeremony.mjs", "flows/passkeyAnswer.mjs", "flows/prfUnlock.mjs", "routes/unlock-methods.route.mjs"]) {
     const source = readFileSync(join(web, "src", file), "utf8");
     assert.ok(!/\.style\b|\bstyle\s*[:=]|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/.test(source), file);
   }

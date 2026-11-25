@@ -119,6 +119,21 @@ html:has(#app > .auth-card, .unlock-host) body {
   font-size: 0.8125rem;
 }
 
+/* The passkey button of the unlock screen: below the form, set apart by the "or" line. */
+.unlock .passkey-unlock {
+  margin-top: var(--sp-4);
+  text-align: center;
+}
+
+.unlock .passkey-unlock .aside {
+  margin: 0;
+}
+
+.unlock ul.help {
+  margin: 0;
+  padding-inline-start: var(--sp-5);
+}
+
 /* On a phone the card gives way to the page, as the admin pages do. */
 @media (max-width: 480px) {
   #app > .auth-card {
