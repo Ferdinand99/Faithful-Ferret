@@ -10,7 +10,8 @@
 # of the new tag (docker buildx imagetools inspect <image>) and change the tag
 # and the digest together.
 #
-# FEATURES is a list of cargo features for the server, empty for a release.
+# FEATURES is a list of cargo features for the server. A release is built with `quick-unlock` and nothing else (the
+# release workflow says so and checks `ferret --build-info`); empty builds the server with every optional feature off.
 
 ARG RUST_IMAGE=rust:1.99-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d
 ARG NODE_IMAGE=node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914

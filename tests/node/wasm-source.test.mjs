@@ -65,7 +65,8 @@ test("ci_uses_the_tree_wasm_while_the_lock_is_behind_the_tree", () => {
   }
   assert.match(job(workflow("extension-firefox.yml"), "firefox"), /FERRET_WASM_SOURCE=\$\{\{ needs\.wasm\.outputs\.source \}\}/);
   // The extension's release variant never takes it, in CI as anywhere.
-  assert.match(job(workflow("extension.yml"), "unit"), /--variant release --wasm lock/);
+  assert.match(job(workflow("extension.yml"), "unit"), /scripts\/release-build\.sh/);
+  assert.match(read("extension/scripts/release-build.sh"), /--variant release --wasm lock/);
   assert.doesNotMatch(job(workflow("extension.yml"), "lint"), /wasm-tree|--wasm tree/);
   // The pins of the recipe are the release's own.
   const pins = (/** @type {string} */ text) => ["WASM_PACK_VERSION", "WASM_BINDGEN_CLI_VERSION", "BINARYEN_VERSION", "BINARYEN_SHA256", "NODE_VERSION", "NODE_SHA256"].map((k) => new RegExp(`^  ${k}: (\\S+)$`, "m").exec(text)?.[1]);

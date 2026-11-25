@@ -7,7 +7,7 @@
 #  * its own compose project (ferret-e2e), network, containers and image, all
 #    named ferret-e2e* and labelled owner=ferret-e2e;
 #  * its own app, built with the cargo features `e2e-clock` (the test clock) and
-#    `quick-unlock` (PIN and passkey unlock); a release image has neither;
+#    `quick-unlock` (PIN and passkey unlock); a release image has the second and not the first;
 #  * one named volume for the data (ferret-e2e-data, so that a container restart
 #    keeps it, which a restart test needs) that every `e2e-up` and `e2e-down`
 #    removes, so every run starts with a fresh, empty database; no published port:

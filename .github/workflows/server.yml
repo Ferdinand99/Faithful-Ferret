@@ -69,7 +69,7 @@ jobs:
         with:
           workspaces: crates/ferret-server
       - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets -- -D warnings
-      # The test clock and the unlock feature, as in the end-to-end image.
+      # The unlock feature of the release image, with the test clock of the end-to-end image.
       - run: cargo clippy --manifest-path crates/ferret-server/Cargo.toml --locked --all-targets --features e2e-clock,quick-unlock -- -D warnings
 
   test:
@@ -82,7 +82,8 @@ jobs:
         with:
           workspaces: crates/ferret-server
       - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked
-      # The same tests with the test clock and the unlock feature of the end-to-end image built in.
+      # The same tests with the unlock feature of the release image and the test clock of the end-to-end image built in
+      # (the run above is the build with both off: nothing of either in the binary).
       - run: cargo test --manifest-path crates/ferret-server/Cargo.toml --locked --features e2e-clock,quick-unlock
 
   deny:

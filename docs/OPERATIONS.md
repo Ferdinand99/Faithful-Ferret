@@ -251,7 +251,7 @@ The stack never gets real data before the checks in the last section of this fil
 without an explicit yes: `scripts/ferret-home.sh up <release tag> --yes-ferret-home`. The script refuses unless the tag is
 a release of this checkout, the image of that release exists for this machine's architecture and for arm64, its
 signature verifies (`cosign`, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
-commit of the tag, the image has no test features, and the compose file passes its own check
+commit of the tag, the image has no test features (a release has the cargo feature `quick-unlock` and nothing else), and the compose file passes its own check
 (`scripts/ferret-home.sh config`). It then runs the image by digest and writes the digest down. The header of the compose
 file has the full list of what the host needs (Docker 28 or newer, buildx, compose v2, git with the tags, node).
 

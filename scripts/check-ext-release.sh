@@ -3,8 +3,9 @@
 # fixed extension UUID, no test name, a shared/features.mjs with exactly the
 # features a release has on (the `save` feature is required, and so are its
 # capture script and the sources it is joined from; the `unlock` feature is
-# refused while a release does not have it, and so are its window page and any
-# use of its database other than the deletion at start), and a manifest.json with only the release keys and the
+# required too, with its window page and its PIN store, and no file other than
+# the PIN store may name its database except to delete it), and a manifest.json
+# with only the release keys and the
 # permissions of manifest/permissions.allow.json (no content script, no
 # web-accessible resource, no externally_connectable). Takes .xpi files or
 # unpacked folders; without arguments it checks every

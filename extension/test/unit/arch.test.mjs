@@ -288,8 +288,8 @@ test("background_exposes_nothing_on_globalThis", async () => {
       // The test build also listens for the content script's reports (the fill probe) and for its own
       // content-script probe, and the lifetime log listens for the heartbeat.
       assert.equal(onMessage.length, variant === "test" ? 3 : 1);
-      // The lock and the clipboard listen for their alarms (and the test build's lifetime log for its heartbeat).
-      assert.deepEqual(counts, { alarm: variant === "test" ? 4 : 2, idle: 1, command: 1, menuClick: 1 });
+      // The lock, the clipboard and the PIN host listen for their alarms (and the test build's lifetime log for its heartbeat).
+      assert.deepEqual(counts, { alarm: variant === "test" ? 4 : 3, idle: 1, command: 1, menuClick: 1 });
       // The one menu item, with the English title (no catalog can be fetched here).
       assert.deepEqual(menuItems, [{ id: "ferret-fill", title: "Fill with Ferret", contexts: ["editable"] }]);
       assert.equal(session.has("lock_at"), false, "a new page starts locked");

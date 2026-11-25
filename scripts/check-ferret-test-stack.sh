@@ -3,12 +3,12 @@
 # a Docker host (`docker compose config` only reads the files). The owner's stack:
 #  * the file is valid and every resource is named ferret-test* and carries the
 #    label owner=ferret-test;
-#  * the stack has one service, built without cargo features, with no test
-#    clock and no extra volume;
+#  * the stack has one service, built with the cargo feature quick-unlock (as a release is) and
+#    no other, with no test clock and no extra volume;
 #  * the container drops every capability but the three the entrypoint needs,
 #    cannot gain privileges and has a read-only root file system;
 #  * the Dockerfile pins every base image by digest, builds without cargo
-#    features by default, uses cache ids of its own and has no setcap or USER root;
+#    features unless told (the release workflow and the stacks name theirs), uses cache ids of its own and has no setcap or USER root;
 #  * it runs on the host network (so the server sees real peer addresses), sets
 #    the public https addresses, and takes the setup token and the trusted
 #    proxies from docker/.env, which git ignores.
@@ -56,7 +56,7 @@ if (c.name !== "ferret-test") fail("project name must be ferret-test");
 if (s.container_name !== "ferret-test-app") fail("container_name");
 if (s.labels?.owner !== "ferret-test") fail("service label owner=ferret-test");
 if (s.build?.labels?.owner !== "ferret-test") fail("build label owner=ferret-test");
-if ((s.build?.args?.FEATURES ?? "") !== "") fail("the image must be built without cargo features");
+if ((s.build?.args?.FEATURES ?? "") !== "quick-unlock") fail("the image must be built with the cargo feature quick-unlock and no other, as a release is");
 if (JSON.stringify(s.cap_drop) !== JSON.stringify(["ALL"])) fail("cap_drop must be [ALL]");
 if ([...(s.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("cap_add must be CHOWN, SETUID, SETGID only, got " + s.cap_add);
 if (!(s.security_opt || []).includes("no-new-privileges:true")) fail("security_opt needs no-new-privileges:true");

@@ -622,7 +622,7 @@ test("a_content_script_or_framed_page_cannot_send_pin_messages", async () => {
 test("pin_messages_are_refused_with_unlock_off", async () => {
   const env = makeRoot();
   try {
-    const result = await build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv2", variant: "release" });
+    const result = await build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv2", variant: "test", features: ["save"] });
     const { pathToFileURL } = await import("node:url");
     const handler = (await import(pathToFileURL(join(result.dir, "background", "handlers", "unlock.handler.mjs")).href)).default;
     const sender = { id: "ferret@hedgerow.tools", url: "moz-extension://x/pages/popup.html", frameId: 0 };
@@ -635,7 +635,7 @@ test("pin_messages_are_refused_with_unlock_off", async () => {
       );
     }
     assert.equal(called, 0);
-    // And no PIN store: a release has the generated module with nothing in it, and so no operation.
+    // And no PIN store: a package with unlock off has the generated module with nothing in it, and so no operation.
     const gen = readFileSync(join(result.dir, "background", "unlockStore.gen.mjs"), "utf8");
     assert.match(gen, /createLocalUnlock = null/);
   } finally {
