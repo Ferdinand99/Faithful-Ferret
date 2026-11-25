@@ -257,6 +257,12 @@ pub(crate) struct DraftDto {
 }
 
 impl DraftDto {
+    /// True when the draft sets or removes a passkey. An imported passkey
+    /// comes from the core's `passkey_import` and never from a draft.
+    pub(crate) fn touches_passkey(&self) -> bool {
+        self.passkey.is_some() || self.remove_passkey
+    }
+
     /// A draft that sets only the device name (or nothing, for `None`).
     #[allow(
         clippy::field_reassign_with_default,

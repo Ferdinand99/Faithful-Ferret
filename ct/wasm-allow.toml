@@ -45,8 +45,8 @@ reason = "The check of the shape of a JavaScript argument before it is read: a m
 [[allow]]
 function = "^ferret_core_wasm::convert::from_js$"
 instruction = "br_table"
-max = 8
-reason = "APPROVED: Same code as the entry already there: serde-wasm-bindgen reading a JavaScript value into a Rust type, inlined. The entry went from 7 to 8 when GetDto got a second caller (passkey_candidates reads the same request type as passkey_get): that stopped wasm-opt from inlining the read into the passkey_get shim, so the match on the kind of a value, which was counted in that shim, is now counted here. This is the structure of a call from JavaScript; key material arrives as byte arrays that are copied."
+max = 18
+reason = "APPROVED: Same code as the entry already there: serde-wasm-bindgen reading a JavaScript value into a Rust type, inlined. The entry went from 8 to 18 because from_js::<ImportDto> reads the argument of passkey_import (twelve fields; the key arrives as a byte array or as text): the jump tables are the match on the kind of each value (number, string, array, object) and on the names of the fields. This is the structure of a call from JavaScript; the key is copied into an owned buffer that is wiped, and no byte of it decides a jump."
 
 [[allow]]
 function = "^ferret_core_wasm::convert::from_js_list$"
@@ -167,30 +167,6 @@ function = "^ferret_core_wasm::vault::server_rows_of$"
 instruction = "br_table"
 max = 1
 reason = "APPROVED: The match on the state label of each row the server shows (live or deleted), which is public text from the server; the tag or tombstone of the row is then checked by the core, in the functions that have their own entries."
-
-[[allow]]
-function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
-instruction = "br_table"
-max = 8
-reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
-
-[[allow]]
-function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
-instruction = "i32\\.div_u"
-max = 3
-reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
-
-[[allow]]
-function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
-instruction = "i32\\.load\\(indexed\\)"
-max = 1
-reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
-
-[[allow]]
-function = "^ferret_core_wasm::vault::Vault>::passkey_create$"
-instruction = "i64\\.load\\(indexed\\)"
-max = 1
-reason = "Creating a passkey: wasm-opt inlined the passkey code into this method, so the hits are of the kinds of the passkey::origin, client_data and psl entries (matches on the user verification mode and the error kind, base64url and element-size divisions, loads of public text such as the origin and the relying party id) and of the conversions of its arguments. The credential key and the PRF output are made and held by ferret_core and the p256 crate (third-party, counted under other crates), not read through these hits. The count is exact, so one more hit fails the scan and the generator refuses it."
 
 [[allow]]
 function = "^ferret_core::cbor::decode::item$"
@@ -503,6 +479,30 @@ function = "^ferret_core::passkey::client_data::push_ccd_string$"
 instruction = "i32\\.load\\(static-table\\)"
 max = 1
 reason = "Public text: server addresses, QR text, origins, relying party ids, the public suffix list, the client data JSON, base64url and hexadecimal output of public values. The loop counter or a length is the index; the prefix of a recovery or secret key code (`FFR1`, `FFS1`) is compared with the constant prefix byte by byte, and the letters of the key itself go through ct/harness/crockford.rs, which has no hit."
+
+[[allow]]
+function = "^ferret_core::passkey::import::parse_jwk::\\{closure#0\\}$"
+instruction = "br_table"
+max = 1
+reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
+
+[[allow]]
+function = "^ferret_core::passkey::import::Scan>::members$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 8
+reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
+
+[[allow]]
+function = "^ferret_core::passkey::import::Scan>::skip_value$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 7
+reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
+
+[[allow]]
+function = "^ferret_core::passkey::import::Scan>::string$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 2
+reason = "The reader of a JWK in the import of a passkey (ferret_core::passkey::import): it walks the text of the file by a position that counts characters, so the address of every load is the pointer plus a position and never a value of the key, and the jump table is the match on the kind of value it skips (object, array, string, number) and on the member names. The private scalar `d` is a quoted text in it: the reader tests its characters only against quote, backslash and control characters, which no valid base64url text holds, so the branches go the same way for every key. The scalar is turned into bytes by ct/harness/base64url.rs, which has no hit in this scan and none in the analyzer beyond the loop counters of TRIAGE.md T12."
 
 [[allow]]
 function = "^ferret_core::passkey::origin::canonical_host$"
@@ -865,12 +865,6 @@ max = 3
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
 
 [[allow]]
-function = "^vault_encrypt_item externref shim multivalue shim$"
-instruction = "br_table"
-max = 10
-reason = "APPROVED: The export shim of encrypt_item with the glue of the call inlined. The hits are serde-wasm-bindgen matching the field names and value kinds of the draft (now including the folders list) and the matches of the code it calls, whose entries are above. This is the structure of the call from JavaScript; no key byte decides a branch."
-
-[[allow]]
 function = "^vault_items_with_field_value multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
@@ -919,6 +913,30 @@ max = 1
 reason = "APPROVED: The export shim of Vault.passkey_candidates, into which wasm-opt inlined the method. The loads and divisions are the walk over the open items and the list of found indexes: the indexed load reads the next entry of the map of handles, the divisions are the lengths of the lists of stored references and of handles divided by the size of one entry, all counts that are public. The RP IDs and credential ids are compared by the core and never used as an address or a divisor; no key, seed or signature is read, and the reply is a list of handles."
 
 [[allow]]
+function = "^vault_passkey_create externref shim multivalue shim$"
+instruction = "br_table"
+max = 7
+reason = "APPROVED: The same code as the entries of Vault>::passkey_create that this change drops (br_table, i32.div_u, i32.load(indexed) and i64.load(indexed), with the counts those entries had, one br_table fewer): adding passkey_import changed what wasm-opt inlines, and the body of passkey_create is now inlined into its export shim. The hits are matches on the user verification mode and the error kind, base64url and element-size divisions and loads of public text such as the origin and the relying party id; the key and the PRF output are made and held by ferret_core and the p256 crate."
+
+[[allow]]
+function = "^vault_passkey_create externref shim multivalue shim$"
+instruction = "i32\\.div_u"
+max = 3
+reason = "APPROVED: The same code as the entries of Vault>::passkey_create that this change drops (br_table, i32.div_u, i32.load(indexed) and i64.load(indexed), with the counts those entries had, one br_table fewer): adding passkey_import changed what wasm-opt inlines, and the body of passkey_create is now inlined into its export shim. The hits are matches on the user verification mode and the error kind, base64url and element-size divisions and loads of public text such as the origin and the relying party id; the key and the PRF output are made and held by ferret_core and the p256 crate."
+
+[[allow]]
+function = "^vault_passkey_create externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The same code as the entries of Vault>::passkey_create that this change drops (br_table, i32.div_u, i32.load(indexed) and i64.load(indexed), with the counts those entries had, one br_table fewer): adding passkey_import changed what wasm-opt inlines, and the body of passkey_create is now inlined into its export shim. The hits are matches on the user verification mode and the error kind, base64url and element-size divisions and loads of public text such as the origin and the relying party id; the key and the PRF output are made and held by ferret_core and the p256 crate."
+
+[[allow]]
+function = "^vault_passkey_create externref shim multivalue shim$"
+instruction = "i64\\.load\\(indexed\\)"
+max = 1
+reason = "APPROVED: The same code as the entries of Vault>::passkey_create that this change drops (br_table, i32.div_u, i32.load(indexed) and i64.load(indexed), with the counts those entries had, one br_table fewer): adding passkey_import changed what wasm-opt inlines, and the body of passkey_create is now inlined into its export shim. The hits are matches on the user verification mode and the error kind, base64url and element-size divisions and loads of public text such as the origin and the relying party id; the key and the PRF output are made and held by ferret_core and the p256 crate."
+
+[[allow]]
 function = "^vault_passkey_get externref shim multivalue shim$"
 instruction = "i32\\.load\\(indexed\\)"
 max = 1
@@ -935,6 +953,18 @@ function = "^vault_passkey_get externref shim multivalue shim$"
 instruction = "i64\\.load\\(indexed\\)"
 max = 14
 reason = "This is the export shim that wasm-bindgen makes (multivalue and externref conversions); wasm-opt inlined the glue of the call and parts of the code it calls into it. The hits are of the kinds of the modules the export uses, whose entries are above and whose reasoning applies; the count is exact, so one more hit fails the scan."
+
+[[allow]]
+function = "^vault_passkey_import externref shim multivalue shim$"
+instruction = "br_table"
+max = 2
+reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument (serde-wasm-bindgen, whose jump table is on the field names, and a match on the tag of the key form and of the PRF form that the caller chose), the JWK reader of ferret_core::passkey::import and the draft. The three indexed loads read one byte of a text at its position (skipping white space and testing for a brace in the JWK, and the loop over the quoted text): the address is the pointer plus a position that counts the characters, never a value of the key, and the branches on the characters of the private scalar are on quote, backslash and control characters, which no valid base64url text holds, so they go the same way for every key. The scalar itself is read by ct/harness/base64url.rs (no hit in the scan) and by p256, counted under other crates."
+
+[[allow]]
+function = "^vault_passkey_import externref shim multivalue shim$"
+instruction = "i32\\.load\\(indexed\\)"
+max = 3
+reason = "APPROVED: The export shim of passkey_import with the code it calls inlined: the read of the argument (serde-wasm-bindgen, whose jump table is on the field names, and a match on the tag of the key form and of the PRF form that the caller chose), the JWK reader of ferret_core::passkey::import and the draft. The three indexed loads read one byte of a text at its position (skipping white space and testing for a brace in the JWK, and the loop over the quoted text): the address is the pointer plus a position that counts the characters, never a value of the key, and the branches on the characters of the private scalar are on quote, backslash and control characters, which no valid base64url text holds, so they go the same way for every key. The scalar itself is read by ct/harness/base64url.rs (no hit in the scan) and by p256, counted under other crates."
 
 [[allow]]
 function = "^vault_prf_methods externref shim multivalue shim$"

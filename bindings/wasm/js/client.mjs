@@ -69,6 +69,19 @@
 //   `item_view`'s `passkey` has `rp_name` and `user_display_name` (`null` when
 //   the site gave none): text a site chose, never the identity of the site.
 //
+// Importing a passkey from another program (`passkey_import`): the vault method
+// `passkey_import(item_id, rev, draft, passkey, now_ms)` seals the passkey into a
+// new login item and returns `{ item: { rev, envelope, tag }, rp_id, notes }`;
+// nothing is stored and the item is not open. `draft` is the draft of
+// `encrypt_item` for a new item without a passkey; `passkey` is `{ cred_id,
+// rp_id, user_handle, user_name, rp_name?, user_display_name?, created,
+// key_pkcs8 | key_jwk, prf_seed_uv?, prf_seed_nouv?, counter? }`. The key goes in
+// as a `Uint8Array` (PKCS#8) or as the text of a JWK and is wiped inside WASM when
+// the call ends; the caller wipes its own copy. The two seeds come only from a
+// source whose PRF is Ferret's formula (AliasVault gives its one secret twice).
+// `notes.register_again` says that the source had a counter above 0: a site that
+// compares counters refuses the passkey, so it is to be registered again there.
+//
 // Encrypted export: `export_begin(rows, now_ms, kdf, token)` needs the same
 // one-time token as the plaintext export (the file holds every secret of the
 // vault, passkey keys and PRF seeds included); `now_ms` is the caller's clock

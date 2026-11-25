@@ -1136,6 +1136,66 @@ fn totp_ops(method: &str, i: &Value) -> Result<Value, Error> {
     })
 }
 
+/// `passkey.import`: the case of `vectors/OPS.md`, run through the core's
+/// `passkey_import`.
+fn passkey_import_op(i: &Value) -> Result<Value, Error> {
+    use ferret_core::{ImportKey, ImportPrf, ImportedPasskeyInput, passkey_import};
+    use p256::ecdsa::SigningKey;
+    use p256::pkcs8::EncodePublicKey;
+    let key_bytes;
+    let key_text;
+    let key = if i["key"]["format"].as_str() == Some("jwk") {
+        key_text = i["key"]["text"].as_str().unwrap().to_owned();
+        ImportKey::JwkJson(&key_text)
+    } else {
+        key_bytes = hx(&i["key"]["hex"]);
+        ImportKey::Pkcs8Der(&key_bytes)
+    };
+    let seeds = i["prf"].as_object().map(|p| (hx(&p["uv"]), hx(&p["nouv"])));
+    let cred_id = hx(&i["cred_id"]);
+    let user_handle = hx(&i["user_handle"]);
+    let input = ImportedPasskeyInput {
+        cred_id: &cred_id,
+        rp_id: i["rp_id"].as_str().unwrap(),
+        user_handle: &user_handle,
+        user_name: i["user_name"].as_str().unwrap(),
+        rp_name: i["rp_name"].as_str(),
+        user_display_name: i["user_display_name"].as_str(),
+        created: u64s(&i["created"]),
+        key,
+        prf: match &seeds {
+            Some((uv, nouv)) => ImportPrf::Seeds { uv, nouv },
+            None => ImportPrf::None,
+        },
+        counter: u32::try_from(i["counter"].as_u64().unwrap()).unwrap(),
+    };
+    let (record, notes) = passkey_import(&input)?;
+    let item = item_of(&record);
+    let key = SigningKey::from_slice(&private_scalar(&record).unwrap()).unwrap();
+    let spki = key.verifying_key().to_public_key_der().unwrap();
+    let opt = |b: &Option<Vec<u8>>| b.as_deref().map_or(Value::Null, |s| Value::from(he(s)));
+    Ok(json!({
+        "record": {
+            "cred_id": he(&item.cred_id),
+            "rp_id": item.rp_id,
+            "user_handle": he(&item.user_handle),
+            "user_name": item.user_name,
+            "rp_name": item.rp_name,
+            "user_display_name": item.user_display_name,
+            "created": item.created.to_string(),
+            "priv_pkcs8": he(&item.private_key),
+            "public_key_spki": he(spki.as_bytes()),
+            "prf_seed_uv": opt(&item.prf_seed_uv),
+            "prf_seed_nouv": opt(&item.prf_seed_nouv),
+        },
+        "notes": {
+            "register_again": notes.register_again,
+            "counter": notes.counter,
+            "prf": notes.prf,
+        },
+    }))
+}
+
 fn passkey_ops(method: &str, i: &Value, rng: &mut ReplayRng) -> Result<Value, Error> {
     use ferret_core::PrfSeed;
     use ferret_core::passkey::{PrfCreate, PrfEval, PrfRequest, prf_salt};
@@ -1462,6 +1522,7 @@ fn dispatch(
         }
         "passkey_create" | "passkey_get" | "passkey_prf" | "passkey_candidates"
         | "passkey_site" => passkey_ops(method, i, rng),
+        "passkey_import" => passkey_import_op(i),
         _ => return Err(None),
     };
     r.map_err(Some)
