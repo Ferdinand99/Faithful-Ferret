@@ -89,6 +89,9 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   // The 32 bytes a passkey gave the unlock window, on their one way to the background (a request from the window, never a
   // reply). The window wipes its copy as soon as the message is sent.
   prf_unlock: Object.freeze(["prf_output"]),
+  // The verification step of Ferret's chooser window for a page's passkey request (the `passkeys` feature): the PIN as typed, or
+  // the 32 bytes a passkey of the vault gave the window, one way to the background (a request, never a reply).
+  passkey_verify: Object.freeze(["pin", "prf_output"]),
 });
 
 /**
@@ -109,6 +112,8 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   pin_unlock: Object.freeze(["pin"]),
   // Not typed, but it travels the same way: from the unlock window to the background, one way, in this one type.
   prf_unlock: Object.freeze(["prf_output"]),
+  // The verification step of the passkey chooser window: the master password (and the secret key), the PIN, or a passkey's bytes.
+  passkey_verify: Object.freeze(["mp", "sk", "pin", "prf_output"]),
 });
 
 /** The type of the background's refusal. No table may define it. */
@@ -371,6 +376,8 @@ export const PASSKEY_RESPONSE = object(
  * never leaves the background.
  */
 const pkRequestRef = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
+/** An item id of the vault (16 bytes in lower-case hex), as the chooser window names a passkey or an item. */
+const pkItemId = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
 /**
  * A waiting request as Ferret's chooser window may see it (the `passkeys` feature). `origin` is the calling frame's
  * origin as the browser gave it (never a value of the page); `rp_id` is the RP ID the page asked for, unchecked (null: the
@@ -473,6 +480,62 @@ export const UI_TYPES = defineTypes({
   passkey_never: {
     request: object({ request_id: pkRequestRef }),
     reply: okReply,
+  },
+  // A page's `get`, from Ferret's chooser window (the `passkeys` feature; needs the open vault). `passkey_candidates`: the passkeys of
+  // the vault the core says may answer the request (exact RP ID, the page's allow list), each named by the vault; `recent`: an
+  // unlock in the last five minutes is enough; `methods`: the ways to verify there are now, in the order they are offered;
+  // `online`: whether the server answers. `passkey_choose`: the person's choice,
+  // an item for a get, a new item or an item to add to for a create; the click is the evidence of presence, and the background
+  // answers the page. `passkey_verify`: the verification step (the recent unlock, a passkey of the vault, the PIN or the master
+  // password); what the person typed and a passkey's 32 bytes go to the background one way, never in a reply.
+  passkey_candidates: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        candidates: array(
+          object({ item_id: pkItemId, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: integer({ min: 0, max: 8_640_000_000_000_000 }) }),
+          { max: 200 },
+        ),
+        recent: boolean(),
+        methods: array(string({ max: 16, oneOf: ["recent", "prf", "pin", "password"] }), { max: 4 }),
+        online: boolean(),
+      },
+      { optional: ["reason", "candidates", "recent", "methods", "online"] },
+    ),
+  },
+  passkey_choose: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        kind: string({ max: 8, oneOf: ["create", "get"] }),
+        item_id: pkItemId,
+        mode: string({ max: 8, oneOf: ["new", "attach"] }),
+        name: string({ min: 1, max: 200 }),
+        folder_id: pkItemId,
+      },
+      { optional: ["item_id", "mode", "name", "folder_id"] },
+    ),
+    reply: okReply,
+  },
+  passkey_verify: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        method: string({ max: 16, oneOf: ["recent", "prf", "pin", "password"] }),
+        pin: string({ min: 1, max: 256 }),
+        mp: string({ min: 1, max: 1024 }),
+        sk: string({ min: 1, max: 128 }),
+        credential_id: string({ min: 1, max: 1024, pattern: B64U }),
+        prf_output: string({ min: 43, max: 43, pattern: B64U }),
+      },
+      { optional: ["pin", "mp", "sk", "credential_id", "prf_output"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
+      { optional: ["reason", "left", "wait_ms"] },
+    ),
   },
   // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
   // it, and what this device has of a PIN (whether one is set, where it is kept, the attempts left, the wait, whether

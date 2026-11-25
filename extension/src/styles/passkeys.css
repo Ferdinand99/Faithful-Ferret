@@ -327,6 +327,23 @@ body.ff-chooser-window {
   display: none;
 }
 
+/* The verification step: the ways one under the other, each form tight. */
+.ff-pk-verify-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ff-pk-verify-step .ff-pk-verify-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.ff-pk-verify-step .ff-actions {
+  margin: 0;
+}
+
 .ff-chooser .ff-notice {
   overflow-wrap: anywhere;
 }

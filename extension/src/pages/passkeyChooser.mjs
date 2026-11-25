@@ -18,7 +18,9 @@
 //     changed (a new list, a new step), not just after it was made. The window shows it is guarded while that runs;
 //   - nothing is sent but the request's id and the choice: no password, key, user name or text of the website.
 // The window claims neither "user present" nor "user verified". The click is the background's evidence of the first; the second
-// comes from a recent unlock or the verification step, which has its place in the window (`passkey-verify`) and is built later.
+// comes from a recent unlock or the verification step (passkeyVerify.mjs): when the background answers a choice with
+// `verification_needed`, the window shows the step in place of the list, and sends the same choice again once the background
+// has the person verified (a passkey of the vault, the PIN or the master password).
 //
 // A locked vault is unlocked here with U3's own parts (master password, PIN, passkey window); that counts as an unlock for the
 // background. Every field is emptied when a choice is sent, when the window closes and when the vault locks.
@@ -27,6 +29,7 @@ import { el, mount } from "../shared/dom.mjs";
 import { FEATURES } from "../shared/features.mjs";
 import { field } from "./page.mjs";
 import { chooserErrorKey, createGuard, defaultItemName, GUARD_MS, isGone, POLL_MS } from "./passkeyFlow.mjs";
+import { createVerifyStep } from "./passkeyVerify.mjs";
 import { createPinUnlockPart } from "./pinUnlockView.mjs";
 import { UiError } from "./ui.mjs";
 
@@ -50,6 +53,7 @@ const reasonKey = (reason) => `session.error.${typeof reason === "string" && /^[
  *   texts: Texts,
  *   backend: ReturnType<typeof import("./passkeyFlow.mjs").createChooserBackend>,
  *   unlock?: ReturnType<typeof import("./popupFlow.mjs").createPopupFlow> | null,
+ *   proof?: ReturnType<typeof import("./passkeyVerify.mjs").createPasskeyProof> | null,
  *   now?: () => number,
  *   schedule?: (fn: () => void, ms: number) => unknown,
  *   cancel?: (handle: any) => void,
@@ -58,6 +62,7 @@ const reasonKey = (reason) => `session.error.${typeof reason === "string" && /^[
  *   pollMs?: number,
  * }} deps
  *   `unlock`: the popup's flow, for a vault that is locked (null: only the master password is offered through it, so nothing).
+ *   `proof`: a passkey of the vault as the verification (the one WebAuthn call of this window; null: not offered).
  *   `now`, `schedule`, `cancel`: the clock and the timers (the tests set them). `closeWindow`: closes this window.
  * @returns {{ root: HTMLElement, loaded: Promise<void>, focus: () => void, touch: () => void, focused: () => void, refresh: () => Promise<void>, wipe: () => void, stop: () => void }}
  */
@@ -65,6 +70,7 @@ export function createChooser({
   texts,
   backend,
   unlock = null,
+  proof = null,
   now = () => Date.now(),
   schedule = (fn, ms) => setTimeout(fn, ms),
   cancel = (handle) => clearTimeout(handle),
@@ -100,6 +106,8 @@ export function createChooser({
   let shownSignature = "";
   /** Counts the builds, so an answer for a window that is gone is dropped. */
   let build = 0;
+  /** The passkey the person chose while the background asks to verify them first: the step shows in place of the list. @type {import("./passkeyFlow.mjs").Candidate | null} */
+  let verifying = null;
 
   // ------------------------------------------------------------ small pieces
 
@@ -295,10 +303,59 @@ export function createChooser({
     );
   }
 
+  /**
+   * The person's choice of a passkey. When the background must verify the person first, the step takes the list's place; once
+   * it has, the same choice goes again.
+   * @param {import("./passkeyFlow.mjs").Candidate} c
+   */
+  function chooseGet(c) {
+    return send(() => backend.choose({ kind: "get", itemId: c.itemId }), "passkeys.done.used", (reason) => {
+      if (reason !== "verification_needed") return false;
+      verifying = c;
+      render();
+      return true;
+    });
+  }
+
+  /**
+   * The verification step for the chosen passkey: the passkey (its name and user name from the vault), the ways to verify, "Back to
+   * the list", and the other choices.
+   * @param {View} v @param {import("./passkeyFlow.mjs").Candidate} c
+   */
+  function verifyParts(v, c) {
+    const step = createVerifyStep({
+      texts,
+      ways: v.methods,
+      verify: (method, input) => backend.verify(method, input),
+      proof,
+      action,
+      onVerified: () => void chooseGet(c),
+    });
+    const previous = teardown;
+    teardown = () => {
+      previous?.();
+      step.wipe();
+    };
+    const name = c.name !== "" ? bdi(c.name) : el("span", { class: "ff-pk-none" }, t("passkeys.unnamed"));
+    const user = c.userName !== "" ? bdi(c.userName) : el("span", { class: "ff-pk-none" }, t("passkeys.no_username"));
+    const back = action({ class: "ff-pk-link", "data-role": "passkey-verify-back" }, t("passkeys.verify.back"), () => {
+      verifying = null;
+      render();
+    });
+    const chosen = el(
+      "section",
+      { class: "ff-pk-ferret", "data-role": "passkey-chosen", "data-item": c.itemId },
+      el("p", { class: "ff-pk-row-main" }, el("span", { class: "ff-pk-row-name" }, name), el("span", { class: "ff-pk-row-sub" }, user)),
+      back,
+    );
+    return [chosen, step.root, others(v)];
+  }
+
   /** @param {View} v */
   function getParts(v) {
+    if (verifying !== null) return verifyParts(v, verifying);
     const list = v.candidates;
-    const choose = (/** @type {import("./passkeyFlow.mjs").Candidate} */ c) => () => send(() => backend.choose({ kind: "get", itemId: c.itemId }), "passkeys.done.used");
+    const choose = (/** @type {import("./passkeyFlow.mjs").Candidate} */ c) => () => chooseGet(c);
     const ferret =
       list.length === 0
         ? el(
@@ -404,8 +461,8 @@ export function createChooser({
   function noEnter(event) {
     if (event?.key === "Enter") event.preventDefault();
   }
-  /** The roles of the forms that unlock the vault: typing a secret there is not a choice, and Enter may submit it. */
-  const UNLOCK_FORMS = ["passkey-unlock-form", "pin-unlock-form"];
+  /** The roles of the forms that unlock the vault or verify the person: typing a secret there is not a choice, and Enter may submit it. */
+  const UNLOCK_FORMS = ["passkey-unlock-form", "pin-unlock-form", "passkey-verify-pin-form", "passkey-verify-password-form"];
   /** @param {any} node */
   const inUnlockForm = (node) => {
     for (let at = node; at; at = at.parentNode) if (UNLOCK_FORMS.includes(at.getAttribute?.("data-role"))) return true;
@@ -575,8 +632,9 @@ export function createChooser({
    * Sends a choice. The fields are emptied before it goes out. An answer closes the window; a refusal says why and leaves the
    * window as it was, unless the request is over (it closes) or the vault locked (it shows the unlock).
    * @param {() => Promise<{ ok: true } | { ok: false, reason: string }>} run @param {string} doneKey
+   * @param {(reason: string) => boolean} [onRefused] handles a refusal itself (true) before the window says it
    */
-  async function send(run, doneKey) {
+  async function send(run, doneKey, onRefused) {
     if (busy || closed) return;
     say(null);
     holding(true);
@@ -603,9 +661,11 @@ export function createChooser({
     }
     if (outcome.reason === "vault_locked") {
       wipe();
+      verifying = null;
       await reload();
       return;
     }
+    if (onRefused?.(outcome.reason) === true) return;
     nameDraft = kept.name;
     folderDraft = kept.folder;
     say(chooserErrorKey(outcome.reason));
@@ -627,6 +687,7 @@ export function createChooser({
       return;
     }
     const wasLocked = view?.state === "locked";
+    if (answer.view.state === "locked") verifying = null;
     view = answer.view;
     // A lock empties what was typed; an unlock starts clean.
     if (wasLocked || answer.view.state === "locked") nameDraft = "";
@@ -647,8 +708,11 @@ export function createChooser({
       return;
     }
     if (signature(answer.view) === shownSignature) return;
-    // A lock empties what was typed.
-    if (answer.view.state === "locked" && view?.state !== "locked") wipe();
+    // A lock empties what was typed, and the step goes with it.
+    if (answer.view.state === "locked" && view?.state !== "locked") {
+      wipe();
+      verifying = null;
+    }
     view = answer.view;
     render();
   }

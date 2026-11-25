@@ -141,7 +141,10 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
   }
   assert.deepEqual(
     [...seenTyped].sort(),
-    ["pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "prf_unlock.prf_output", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk"],
+    [
+      "passkey_verify.mp", "passkey_verify.pin", "passkey_verify.prf_output", "passkey_verify.sk",
+      "pin_set.mp", "pin_set.pin", "pin_set.sk", "pin_unlock.pin", "prf_unlock.prf_output", "sign_in.mp", "sign_in.qr_text", "sign_in.sk", "unlock.mp", "unlock.sk",
+    ],
   );
   assert.deepEqual(FORBIDDEN_KEYS, ["password", "current_password", "value", "secret", "totp_secret", "code", "vk", "pin", "prf_output"]);
 
@@ -329,6 +332,12 @@ test("every UI request and reply round-trips with a sample body", () => {
     prf_options: [{}, { ok: true, rp_id: "vault.example.com", credentials: [{ id: "AQID", salt: "a".repeat(43) }] }],
     prf_window: [{}, { ok: true }],
     passkey_never: [{ request_id: "ab".repeat(16) }, { ok: true }],
+    passkey_candidates: [
+      { request_id: "ab".repeat(16) },
+      { ok: true, candidates: [{ item_id: "cd".repeat(16), name: "Example", user_name: "anna", created: 1_700_000_000_000 }], recent: false, methods: ["prf", "pin", "password"], online: true },
+    ],
+    passkey_choose: [{ request_id: "ab".repeat(16), kind: "get", item_id: "cd".repeat(16) }, { ok: false, reason: "verification_needed" }],
+    passkey_verify: [{ request_id: "ab".repeat(16), method: "pin", pin: "123456" }, { ok: false, reason: "wrong_pin", left: 4, wait_ms: 0 }],
     prf_unlock: [{ credential_id: "AQID", prf_output: "b".repeat(43) }, { ok: false, reason: "prf_failed" }],
     passkey_pending: [
       { request_id: "a1".repeat(16) },
@@ -373,13 +382,14 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
   assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, {
     fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"], item_code: ["code"],
-    pin_set: ["pin"], pin_unlock: ["pin"], prf_unlock: ["prf_output"],
+    pin_set: ["pin"], pin_unlock: ["pin"], prf_unlock: ["prf_output"], passkey_verify: ["pin", "prf_output"],
   });
-  // The name `pin` has exactly two exceptions (GC50): the requests of `pin_set` and `pin_unlock`. No reply carries it, and the
-  // rule and the state in the reply of `unlock_policy` are `pin_state`.
+  // The name `pin` has three exceptions, all requests from an extension page to the background: `pin_set` and `pin_unlock`, and
+  // `passkey_verify`, the verification step of the passkey chooser window (the PIN checked like an unlock, for a page's passkey
+  // request). No reply carries it, and the rule and the state in the reply of `unlock_policy` are `pin_state`.
   assert.deepEqual(
     Object.entries(SECRET_KEY_EXCEPTIONS).filter(([, keys]) => keys.includes("pin")).map(([type]) => type),
-    ["pin_set", "pin_unlock"],
+    ["pin_set", "pin_unlock", "passkey_verify"],
   );
   assert.ok(FORBIDDEN_KEYS.includes("pin") && !FORBIDDEN_KEYS.includes("pin_state"));
   /** @type {string[]} */
@@ -396,6 +406,8 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "ui/generate/reply/value",
     "ui/item_code/reply/code",
     "ui/offer_reveal/reply/value",
+    "ui/passkey_verify/request/pin",
+    "ui/passkey_verify/request/prf_output",
     "ui/pin_set/request/pin",
     "ui/pin_unlock/request/pin",
     "ui/prf_unlock/request/prf_output",

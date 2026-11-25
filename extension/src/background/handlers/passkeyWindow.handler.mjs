@@ -1,7 +1,10 @@
 // Ferret's chooser window for a page's passkey request (the `passkeys` feature, design document § 9.2 and § 9.4): what the
 // window may see of the request (`passkey_pending`), the site as the core checked it (`passkey_site`), the user's cancel
 // (`passkey_cancel`), "use the browser instead" (`passkey_browser`) and "never on this site" (`passkey_never`: the core's RP ID goes on
-// the never list, then the browser answers; it needs the open vault).
+// the never list, then the browser answers; it needs the open vault). For a get: the passkeys of the vault that may answer
+// (`passkey_candidates`), the person's choice (`passkey_choose`: the click is the evidence of presence, so only this window may
+// send it) and the verification step (`passkey_verify`: the recent unlock, Windows Hello or another passkey of the vault, the PIN
+// or the master password; a passkey's 32 bytes come only from this window, never the popup).
 //
 // Only from the window itself: a top-level page of this extension at `pages/passkey.html?r=<the request's id>` (the router
 // accepted its port already; this checks the page), and, where the browser names it, from the browser window the
@@ -37,17 +40,26 @@ function fromWindow(ctx, requestId) {
   }
 }
 
+/** What a type carries beside the request's id (its schema checked it already); nothing else of the body goes on. */
+const FIELDS = Object.freeze({
+  passkey_choose: Object.freeze(["kind", "item_id", "mode", "name", "folder_id"]),
+  passkey_verify: Object.freeze(["method", "pin", "mp", "sk", "credential_id", "prf_output"]),
+});
+
 /** @param {any} body @param {import("../router.mjs").HandlerContext} ctx */
 async function handle(body, ctx) {
   if (!FEATURES.passkeys) throw notAvailable();
   if (typeof ctx.call !== "function" || !fromWindow(ctx, body?.request_id)) throw notAvailable();
   // The browser window the page is in: the broker checks it against the window it opened for the request.
   const windowId = ctx.sender?.tab?.windowId;
-  return ctx.call(ctx.type, { request_id: body.request_id, session: ctx.session, ...(Number.isSafeInteger(windowId) ? { window_id: windowId } : {}) });
+  /** @type {Record<string, unknown>} */
+  const extra = {};
+  for (const key of /** @type {Record<string, readonly string[]>} */ (FIELDS)[ctx.type] ?? []) if (Object.hasOwn(body, key)) extra[key] = body[key];
+  return ctx.call(ctx.type, { ...extra, request_id: body.request_id, session: ctx.session, ...(Number.isSafeInteger(windowId) ? { window_id: windowId } : {}) });
 }
 
 export default {
-  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"],
+  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never", "passkey_candidates", "passkey_choose", "passkey_verify"],
   channel: /** @type {"ui"} */ ("ui"),
   handle,
 };

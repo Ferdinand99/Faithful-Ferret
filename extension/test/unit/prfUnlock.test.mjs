@@ -65,6 +65,8 @@ async function prfWorld({ passkeys = [PASSKEY], prfEnabled = true, windows = nul
     unlockBehaviour: /** @type {null | (() => unknown)} */ (null),
     methodsCheck: /** @type {null | (() => unknown)} */ (null),
     seedCalls: 0,
+    /** The clients made for one check each (the verification for a passkey request). @type {any[]} */
+    scratch: [],
   };
 
   const server = deviceServer({
@@ -93,16 +95,18 @@ async function prfWorld({ passkeys = [PASSKEY], prfEnabled = true, windows = nul
     return server.fetchImpl(input, init);
   };
 
+  const unlockPrfFake = async (/** @type {string} */ url, /** @type {any} */ ctx, /** @type {Uint8Array} */ output, /** @type {any} */ wrap, /** @type {any} */ pinned) => {
+    state.handed.push(output);
+    state.prfCalls.push({ url, ctx, output: Uint8Array.from(output), wrap, pinned });
+    if (state.unlockBehaviour) await state.unlockBehaviour();
+    if (pinned?.kind !== "pinned") throw coded("invalid_input");
+    if (Number(ctx.vk_epoch) > Number(pinned.record.vk_epoch_max)) throw coded("pinned_epoch_ahead");
+    if (!Buffer.from(output).equals(Buffer.from(state.correctOutput))) throw coded("decrypt");
+    return { pinned: pinned.record };
+  };
+
   const client = coreClient({
-    unlock_prf: async (/** @type {string} */ url, /** @type {any} */ ctx, /** @type {Uint8Array} */ output, /** @type {any} */ wrap, /** @type {any} */ pinned) => {
-      state.handed.push(output);
-      state.prfCalls.push({ url, ctx, output: Uint8Array.from(output), wrap, pinned });
-      if (state.unlockBehaviour) await state.unlockBehaviour();
-      if (pinned?.kind !== "pinned") throw coded("invalid_input");
-      if (Number(ctx.vk_epoch) > Number(pinned.record.vk_epoch_max)) throw coded("pinned_epoch_ahead");
-      if (!Buffer.from(output).equals(Buffer.from(state.correctOutput))) throw coded("decrypt");
-      return { pinned: pinned.record };
-    },
+    unlock_prf: unlockPrfFake,
     seed_pinned: (/** @type {any} */ pinned) => {
       state.seedCalls += 1;
       return pinned;
@@ -112,7 +116,7 @@ async function prfWorld({ passkeys = [PASSKEY], prfEnabled = true, windows = nul
 
   const db = memoryDb();
   const store = memoryStore(db);
-  w = await sessionWorld({ client, store, fetchImpl, pin: { store: pinStore, options: { policyTimeoutMs: 2000, ...(windows ? { windows, getURL: (/** @type {string} */ path) => `moz-extension://ferret/${path}`, windowPage: WINDOW_PAGE } : {}) } } });
+  w = await sessionWorld({ client, store, fetchImpl, pin: { store: pinStore, options: { policyTimeoutMs: 2000, scratch: async () => { const made = coreClient({ unlock_prf: unlockPrfFake }); state.scratch.push(made); return made; }, ...(windows ? { windows, getURL: (/** @type {string} */ path) => `moz-extension://ferret/${path}`, windowPage: WINDOW_PAGE } : {}) } } });
   w.clock.set(START);
   const signinPage = w.page("pages/signin.html");
   const signIn = () => signinPage.request("sign_in", { server: SERVER, email: EMAIL, mp: MP, sk: SK_CODE, remember_sk: true });
@@ -169,7 +173,9 @@ test("prf_unlock_runs_only_in_the_unlock_window_never_in_the_popup", async () =>
   w.router.onConnect(evil.background);
   assert.equal(evil.background.disconnected, true);
 
-  // The one place in a package with a WebAuthn call is the window's page (the shared files make none; they are handed one).
+  // The places in a package with a WebAuthn call are Ferret's own windows: the unlock window, and the passkey chooser window,
+  // which verifies the person with a passkey of the vault for a page's passkey request (the shared files make none; they are
+  // handed one).
   const { dir } = await pkg();
   /** @type {string[]} */
   const holders = [];
@@ -183,7 +189,7 @@ test("prf_unlock_runs_only_in_the_unlock_window_never_in_the_popup", async () =>
     }
   };
   walkDir(dir, "");
-  assert.deepEqual(holders.filter((p) => !p.startsWith("test") && !p.startsWith("probe")), ["pages/unlockWindow.mjs"]);
+  assert.deepEqual(holders.filter((p) => !p.startsWith("test") && !p.startsWith("probe")).sort(), ["pages/passkey.mjs", "pages/unlockWindow.mjs"]);
   // The popup never imports it and opens the window only by asking the background.
   const popup = readFileSync(join(dir, "pages", "popup.mjs"), "utf8");
   assert.equal(/unlockWindow/.test(popup), false);
@@ -734,4 +740,47 @@ test("a_refusal_of_the_checks_after_a_passkey_unlock_deletes_the_pin_but_a_wrong
   w.state.prfEnabled = false;
   assert.deepEqual(await w.unlock(), { ok: false, reason: "prf_unavailable" });
   assert.equal((await w.pinStore.status(SERVER, ACCOUNT)).set, true, "the PIN is still there");
+});
+
+// ------------------------------------------------------------------------------------------ verifying for a passkey request
+
+test("a_passkey_verification_for_a_passkey_request_runs_the_checks_of_an_unlock_in_a_client_of_its_own", async () => {
+  const w = await prfWorld();
+  assert.equal((await w.signIn()).ok, true);
+  // The rule is read when the vault opens (it is what says whether passkeys may verify).
+  await settle();
+  const v = w.pinHost.verifier;
+  const verify = (/** @type {Uint8Array} */ output = PASSKEY.output) => v.prf.verify({ credential_id: b64u(PASSKEY.credential), prf_output: b64u(output) });
+  assert.equal(await v.prf.available(), true);
+  const reads = w.state.listReads;
+  assert.deepEqual(await verify(), { ok: true });
+  assert.equal(w.state.listReads, reads + 1, "the server's list is read now");
+  // The core's unlock of the passkey with the pinned record (so the account key pk_a is compared), never on the open vault.
+  const call = w.state.prfCalls.at(-1);
+  assert.equal(call.pinned.kind, "pinned");
+  assert.equal(coreCalls(w, "unlock_prf").length, 0);
+  assert.equal(w.state.scratch.length, 1);
+  assert.ok(w.state.scratch[0].locks >= 1, "the check's client was ended");
+  assert.equal(w.coreHost.state(), "unlocked");
+  // The bytes were wiped once the core had them.
+  assert.ok(w.state.handed.at(-1).every((/** @type {number} */ b) => b === 0));
+  // A key that does not open the wrap.
+  assert.deepEqual(await verify(filled(32, 0x13)), { ok: false, reason: "prf_failed" });
+  // A record the server's answer does not match (another account key): an attack warning, and the PIN goes.
+  w.state.unlockBehaviour = () => {
+    throw coded("pinned_auth_key");
+  };
+  assert.deepEqual(await verify(), { ok: false, reason: "attack_warning" });
+  w.state.unlockBehaviour = null;
+  // It needs the network, and the rule must allow passkeys.
+  w.state.online = false;
+  assert.deepEqual(await verify(), { ok: false, reason: "network" });
+  w.state.online = true;
+  w.state.prfEnabled = false;
+  assert.deepEqual(await verify(), { ok: false, reason: "prf_unavailable" });
+  assert.equal(w.coreHost.state(), "unlocked");
+  // With the vault locked there is nothing to verify for.
+  await w.lockNow();
+  w.state.prfEnabled = true;
+  assert.deepEqual(await verify(), { ok: false, reason: "vault_locked" });
 });

@@ -52,8 +52,11 @@ import { PASSKEY_ORIGINS, PASSKEY_SETTING_KEY } from "./passkeyRegistry.mjs";
 
 /** The core operation the router hands a message of the bridge to. */
 export const PASSKEY_EVENT_OP = "passkey_event";
-/** The core operations of Ferret's chooser window (the UI types of the same names). */
-export const PASSKEY_WINDOW_OPS = Object.freeze(["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never"]);
+/**
+ * The core operations of Ferret's chooser window (the UI types of the same names): the broker's, and those of a get
+ * (`passkey_candidates`, `passkey_choose`, `passkey_verify`: passkeyGet.mjs).
+ */
+export const PASSKEY_WINDOW_OPS = Object.freeze(["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never", "passkey_candidates", "passkey_choose", "passkey_verify"]);
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -976,6 +979,16 @@ export function createPasskeyRequests({
     forUi: (id, session) => {
       const req = owned(id, session);
       return req === null ? null : viewOf(req);
+    },
+    /**
+     * What the page asked, for the session that owns the request: the kind and the page's options as the bridge carried them
+     * (PASSKEY_CREATE_OPTIONS or PASSKEY_GET_OPTIONS), or null. Read only: the options are the request's own.
+     * @param {string} id @param {string} session
+     * @returns {{ kind: "create" | "get", options: any } | null}
+     */
+    requestOf: (id, session) => {
+      const req = owned(id, session);
+      return req === null ? null : Object.freeze({ kind: req.kind, options: req.options });
     },
     /** The caller for the core, for the session that owns the request (see callerFor). @param {string} id @param {string} session */
     callerOf: (id, session) => {
