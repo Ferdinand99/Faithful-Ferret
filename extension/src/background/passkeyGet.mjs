@@ -25,6 +25,13 @@
 //     recent unlock).
 // The PRF results go to the page only when it asked for them, and the core picks the seed that follows UV.
 //
+// Ferret's popup has the same three for a page's conditional request (`passkey_tab_list`, `passkey_tab_choose`,
+// `passkey_tab_verify`): the popup names its tab, never a request, and the broker gives the tab's conditional request with the
+// popup's session (`tabRef`). The click in the popup is the evidence of presence (its handler lets only the popup page send it);
+// verification there is the recent unlock, the PIN or the master password, never a passkey (only Ferret's window can make that
+// call: the popup opens it). The list goes to the popup only. Without a conditional request the popup gets the passkeys of the
+// tab's site for information, with no way to sign (`tabSite`).
+//
 // A get writes nothing: no counter, no "last used", no change of the item (design § 9.5). It works without the server.
 
 import { pageErrorOf } from "./passkeyRequests.mjs";
@@ -33,6 +40,10 @@ import { fromB64u, responseToWire } from "../shared/webauthnWire.mjs";
 
 /** The window's operations of a get (beside the broker's). */
 export const PASSKEY_GET_OPS = Object.freeze(["passkey_candidates", "passkey_choose", "passkey_verify"]);
+/** The popup's operations of a get, by tab (its list, its click, its verification step). */
+export const PASSKEY_TAB_OPS = Object.freeze(["passkey_tab_list", "passkey_tab_choose", "passkey_tab_verify"]);
+/** The ways to verify the popup has (a passkey of the vault needs Ferret's window). */
+const TAB_WAYS = Object.freeze(["pin", "password"]);
 
 /** How many items are opened at once to ask the core which of them may answer. */
 export const CANDIDATE_BATCH = 64;
@@ -124,6 +135,8 @@ export function getAnswerOf(signed, askedPrf) {
  *   callerOf(id: string, session: string): Readonly<Record<string, unknown>> | null,
  *   answer(id: string, session: string, response: Record<string, unknown>): Promise<boolean>,
  *   fail(id: string, session: string, name: string): boolean,
+ *   tabRef?(tabId: unknown): { request_id: string, session: string } | null,
+ *   tabSite?(tabId: unknown): Promise<{ caller: Readonly<Record<string, unknown>> } | null>,
  * }} Broker the request broker (passkeyRequests.mjs): every call names the window session that owns the request
  */
 
@@ -211,6 +224,37 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     return { kind: req.kind, options: req.options, caller, request: req.kind === "get" ? getRequestOf(req.options) : null };
   };
 
+  /**
+   * The passkeys of the vault that may answer `request` for `caller` (the core decides), named by the vault, in the window's order
+   * and capped.
+   * @param {any} client @param {ItemSource} source @param {any} caller @param {any} request
+   */
+  async function listFor(client, source, caller, request) {
+    /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
+    const list = [];
+    await eachCandidate(client, source, passkeyItems(source), caller, request, async (id, handle) => {
+      const view = await client.vault.item_view(handle);
+      const created = view?.passkey?.created;
+      list.push({
+        item_id: id,
+        name: typeof view?.name === "string" ? view.name.slice(0, 1024) : "",
+        user_name: typeof view?.passkey?.user_name === "string" ? view.passkey.user_name.slice(0, 1024) : "",
+        created: Number.isSafeInteger(created) && created > 0 ? created : null,
+      });
+      return false;
+    });
+    // The order of the window (oldest first, the item id breaking a tie), then the cap: a vault with more keeps the oldest.
+    list.sort((x, y) => (x.created ?? Number.MAX_SAFE_INTEGER) - (y.created ?? Number.MAX_SAFE_INTEGER) || (x.item_id < y.item_id ? -1 : x.item_id > y.item_id ? 1 : 0));
+    list.length = Math.min(list.length, MAX_CANDIDATES);
+    return list;
+  }
+
+  /** The ways to verify now, in the window's order, and whether the server answers. */
+  async function ways() {
+    const found = await verify.methods();
+    return { recent: await verify.recent(), methods: VERIFY_METHODS.filter((m) => /** @type {Record<string, boolean>} */ (/** @type {unknown} */ (found))[m] === true), online: found.online };
+  }
+
   /** @type {import("./coreHost.mjs").CoreOp} */
   const candidates = {
     vault: true,
@@ -227,30 +271,15 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
       const source = items();
       if (source === null) return { ok: false, reason: "busy" };
       /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
-      const list = [];
+      let list = [];
       try {
-        await eachCandidate(client, source, passkeyItems(source), got.caller, got.request, async (id, handle) => {
-          const view = await client.vault.item_view(handle);
-          const created = view?.passkey?.created;
-          list.push({
-            item_id: id,
-            name: typeof view?.name === "string" ? view.name.slice(0, 1024) : "",
-            user_name: typeof view?.passkey?.user_name === "string" ? view.passkey.user_name.slice(0, 1024) : "",
-            created: Number.isSafeInteger(created) && created > 0 ? created : null,
-          });
-          return false;
-        });
+        list = await listFor(client, source, got.caller, got.request);
       } catch (error) {
         return refusal(error, ref);
       }
-      const ways = await verify.methods();
-      // The order of the window (oldest first, the item id breaking a tie), then the cap: a vault with more keeps the oldest.
-      list.sort((x, y) => (x.created ?? Number.MAX_SAFE_INTEGER) - (y.created ?? Number.MAX_SAFE_INTEGER) || (x.item_id < y.item_id ? -1 : x.item_id > y.item_id ? 1 : 0));
-      list.length = Math.min(list.length, MAX_CANDIDATES);
-      return { ok: true, candidates: list, recent: await verify.recent(), methods: VERIFY_METHODS.filter((m) => /** @type {Record<string, boolean>} */ (/** @type {unknown} */ (ways))[m] === true), online: ways.online };
+      return { ok: true, candidates: list, ...(await ways()) };
     },
   };
-
   /**
    * A get: the person's click on a passkey of the list. See the head of the file for UV.
    * @param {any} client @param {{ request_id: string, session: string }} ref @param {any} got @param {unknown} itemId
@@ -277,8 +306,14 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
           refused = decided;
           return true;
         }
-        const signed = await client.vault.passkey_get(handle, request, got.caller, { user_present: true, user_verified: decided.uv });
-        answer = getAnswerOf(signed, request.prf !== undefined);
+        try {
+          const signed = await client.vault.passkey_get(handle, request, got.caller, { user_present: true, user_verified: decided.uv });
+          answer = getAnswerOf(signed, request.prf !== undefined);
+        } catch (error) {
+          // Nothing was signed: the person's verification for this request is given back, as a create does when its write fails.
+          if (decided.uv) verify.restore(ref);
+          throw error;
+        }
         return true;
       });
     } catch (error) {
@@ -321,7 +356,109 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     },
   };
 
+  /**
+   * The name of the site the passkeys belong to, for the popup's heading: the RP ID as the core reads it (its Unicode form), or the
+   * origin's host when the core refuses it (the list then says nothing more).
+   * @param {any} client @param {any} caller @param {unknown} asked
+   */
+  async function siteName(client, caller, asked) {
+    try {
+      const site = await client.vault.passkey_site(caller, typeof asked === "string" ? asked : null);
+      if (typeof site?.rp_id_unicode === "string" && site.rp_id_unicode !== "") return site.rp_id_unicode.slice(0, 300);
+    } catch (error) {
+      const code = /** @type {{ code?: unknown }} */ (error)?.code;
+      if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+    }
+    try {
+      return new URL(String(caller?.origin)).hostname.slice(0, 300);
+    } catch {
+      return "";
+    }
+  }
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const tabList = {
+    vault: true,
+    worker: "vault",
+    async run(client, args) {
+      const tabId = args?.tab_id;
+      const source = items();
+      if (source === null) return { ok: false, reason: "busy" };
+      const ref = requests.tabRef?.(tabId) ?? null;
+      if (ref !== null) {
+        const got = getOf(ref);
+        if (got === null || got.kind !== "get") return { ok: true, mode: "none" };
+        if (got.request === null) {
+          requests.fail(ref.request_id, ref.session, "TypeError");
+          return { ok: true, mode: "none" };
+        }
+        /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
+        let list = [];
+        try {
+          list = await listFor(client, source, got.caller, got.request);
+        } catch (error) {
+          const refused = refusal(error, ref);
+          return refused.reason === "internal_error" ? refused : { ok: true, mode: "none" };
+        }
+        const host = await siteName(client, got.caller, got.options?.rp_id);
+        const found = await ways();
+        return { ok: true, mode: "pick", host, candidates: list, recent: found.recent, methods: found.methods, online: found.online };
+      }
+      // No conditional request: the passkeys of the tab's site, for information (nothing can be signed without a request).
+      const site = (await requests.tabSite?.(tabId)) ?? null;
+      if (site === null) return { ok: true, mode: "none" };
+      const probe = { challenge: new Uint8Array(32), allow: [], user_verification: "preferred" };
+      /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
+      let list = [];
+      try {
+        list = await listFor(client, source, site.caller, probe);
+      } catch (error) {
+        const code = /** @type {{ code?: unknown }} */ (error)?.code;
+        if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+        return { ok: true, mode: "none" };
+      }
+      return { ok: true, mode: "info", host: await siteName(client, site.caller, null), candidates: list };
+    },
+  };
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const tabChoose = {
+    vault: true,
+    worker: "vault",
+    async run(client, args) {
+      const ref = requests.tabRef?.(args?.tab_id) ?? null;
+      if (ref === null) return { ok: false, reason: "gone" };
+      const got = getOf(ref);
+      if (got === null || got.kind !== "get") return { ok: false, reason: "gone" };
+      return chooseGet(client, ref, got, args?.item_id);
+    },
+  };
+
+  /** @type {import("./coreHost.mjs").CoreOp} */
+  const tabVerify = {
+    vault: true,
+    worker: "vault",
+    async run(_client, args) {
+      const ref = requests.tabRef?.(args?.tab_id) ?? null;
+      if (ref === null) return { ok: false, reason: "gone" };
+      const method = typeof args?.method === "string" ? args.method : "";
+      // A passkey of the vault (Windows Hello) is never checked for the popup: the popup cannot make that call, the window does.
+      if (!TAB_WAYS.includes(method)) return { ok: false, reason: "invalid_input" };
+      /** @type {Record<string, unknown>} */
+      const input = {};
+      for (const key of ["pin", "mp", "sk"]) if (typeof args?.[key] === "string") input[key] = args[key];
+      return verify.verify(ref, method, input);
+    },
+  };
+
   return {
-    ops: Object.freeze({ passkey_candidates: candidates, passkey_choose: choose, passkey_verify: verifyOp }),
+    ops: Object.freeze({
+      passkey_candidates: candidates,
+      passkey_choose: choose,
+      passkey_verify: verifyOp,
+      passkey_tab_list: tabList,
+      passkey_tab_choose: tabChoose,
+      passkey_tab_verify: tabVerify,
+    }),
   };
 }

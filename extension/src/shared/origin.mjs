@@ -86,6 +86,21 @@ export function isTopLevelExtensionPage(sender, runtime) {
   return frameId === undefined || frameId === 0;
 }
 
+/** The popup's page in the package (the toolbar panel, a popped-out window `?tab=<id>`, or a tab of its own). */
+const POPUP_PAGE = "pages/popup.html";
+
+/**
+ * True when the sender is Ferret's popup: a top-level page of this extension at the popup's address (with or without its query).
+ * @param {Sender | null | undefined} sender
+ * @param {Runtime} runtime
+ */
+export function isPopupPage(sender, runtime) {
+  if (!isTopLevelExtensionPage(sender, runtime) || typeof runtime.getURL !== "function") return false;
+  const page = runtime.getURL(POPUP_PAGE);
+  const url = /** @type {Sender} */ (sender).url;
+  return typeof url === "string" && (url === page || url.startsWith(`${page}?`));
+}
+
 /**
  * The sender of a message from a content script, or null. A content script has
  * this extension's id, a tab and a frame, and a web page URL. An extension page

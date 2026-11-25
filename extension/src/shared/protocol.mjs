@@ -494,17 +494,20 @@ export const UI_TYPES = defineTypes({
   // The person's choice in the window: for a create request a new item (`name`, `folder_id` from passkey_create_options) or an
   // item to add to (`item_id`); for a get request a passkey of the vault (`item_id`). Nothing about presence or verification: the
   // click in this window is the background's evidence of presence, and verification is its own mark for the request.
+  // From Ferret's popup (a get only), for the tab's conditional request: `tab_id` in place of `request_id` (the handler takes exactly
+  // one of the two, and `tab_id` only from the popup page).
   passkey_choose: {
     request: object(
       {
         request_id: pkRequestRef,
+        tab_id: tabId,
         kind: string({ max: 8, oneOf: ["create", "get"] }),
         mode: string({ max: 8, oneOf: ["new", "attach"] }),
         name: string({ min: 1, max: 800 }),
         folder_id: pkRequestRef,
         item_id: pkRequestRef,
       },
-      { optional: ["mode", "name", "folder_id", "item_id"] },
+      { optional: ["request_id", "tab_id", "mode", "name", "folder_id", "item_id"] },
     ),
     reply: okReply,
   },
@@ -526,11 +529,13 @@ export const UI_TYPES = defineTypes({
       { optional: ["reason", "candidates", "recent", "methods", "online"] },
     ),
   },
-  // The window's verification step (chooser window of the request only; request only, never a reply).
+  // The verification step (request only, never a reply): of the chooser window of the request, or of Ferret's popup for the tab's
+  // conditional request (`tab_id` in place of `request_id`; the PIN or the master password only: a passkey needs the window).
   passkey_verify: {
     request: object(
       {
         request_id: pkRequestRef,
+        tab_id: tabId,
         method: string({ max: 16, oneOf: PK_WAYS }),
         pin: string({ min: 1, max: 256 }),
         mp: string({ min: 1, max: 1024 }),
@@ -538,12 +543,56 @@ export const UI_TYPES = defineTypes({
         credential_id: string({ min: 1, max: 1024, pattern: B64U }),
         prf_output: string({ min: 43, max: 43, pattern: B64U }),
       },
-      { optional: ["pin", "mp", "sk", "credential_id", "prf_output"] },
+      { optional: ["request_id", "tab_id", "pin", "mp", "sk", "credential_id", "prf_output"] },
     ),
     reply: object(
       { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
       { optional: ["reason", "left", "wait_ms"] },
     ),
+  },
+  // Ferret's popup for the tab it is about (the `passkeys` feature; from the popup page only). `passkey_tab` works locked: a modal
+  // request that waits without a window (the card: the calling frame's origin from the browser, and the kind), whether a conditional
+  // request waits for the popup's list, `again`: a one-time pass of "use the browser" that waits for a click on the page (its kind), and the
+  // foreign mark (text only). `passkey_tab_list` (open vault): the passkeys for the tab, `pick` for a conditional request (a button
+  // each), `info` without one (no button), `none` when Ferret does not answer there; `host` is the RP ID as the core reads it.
+  // `passkey_tab_open`: the popup's click opens Ferret's window for the waiting request (`waiting`) or for the conditional one
+  // (`conditional`: Windows Hello, which the popup cannot ask for). The list goes to the popup and nowhere else.
+  passkey_tab: {
+    request: object({ tab_id: tabId }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        waiting: nullable(object({ origin: string({ min: 1, max: 300 }), kind: string({ max: 8, oneOf: ["create", "get"] }) })),
+        conditional: boolean(),
+        again: nullable(string({ max: 8, oneOf: ["create", "get"] })),
+        foreign: boolean(),
+      },
+      { optional: ["reason", "waiting", "conditional", "again", "foreign"] },
+    ),
+  },
+  passkey_tab_list: {
+    request: object({ tab_id: tabId }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        mode: string({ max: 8, oneOf: ["none", "pick", "info"] }),
+        host: string({ max: 300 }),
+        candidates: array(
+          object({ item_id: pkRequestRef, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: nullable(integer({ min: 0, max: 8_640_000_000_000_000 })) }),
+          { max: 200 },
+        ),
+        recent: boolean(),
+        methods: pkWays,
+        online: boolean(),
+      },
+      { optional: ["reason", "mode", "host", "candidates", "recent", "methods", "online"] },
+    ),
+  },
+  passkey_tab_open: {
+    request: object({ tab_id: tabId, which: string({ max: 16, oneOf: ["waiting", "conditional"] }) }),
+    reply: okReply,
   },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's

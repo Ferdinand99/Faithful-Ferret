@@ -14,6 +14,9 @@
 //           --provider ferret joins both networks), with passkeys on, and the runner presses in Ferret's window what a person
 //           would: "Save in Ferret" for a new passkey, the first passkey of a sign-in (or "Use the browser" when Ferret offers
 //           none: a cancel would count toward the tab's calm period and keep the next cases' windows from opening).
+//           A case whose last step is a conditional get (the site's autofill UI) is answered from Ferret's popup, about the
+//           case's tab: the newest passkey of the list, with the master password when the popup asks to verify; the case then
+//           fails unless the page's conditional get ended with a credential.
 //           The cases that need a driver step of their own (a lock, a navigation, the network going away while a request
 //           waits) are reported as not run.
 //
@@ -130,6 +133,9 @@ export async function turnOnPasskeyScripts(session) {
 
 /** The address of Ferret's chooser window. */
 const CHOOSER_PAGE = `${EXTENSION_ORIGIN}/pages/passkey.html?r=`;
+
+/** The popup's page (the Ferret provider answers a conditional get there). */
+const POPUP_PAGE = `${EXTENSION_ORIGIN}/pages/popup.html`;
 
 /** The master password of the account the extension is signed in to (the Ferret provider): what a person types to verify. */
 let ferretPassword = "";
@@ -255,6 +261,47 @@ async function verifyInChooser(session, handle) {
   if (submit) await session.click(submit);
 }
 
+/**
+ * Answers the page's conditional get from Ferret's popup, as a person would: the popup in a window of its own about the case's tab
+ * (`top` is the page's origin), the newest passkey of its list (the one the case made), and the master password when the popup asks
+ * to verify. Returns what was done, or why nothing could be. The session comes back to `main`.
+ * @param {import("./driver.mjs").Session} session @param {string} main @param {string} top
+ * @returns {Promise<{ picked: boolean, verified: boolean, reason?: string }>}
+ */
+export async function pickInPopup(session, main, top) {
+  const popup = await session.newWindow();
+  try {
+    await session.switchTo(popup);
+    await session.navigate(POPUP_PAGE);
+    const tabId = await session.content(async (/** @type {string} */ origin) => {
+      const tabs = await browser.tabs.query({ url: `${origin}/*` });
+      return tabs.length === 1 ? tabs[0].id : null;
+    }, top);
+    if (typeof tabId !== "number") return { picked: false, verified: false, reason: "no single tab of the case" };
+    await session.navigate(`${POPUP_PAGE}?tab=${tabId}`);
+    const listed = await session
+      .waitFor(async () => (await session.findAll('[data-role="passkey-popup-pick"]')).length > 0, 20_000, "the popup's list")
+      .catch(() => false);
+    if (!listed) return { picked: false, verified: false, reason: "the popup listed no passkey for the conditional get" };
+    // The popup's guard: a click counts only 400 ms after its content was built.
+    await sleep(900);
+    const picks = await session.findAll('[data-role="passkey-popup-pick"]');
+    await session.click(/** @type {any} */ (picks.at(-1)));
+    const step = await session
+      .waitFor(async () => ((await session.findAll('[data-role="passkey-verify-password"]')).length > 0 ? "verify" : (await session.findAll('[data-role="passkey-popup-pick"]')).length === 0 ? "done" : null), 10_000, "the popup's answer")
+      .catch(() => "done");
+    if (step !== "verify" || ferretPassword === "") return { picked: true, verified: false };
+    const [field] = await session.findAll('[data-role="passkey-verify-password"]');
+    await session.type(field, ferretPassword);
+    await sleep(900);
+    const [submit] = await session.findAll('[data-role="passkey-verify-password-submit"]');
+    if (submit) await session.click(submit);
+    return { picked: true, verified: true };
+  } finally {
+    await session.switchTo(main).catch(() => {});
+  }
+}
+
 /** How many requests went through the bridge so far. @param {import("./driver.mjs").Session} session @param {string} tab */
 export async function bridgeRequests(session, tab) {
   const back = await session.windowHandle();
@@ -364,6 +411,20 @@ export async function runCase(session, c, { channel, provider }) {
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
     }
+    // A conditional get as the last step (the page's autofill UI): Ferret answers it from its popup, and the case passes only when the
+    // page's conditional get ended with a credential.
+    const steps = Array.isArray(spec.steps) ? spec.steps : [];
+    /** @type {any} */
+    let conditional = null;
+    if (provider === "ferret" && steps.at(-1) === "conditional" && reports.some((r) => r.kind === "conditional-started")) {
+      const top = new URL(address.url).origin;
+      const picked = await pickInPopup(session, main, top);
+      for (let i = 0; i < 80 && !reports.some((r) => r.kind === "conditional"); i++) {
+        await sleep(250);
+        reports = await fetchReports(run);
+      }
+      conditional = { ...picked, report: reports.find((r) => r.kind === "conditional") ?? null };
+    }
     // An adversarial page reports what it saw itself after the ceremony's "done": give it a moment (a page that threw, or that
     // went away, has none, and the checks of its case then say so).
     if (c.page.path?.startsWith("/adversarial/") && reports.some((r) => r.kind === "done")) {
@@ -377,6 +438,15 @@ export async function runCase(session, c, { channel, provider }) {
     if (!reports.some((r) => r.kind === "started")) return { status: "not-run", reason: "the page never started (no report from it at all)" };
     // A page that left (nav-before-click) or never answered has no "done": that is an outcome (ceremony none), not an error.
     const observed = observe(reports, { windowShown: windowsOpened > 0, windowsOpened });
+    if (conditional !== null) {
+      // Answered in Ferret's popup: the route is Ferret's; the ceremony is the conditional get's own end.
+      if (conditional.picked) observed.route = "ferret";
+      if (conditional.report?.ok !== true) {
+        observed.ceremony = "client-error";
+        observed.error = conditional.report?.error?.name ?? (conditional.reason ? `not answered: ${conditional.reason}` : "none");
+        observed.failStep = "conditional";
+      }
+    }
     return { status: "ran", observed, unsafe: detectUnsafe(c, observed, provider), provider };
   } catch (e) {
     return { status: "not-run", reason: `the run threw: ${e instanceof Error ? e.message : String(e)}` };

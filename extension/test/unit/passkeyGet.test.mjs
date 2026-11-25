@@ -58,7 +58,6 @@ function world(o = {}) {
     setting: true,
     pin: { set: true, offlineOk: true },
     prf: true,
-    password: true,
     pinAttempts: 0,
     /** Writes the vault was asked for (a get must make none). */
     writes: /** @type {string[]} */ ([]),
@@ -67,6 +66,9 @@ function world(o = {}) {
     /** What the core was asked for the candidates. */
     asked: /** @type {any[]} */ ([]),
     closed: 0,
+    /** The windows the broker opened (by request id) and closed. */
+    windowsOpened: /** @type {string[]} */ ([]),
+    windowsClosed: /** @type {number[]} */ ([]),
     ...o.state,
   };
   const requests = createPasskeyRequests({
@@ -76,7 +78,10 @@ function world(o = {}) {
       },
     },
     frames: { getAllFrames: async () => [{ frameId: 0, parentFrameId: -1, url: `${RP}/login`, documentId: "doc-1" }] },
-    windows: { open: async () => 101, close: async () => {} },
+    windows: {
+      open: async (/** @type {string} */ id) => (state.windowsOpened.push(id), 101),
+      close: async (/** @type {number} */ id) => void state.windowsClosed.push(id),
+    },
     servers: { current: async () => ({ origin: SERVER, live: true }) },
     storageLocal: { get: async () => ({ use_passkeys: true }) },
     permissions: { contains: async () => true },
@@ -101,7 +106,6 @@ function world(o = {}) {
     now: () => mono.t,
     wall: () => mono.w,
   });
-  if (!state.password) /** @type {any} */ (verify).noPassword = true;
   /** @type {Map<number, FakeItem>} */
   const open = new Map();
   let nextHandle = 10;
@@ -627,4 +631,245 @@ test("only_a_refusal_of_the_request_itself_ends_it", async () => {
   assert.equal(w.answerOf(bridgeId), undefined);
   // (The PIN verified the person, which starts the five minutes: the next click is enough.)
   assert.deepEqual(await w.choose(id, ID(3)), { ok: true });
+});
+
+// ------------------------------------------------------------------------- Ferret's popup: a conditional request, by tab
+
+const PAGE = Object.freeze({ tabId: 4, frameId: 0, documentId: "doc-1", url: `${RP}/login`, origin: RP });
+
+/**
+ * A page's conditional get in tab 4 (the site's autofill UI): no window, the popup's list.
+ * @param {ReturnType<typeof world>} w @param {Record<string, any>} [options]
+ */
+async function conditional(w, options = {}) {
+  const bridgeId = `c${Math.random().toString(16).slice(2, 10)}`;
+  const opened = /** @type {any} */ (await w.requests.open(PAGE, {
+    request_id: bridgeId, kind: "get", mediation: "conditional",
+    get: { challenge: CHALLENGE, allow_credentials: [], hints: [], extensions: {}, user_verification: "preferred", ...options },
+    activation: false, policy: true,
+  }));
+  assert.ok(opened.request_id, JSON.stringify(opened));
+  return { id: /** @type {string} */ (opened.request_id), bridgeId };
+}
+/** One of the popup's get ops, for tab 4. @param {ReturnType<typeof world>} w @param {string} op @param {Record<string, unknown>} [body] */
+const tabOp = async (w, op, body = {}) => {
+  const reply = await /** @type {any} */ (w.get.ops)[op].run(w.client, { tab_id: 4, ...body });
+  await flush();
+  return reply;
+};
+/** One of the broker's popup ops, for tab 4. @param {ReturnType<typeof world>} w @param {string} op @param {Record<string, unknown>} [body] */
+const brokerOp = async (w, op, body = {}) => {
+  const reply = await /** @type {any} */ (w.requests.ops)[op].run(null, { tab_id: 4, ...body });
+  await flush();
+  return reply;
+};
+/** The extension as the browser names it to a handler. */
+const runtime = { id: "ferret@x", getURL: (/** @type {string} */ p) => `moz-extension://u/${p}` };
+const POPUP = Object.freeze({ id: "ferret@x", url: "moz-extension://u/pages/popup.html", frameId: 0 });
+
+test("the_popup_lists_ferret_passkeys_for_the_exact_rp_id_only", async () => {
+  const w = world();
+  // No request yet: the passkeys of the tab's site, for information (no way to sign), from the core only.
+  const info = await tabOp(w, "passkey_tab_list");
+  assert.equal(info.mode, "info");
+  assert.deepEqual(info.candidates.map((/** @type {any} */ c) => c.item_id), [ID(3), ID(1)]);
+  assert.equal(info.host, "rp-a.test");
+  assert.equal(info.recent, undefined, "nothing about verification without a request");
+  assert.deepEqual(w.state.asked.at(-1).caller, { origin: RP, top_origin_is_same: true });
+  assert.equal(w.state.asked.at(-1).request.rp_id, undefined, "the core takes the origin's host as the RP ID");
+  // A conditional request: the core gets the WHOLE request and the caller the broker built; the RP ID is compared exactly there.
+  await conditional(w, { rp_id: "rp-a.test" });
+  const list = await tabOp(w, "passkey_tab_list");
+  assert.equal(list.mode, "pick");
+  assert.deepEqual(list.candidates.map((/** @type {any} */ c) => [c.item_id, c.name, c.user_name]), [[ID(3), "RP A (work)", "anna@rp-a.test"], [ID(1), "RP A", "anna"]]);
+  assert.equal(w.state.asked.at(-1).request.rp_id, "rp-a.test");
+  assert.deepEqual(w.state.asked.at(-1).caller, { origin: RP, top_origin_is_same: true });
+  assert.ok(!list.candidates.some((/** @type {any} */ c) => c.item_id === ID(2)), "another site's passkey is never listed");
+  assert.deepEqual(list.methods, ["prf", "pin", "password"]);
+  // The page's allow list is the core's to apply too.
+  const w2 = world();
+  await conditional(w2, { rp_id: "rp-a.test", allow_credentials: [{ type: "public-key", id: b64u(bytes(16, 1)) }] });
+  assert.deepEqual((await tabOp(w2, "passkey_tab_list")).candidates.map((/** @type {any} */ c) => c.item_id), [ID(1)]);
+  assert.equal(w.pushed.length, 0, "nothing of the list went to the page");
+  // Where Ferret does not answer (the setting off), the popup lists nothing, not even for information.
+  const off = world();
+  const offGet = createPasskeyGet({ requests: { ...off.requests, tabSite: async () => null }, verify: off.verify, items: () => off.source });
+  assert.deepEqual(await /** @type {any} */ (offGet.ops).passkey_tab_list.run(off.client, { tab_id: 4 }), { ok: true, mode: "none" });
+});
+
+test("a_pick_needs_a_pending_conditional_request_and_the_guards", async () => {
+  const w = world();
+  // No conditional request: a click in the popup answers nothing.
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "gone" });
+  // A modal request is the window's (or the card's), never the popup list's.
+  const modal = await w.ask();
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "gone" });
+  w.requests.cancel(modal.id, SESSION);
+  // A conditional request: the click is the presence; verification follows what the page asked.
+  const { bridgeId } = await conditional(w, { user_verification: "required" });
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(2) }), { ok: false, reason: "not_found" }, "only a candidate of the request");
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "verification_needed" });
+  assert.equal(w.state.signs.length, 0);
+  // The popup verifies with the PIN or the master password, never a passkey's bytes.
+  assert.deepEqual(await tabOp(w, "passkey_tab_verify", { method: "prf", credential_id: "AQID", prf_output: b64u(bytes(32, 7)) }), { ok: false, reason: "invalid_input" });
+  assert.deepEqual(await tabOp(w, "passkey_tab_verify", { method: "pin", pin: "123456" }), { ok: true });
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: true });
+  assert.deepEqual(w.state.signs.map((/** @type {any} */ x) => [x.item, x.uv]), [[ID(3), { user_present: true, user_verified: true }]]);
+  assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
+  // Answered: the next click has nothing to answer.
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "gone" });
+
+  // The guards of the handler: the popup page only, a tab or a request (never both), a get only, and no passkey bytes.
+  const windowHandler = await loadWindowHandler();
+  /** @type {any[]} */
+  const calls = [];
+  const ctx = (/** @type {any} */ sender, /** @type {string} */ type) => ({ channel: "ui", type, sender, runtime, session: "ab".repeat(16), state: () => "unlocked", call: async (/** @type {string} */ op, /** @type {any} */ args) => (calls.push({ op, args }), { ok: true }) });
+  assert.deepEqual(await windowHandler.handle({ tab_id: 4, kind: "get", item_id: ID(3) }, ctx(POPUP, "passkey_choose")), { ok: true });
+  assert.deepEqual(calls.at(-1), { op: "passkey_tab_choose", args: { tab_id: 4, item_id: ID(3) } });
+  assert.deepEqual(await windowHandler.handle({ tab_id: 4, method: "pin", pin: "123456" }, ctx({ ...POPUP, url: `${POPUP.url}?tab=4` }, "passkey_verify")), { ok: true });
+  assert.deepEqual(calls.at(-1), { op: "passkey_tab_verify", args: { method: "pin", pin: "123456", tab_id: 4 } });
+  const refused = [
+    [{ tab_id: 4, kind: "get", item_id: ID(3) }, { ...POPUP, url: "moz-extension://u/pages/settings.html" }, "passkey_choose"],
+    [{ tab_id: 4, kind: "get", item_id: ID(3) }, { ...POPUP, url: `moz-extension://u/pages/passkey.html?r=${ID(5)}` }, "passkey_choose"],
+    [{ tab_id: 4, kind: "get", item_id: ID(3) }, { ...POPUP, frameId: 3 }, "passkey_choose"],
+    [{ tab_id: 4, kind: "get", item_id: ID(3) }, { id: "ferret@x", url: `${RP}/login`, frameId: 0, tab: { id: 4 } }, "passkey_choose"],
+    [{ tab_id: 4, request_id: ID(5), kind: "get", item_id: ID(3) }, POPUP, "passkey_choose"],
+    [{ tab_id: 4, kind: "create", mode: "new", name: "x" }, POPUP, "passkey_choose"],
+    [{ tab_id: 4, method: "prf", credential_id: "AQID", prf_output: b64u(bytes(32, 7)) }, POPUP, "passkey_verify"],
+    [{ tab_id: 4, method: "recent" }, POPUP, "passkey_verify"],
+  ];
+  const before = calls.length;
+  for (const [body, sender, type] of refused) {
+    await assert.rejects(Promise.resolve().then(() => windowHandler.handle(body, ctx(sender, /** @type {string} */ (type)))), /not_available/, JSON.stringify(body));
+  }
+  assert.equal(calls.length, before);
+  // The click guard (isTrusted, 400 ms after each change) is the popup page's: test/unit/popupPasskeys.test.mjs.
+});
+
+test("windows_hello_from_the_popup_opens_the_window", async () => {
+  const w = world();
+  const { id } = await conditional(w, { user_verification: "required" });
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "verification_needed" });
+  // Windows Hello needs Ferret's window (the popup closes when the system's dialog takes the focus): the popup's click opens it.
+  assert.deepEqual(await brokerOp(w, "passkey_tab_open", { which: "conditional" }), { ok: true });
+  assert.deepEqual(w.state.windowsOpened, [id]);
+  // The window owns the request now: the popup's list is gone, and a second window does not open.
+  assert.equal(w.requests.tabRef(4), null);
+  assert.deepEqual(await brokerOp(w, "passkey_tab"), { ok: true, waiting: null, conditional: false, again: null, foreign: false });
+  assert.deepEqual(await brokerOp(w, "passkey_tab_open", { which: "conditional" }), { ok: false, reason: "busy" });
+  assert.ok(w.requests.forUi(id, "window-1"), "the window's session takes it");
+  assert.deepEqual(await w.get.ops.passkey_verify.run(w.client, { request_id: id, session: "window-1", method: "prf", credential_id: "AQID", prf_output: b64u(bytes(32, 7)) }), { ok: true });
+  // The person closes the window: a conditional request is not ended by it, it waits for the popup again.
+  w.requests.onWindowRemoved(101);
+  await flush();
+  assert.equal((await brokerOp(w, "passkey_tab")).conditional, true);
+  assert.notEqual(w.requests.tabRef(4), null);
+  // Its Cancel does the same, and closes the window.
+  await brokerOp(w, "passkey_tab_open", { which: "conditional" });
+  assert.ok(w.requests.forUi(id, "window-2"));
+  assert.equal(w.requests.cancel(id, "window-2"), true);
+  await flush();
+  assert.deepEqual(w.state.windowsClosed, [101]);
+  assert.equal((await brokerOp(w, "passkey_tab")).conditional, true);
+  assert.equal(w.pushed.length, 0, "the page's call still waits");
+  // "Use the browser" for a conditional request: straight to the browser's own call, no pass and no "click again".
+  await brokerOp(w, "passkey_tab_open", { which: "conditional" });
+  assert.ok(w.requests.forUi(id, "window-3"));
+  assert.equal(w.requests.handover(id, "window-3", { once: true }), true);
+  await flush();
+  assert.equal(w.pushed.at(-1)?.type, "passkey_handover");
+  assert.equal(w.pushed.at(-1)?.body.once, false);
+  assert.equal(w.requests.passPendingFor(4), null);
+});
+
+test("the_section_disappears_on_page_abort_or_navigation", async () => {
+  const w = world();
+  const tabState = () => brokerOp(w, "passkey_tab");
+  const first = await conditional(w);
+  assert.equal((await tabState()).conditional, true);
+  assert.equal((await tabOp(w, "passkey_tab_list")).mode, "pick");
+  // The page aborts its call: the list goes (the popup asks again and finds nothing to pick).
+  await w.requests.onEvent({ type: "passkey_abort", sender: PAGE, body: { request_id: first.bridgeId } });
+  await flush();
+  assert.equal((await tabState()).conditional, false);
+  assert.equal((await tabOp(w, "passkey_tab_list")).mode, "info");
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: false, reason: "gone" });
+  // A new document in the tab.
+  await conditional(w);
+  assert.equal((await tabState()).conditional, true);
+  w.requests.onNavigation({ tabId: 4, frameId: 0, documentId: "doc-2" });
+  await flush();
+  assert.equal((await tabState()).conditional, false);
+  // A lock of the open vault.
+  await conditional(w);
+  w.requests.onLock(true);
+  await flush();
+  assert.equal((await tabState()).conditional, false);
+});
+
+test("the_list_is_never_sent_to_the_page", async () => {
+  const w = world();
+  const { bridgeId } = await conditional(w);
+  await tabOp(w, "passkey_tab_list");
+  w.verify.markUnlocked();
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: true });
+  // The page got one message: its credential. No name, user name or other passkey of the vault.
+  assert.deepEqual(w.pushed.map((p) => p.type), ["passkey_result"]);
+  assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
+  const text = JSON.stringify(w.pushed);
+  for (const item of ITEMS) {
+    if (item.name !== "") assert.equal(text.includes(item.name), false, item.name);
+    if (item.user !== "") assert.equal(text.includes(item.user), false, item.user);
+  }
+  // No message a page or its bridge can get has a list, and the popup's types are refused to anything but the popup page.
+  for (const [type, def] of Object.entries(PUSH_TYPES)) assert.doesNotMatch(JSON.stringify(def), /candidates|user_name/, type);
+  const popupHandler = (await (await pkg()).load("background/handlers/passkeyPopup.handler.mjs")).default;
+  assert.deepEqual([...popupHandler.types], ["passkey_tab", "passkey_tab_list", "passkey_tab_open"]);
+  /** @type {any[]} */
+  const calls = [];
+  const ctx = (/** @type {any} */ sender, /** @type {string} */ type) => ({ channel: "ui", type, sender, runtime, session: "ab".repeat(16), call: async (/** @type {string} */ op, /** @type {any} */ args) => (calls.push({ op, args }), { ok: true }) });
+  assert.deepEqual(await popupHandler.handle({ tab_id: 4 }, ctx(POPUP, "passkey_tab_list")), { ok: true });
+  assert.deepEqual(calls, [{ op: "passkey_tab_list", args: { tab_id: 4 } }]);
+  for (const sender of [{ ...POPUP, url: `moz-extension://u/pages/passkey.html?r=${ID(5)}` }, { ...POPUP, frameId: 2 }, { id: "ferret@x", url: `${RP}/login`, frameId: 0, tab: { id: 4 } }, { ...POPUP, id: "other@x" }]) {
+    await assert.rejects(Promise.resolve().then(() => popupHandler.handle({ tab_id: 4 }, ctx(sender, "passkey_tab_list"))), /not_available/);
+  }
+  assert.equal(calls.length, 1);
+});
+
+test("a_modal_request_without_activation_shows_a_card_that_opens_the_window", async () => {
+  const w = world();
+  const opened = /** @type {any} */ (await w.requests.open(PAGE, {
+    request_id: "m1", kind: "get", mediation: "optional", get: { challenge: CHALLENGE, allow_credentials: [], hints: [], extensions: {} }, activation: false, policy: true,
+  }));
+  assert.ok(opened.request_id);
+  // No user activation: no window of its own accord, a card in the popup.
+  assert.deepEqual(w.state.windowsOpened, []);
+  assert.deepEqual(await brokerOp(w, "passkey_tab"), { ok: true, waiting: { origin: RP, kind: "get" }, conditional: false, again: null, foreign: false });
+  // The card's click opens the window for it.
+  assert.deepEqual(await brokerOp(w, "passkey_tab_open", { which: "waiting" }), { ok: true });
+  assert.deepEqual(w.state.windowsOpened, [opened.request_id]);
+  assert.equal((await brokerOp(w, "passkey_tab")).waiting, null);
+  // The types of the popup: in the UI table and the core's ops; the two that read the tab and open the window work locked.
+  for (const type of ["passkey_tab", "passkey_tab_list", "passkey_tab_open"]) {
+    assert.ok(Object.hasOwn(UI_TYPES, type), type);
+    assert.ok(CORE_OPS.includes(type), type);
+  }
+  assert.ok(LOCK_EXEMPT.includes("passkey_tab") && LOCK_EXEMPT.includes("passkey_tab_open") && !LOCK_EXEMPT.includes("passkey_tab_list"));
+});
+
+test("a_get_gives_the_mark_back_when_signing_fails", async () => {
+  const w = world();
+  const { id, bridgeId } = await w.ask({ user_verification: "required" });
+  assert.deepEqual(await w.verifyOp(id, { method: "pin", pin: "123456" }), { ok: true });
+  // The core fails to sign once (not a refusal of the request): nothing went to the page, and the person's verification is kept.
+  const sign = w.client.vault.passkey_get;
+  w.client.vault.passkey_get = async () => {
+    throw Object.assign(new Error("busy"), { code: "busy" });
+  };
+  assert.deepEqual(await w.choose(id), { ok: false, reason: "internal_error" });
+  w.client.vault.passkey_get = sign;
+  // The next try needs no new verification.
+  assert.deepEqual(await w.choose(id), { ok: true });
+  assert.deepEqual(w.state.signs.at(-1).uv, { user_present: true, user_verified: true });
+  assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
 });

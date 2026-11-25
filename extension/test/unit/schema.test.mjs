@@ -338,6 +338,12 @@ test("every UI request and reply round-trips with a sample body", () => {
       { ok: true, candidates: [{ item_id: "cd".repeat(16), name: "Example", user_name: "anna", created: 1_700_000_000_000 }], recent: false, methods: ["prf", "pin", "password"], online: true },
     ],
     passkey_verify: [{ request_id: "ab".repeat(16), method: "pin", pin: "123456" }, { ok: false, reason: "wrong_pin", left: 4, wait_ms: 0 }],
+    passkey_tab: [{ tab_id: 4 }, { ok: true, waiting: { origin: "https://rp.example", kind: "get" }, conditional: true, again: "get", foreign: false }],
+    passkey_tab_list: [
+      { tab_id: 4 },
+      { ok: true, mode: "pick", host: "rp.example", candidates: [{ item_id: "cd".repeat(16), name: "Example", user_name: "anna", created: null }], recent: true, methods: ["recent", "pin"], online: true },
+    ],
+    passkey_tab_open: [{ tab_id: 4, which: "conditional" }, { ok: true }],
     prf_unlock: [{ credential_id: "AQID", prf_output: "b".repeat(43) }, { ok: false, reason: "prf_failed" }],
     passkey_pending: [
       { request_id: "a1".repeat(16) },

@@ -86,14 +86,18 @@ const REALM_DOM = String.raw`
     get aborted() { return coreOf(this).aborted; }
     get reason() { return coreOf(this).reason; }
   }
+  // As in the browser, the signal is an accessor of the prototype (the controller has no own property).
+  const signalOf = new WeakMap();
   class AbortController {
-    constructor() { this.signal = wrap("signal", host.newTarget({ aborted: false, reason: undefined })); }
+    constructor() { signalOf.set(this, wrap("signal", host.newTarget({ aborted: false, reason: undefined }))); }
+    get signal() { const s = signalOf.get(this); if (s === undefined) throw new TypeError("Illegal invocation"); return s; }
     abort(reason) {
-      const c = coreOf(this.signal);
+      const signal = this.signal;
+      const c = coreOf(signal);
       if (c.aborted) return;
       c.aborted = true;
       c.reason = reason === undefined ? new DOMException("The operation was aborted. ", "AbortError") : reason;
-      this.signal.dispatchEvent(new Event("abort"));
+      signal.dispatchEvent(new Event("abort"));
     }
   }
   class DOMException extends Error {
@@ -201,6 +205,8 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
   const document = {};
   /** Calls of the browser's own create and get. @type {Array<{ kind: string, self: unknown, args: unknown[], world: unknown }>} */
   const nativeCalls = [];
+  /** The conditional calls of the browser's own get that wait: `resolve(value)` or `reject(name)` answers one. @type {Array<any>} */
+  const conditionalCalls = [];
   /** What the bridge sent the background, decoded. @type {Array<{ type: string, body: any }>} */
   const sent = [];
   /** The bridge's push listeners. @type {Array<(raw: unknown, sender: unknown) => unknown>} */
@@ -288,7 +294,26 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     },
     native: (/** @type {string} */ kind, /** @type {unknown} */ self, /** @type {unknown[]} */ args, /** @type {any} */ world) => {
       nativeCalls.push({ kind, self, args, world });
-      return world.Promise.resolve("browser");
+      const options = /** @type {any} */ (args[0]);
+      if (kind !== "get" || options?.mediation !== "conditional") return world.Promise.resolve("browser");
+      // A conditional call of the browser's own waits for the person's pick in its list (`conditionalCalls`), or for its signal.
+      return new world.Promise((/** @type {any} */ resolve, /** @type {any} */ reject) => {
+        const call = { options, signal: options.signal, resolve, reject, settled: false, aborted: false };
+        const settle = (/** @type {() => void} */ fn) => {
+          if (call.settled) return;
+          call.settled = true;
+          fn();
+        };
+        call.resolve = (/** @type {unknown} */ v) => settle(() => resolve(v));
+        call.reject = (/** @type {string} */ name) => settle(() => reject(new world.DOMException("", name)));
+        if (options.signal !== undefined) {
+          options.signal.addEventListener("abort", () => {
+            call.aborted = true;
+            call.reject("AbortError");
+          });
+        }
+        conditionalCalls.push(call);
+      });
     },
   });
 
@@ -393,6 +418,7 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     /** Runs code in the page's world. @param {string} code */
     page: (code) => vm.runInContext(code, contexts.page),
     nativeCalls,
+    conditionalCalls,
     sent,
     flush,
     /** @param {boolean} on */

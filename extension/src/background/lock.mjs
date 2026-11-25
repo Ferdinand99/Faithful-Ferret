@@ -51,7 +51,8 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * taken while the vault is locked (Ferret's own window opens it), and a page's activity never moves the deadline.
  * `passkey_pending`, `passkey_cancel` and `passkey_browser` are Ferret's chooser window for such a request: it shows the
  * request, cancels it or hands it to the browser while the vault is locked (it is where the vault is opened), and none of
- * them uses a key. `passkey_site` asks the core, so it needs the open vault.
+ * them uses a key. `passkey_site` asks the core, so it needs the open vault. `passkey_tab` (what the popup shows for its tab, read
+ * on a timer) and `passkey_tab_open` (the popup's card opens that window) work locked too and use no key.
  */
 export const LOCK_EXEMPT = Object.freeze([
   "sign_in",
@@ -81,6 +82,8 @@ export const LOCK_EXEMPT = Object.freeze([
   "passkey_cancel",
   "passkey_browser",
   "passkey_settings",
+  "passkey_tab",
+  "passkey_tab_open",
 ]);
 
 export const LOCK_AT_KEY = "lock_at";

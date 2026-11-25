@@ -27,7 +27,10 @@
 // What happens to a request Ferret takes:
 //   - one modal request per tab: another one from the same tab ends at once with AbortError (it never replaces the one
 //     that waits); a modal request from the same document ends a conditional one that waits (AbortError);
-//   - a conditional request has no deadline and only marks the toolbar button (its list is the popup's); one per tab;
+//   - a conditional request has no deadline and only marks the toolbar button (its list is the popup's); one per tab. The
+//     popup acts on it by tab (`tabRef`), never by an id it was given. A window opened for it (Windows Hello from the popup)
+//     gives it back when it closes or the person cancels there: it ends only on an answer, a hand-over (always straight to the
+//     browser, no pass), the page's abort, a modal request of the same document, a navigation, a lock or the tab closing;
 //   - a modal request has a deadline, the page's `timeout` clamped to PASSKEY_TIMEOUT_MS;
 //   - at most one Ferret window: a modal request opens it only when the page had user activation, no window is open and
 //     the tab is not in its calm period; otherwise the request waits with a mark on the button and a card in the popup,
@@ -76,6 +79,11 @@ export const PASSKEY_GUARD_MS = 400;
 export { PASSKEY_PASS_ONCE_MS };
 /** The calm period: this many modal requests of a tab ended without an answer within `windowMs` give `quietMs` of marks only. */
 export const PASSKEY_QUIET = Object.freeze({ cancels: 3, windowMs: 60_000, quietMs: 300_000 });
+/**
+ * The session name under which Ferret's popup acts on a tab's conditional request (`tabRef`): the popup names the tab, never a
+ * request, and any popup of this extension may act for the tab it shows. A window opened for the request takes it over.
+ */
+export const POPUP_SESSION = "popup";
 /** The delay of every NotAllowedError (cancel, no match, deadline): `min` plus a random part below `spread`. */
 export const PASSKEY_ERROR_DELAY_MS = Object.freeze({ min: 120, spread: 200 });
 
@@ -661,7 +669,7 @@ export function createPasskeyRequests({
     }
     if (windowId === null) {
       windowHolder = null;
-      req.state = "waiting";
+      req.state = req.mediation === "conditional" ? "conditional" : "waiting";
       mark(req.sender.tabId);
       return false;
     }
@@ -832,7 +840,10 @@ export function createPasskeyRequests({
    * list now, so the next call goes to the browser by the list.
    * @param {Request} req @param {{ once: boolean, pass?: boolean }} how
    */
-  const handoverReq = (req, { once, pass = once }) => {
+  const handoverReq = (req, how) => {
+    // A conditional request goes to the browser at once, with no pass: the original's own list needs no click of the person.
+    const once = req.mediation === "conditional" ? false : how.once;
+    const pass = req.mediation === "conditional" ? false : (how.pass ?? how.once);
     if (!end(req, false)) return false;
     if (once === true) {
       const tabId = req.sender.tabId;
@@ -864,9 +875,27 @@ export function createPasskeyRequests({
     return true;
   };
 
-  /** The user cancelled (or closed the window, or had no match): NotAllowedError. @param {Request} req */
+  /**
+   * A conditional request whose window closed (the person cancelled there, or closed it): it waits again for the popup, as the
+   * browser's own list stays when its dialog is dismissed. The window goes; the request is nobody's until the popup or another
+   * window acts on it.
+   * @param {Request} req @param {boolean} closeWindow
+   */
+  const giveBack = (req, closeWindow) => {
+    if (requests.get(req.id) !== req) return false;
+    if (windowHolder === req.id) windowHolder = null;
+    if (closeWindow && req.windowId !== null && windows !== null) windows.close(req.windowId).catch(() => {});
+    req.windowId = null;
+    req.session = null;
+    req.state = "conditional";
+    mark(req.sender.tabId);
+    return true;
+  };
+
+  /** The user cancelled (or closed the window, or had no match): NotAllowedError. A conditional request waits again. @param {Request} req */
   const cancelReq = (req) => {
     if (requests.get(req.id) !== req) return false;
+    if (req.mediation === "conditional") return giveBack(req, true);
     void endWithError(req, "NotAllowedError", true);
     return true;
   };
@@ -957,7 +986,8 @@ export function createPasskeyRequests({
     for (const req of [...requests.values()]) {
       if (req.windowId !== null && req.windowId === windowId) {
         req.windowId = null;
-        void endWithError(req, "NotAllowedError", true);
+        if (req.mediation === "conditional") giveBack(req, false);
+        else void endWithError(req, "NotAllowedError", true);
       }
     }
   };
@@ -965,7 +995,9 @@ export function createPasskeyRequests({
   /** A page's port ended: the window that owned a request is gone. @param {string} session */
   const endSession = (session) => {
     for (const req of [...requests.values()]) {
-      if (req.session === session && req.state === "window") void endWithError(req, "NotAllowedError", true);
+      if (req.session !== session || req.state !== "window") continue;
+      if (req.mediation === "conditional") giveBack(req, true);
+      else void endWithError(req, "NotAllowedError", true);
     }
   };
 
@@ -1154,6 +1186,50 @@ export function createPasskeyRequests({
      * @param {number} tabId
      */
     passPendingFor: (tabId) => (isIndex(tabId) ? passes.pendingIn(tabId) : null),
+    /**
+     * The tab's conditional request for Ferret's popup: the request and the popup's session name, while it waits for the popup (no
+     * window has it), or null. The popup names the tab and never learns an id it could send elsewhere: the ops of the popup take
+     * the tab and ask for this.
+     * @param {unknown} tabId @returns {{ request_id: string, session: string } | null}
+     */
+    tabRef: (tabId) => {
+      if (!isIndex(tabId)) return null;
+      for (const req of [...requests.values()]) {
+        if (req.sender.tabId !== tabId || req.mediation !== "conditional" || req.state !== "conditional") continue;
+        return owned(req.id, POPUP_SESSION) === null ? null : Object.freeze({ request_id: req.id, session: POPUP_SESSION });
+      }
+      return null;
+    },
+    /**
+     * The page of a tab when Ferret would answer it and no request waits (the popup then lists the passkeys for information only,
+     * with no button): its top frame's `https` origin, under the same rules as a request (the setting, a live server that is not the
+     * page's host, not localhost in a release, not on the never list). The caller is built here, as for a request. Null otherwise.
+     * @param {unknown} tabId @returns {Promise<{ caller: Readonly<{ origin: string, top_origin_is_same: boolean }> } | null>}
+     */
+    tabSite: async (tabId) => {
+      if (!isIndex(tabId) || frames === null) return null;
+      /** @type {unknown} */
+      let listed;
+      try {
+        listed = await frames.getAllFrames({ tabId });
+      } catch {
+        return null;
+      }
+      const top = Array.isArray(listed) ? listed.find((f) => f?.frameId === 0 && f?.parentFrameId === -1) : undefined;
+      const origin = httpsOrigin(top?.url);
+      if (origin === null) return null;
+      const host = hostOf(origin);
+      if (host.endsWith(".") || (release && isLoopbackHost(host))) return null;
+      if (!(await enabled())) return null;
+      const serverHost = await liveServerHost();
+      if (serverHost === null || serverHost === host) return null;
+      try {
+        if (never !== null && (await never.has(host))) return null;
+      } catch {
+        return null;
+      }
+      return Object.freeze({ caller: Object.freeze({ origin, top_origin_is_same: true }) });
+    },
     /** How many requests wait. */
     size: () => requests.size,
     /**
@@ -1168,6 +1244,51 @@ export function createPasskeyRequests({
         worker: /** @type {const} */ ("none"),
         run: async (/** @type {unknown} */ _client, /** @type {BridgeEvent} */ args) => {
           await onEvent(args);
+        },
+      },
+      // What Ferret's popup shows for the tab it is about (works locked, and it is not a use of the vault): a modal request that waits
+      // without a window (the card: the calling frame's origin from the browser and the kind), whether a conditional request waits for
+      // the popup's list, a one-time pass of "use the browser" that waits for the person's next click on the page, and the foreign
+      // mark (text only).
+      passkey_tab: {
+        vault: false,
+        worker: /** @type {const} */ ("none"),
+        run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
+          const tabId = args?.tab_id;
+          if (!isIndex(tabId)) return { ok: false, reason: "invalid_input" };
+          const waiting = viewIn(tabId, (r) => r.state === "waiting");
+          const conditional = viewIn(tabId, (r) => r.mediation === "conditional" && r.state === "conditional");
+          // A stopped event page reads its passes back first.
+          await passes.ready();
+          const pass = passes.pendingIn(tabId);
+          return {
+            ok: true,
+            waiting: waiting === null ? null : { origin: waiting.origin, kind: waiting.kind },
+            conditional: conditional !== null,
+            again: pass === null ? null : pass.kind,
+            foreign: (waiting ?? conditional)?.foreign === true,
+          };
+        },
+      },
+      // The popup's click opens Ferret's window: for the tab's modal request that waits (the card; the click is the activation the page
+      // did not have), or for its conditional request (Windows Hello, which only the window can ask for).
+      passkey_tab_open: {
+        vault: false,
+        worker: /** @type {const} */ ("none"),
+        run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
+          const tabId = args?.tab_id;
+          if (!isIndex(tabId)) return { ok: false, reason: "invalid_input" };
+          if (windowHolder !== null) return { ok: false, reason: "busy" };
+          for (const req of [...requests.values()]) {
+            if (req.sender.tabId !== tabId || live(req.id) === null) continue;
+            if (args?.which === "waiting" && req.state === "waiting") return (await showWindow(req)) ? { ok: true } : { ok: false, reason: "busy" };
+            if (args?.which === "conditional" && req.mediation === "conditional" && req.state === "conditional") {
+              if (req.session !== null && req.session !== POPUP_SESSION) return { ok: false, reason: "busy" };
+              req.session = null;
+              return (await showWindow(req)) ? { ok: true } : { ok: false, reason: "busy" };
+            }
+          }
+          return { ok: false, reason: "gone" };
         },
       },
       passkey_pending: {

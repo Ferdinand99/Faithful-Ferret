@@ -46,7 +46,8 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * `passkey_event` (the reports of the passkey bridge) belongs to the `passkeys` feature (passkeyRequests.mjs); a build
  * without the feature does not have it, nor the chooser window's (`passkey_pending`, `passkey_site`, `passkey_cancel`,
  * `passkey_browser`, `passkey_never`), its choices (`passkey_create_options`, passkeyFlow.mjs), and a get and verification
- * (`passkey_candidates`, `passkey_choose`, `passkey_verify`, passkeyGet.mjs).
+ * (`passkey_candidates`, `passkey_choose`, `passkey_verify`, passkeyGet.mjs), and the popup's for a tab (`passkey_tab`,
+ * `passkey_tab_open`: passkeyRequests.mjs; `passkey_tab_list`, `passkey_tab_choose`, `passkey_tab_verify`: passkeyGet.mjs).
  * `passkey_reconcile` is the test build's only (its hooks).
  */
 export const CORE_OPS = Object.freeze([
@@ -119,6 +120,11 @@ export const CORE_OPS = Object.freeze([
   "passkey_candidates",
   "passkey_choose",
   "passkey_verify",
+  "passkey_tab",
+  "passkey_tab_list",
+  "passkey_tab_open",
+  "passkey_tab_choose",
+  "passkey_tab_verify",
 ]);
 
 /**

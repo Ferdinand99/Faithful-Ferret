@@ -22,6 +22,11 @@
 //   within TAKEN_MS goes to the browser, and
 //   a taken one that hears no "alive" from the bridge for ALIVE_MS ends as one the user left (NotAllowedError; a
 //   conditional one goes to the browser, whose own list then works as before).
+// - Beside a conditional `get` that Ferret takes (its list is in Ferret's popup), it makes a conditional call of its own to
+//   the original, with its own AbortController, so the browser's own autofill list still offers the platform's passkeys.
+//   Only a credential from it wins (Ferret's request is then aborted); an error from it is swallowed while Ferret's part
+//   waits, and the call is made once more if the browser aborted it. It is aborted whenever the page's request ends
+//   otherwise, before the original gets the page's own arguments.
 // - It tells the bridge when create or get were not the browser's own at install (another extension came first), or
 //   when Ferret's own were replaced later.
 // - It builds the answer objects of Ferret's credentials (content/passkeyResponse.mjs) and answers the three static
@@ -98,6 +103,12 @@ function install() {
   const AS = W.AbortSignal.prototype;
   const signalAborted = getterOf(AS, "aborted");
   const signalReason = getterOf(AS, "reason");
+  // The AbortController of the conditional call beside Ferret's part; without it (a browser that has none) there is no such call.
+  const AC = typeof W.AbortController === "function" ? W.AbortController : null;
+  const acAbort = AC === null ? null : AC.prototype.abort;
+  const acSignalHeld = AC === null ? undefined : OGOPD(AC.prototype, "signal");
+  const acSignal = acSignalHeld !== undefined && typeof acSignalHeld.get === "function" ? acSignalHeld.get : null;
+  const pThen = P.prototype.then;
   const setTimer = W.setTimeout;
   const clearTimer = W.clearTimeout;
   const fnText = Function.prototype.toString;
@@ -173,10 +184,80 @@ function install() {
   let conditionalKey = null;
   let counter = 0;
 
+  /** Ends the conditional call of a request to the original, if one runs; what it answers then counts for nothing. @param {any} entry */
+  const stopSide = (entry) => {
+    const side = entry.side;
+    if (side === null || side === undefined) return;
+    entry.side = null;
+    try {
+      R(/** @type {Function} */ (acAbort), side, []);
+    } catch {
+      // Ended already.
+    }
+  };
+
+  /**
+   * The conditional call of a request to the original, beside Ferret's part: the page's own `publicKey`, with an AbortController
+   * of this script. Only a credential wins; an error is swallowed while Ferret's part waits, and an AbortError of the browser's
+   * own (not this script's) starts the call once more.
+   * @param {any} entry
+   */
+  const startSide = (entry) => {
+    if (pending[entry.key] !== entry || AC === null || acAbort === null || acSignal === null) return;
+    const controller = new AC();
+    const options = rec();
+    options.mediation = "conditional";
+    options.publicKey = entry.publicKey;
+    /** @type {unknown} */
+    let promise;
+    try {
+      options.signal = R(acSignal, controller, []);
+      promise = R(entry.original, entry.self, [options]);
+    } catch {
+      return;
+    }
+    entry.side = controller;
+    const mine = () => entry.side === controller;
+    try {
+      R(pThen, promise, [
+        (/** @type {unknown} */ value) => {
+          if (!mine()) return;
+          entry.side = null;
+          if (value === null || value === undefined || !finish(entry)) return;
+          // The browser's list answered: Ferret's request of this call ends.
+          try {
+            send({ t: "abort", n: entry.n });
+          } catch {
+            // The bridge is gone; the background drops the request with the page.
+          }
+          entry.resolve(value);
+        },
+        (/** @type {unknown} */ error) => {
+          if (!mine()) return;
+          entry.side = null;
+          /** @type {unknown} */
+          let name;
+          try {
+            name = typeof error === "object" && error !== null ? /** @type {any} */ (error).name : undefined;
+          } catch {
+            name = undefined;
+          }
+          if (name === "AbortError" && !entry.restarted) {
+            entry.restarted = true;
+            startSide(entry);
+          }
+        },
+      ]);
+    } catch {
+      stopSide(entry);
+    }
+  };
+
   /** @param {any} entry */
   const finish = (entry) => {
     if (pending[entry.key] !== entry) return false;
     delete pending[entry.key];
+    stopSide(entry);
     if (conditionalKey === entry.key) conditionalKey = null;
     cancelTimer(entry.timer);
     entry.timer = undefined;
@@ -483,6 +564,7 @@ function install() {
     const request = rec();
     request.mediation = mediation;
     request.signal = signal;
+    request.publicKey = publicKey;
     request.options = kind === "create" ? copyCreate(publicKey) : copyGet(publicKey);
     // A getter of the page may have fired the signal while the options were copied: then the browser rejects with its reason.
     if (signal !== undefined && R(signalAborted, signal, []) !== false) return null;
@@ -518,6 +600,9 @@ function install() {
       entry.reject = reject;
       entry.signal = request.signal;
       entry.conditional = request.mediation === "conditional";
+      entry.publicKey = request.publicKey;
+      entry.side = null;
+      entry.restarted = false;
       entry.taken = false;
       // A modal request replaces a conditional one that waits, which ends as the browser ends it.
       if (request.mediation !== "conditional" && conditionalKey !== null) {
@@ -572,6 +657,8 @@ function install() {
         }
         toBrowser(entry);
       }, TAKEN_MS);
+      // A conditional get: the browser's own list keeps the platform's passkeys while Ferret's list is in its popup.
+      if (entry.conditional) startSide(entry);
     });
   };
 
@@ -610,7 +697,6 @@ function install() {
   function installStatics() {
     const PKC = /** @type {any} */ (W).PublicKeyCredential;
     if (typeof PKC !== "function") return;
-    const pThen = P.prototype.then;
     /** What Ferret's provider can do, for getClientCapabilities (design § 9.5). */
     const CAPABILITIES = /** @type {const} */ ([
       ["conditionalCreate", false], ["conditionalGet", true], ["passkeyPlatformAuthenticator", true], ["userVerifyingPlatformAuthenticator", true],
