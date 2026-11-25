@@ -107,7 +107,7 @@ export function createSettingsView({ texts, flow }) {
       const row = createNavRow({ role: `settings-row-${page.id}`, icon: page.icon, title: page.title, summary: page.summary, attrs: page.attrs });
       const back = el(
         "button",
-        { type: "button", class: "ff-back", "data-role": "settings-back", "aria-label": t("settings.back") },
+        { type: "button", class: "ff-sback", "data-role": "settings-back", "aria-label": t("settings.back") },
         el("span", { class: "ff-ico ff-ico-back", "aria-hidden": "true" }),
         t("settings.title"),
       );

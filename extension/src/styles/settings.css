@@ -90,9 +90,9 @@
 }
 
 .ff-nav-row:focus-visible,
-.ff-back:focus-visible,
+.ff-sback:focus-visible,
 .ff-switch-row:focus-visible,
-.ff-more-summary:focus-visible {
+.ff-disclosure-summary:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: -2px;
 }
@@ -137,7 +137,7 @@
 }
 
 /* A sub-page: the back button, the title, and the cards. */
-.ff-back {
+.ff-sback {
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
@@ -155,11 +155,11 @@
   touch-action: manipulation;
 }
 
-.ff-back:hover {
+.ff-sback:hover {
   background: var(--hover);
 }
 
-.ff-back .ff-ico:dir(rtl) {
+.ff-sback .ff-ico:dir(rtl) {
   transform: scaleX(-1);
 }
 
@@ -261,7 +261,7 @@ li.ff-scard {
 }
 
 /* "On" or "Off" in words, with a colour that is more than the words. */
-.ff-chip {
+.ff-state {
   flex: none;
   padding: 2px var(--sp-2);
   border: 1px solid var(--field-border);
@@ -271,7 +271,7 @@ li.ff-scard {
   font-weight: 700;
 }
 
-.ff-chip[data-on="1"] {
+.ff-state[data-on="1"] {
   border-color: var(--brand);
   background: var(--brand-fill);
   color: var(--brand);
@@ -379,12 +379,12 @@ li.ff-scard {
 }
 
 /* "More about this": the long explanations, one click away. */
-.ff-more {
+.ff-disclosure {
   border-top: 1px solid var(--line);
   padding-top: var(--sp-2);
 }
 
-.ff-more-summary {
+.ff-disclosure-summary {
   display: inline-block;
   padding: var(--sp-1) 0;
   color: var(--brand);
@@ -393,22 +393,22 @@ li.ff-scard {
   cursor: pointer;
 }
 
-.ff-more[open] > .ff-more-summary {
+.ff-disclosure[open] > .ff-disclosure-summary {
   margin-bottom: var(--sp-1);
 }
 
-.ff-more-body,
-.ff-more-lines {
+.ff-disclosure-body,
+.ff-disclosure-lines {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
 }
 
-.ff-more-lines:empty {
+.ff-disclosure-lines:empty {
   display: none;
 }
 
-.ff-more-body p {
+.ff-disclosure-body p {
   text-wrap: pretty;
   overflow-wrap: anywhere;
 }
@@ -430,7 +430,7 @@ li.ff-scard {
   .ff-nav-list,
   .ff-scard,
   .ff-switch-track,
-  .ff-chip {
+  .ff-state {
     border-color: CanvasText;
   }
 
@@ -447,7 +447,7 @@ li.ff-scard {
     background: HighlightText;
   }
 
-  .ff-chip[data-on="1"] {
+  .ff-state[data-on="1"] {
     border-color: Highlight;
     color: Highlight;
   }

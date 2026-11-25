@@ -73,9 +73,9 @@ export const createSummary = (role, attrs = {}) => el("span", { class: "ff-nav-s
 export function createMore(texts, paragraphs, attrs = {}) {
   return el(
     "details",
-    { class: "ff-more", "data-role": "more", ...attrs },
-    el("summary", { class: "ff-more-summary" }, texts.t("settings.more")),
-    el("div", { class: "ff-more-body" }, ...paragraphs),
+    { class: "ff-disclosure", "data-role": "more", ...attrs },
+    el("summary", { class: "ff-disclosure-summary" }, texts.t("settings.more")),
+    el("div", { class: "ff-disclosure-body" }, ...paragraphs),
   );
 }
 

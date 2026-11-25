@@ -26,10 +26,10 @@ function buildSection(flow, texts, { pollMs } = {}) {
 
   const status = el("p", { class: "ff-status", id: "unlock-pin-status", tabindex: "-1", "aria-live": "polite", "data-role": "unlock-pin-status", ...FEATURE });
   const detail = el("div", { class: "ff-hint ff-unlock-detail", "data-role": "unlock-pin-detail", ...FEATURE });
-  const moreDetail = el("div", { class: "ff-more-lines", "data-role": "unlock-pin-more-detail", ...FEATURE });
+  const moreDetail = el("div", { class: "ff-disclosure-lines", "data-role": "unlock-pin-more-detail", ...FEATURE });
   const ruleLine = el("p", { class: "ff-hint", "data-role": "unlock-pin-rule", ...FEATURE });
   const actions = el("div", { class: "ff-actions", "data-role": "unlock-pin-actions", ...FEATURE });
-  const chip = el("span", { class: "ff-chip", "data-role": "unlock-pin-chip", ...FEATURE }, t("settings.off"));
+  const chip = el("span", { class: "ff-state", "data-role": "unlock-pin-chip", ...FEATURE }, t("settings.off"));
   const failure = el("p", { class: "ff-error", role: "alert", "data-role": "unlock-error", hidden: true });
   const passkeyFailure = el("p", { class: "ff-error", role: "alert", "data-role": "unlock-passkey-error", hidden: true });
   const passkeyCount = el("p", { class: "ff-status", "data-role": "unlock-passkey-count", ...FEATURE });
