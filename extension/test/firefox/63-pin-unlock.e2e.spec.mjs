@@ -123,7 +123,7 @@ test("pin_unlock_after_lock_in_release_and_esr", async () => {
       await session.waitFor(async () => (await view.look()).text !== "", 10_000, "the rule text");
       seen = await view.look();
       assert.match(seen.text, /at least 6 characters/, channel);
-      assert.equal((await ask(session, "unlock_policy", {})).pin.failures_left, 5, `${channel}: nothing was counted`);
+      assert.equal((await ask(session, "unlock_policy", {})).pin_state.failures_left, 5, `${channel}: nothing was counted`);
       await session.content(() => {
         /** @type {HTMLInputElement} */ (document.querySelector('[data-role="pin-input"]')).value = "";
       });
@@ -135,7 +135,7 @@ test("pin_unlock_after_lock_in_release_and_esr", async () => {
       assert.match(seen.text, /not right\. 4 tries left/, `${channel}: ${seen.text}`);
       assert.equal(seen.value, "", `${channel}: the field is empty`);
       assert.equal(seen.focus, "pin-input", channel);
-      assert.equal((await ask(session, "unlock_policy", {})).pin.failures_left, 4, `${channel}: the real counter went down`);
+      assert.equal((await ask(session, "unlock_policy", {})).pin_state.failures_left, 4, `${channel}: the real counter went down`);
 
       // The second wrong PIN starts a wait: shown, the button is off, and Enter does nothing while it runs.
       await view.tryPin("wrong-pin-two");
@@ -161,7 +161,7 @@ test("pin_unlock_after_lock_in_release_and_esr", async () => {
       await view.page.click('[data-role="pin-unlock"]');
       await view.page.waitVisible('[data-role="unlocked-view"]', SLOW);
       assert.equal((await ask(session, "state", {})).state, "unlocked", channel);
-      assert.equal((await ask(session, "unlock_policy", {})).pin.failures_left, 5, `${channel}: a right PIN gives the tries back`);
+      assert.equal((await ask(session, "unlock_policy", {})).pin_state.failures_left, 5, `${channel}: a right PIN gives the tries back`);
 
       // Locked again: the PIN is offered again, "Use master password instead" opens that form, and a master-password unlock works.
       await ask(session, "lock", {});
@@ -188,7 +188,7 @@ test("pin_unlock_after_lock_in_release_and_esr", async () => {
       seen = await view.look();
       assert.deepEqual([seen.pinForm, seen.masterForm, seen.usePin], [false, true, false], `${channel}: ${JSON.stringify(seen)}`);
       assert.match(seen.alert, /The PIN on this device was deleted: after five wrong tries/, `${channel}: ${seen.alert}`);
-      assert.equal((await ask(session, "unlock_policy", {})).pin.set, false, `${channel}: no PIN is left`);
+      assert.equal((await ask(session, "unlock_policy", {})).pin_state.set, false, `${channel}: no PIN is left`);
       await view.open();
       await session.waitFor(async () => (await view.look()).masterForm, 10_000, "the master password's form");
       assert.equal((await view.look()).pinForm, false, `${channel}: the next popup offers no PIN`);

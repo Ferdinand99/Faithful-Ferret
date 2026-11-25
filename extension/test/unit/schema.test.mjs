@@ -124,11 +124,6 @@ test("no_ui_or_content_type_can_carry_a_secret_field", () => {
         seenTyped.add(`${type}.${key}`);
         continue;
       }
-      if (allowed.has(key) && type === "unlock_policy") {
-        // An object named `pin` in the reply: the rule and the state of the PIN (flags and numbers), nothing typed.
-        assert.equal(channel === "ui" && direction === "reply", true, `${where}: only the reply of unlock_policy`);
-        continue;
-      }
       if (allowed.has(key)) {
         // The fill value goes down to a page (push); what the person typed into a form goes up (content); the generator's
         // reply carries the value the core has just made. Nothing else.
@@ -318,8 +313,8 @@ test("every UI request and reply round-trips with a sample body", () => {
     unlock_policy: [
       {},
       {
-        pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 4, wait_ms: 5000, offline_ok: true },
-        prf: { enabled: false, count: 0 },
+        pin_state: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 4, wait_ms: 5000, offline_ok: true },
+        prf: { enabled: false },
       },
     ],
     pin_set: [{ mp: "p", sk: "FFS1-X", pin: "123456", location: "disk", acknowledged: true }, { ok: false, reason: "wrong_credentials" }],
@@ -343,8 +338,15 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
   assert.ok(FORBIDDEN_KEYS.includes("password") && FORBIDDEN_KEYS.includes("current_password"));
   assert.deepEqual({ ...SECRET_KEY_EXCEPTIONS }, {
     fill_field: ["value"], generate: ["value"], form_capture: ["password", "current_password"], offer_reveal: ["value"], item_code: ["code"],
-    pin_set: ["pin"], pin_unlock: ["pin"], unlock_policy: ["pin"], prf_unlock: ["prf_output"],
+    pin_set: ["pin"], pin_unlock: ["pin"], prf_unlock: ["prf_output"],
   });
+  // The name `pin` has exactly two exceptions (GC50): the requests of `pin_set` and `pin_unlock`. No reply carries it, and the
+  // rule and the state in the reply of `unlock_policy` are `pin_state`.
+  assert.deepEqual(
+    Object.entries(SECRET_KEY_EXCEPTIONS).filter(([, keys]) => keys.includes("pin")).map(([type]) => type),
+    ["pin_set", "pin_unlock"],
+  );
+  assert.ok(FORBIDDEN_KEYS.includes("pin") && !FORBIDDEN_KEYS.includes("pin_state"));
   /** @type {string[]} */
   const holders = [];
   for (const { type, channel, direction, schema } of allSchemas()) {
@@ -362,7 +364,6 @@ test("content_to_background_secrets_are_allowed_only_in_form_capture", () => {
     "ui/pin_set/request/pin",
     "ui/pin_unlock/request/pin",
     "ui/prf_unlock/request/prf_output",
-    "ui/unlock_policy/reply/pin",
   ]);
   // Not a UI type and not a push type: the capture is accepted on the content channel only, and has no reply.
   const raw = (/** @type {string} */ type, /** @type {unknown} */ body) => JSON.stringify({ v: 1, id: "a", type, body });

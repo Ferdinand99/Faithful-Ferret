@@ -36,6 +36,8 @@
 // The PIN and the master password come in as text in a request, go to the core as bytes that the client wipes, and are
 // never stored, logged or put in a reply or an error. The strings of a request cannot be wiped (L6).
 
+import { checkPin } from "../shared/pinText.mjs";
+
 // This module does not import the PIN store: a package with the `unlock` flag off does not hold its file, and the
 // entry hands the store over only through the generated module (unlockStore.gen.mjs). The types below are the shapes
 // this module uses of it.
@@ -288,7 +290,7 @@ export function createPinHost({
   function policyReply(policy, status) {
     const pin = policy?.pin ?? { allowed: false, after_restart: false, min_length: 6 };
     return {
-      pin: {
+      pin_state: {
         allowed: pin.allowed,
         after_restart: pin.after_restart,
         min_length: pin.min_length,
@@ -298,7 +300,7 @@ export function createPinHost({
         wait_ms: status?.waitMs ?? 0,
         offline_ok: status?.offlineOk === true,
       },
-      prf: { enabled: policy?.prf.enabled === true, count: 0 },
+      prf: { enabled: policy?.prf.enabled === true },
     };
   }
 
@@ -493,8 +495,7 @@ export function createPinHost({
     // A PIN shorter than the rule, or longer than a PIN can be, can never be the right one: it is a typo, it costs no
     // attempt and has a reason of its own for the popup. (The length is what the person just typed, compared with
     // public numbers.)
-    const length = [...pin.normalize("NFKD")].length;
-    if (length < Math.max(4, cached?.pin.min_length ?? 0) || length > 64 || new TextEncoder().encode(pin.normalize("NFKD")).length > 256) {
+    if (!checkPin(pin, cached?.pin.min_length ?? 0).ok) {
       return refused({ ok: false, reason: "pin_rule", left: status.failuresLeft, wait_ms: status.waitMs });
     }
     const pinBytes = new TextEncoder().encode(pin);

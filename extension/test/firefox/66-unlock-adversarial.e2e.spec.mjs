@@ -39,7 +39,7 @@ test("content_scripts_cannot_burn_pin_attempts", async () => {
       await pace();
       assert.deepEqual(await w.ui.body("pin_set", { mp: w.account.password, pin: PIN, location: "disk", acknowledged: true }), { ok: true }, channel);
       await w.ui.body("lock", {});
-      const before = (await w.ui.body("unlock_policy", {})).pin;
+      const before = (await w.ui.body("unlock_policy", {})).pin_state;
       assert.deepEqual([before.set, before.failures_left, before.location], [true, 5, "disk"], channel);
 
       const tabId = await w.visit(w.server.siteUrl("login"));
@@ -59,11 +59,11 @@ test("content_scripts_cannot_burn_pin_attempts", async () => {
       const seen = await asContentScript(w, "content.unlock_flood", { tab_id: tabId, messages: bodies });
       // Nothing a content script sent got an answer of the unlock: no reply has a body of a PIN, a policy or a state.
       const text = JSON.stringify(seen.replies);
-      assert.ok(!/wrong_pin|pin_wait|pin_wiped|"ok":true|"state":|"pin":\{/.test(text), `${channel}: a message of the unlock was answered to a content script: ${text.slice(0, 300)}`);
+      assert.ok(!/wrong_pin|pin_wait|pin_wiped|"ok":true|"state":|"pin_state":|"pin":\{/.test(text), `${channel}: a message of the unlock was answered to a content script: ${text.slice(0, 300)}`);
       assert.deepEqual(seen.port.got, [], `${channel}: the extension pages' port answered a content script: ${JSON.stringify(seen.port.got).slice(0, 300)}`);
 
       // What the PIN looks like now, from the extension's own page: untouched, and the vault is still locked.
-      const after = (await w.ui.body("unlock_policy", {})).pin;
+      const after = (await w.ui.body("unlock_policy", {})).pin_state;
       assert.deepEqual([after.set, after.failures_left, after.wait_ms, after.location], [true, 5, 0, "disk"], `${channel}: the attempts and the PIN are as they were`);
       assert.equal((await w.ui.body("state", {})).state, "locked", channel);
       // And the PIN still opens the vault, which a flood that had counted would have taken away.
@@ -105,7 +105,7 @@ test("storage_session_is_not_readable_from_a_content_script", async () => {
       // real record gone, a copy of it is not a PIN.
       assert.deepEqual(seen.local, [key], `${channel}: the copy is in the local storage`);
       assert.deepEqual(await w.ui.body("pin_off", {}), { ok: true }, channel);
-      const policy = (await w.ui.body("unlock_policy", {})).pin;
+      const policy = (await w.ui.body("unlock_policy", {})).pin_state;
       assert.equal(policy.set, false, `${channel}: a copy of the record in the local storage is no PIN`);
       await w.ui.body("lock", {});
       const tried = await w.ui.body("pin_unlock", { pin: PIN });

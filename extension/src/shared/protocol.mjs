@@ -86,8 +86,6 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   // the background, never a reply. (The master password and the secret key of `pin_set` are `mp` and `sk`, as in `unlock`.)
   pin_set: Object.freeze(["pin"]),
   pin_unlock: Object.freeze(["pin"]),
-  // The reply of `unlock_policy` has an object named `pin` (the rule and the state of the PIN: flags and numbers, nothing typed).
-  unlock_policy: Object.freeze(["pin"]),
   // The 32 bytes a passkey gave the unlock window, on their one way to the background (a request from the window, never a
   // reply). The window wipes its copy as soon as the message is sent.
   prf_unlock: Object.freeze(["prf_output"]),
@@ -105,7 +103,8 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   sign_in: Object.freeze(["mp", "sk", "qr_text"]),
   unlock: Object.freeze(["mp", "sk"]),
   // `pin_set` asks for the master password again (`mp`) and, when this device does not keep it, the secret key (`sk`).
-  // `pin` is a forbidden name, so SECRET_KEY_EXCEPTIONS names exactly these two types for it.
+  // `pin` is a forbidden name, so SECRET_KEY_EXCEPTIONS names exactly these two types for it (and no reply carries it:
+  // the rule and the state in the reply of `unlock_policy` are `pin_state`).
   pin_set: Object.freeze(["mp", "sk", "pin"]),
   pin_unlock: Object.freeze(["pin"]),
   // Not typed, but it travels the same way: from the unlock window to the background, one way, in this one type.
@@ -299,11 +298,12 @@ export const UI_TYPES = defineTypes({
   // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
   // it, and what this device has of a PIN (whether one is set, where it is kept, the attempts left, the wait, whether
   // it works without the server now). It needs no key and works while the vault is locked. Nothing in it tells the
-  // length or the kind of the PIN.
+  // length or the kind of the PIN. The object is `pin_state` and not `pin`: `pin` is a forbidden name, and the only
+  // two places that may carry it are the requests of `pin_set` and `pin_unlock`.
   unlock_policy: {
     request: empty,
     reply: object({
-      pin: object(
+      pin_state: object(
         {
           allowed: boolean(),
           after_restart: boolean(),
@@ -316,7 +316,7 @@ export const UI_TYPES = defineTypes({
         },
         { optional: ["location"] },
       ),
-      prf: object({ enabled: boolean(), count: integer({ min: 0, max: 1000 }) }),
+      prf: object({ enabled: boolean() }),
     }),
   },
   // Sets (or changes) the PIN: needs the open vault, the network and the master password again (and the secret key

@@ -4,8 +4,8 @@
 //
 // The background answers three requests (a narrow interface; the types are in the protocol of the background):
 //
-//   unlock_policy {}  ->  { pin: { allowed, after_restart, min_length, set, location, failures_left, wait_ms, offline_ok,
-//                                  last_contact_at? }, prf: { enabled, count } }
+//   unlock_policy {}  ->  { pin_state: { allowed, after_restart, min_length, set, location, failures_left, wait_ms,
+//                                        offline_ok, last_contact_at? }, prf: { enabled } }
 //   pin_set { mp, sk?, pin, location, acknowledged }  ->  { ok: true } | { ok: false, reason }
 //   pin_off {}        ->  { ok: true } | { ok: false, reason }
 //
@@ -16,11 +16,10 @@
 // This module asks no build flag and imports nothing of the background: the section that uses it (unlockSettings.mjs) is
 // the one that asks the flag.
 
-/** The smallest PIN the core accepts, whatever the server says (the same floor as the core's). */
-export const PIN_FLOOR = 4;
-/** The longest PIN, in characters (Unicode scalar values after normalisation), and in UTF-8 bytes. */
-export const PIN_MAX_CHARS = 64;
-export const PIN_MAX_BYTES = 256;
+import { PIN_FLOOR, PIN_MAX_BYTES, PIN_MAX_CHARS, checkPin, pinLength } from "../shared/pinText.mjs";
+
+// How a PIN is counted lives in shared/pinText.mjs (the background uses it too); the page's tests read it from here.
+export { PIN_FLOOR, PIN_MAX_BYTES, PIN_MAX_CHARS, checkPin, pinLength };
 
 /** The places a PIN can be kept. */
 export const PIN_LOCATIONS = Object.freeze(["disk", "session"]);
@@ -54,32 +53,11 @@ const reasonOf = (error) => {
 };
 
 /**
- * The length of a PIN as the rule counts it: Unicode scalar values after the same normalisation the core uses for the
- * master password (NFKD). The core is the judge; this is what the dialog tells the user before it asks.
- * @param {string} pin
- */
-export function pinLength(pin) {
-  return [...pin.normalize("NFKD")].length;
-}
-
-/**
- * Whether a PIN meets the rule the server set (and the fixed floor and ceiling). Nothing about the PIN is kept or sent.
- * @param {string} pin @param {number} minLength
- * @returns {{ ok: true } | { ok: false, reason: "too_short" | "too_long" }}
- */
-export function checkPin(pin, minLength) {
-  const length = pinLength(pin);
-  if (length < Math.max(PIN_FLOOR, minLength)) return { ok: false, reason: "too_short" };
-  if (length > PIN_MAX_CHARS || new TextEncoder().encode(pin.normalize("NFKD")).length > PIN_MAX_BYTES) return { ok: false, reason: "too_long" };
-  return { ok: true };
-}
-
-/**
  * @typedef {{
  *   allowed: boolean, afterRestart: boolean, minLength: number, set: boolean, location: "disk" | "session" | null,
  *   failuresLeft: number, waitMs: number, offlineOk: boolean, lastContactAt: number | null,
  * }} PinState
- * @typedef {{ pin: PinState, prf: { enabled: boolean, count: number } }} UnlockState
+ * @typedef {{ pin: PinState, prf: { enabled: boolean } }} UnlockState
  * @typedef {{ ok: true, state: UnlockState } | { ok: false, reason: string }} LoadOutcome
  * @typedef {{ ok: true } | { ok: false, reason: string }} Outcome
  */
@@ -94,12 +72,12 @@ const count = (value, max) => typeof value === "number" && Number.isInteger(valu
  * @param {unknown} reply @returns {UnlockState | null}
  */
 export function readUnlockState(reply) {
-  if (!isRecord(reply) || !isRecord(reply.pin) || !isRecord(reply.prf)) return null;
-  const pin = reply.pin;
+  if (!isRecord(reply) || !isRecord(reply.pin_state) || !isRecord(reply.prf)) return null;
+  const pin = reply.pin_state;
   const prf = reply.prf;
   if (typeof pin.allowed !== "boolean" || typeof pin.after_restart !== "boolean" || typeof pin.set !== "boolean") return null;
   if (!count(pin.min_length, PIN_MAX_CHARS) || /** @type {number} */ (pin.min_length) < PIN_FLOOR) return null;
-  if (typeof prf.enabled !== "boolean" || !count(prf.count, 1000)) return null;
+  if (typeof prf.enabled !== "boolean") return null;
   const location = pin.location === "disk" || pin.location === "session" ? pin.location : null;
   if (pin.set && location === null) return null;
   const contact = pin.last_contact_at;
@@ -115,7 +93,7 @@ export function readUnlockState(reply) {
       offlineOk: pin.offline_ok === true,
       lastContactAt: typeof contact === "number" && Number.isFinite(contact) && contact > 0 ? contact : null,
     },
-    prf: { enabled: prf.enabled, count: /** @type {number} */ (prf.count) },
+    prf: { enabled: prf.enabled },
   };
 }
 
