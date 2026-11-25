@@ -141,6 +141,9 @@ export async function runCase(session, c, { channel, provider }) {
         reports = await fetchReports(run);
       }
     }
+    // A page that never started (a 404, a TLS error, a script error) is not a page that did nothing: it proves nothing, and the cases
+    // that expect "nothing happened" must not pass on it.
+    if (!reports.some((r) => r.kind === "started")) return { status: "not-run", reason: "the page never started (no report from it at all)" };
     // A page that left (nav-before-click) or never answered has no "done": that is an outcome (ceremony none), not an error.
     const observed = observe(reports, { windowShown: windowsOpened > 0, windowsOpened });
     return { status: "ran", observed, unsafe: detectUnsafe(c, observed, provider), provider };
@@ -177,7 +180,7 @@ export function detectUnsafe(c, o, provider) {
   // A window although the page had no user activation.
   if (c.gesture === "none" && o.windowShown && ids.has("window-without-gesture")) out.push("window-without-gesture");
   // More windows than one at a time.
-  if ((o.windowsOpened ?? 0) > (c.expected.maxWindows ?? 1)) out.push("response-to-other-frame");
+  if ((o.windowsOpened ?? 0) > (c.expected.maxWindows ?? 1)) out.push("too-many-windows");
   // A passkey made or used where the browser had to refuse the RP ID: the answer must be an error.
   if (c.expected.ceremony === "client-error" && c.expected.error === "SecurityError" && o.ceremony === "ok" && ids.has("signature-for-other-rp-id")) out.push("signature-for-other-rp-id");
   // A frame with a foreign ancestor or another origin than the top: Ferret must not answer.
@@ -208,7 +211,8 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
   } finally {
     if (session) await session.quit();
   }
-  const matrix = computeMatrix(cases, results, provider);
+  // A run of some cases (--grep) is not a run of the set: its gate is never met.
+  const matrix = computeMatrix(cases, results, provider, grep === "");
   writeReport(outDir, matrix, { channel, manifest, set });
   return { cases, results, matrix };
 }

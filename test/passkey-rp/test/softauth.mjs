@@ -38,6 +38,7 @@ const b64u = (/** @type {Buffer} */ b) => b.toString("base64url");
  *   counter?: number,          the signature counter (default 0)
  *   tamperSignature?: boolean, flip a bit of the signature
  *   challenge?: string,        a challenge other than the one asked for
+ *   omitUserHandle?: boolean,  no userHandle in the assertion
  * }} Tamper
  */
 
@@ -91,7 +92,7 @@ export class SoftAuthenticator {
       id: b64u(this.credentialId),
       rawId: b64u(this.credentialId),
       type: "public-key",
-      response: { clientDataJSON: b64u(clientData), authenticatorData: b64u(authData), signature: b64u(signature), userHandle: this.userHandle ? b64u(this.userHandle) : undefined },
+      response: { clientDataJSON: b64u(clientData), authenticatorData: b64u(authData), signature: b64u(signature), userHandle: this.userHandle && !t.omitUserHandle ? b64u(this.userHandle) : undefined },
       clientExtensionResults: {},
     };
   }

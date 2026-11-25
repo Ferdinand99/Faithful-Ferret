@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial: request-flood</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<h1>Adversarial page: request-flood</h1>
+<form id="login" onsubmit="return false">
+  <label>User name <input id="username" name="username" type="text" autocomplete="username webauthn"></label>
+  <button id="go" type="button">Run the case</button>
+</form>
+<pre id="result" data-state="idle">idle</pre>
+<script type="module">
+import { adversarial } from "/adversarial/adv.mjs";
+import { report, runCeremony } from "/lib.mjs";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+void report; void sleep;
+
+adversarial({ name: "request-flood", run: async (spec, note) => {
+  const outcomes = {};
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 3000);
+  const make = (i) => navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32).fill(i % 255), rpId: spec.rpId ?? location.hostname, timeout: 2000, userVerification: "preferred" }, signal: controller.signal });
+  const results = await Promise.allSettled(Array.from({ length: 1000 }, (_, i) => make(i)));
+  for (const r of results) { const k = r.status === "fulfilled" ? "fulfilled" : r.reason?.name ?? "error"; outcomes[k] = (outcomes[k] ?? 0) + 1; }
+  note("flood", outcomes);
+  note("floodErrors", Object.keys(outcomes).sort());
+  return runCeremony(spec);
+} });
+</script>
+</body>
+</html>

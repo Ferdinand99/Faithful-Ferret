@@ -9,6 +9,7 @@
 //   POST /api/swa/auth/start      {sid, rpId, userVerification, allow: "all"|"none"|"unknown", extensions?}
 //   POST /api/swa/auth/finish     {sid, credential}
 //   POST /api/swa/reset           {sid}
+import { randomBytes } from "node:crypto";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 
 /** @typedef {{ id: string, publicKey: Uint8Array, counter: number, transports?: string[], userId: string }} StoredCredential */
@@ -54,6 +55,8 @@ export async function handleSwa(route, body, origin) {
         userName: body.user.name,
         userDisplayName: body.user.displayName,
         userID: userId,
+        // A challenge of the size the test asks for (the huge-options case): the relying party issues it, so it can still check it.
+        ...(body.challengeBytes ? { challenge: new Uint8Array(randomBytes(Math.min(Number(body.challengeBytes), 4 * 1024 * 1024))) } : {}),
         attestationType: body.attestation === "enterprise" || body.attestation === "direct" || body.attestation === "indirect" ? body.attestation : "none",
         excludeCredentials: body.excludeExisting ? s.credentials.filter((c) => c.userId === b64u(userId)).map((c) => ({ id: c.id, transports: c.transports })) : [],
         authenticatorSelection: {

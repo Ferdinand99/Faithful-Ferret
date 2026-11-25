@@ -38,6 +38,9 @@ export function adversarial({ name, run }) {
     result.textContent = JSON.stringify({ out, notes }, null, 1);
     return out;
   }
+  // The runner tells a page that did nothing from a page that never loaded by this report.
+  const loaded = pageSpec();
+  if (loaded) report(loaded.run, { kind: "started", href: location.href });
   document.getElementById("go")?.addEventListener("click", go);
   window.__ceremony = go;
   if (new URLSearchParams(location.search).get("auto") === "1") go();

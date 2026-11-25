@@ -1,0 +1,65 @@
+{
+  "id": "prf-eval-rs",
+  "set": "fixtures",
+  "category": "get-prf",
+  "title": "prf eval against the strict relying party",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "extensions": {
+        "prf": {}
+      }
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "prf": "results",
+    "stub": {
+      "ceremony": "server-refused",
+      "prf": "results"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    },
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "note": "The strict library is given a PRF ceremony too, so that Ferret's assertion is parsed by it: an assertion with no extension bytes passes, the virtual authenticator's (with them) is refused."
+}

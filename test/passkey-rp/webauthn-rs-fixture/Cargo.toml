@@ -13,7 +13,8 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 # The verification core of webauthn-rs: the same checks as the `webauthn-rs` wrapper
-# (signature, RP ID hash, origin, crossOrigin, flags, backup state, counter), with the
+# (signature, RP ID hash, origin, flags, backup state, counter; the fixture adds crossOrigin, the user handle
+# of a discoverable sign-in and the backup eligibility of the registration), with the
 # options (user verification, resident key, attestation) left to the fixture, which is
 # what the matrix has to vary.
 webauthn-rs-core = "=0.6.2"

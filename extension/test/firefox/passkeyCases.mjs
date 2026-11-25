@@ -56,6 +56,8 @@ export const UNSAFE = Object.freeze({
   "error-differs": "a difference in error type or time between \"cancelled\" and \"no match\"",
   "key-outside-core": "a private key outside the core",
   "passkey-not-delivered": "a passkey in the vault that the site never got, outside the trash",
+  // Not in § 11.3's list but seen from outside by the runner: the plan allows one Ferret window at a time (UK129).
+  "too-many-windows": "more Ferret windows at a time than the request limit allows (one)",
 });
 
 /**
@@ -338,11 +340,14 @@ export function judge(c, o, provider) {
 /**
  * The numbers of a run over `cases`. A case with no result, or whose result says it did not run, counts as failed: the
  * run proved nothing about it (UK125).
+ * The gate is met only by the Ferret provider over the whole set (`complete`: no case was left out by a filter): the stub provider cannot see
+ * the route and cannot run the cases that need Ferret, and a run of some cases proves nothing about the rest.
  * @param {any[]} cases
  * @param {Map<string, CaseResult>} results
  * @param {"stub" | "ferret"} provider
+ * @param {boolean} [complete] the run was of every case of the set (no --grep)
  */
-export function computeMatrix(cases, results, provider) {
+export function computeMatrix(cases, results, provider, complete = true) {
   /** @type {{ id: string, set: string, category: string, status: "passed" | "failed" | "not-run", problems: string[], routeUnchecked: boolean, unsafe: string[] }[]} */
   const rows = [];
   for (const c of cases) {
@@ -371,8 +376,9 @@ export function computeMatrix(cases, results, provider) {
     needsProvider,
     unsafe,
     routeUnchecked: rows.filter((r) => r.routeUnchecked).length,
-    // 100 % of the cases, none not run, no unsafe answer (§ 11.3).
-    gate: total > 0 && passed === total && unsafe === 0,
+    complete,
+    // 100 % of the cases of the whole set, none not run, no unsafe answer, answered by Ferret (§ 11.3).
+    gate: provider === "ferret" && complete && total > 0 && passed === total && unsafe === 0,
     rows,
   };
 }
@@ -383,7 +389,8 @@ export function matrixMarkdown(m, { channel, manifest, set }) {
     `# Passkey matrix: ${set}, ${channel}, ${manifest}, provider ${m.provider}`,
     "",
     `cases ${m.total}, passed ${m.passed}, failed ${m.failed} (of which not run ${m.notRun}, of which need the Ferret provider ${m.needsProvider}), unsafe answers ${m.unsafe}, route not checked ${m.routeUnchecked}`,
-    `gate (100 % passed, nothing not run, no unsafe answer): ${m.gate ? "met" : "NOT met"}`,
+    `unsafe answers seen from outside (gesture, window count, an RP ID the browser refused, a frame route; what only Ferret's internals know is measured by the specs of U4-6 to U4-8): ${m.unsafe}`,
+    `gate (the Ferret provider, the whole set, 100 % passed, nothing not run, no unsafe answer): ${m.gate ? "met" : "NOT met"}${m.provider === "stub" ? " (the stub provider never meets it)" : m.complete ? "" : " (a filtered run never meets it)"}`,
     "",
   ];
   const bad = m.rows.filter((r) => r.status !== "passed");

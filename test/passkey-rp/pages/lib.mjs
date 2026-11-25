@@ -118,11 +118,12 @@ export const TAMPER = {
   },
   // Values far past every limit of the protocol.
   huge: (o) => {
-    o.challenge = toB64u(new Uint8Array(2 * 1024 * 1024).fill(7));
     if (o.user) o.user.displayName = "x".repeat(1024 * 1024);
     if (o.rp) o.rp.name = "y".repeat(1024 * 1024);
     o.excludeCredentials = Array.from({ length: 5000 }, (_, i) => ({ type: "public-key", id: toB64u(new Uint8Array(32).fill(i % 255)) }));
-    o.allowCredentials = o.allowCredentials === undefined ? undefined : Array.from({ length: 5000 }, (_, i) => ({ type: "public-key", id: toB64u(new Uint8Array(32).fill(i % 255)) }));
+    // The real ones stay, so the relying party can still be answered; thousands of others come with them.
+    const fakes = Array.from({ length: 5000 }, (_, i) => ({ type: "public-key", id: toB64u(new Uint8Array(32).fill(i % 255)) }));
+    if (o.allowCredentials !== undefined) o.allowCredentials = [...o.allowCredentials, ...fakes];
   },
 };
 
@@ -160,7 +161,7 @@ async function runStep(spec, step) {
   try {
     const startBody =
       step === "create"
-        ? { sid, rpId, user: spec.user, userVerification: opt.userVerification, residentKey: opt.residentKey, attestation: opt.attestation, algs: opt.algs, excludeExisting: opt.excludeExisting, authenticatorAttachment: opt.authenticatorAttachment, extensions: opt.extensions }
+        ? { sid, rpId, user: spec.user, challengeBytes: opt.challengeBytes, userVerification: opt.userVerification, residentKey: opt.residentKey, attestation: opt.attestation, algs: opt.algs, excludeExisting: opt.excludeExisting, authenticatorAttachment: opt.authenticatorAttachment, extensions: opt.extensions }
         : { sid, rpId, userVerification: opt.userVerification, allow: opt.allow ?? "all", extensions: opt.extensions };
     const started1 = await post(`${base}/${step === "create" ? "register" : "auth"}/start`, startBody);
     if (!started1.json.ok) {

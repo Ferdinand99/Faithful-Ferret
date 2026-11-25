@@ -142,7 +142,8 @@
     "window-without-gesture": "a Ferret window without a user gesture",
     "error-differs": "a difference in error type or time between \"cancelled\" and \"no match\"",
     "key-outside-core": "a private key outside the core",
-    "passkey-not-delivered": "a passkey in the vault that the site never got, outside the trash"
+    "passkey-not-delivered": "a passkey in the vault that the site never got, outside the trash",
+    "too-many-windows": "more Ferret windows at a time than the request limit allows (one)"
   },
   "hosts": {
     "A": "rp-a.test",

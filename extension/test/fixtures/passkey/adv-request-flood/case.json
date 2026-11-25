@@ -1,0 +1,60 @@
+{
+  "id": "adv-request-flood",
+  "set": "adversarial",
+  "category": "adv-window",
+  "title": "a thousand get requests at once: the browser's own concurrent-request errors, never more than one window, and an ordinary ceremony still works afterwards",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/request-flood.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser",
+    "maxWindows": 1,
+    "adv": [
+      {
+        "key": "floodErrors",
+        "equals": [
+          "AbortError"
+        ]
+      }
+    ]
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "waitMs": 40000
+}

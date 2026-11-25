@@ -14,8 +14,9 @@ Relying-party libraries (the two fixtures)
 webauthn-rs-core 0.6.2 and webauthn-rs-proto 0.6.2   MPL-2.0
     https://github.com/kanidm/webauthn-rs
     The relying party of the strict fixture (test/passkey-rp/webauthn-rs-fixture) calls the
-    verification code of webauthn-rs (signature, RP ID hash, origin, crossOrigin, flags,
-    backup state, counter). The sources of the library are used unmodified and are fetched
+    verification code of webauthn-rs (signature, RP ID hash, origin, flags, backup state,
+    counter, the offered algorithms); the fixture itself adds the crossOrigin refusal, the user
+    handle of a discoverable sign-in and the backup eligibility of the registration. The sources of the library are used unmodified and are fetched
     from crates.io at the versions in webauthn-rs-fixture/Cargo.lock; the fixture's own code
     is a separate file under the licence of this repository. The Mozilla Public License 2.0
     is at https://www.mozilla.org/MPL/2.0/ and lets the source of the library be had from

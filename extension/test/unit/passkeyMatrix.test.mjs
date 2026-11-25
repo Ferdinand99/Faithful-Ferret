@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { generated } from "../fixtures/passkey/generate.mjs";
-import { CATEGORIES, TEST_HOSTS, UNSAFE, caseAddress, caseProblems, categoryShortfalls, computeMatrix, judge, loadCases, observe, specOf } from "../firefox/passkeyCases.mjs";
+import { CATEGORIES, TEST_HOSTS, UNSAFE, caseAddress, caseProblems, categoryShortfalls, computeMatrix, judge, loadCases, matrixMarkdown, observe, specOf } from "../firefox/passkeyCases.mjs";
 import { MATRIX_PREFS, SET_DIRS, detectUnsafe, runCase, selectCases } from "../firefox/passkeyMatrix.mjs";
 import { caExtensions } from "../../../test/passkey-rp/server/tls.mjs";
 
@@ -95,7 +95,10 @@ test("the_test_hosts_never_resolve_outside_the_test_network", () => {
   const lines = caExtensions(hostsJson.hosts, hostsJson.localhostNames);
   const constraint = lines.find((l) => l.startsWith("nameConstraints="));
   assert.ok(constraint?.startsWith("nameConstraints=critical,"), "name constraints are critical");
-  const permitted = constraint.replace("nameConstraints=critical,", "").split(",");
+  const parts = constraint.replace("nameConstraints=critical,", "").split(",");
+  // No IP address is allowed at all, and the permitted names are exactly the hosts.
+  assert.deepEqual(parts.filter((p) => p.startsWith("excluded;")).sort(), ["excluded;IP:0.0.0.0/0.0.0.0", "excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0"]);
+  const permitted = parts.filter((p) => p.startsWith("permitted;"));
   assert.deepEqual(permitted.sort(), [...hostsJson.hosts, ...hostsJson.localhostNames].map((h) => `permitted;DNS:${h}`).sort());
   assert.ok(lines.includes("basicConstraints=critical,CA:TRUE,pathlen:0"));
   const tls = readFileSync(join(rpDir, "server", "tls.mjs"), "utf8");
@@ -173,6 +176,53 @@ test("the_matrix_counts_a_case_that_did_not_run_as_failed", async () => {
   assert.ok(stubMatrix.needsProvider > 10, "the cases that need Ferret are counted");
 });
 
+test("the gate is met only by the Ferret provider over the whole set", () => {
+  const some = all().cases.filter((c) => c.set === "fixtures").slice(0, 3);
+  /** @param {any} c @returns {import("../firefox/passkeyCases.mjs").CaseResult} */
+  const passing = (c) => ({ status: "ran", provider: "ferret", observed: { ceremony: c.expected.ceremony, error: c.expected.error, failStep: c.expected.failStep, route: c.expected.route === "any" ? "browser" : c.expected.route, windowShown: c.expected.route === "ferret", windowsOpened: 1 } });
+  const results = new Map(some.map((c) => [c.id, passing(c)]));
+  assert.equal(computeMatrix(some, results, "ferret", true).gate, true, "every case, the Ferret provider: met");
+  assert.equal(computeMatrix(some, results, "ferret", false).gate, false, "a run of some cases (--grep) never meets it");
+  assert.equal(computeMatrix(some, results, "stub", true).gate, false, "the stub provider never meets it, whatever passed");
+  assert.match(matrixMarkdown(computeMatrix(some, results, "stub", true), { channel: "release", manifest: "mv2", set: "fixtures" }), /stub provider never meets it/);
+});
+
+test("a page that never started is not a page that did nothing", async () => {
+  const c = { ...all().cases.find((x) => x.id === "adv-nav-before-click"), waitMs: 1000 };
+  assert.deepEqual(c.expected, { ceremony: "none", route: "none" });
+  /** @param {any[]} reports */
+  const run = async (reports) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = /** @type {any} */ (async () => ({ json: async () => ({ reports }) }));
+    const session = /** @type {any} */ ({
+      windowHandle: async () => "main",
+      windowHandles: async () => ["main"],
+      navigate: async () => {},
+      switchToTopFrame: async () => {},
+      switchToFrame: async () => {},
+      switchTo: async () => {},
+      closeTab: async () => {},
+      findAll: async () => [{}],
+      waitFor: async (/** @type {() => any} */ fn) => fn(),
+      content: async () => true,
+      click: async () => {},
+    });
+    try {
+      return await runCase(session, c, { channel: "release", provider: "stub" });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+  const never = await run([]);
+  assert.equal(never.status, "not-run");
+  assert.match(never.reason ?? "", /never started/);
+  const started = await run([{ kind: "started" }]);
+  assert.equal(started.status, "ran");
+  assert.equal(started.observed?.ceremony, "none");
+  // ... and every page of the fixture says that it started.
+  for (const file of ["pages/ceremony.mjs", "pages/adversarial/adv.mjs"]) assert.match(readFileSync(join(rpDir, file), "utf8"), /kind: "started"/, file);
+});
+
 test("what a run saw is judged against the case, per provider", () => {
   const { cases } = all();
   const c = cases.find((x) => x.id === "basic-rs-manual");
@@ -206,7 +256,7 @@ test("what a run saw is judged against the case, per provider", () => {
   assert.deepEqual(detectUnsafe(gestureCase, { ceremony: "none", route: "ferret", windowShown: true, windowsOpened: 1 }, "ferret"), ["window-without-gesture"]);
   const sec = cases.find((x) => x.id === "origin-child-rpid-denied");
   assert.deepEqual(detectUnsafe(sec, { ceremony: "ok", route: "browser", windowShown: false, windowsOpened: 0 }, "ferret"), ["signature-for-other-rp-id"]);
-  assert.deepEqual(detectUnsafe(c, { ceremony: "ok", route: "ferret", windowShown: true, windowsOpened: 3 }, "ferret"), ["response-to-other-frame"]);
+  assert.deepEqual(detectUnsafe(c, { ceremony: "ok", route: "ferret", windowShown: true, windowsOpened: 3 }, "ferret"), ["too-many-windows"]);
 });
 
 test("the address of a case: frames, kinds, allow and the spec", () => {

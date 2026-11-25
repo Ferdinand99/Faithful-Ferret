@@ -42,8 +42,9 @@ if [ "$(id -u)" = 0 ]; then
       printf '%s\n' "${FERRET_PASSKEY_CA_PEM:?FERRET_PASSKEY_CA_PEM is not set}" > /tmp/passkey-rp-ca.pem
       NODE_EXTRA_CA_CERTS=/tmp/passkey-rp-ca.pem
       export NODE_EXTRA_CA_CERTS
+      # Root, for ports 80 and 443, before the privilege drop; the container is a throwaway one with no way out but the test network.
       node test/passkey-rp/forward.mjs rp-a.test >&2 &
-      sleep 1
+      node -e 'const net = require("net"); let n = 0; setInterval(() => { const s = net.connect(443, "127.0.0.1", () => { s.destroy(); process.exit(0); }); s.on("error", () => { if (++n > 40) process.exit(1); }); }, 250);' || { echo "run.sh: the localhost forwarder did not come up" >&2; exit 1; }
     fi
   else
     node extension/test/firefox/harness.mjs hosts >> /etc/hosts

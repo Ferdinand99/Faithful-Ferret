@@ -10,10 +10,11 @@
 //   POST /auth/finish     {sid, credential}              ->  {ok, counter, flags} or {ok:false, error}
 //   POST /reset           {sid}                          ->  {ok}
 //
-// Every check is the library's (signature, RP ID hash, origin, crossOrigin, flags, backup
-// eligibility and state, counter). The fixture adds two on top, so that the reason of a
-// refusal is plain: a clientDataJSON with `crossOrigin: true` is refused, and a discoverable
-// response must carry the user handle of the credential's owner.
+// The checks of the library: signature, RP ID hash, origin, flags, backup state, counter, and
+// that the credential's algorithm is one the options offered. The fixture adds what a strict
+// relying party also does and the library leaves to the application: a clientDataJSON with
+// `crossOrigin: true` is refused; a discoverable sign-in must carry the user handle of the
+// credential's owner; and the backup eligibility must be the one of the registration.
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ use tiny_http::{Header, Method, Response, Server};
 use url::Url;
 use webauthn_rs_core::WebauthnCore;
 use webauthn_rs_core::proto::{
-    AttestationConveyancePreference, AuthenticationState, AuthenticatorAttachment, Credential, PublicKeyCredential,
+    AttestationConveyancePreference, AuthenticationState, AuthenticatorAttachment, COSEAlgorithm, Credential, PublicKeyCredential,
     RegisterPublicKeyCredential, RegistrationState, UserVerificationPolicy,
 };
 
@@ -38,6 +39,8 @@ struct Registration {
 }
 
 struct Authentication {
+    /// The request listed no credential: the response has to name the user (WebAuthn section 7.2, step 6).
+    discoverable: bool,
     state: AuthenticationState,
     rp_id: String,
     origin: String,
@@ -105,6 +108,22 @@ fn none() -> String {
 }
 fn all() -> String {
     "all".into()
+}
+
+fn algorithm(cose: i64) -> Option<COSEAlgorithm> {
+    Some(match cose {
+        -7 => COSEAlgorithm::ES256,
+        -35 => COSEAlgorithm::ES384,
+        -36 => COSEAlgorithm::ES521,
+        -257 => COSEAlgorithm::RS256,
+        -258 => COSEAlgorithm::RS384,
+        -259 => COSEAlgorithm::RS512,
+        -37 => COSEAlgorithm::PS256,
+        -38 => COSEAlgorithm::PS384,
+        -39 => COSEAlgorithm::PS512,
+        -8 => COSEAlgorithm::EDDSA,
+        _ => return None,
+    })
 }
 
 fn policy(text: &str) -> Result<UserVerificationPolicy, String> {
@@ -192,6 +211,12 @@ fn register_start(state: &Mutex<State>, body: &[u8]) -> (u16, Value) {
         Some("cross-platform") => Some(AuthenticatorAttachment::CrossPlatform),
         _ => None,
     });
+    // The algorithms the options offer are the ones a credential may have: an empty list is the specification's ES256 and
+    // RS256 and leaves the library's default.
+    let offered: Vec<COSEAlgorithm> = req.algs.iter().flatten().filter_map(|a| algorithm(*a)).collect();
+    if !offered.is_empty() {
+        builder = builder.credential_algorithms(offered);
+    }
     let mut st = state.lock().unwrap();
     let session = st.sessions.entry(req.sid.clone()).or_default();
     if req.exclude_existing {
@@ -310,6 +335,7 @@ fn auth_start(state: &Mutex<State>, body: &[u8]) -> (u16, Value) {
         "all" => session.credentials.iter().map(|(c, _)| c.clone()).collect(),
         _ => vec![],
     };
+    let allow_none = creds.is_empty() && req.allow != "unknown";
     let builder = match w.new_challenge_authenticate_builder(creds, Some(uv)) {
         Ok(b) => b,
         Err(e) => return err(format!("{e:?}")),
@@ -318,7 +344,7 @@ fn auth_start(state: &Mutex<State>, body: &[u8]) -> (u16, Value) {
         Ok(x) => x,
         Err(e) => return err(format!("{e:?}")),
     };
-    session.auth = Some(Authentication { state: auth_state, rp_id: req.rp_id.clone(), origin: req.origin.clone() });
+    session.auth = Some(Authentication { discoverable: allow_none, state: auth_state, rp_id: req.rp_id.clone(), origin: req.origin.clone() });
     let mut options = match serde_json::to_value(&response) {
         Ok(Value::Object(mut o)) => o.remove("publicKey").unwrap_or(Value::Null),
         _ => return err("options did not serialise"),
@@ -365,15 +391,19 @@ fn auth_finish(state: &Mutex<State>, body: &[u8]) -> (u16, Value) {
     let Some(idx) = session.credentials.iter().position(|(c, _)| c.cred_id.as_slice() == parsed.raw_id.as_slice()) else {
         return err("CredentialNotFound");
     };
-    if let Some(handle) = parsed.response.user_handle.as_ref() {
-        if *handle != session.credentials[idx].1 {
-            return err("userHandle does not name the owner of the credential");
-        }
+    match parsed.response.user_handle.as_ref() {
+        Some(handle) if *handle != session.credentials[idx].1 => return err("userHandle does not name the owner of the credential"),
+        None if auth.discoverable => return err("a discoverable sign-in carries no userHandle"),
+        _ => {}
     }
     let cred = session.credentials[idx].0.clone();
     match w.authenticate_single_credential(&parsed, &auth.state, &cred) {
         Ok(result) => {
             let flags = Flags { uv: result.user_verified(), be: result.backup_eligible(), bs: result.backup_state() };
+            // The backup eligibility is fixed at registration: a sign-in that says otherwise is refused.
+            if result.backup_eligible() != session.credentials[idx].0.backup_eligible {
+                return err("backup eligibility changed since the registration");
+            }
             // What a relying party must do with the answer, or the next check has nothing to compare to:
             // keep the counter (and the backup state) the authenticator reported.
             let counter: u32 = result.counter();
@@ -393,7 +423,7 @@ fn main() {
     eprintln!("webauthn-rs fixture on {addr}");
     for mut request in server.incoming_requests() {
         let mut body = Vec::new();
-        let _ = request.as_reader().take(1 << 20).read_to_end(&mut body);
+        let _ = request.as_reader().take(16 << 20).read_to_end(&mut body);
         let path = request.url().split('?').next().unwrap_or("").to_string();
         let (status, value) = match (request.method(), path.as_str()) {
             (Method::Get, "/healthz") => (200, json!({"ok": true})),

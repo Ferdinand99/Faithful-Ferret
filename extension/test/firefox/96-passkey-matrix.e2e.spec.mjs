@@ -9,9 +9,10 @@
 //   holdout or demo) whose id contains FERRET_PASSKEY_GREP, with the provider FERRET_PASSKEY_PROVIDER (stub by default), in each
 //   channel. It writes <set>-<channel>-<manifest>.json and .md to FERRET_PASSKEY_OUT and asserts: there are cases, every one has
 //   a result or a reason, and no answer was unsafe.
-// - passkey_matrix_meets_the_gate: 100 % of the cases passed, none not run, no unsafe answer (§ 11.3). The stub provider cannot
-//   meet it (it cannot run the cases that need Ferret); it then asserts that every case it could run passed, and says how many
-//   it could not run. With the provider ferret the gate is asserted as it is.
+// - passkey_matrix_meets_the_gate: 100 % of the cases of the whole set passed, none not run, no unsafe answer (§ 11.3), answered by
+//   Ferret. The stub provider never meets it (it cannot run the cases that need Ferret and cannot see the route); it then asserts that
+//   every case it could run passed, and says how many it could not run. With the provider ferret the gate is asserted as it is, and a
+//   run with --grep fails it.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,6 +109,7 @@ test("passkey_matrix_meets_the_gate", async (t) => {
   for (const [channel, run] of runs) {
     const m = run.matrix;
     if (PROVIDER === "ferret") {
+      assert.equal(GREP, "", `${channel}: the gate is for the whole set: a run with --grep never meets it`);
       assert.equal(m.gate, true, `${channel}: the gate (100 % passed, nothing not run, no unsafe answer) is not met: ${JSON.stringify(m.rows.filter((r) => r.status !== "passed").map((r) => ({ id: r.id, problems: r.problems })))}`);
     } else {
       // The stub runs what it can. Whatever it ran must pass; what only Ferret can answer is counted, not hidden.

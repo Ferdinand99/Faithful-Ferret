@@ -33,7 +33,7 @@
   "gesture": "click",
   "expected": {
     "ceremony": "ok",
-    "route": "any"
+    "route": "browser"
   },
   "unsafe": [
     {
@@ -45,5 +45,5 @@
       "definition": "a window or an answer for any frame or origin other than the one that asked"
     }
   ],
-  "note": "Firefox accepts the trailing dot (the RP ID is the host as written). Ferret may answer or leave it to the browser, and must never sign for an RP ID other than exactly the stored one."
+  "note": "Firefox accepts the trailing dot: the RP ID is the host as written. The core strips one trailing dot, so a Ferret answer would have an origin and an RP ID hash that differ from the ones the site expects; the call goes to the browser (reviewer's ruling)."
 }

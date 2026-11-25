@@ -14,7 +14,7 @@ const DAYS = 30;
 const REUSE_MIN_SECONDS = 3 * 24 * 3600;
 
 /**
- * The openssl extension lines of the CA: constrained to `hosts` and the localhost names.
+ * The openssl extension lines of the CA: constrained to `hosts` and the localhost names, and no IP address at all.
  * @param {string[]} hosts
  * @param {string[]} localhostNames
  * @returns {string[]}
@@ -24,7 +24,7 @@ export function caExtensions(hosts, localhostNames) {
   return [
     "basicConstraints=critical,CA:TRUE,pathlen:0",
     "keyUsage=critical,keyCertSign,cRLSign",
-    `nameConstraints=critical,${permitted}`,
+    `nameConstraints=critical,${permitted},excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0`,
   ];
 }
 

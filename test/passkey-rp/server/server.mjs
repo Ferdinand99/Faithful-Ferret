@@ -91,7 +91,7 @@ function readBody(req) {
     let size = 0;
     req.on("data", (c) => {
       size += c.length;
-      if (size > 4 << 20) {
+      if (size > 16 << 20) {
         reject(new Error("body too large"));
         req.destroy();
         return;

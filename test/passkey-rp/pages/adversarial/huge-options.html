@@ -18,19 +18,7 @@ import { report, runCeremony } from "/lib.mjs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 void report; void sleep;
 
-adversarial({ name: "huge-options", run: async (spec, note) => {
-  const flood = async () => {
-    const outcomes = {};
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 3000);
-    const make = (i) => navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32).fill(i % 255), rpId: spec.rpId ?? location.hostname, timeout: 2000, userVerification: "preferred" }, signal: controller.signal });
-    const results = await Promise.allSettled(Array.from({ length: 1000 }, (_, i) => make(i)));
-    for (const r of results) { const k = r.status === "fulfilled" ? "fulfilled" : r.reason?.name ?? "error"; outcomes[k] = (outcomes[k] ?? 0) + 1; }
-    return outcomes;
-  };
-  note("flood", await flood());
-  return runCeremony({ tamper: "huge", ...spec });
-} });
+adversarial({ name: "huge-options", run: (spec) => runCeremony({ tamper: "huge", ...spec }) });
 </script>
 </body>
 </html>

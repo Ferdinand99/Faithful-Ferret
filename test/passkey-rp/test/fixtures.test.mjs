@@ -10,7 +10,10 @@
 // answers below are per library, and a library that changes its mind fails the test.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { request } from "node:https";
+import { readFileSync } from "node:fs";
+import { connect } from "node:net";
 import { describe, test } from "node:test";
 import { FLAG, SoftAuthenticator } from "./softauth.mjs";
 
@@ -92,6 +95,8 @@ for (const lib of /** @type {const} */ (["rs", "swa"])) {
         { name: "crossOrigin true", tamper: { crossOrigin: true }, accepted: ["swa"] },
         // Backup state without backup eligibility is not a state the specification allows; both libraries know.
         { name: "backup state without eligibility", tamper: { flags: FLAG.UP | FLAG.UV | FLAG.BS } },
+        // Registered with BE = 1, signs in with BE = 0: the strict one keeps the eligibility of the registration; the other does not compare.
+        { name: "backup eligibility changed since the registration", tamper: { flags: FLAG.UP | FLAG.UV }, accepted: ["swa"] },
       ];
       for (const c of cases) {
         const { sid, auth, finish } = await register(lib);
@@ -140,6 +145,31 @@ for (const lib of /** @type {const} */ (["rs", "swa"])) {
       assert.equal(first.json.ok, true, JSON.stringify(first.json));
       const back = await authenticate(lib, sid, auth, { counter: 3 });
       assert.equal(back.json.ok, false, `${lib} accepted a counter that went from 5 to 3`);
+    });
+
+    test("a discoverable sign-in without a user handle is refused by the strict one", async () => {
+      const { sid, auth } = await register(lib);
+      const control = await authenticate(lib, sid, auth, {}, { allow: "none" });
+      assert.equal(control.json.ok, true, JSON.stringify(control.json));
+      const r = await authenticate(lib, sid, auth, { omitUserHandle: true }, { allow: "none" });
+      assert.equal(r.json.ok === true, lib === "swa", `${lib}: ${JSON.stringify(r.json)}`);
+      // A request that listed the credential does not need the handle.
+      const listed = await authenticate(lib, sid, auth, { omitUserHandle: true }, { allow: "all" });
+      assert.equal(listed.json.ok, true, `${lib}: ${JSON.stringify(listed.json)}`);
+    });
+
+    test("an algorithm the options never offered: the strict one refuses it", async () => {
+      // The options offer RS256 only; the authenticator answers with an ES256 key.
+      const sid = sidOf();
+      const auth = new SoftAuthenticator();
+      const start = /** @type {any} */ (await post(`/api/${lib}/register/start`, { sid, rpId: HOST, user: USER, algs: [-257] }));
+      assert.equal(start.json.ok, true, JSON.stringify(start.json));
+      assert.deepEqual(start.json.options.pubKeyCredParams.map((/** @type {any} */ p) => p.alg), [-257]);
+      const finish = /** @type {any} */ (await post(`/api/${lib}/register/finish`, { sid, credential: auth.create(start.json.options, ORIGIN) }));
+      assert.equal(finish.json.ok === true, lib === "swa", `${lib}: ${JSON.stringify(finish.json)}`);
+      // The offered one is accepted (the control).
+      const ok = await register(lib, {}, { algs: [-7, -257] });
+      assert.equal(ok.finish.json.ok, true, JSON.stringify(ok.finish.json));
     });
 
     test("a discoverable request finds the credential by its id and the user handle", async () => {
@@ -203,6 +233,19 @@ describe("the API of the fixture", () => {
       assert.equal(res.status, 200, host);
       assert.match(await res.text(), /Passkey fixture/);
     }
+  });
+
+  test("every host of hosts.json is an alias of the one fixture, and a public name does not resolve from here", async () => {
+    const hosts = JSON.parse(readFileSync(new URL("../hosts.json", import.meta.url), "utf8")).hosts;
+    const home = (await lookup("rp-a.test")).address;
+    for (const h of hosts) assert.equal((await lookup(h)).address, home, `${h} is an alias of the fixture`);
+    // The network has no way out: a name that is not an alias does not resolve, and nothing is reached by address either.
+    await assert.rejects(lookup("example.com"), /ENOTFOUND|EAI_AGAIN/);
+    await assert.rejects(new Promise((resolve, reject) => {
+      const socket = connect({ host: "1.1.1.1", port: 443, timeout: 2000 }, () => { socket.destroy(); resolve(undefined); });
+      socket.on("error", reject);
+      socket.on("timeout", () => { socket.destroy(); reject(new Error("timeout")); });
+    }));
   });
 
   test("the browser library is served", async () => {

@@ -107,21 +107,24 @@ adversarial({ name: "patched-builtins", run: async (spec, note) => {
     body: `
 adversarial({ name: "forged-origin", run: (spec) => runCeremony({ tamper: "forged-origin", ...spec }) });`,
   },
-  // Values far past every limit, and a thousand requests at once.
+  // Values far past every limit: a megabyte of challenge, names and display names, thousands of credential ids.
   "huge-options": {
     body: `
-adversarial({ name: "huge-options", run: async (spec, note) => {
-  const flood = async () => {
-    const outcomes = {};
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 3000);
-    const make = (i) => navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32).fill(i % 255), rpId: spec.rpId ?? location.hostname, timeout: 2000, userVerification: "preferred" }, signal: controller.signal });
-    const results = await Promise.allSettled(Array.from({ length: 1000 }, (_, i) => make(i)));
-    for (const r of results) { const k = r.status === "fulfilled" ? "fulfilled" : r.reason?.name ?? "error"; outcomes[k] = (outcomes[k] ?? 0) + 1; }
-    return outcomes;
-  };
-  note("flood", await flood());
-  return runCeremony({ tamper: "huge", ...spec });
+adversarial({ name: "huge-options", run: (spec) => runCeremony({ tamper: "huge", ...spec }) });`,
+  },
+  // A thousand requests at once: the browser's own concurrent-request errors, and then an ordinary ceremony still works.
+  "request-flood": {
+    body: `
+adversarial({ name: "request-flood", run: async (spec, note) => {
+  const outcomes = {};
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 3000);
+  const make = (i) => navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32).fill(i % 255), rpId: spec.rpId ?? location.hostname, timeout: 2000, userVerification: "preferred" }, signal: controller.signal });
+  const results = await Promise.allSettled(Array.from({ length: 1000 }, (_, i) => make(i)));
+  for (const r of results) { const k = r.status === "fulfilled" ? "fulfilled" : r.reason?.name ?? "error"; outcomes[k] = (outcomes[k] ?? 0) + 1; }
+  note("flood", outcomes);
+  note("floodErrors", Object.keys(outcomes).sort());
+  return runCeremony(spec);
 } });`,
   },
   // Names made to mislead: GitHub, a right-to-left override, control characters.
