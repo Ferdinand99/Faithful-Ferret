@@ -32,8 +32,8 @@ const SENTINEL = "sentinel-pin-4417-xyz";
 
 /** The state of a PIN as the background's `unlock_policy` says it. @param {Record<string, unknown>} [pin] */
 const policy = (pin = {}) => ({
-  pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true, ...pin },
-  prf: { enabled: false, count: 0 },
+  pin_state: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true, ...pin },
+  prf: { enabled: false },
 });
 
 /**
@@ -191,7 +191,7 @@ test("the_pin_field_shows_only_when_a_pin_is_set_and_unlock_is_on", async () => 
     assert.equal(world.offer, null, what);
     assert.equal(world.part, null, what);
   }
-  for (const reply of [null, {}, { pin: null, prf: {} }, { pin: { ...policy().pin, min_length: 3 }, prf: { enabled: false, count: 0 } }]) {
+  for (const reply of [null, {}, { pin_state: null, prf: {} }, { pin: policy().pin_state, prf: { enabled: false } }, { pin_state: { ...policy().pin_state, min_length: 3 }, prf: { enabled: false } }]) {
     const world = await partOf(on, { offer: null });
     world.state.policy = /** @type {any} */ (reply);
     assert.equal(await world.flow.pinPolicy(), null, JSON.stringify(reply));

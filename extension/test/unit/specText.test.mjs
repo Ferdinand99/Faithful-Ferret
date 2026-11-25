@@ -117,7 +117,7 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
     "Only with the vault open, a network, and the master password typed again in the same dialog",
     "Every set or change makes a **new `device_salt` and a new local `method_id`**.",
     "Only the extension's own top-level pages can send the messages that set, use or turn off a PIN",
-    "It is NFKD like MP (Unicode 16.0), control characters and unassigned characters are refused, the length counts Unicode scalar values, and a PIN has at most 64 scalar values and 256 bytes.",
+    "It is NFKD like MP (Unicode 16.0), control characters and unassigned characters are refused, the minimum length counts Unicode scalar values of the composed form (NFC of the NFKD form, so a letter with a combining accent, or a Hangul syllable written as separate jamo, counts as one), and a PIN has at most 64 scalar values of the NFKD form and 256 bytes of it.",
     "The minimum length comes from the server's rule (4 to 64, default 6), and the client never accepts less than 4",
     "**The record holds neither the length nor whether the PIN is digits or text:**",
     "KEK_pin = Argon2id(NFKD(PIN), device_salt, PIN profile 1: m = 256 MiB, t = 3, p = 1, L = 32)",

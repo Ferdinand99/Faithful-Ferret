@@ -557,8 +557,8 @@ test("a_server_without_the_policy_route_means_no_pin", async () => {
   await w.events.fireAlarm("ferret-contact");
   assert.equal((await w.status()).set, false, "the blob is deleted at that contact");
   const reply = await w.page.request("unlock_policy", {});
-  assert.equal(reply.pin.allowed, false);
-  assert.equal(reply.pin.set, false);
+  assert.equal(reply.pin_state.allowed, false);
+  assert.equal(reply.pin_state.set, false);
   assert.deepEqual(await w.setPin(), { ok: false, reason: "pin_not_allowed" });
 });
 
@@ -575,15 +575,15 @@ test("unlock_policy_answers_while_locked_and_tells_what_the_device_has", async (
   await w.lockNow();
   const reply = await w.page.request("unlock_policy", {});
   assert.deepEqual(reply, {
-    pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true },
-    prf: { enabled: false, count: 0 },
+    pin_state: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true },
+    prf: { enabled: false },
   });
   await w.unlockWithPin(WRONG);
   const after = await w.page.request("unlock_policy", {});
-  assert.equal(after.pin.failures_left, 4);
+  assert.equal(after.pin_state.failures_left, 4);
   // Offline it answers from the rule it has kept.
   w.state.online = false;
-  assert.equal((await w.page.request("unlock_policy", {})).pin.min_length, 6);
+  assert.equal((await w.page.request("unlock_policy", {})).pin_state.min_length, 6);
 });
 
 // ------------------------------------------------------------------------------------------------ who may send
@@ -830,9 +830,9 @@ test("unlock_policy_answers_at_once_from_the_cached_rule_when_the_server_is_slow
   const started = Date.now();
   const reply = await w.page.request("unlock_policy", {});
   assert.ok(Date.now() - started < 1500, "no wait for the server");
-  assert.equal(reply.pin.set, true);
-  assert.equal(reply.pin.min_length, 6);
-  assert.equal(reply.pin.offline_ok, true);
+  assert.equal(reply.pin_state.set, true);
+  assert.equal(reply.pin_state.min_length, 6);
+  assert.equal(reply.pin_state.offline_ok, true);
 });
 
 test("a_lost_rule_is_no_permission_a_forget_wipes_awaited_a_short_pin_costs_nothing_and_pin_off_works_locked", async () => {
@@ -855,6 +855,12 @@ test("a_lost_rule_is_no_permission_a_forget_wipes_awaited_a_short_pin_costs_noth
   const runs = w.state.unlockCalls;
   assert.deepEqual(await w.unlockWithPin("12345"), { ok: false, reason: "pin_rule", left: 5, wait_ms: 0 });
   assert.deepEqual(await w.unlockWithPin("x".repeat(65)), { ok: false, reason: "pin_rule", left: 5, wait_ms: 0 });
+  // The length is counted the way the core counts it (NFC of the NFKD form): four Hangul syllables are four, whether they are
+  // written as syllables or as twelve jamo, and so are four accented letters in either spelling; none of them reaches the core.
+  const jamo = "한글한글";
+  for (const short of ["한글한글", jamo, "éééé", "éééé"]) {
+    assert.deepEqual(await w.unlockWithPin(short), { ok: false, reason: "pin_rule", left: 5, wait_ms: 0 }, short);
+  }
   assert.equal(w.state.unlockCalls, runs);
   assert.equal((await w.status()).failuresLeft, 5);
 

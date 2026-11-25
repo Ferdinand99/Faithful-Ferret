@@ -640,8 +640,8 @@ test("the_popup_offers_a_passkey_only_when_the_server_and_the_account_have_one",
       return reply;
     });
   const policy = (/** @type {boolean} */ enabled) => ({
-    pin: { allowed: true, after_restart: true, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false },
-    prf: { enabled, count: 0 },
+    pin_state: { allowed: true, after_restart: true, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false },
+    prf: { enabled },
   });
   assert.equal(await flowWith({ unlock_policy: policy(true), prf_options: { ok: true, rp_id: HOST, credentials: [{ id: "AQID", salt: "a".repeat(43) }] } }).passkeyOffer(), true);
   assert.equal(await flowWith({ unlock_policy: policy(false), prf_options: { ok: true, rp_id: HOST, credentials: [{ id: "AQID", salt: "a".repeat(43) }] } }).passkeyOffer(), false);

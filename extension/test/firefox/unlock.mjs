@@ -66,7 +66,7 @@ export async function ask(session, type, body) {
 
 /** What the extension says of the PIN now. @param {Session} session */
 export async function pinPolicy(session) {
-  return (await ask(session, "unlock_policy", {})).pin;
+  return (await ask(session, "unlock_policy", {})).pin_state;
 }
 
 /**

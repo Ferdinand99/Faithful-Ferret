@@ -68,7 +68,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("prf_options", { ok: false, reason: "prf_unavailable" }),
     record("prf_window", { ok: true }),
     record("prf_unlock", { ok: false, reason: "prf_failed" }),
-    record("unlock_policy", { pin: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false, count: 0 } }),
+    record("unlock_policy", { pin_state: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false } }),
     record("form_capture", undefined),
     record("form_gone", undefined),
     record("page_ready", undefined),

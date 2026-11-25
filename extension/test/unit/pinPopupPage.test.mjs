@@ -35,8 +35,8 @@ let worlds = 0;
 
 /** The answer of `unlock_policy` for a PIN that is set. @param {Record<string, unknown>} [pin] */
 const policy = (pin = {}) => ({
-  pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true, ...pin },
-  prf: { enabled: false, count: 0 },
+  pin_state: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 5, wait_ms: 0, offline_ok: true, ...pin },
+  prf: { enabled: false },
 });
 
 /**
@@ -334,6 +334,6 @@ test("every_reason_the_pin_handlers_send_goes_through_the_protocol_and_has_its_t
     const read = readUnlockState(decode(encode("unlock_policy", body, { id: "c5", reply: true }), UI_TYPES, { reply: true }).body);
     assert.ok(read !== null && read.pin.set && read.pin.allowed);
   }
-  const none = { pin: { allowed: true, after_restart: true, min_length: 6, set: false, failures_left: 5, wait_ms: 0, offline_ok: true }, prf: { enabled: false, count: 0 } };
+  const none = { pin_state: { allowed: true, after_restart: true, min_length: 6, set: false, failures_left: 5, wait_ms: 0, offline_ok: true }, prf: { enabled: false } };
   assert.equal(readUnlockState(decode(encode("unlock_policy", none, { id: "c6", reply: true }), UI_TYPES, { reply: true }).body)?.pin.set, false);
 });

@@ -39,10 +39,10 @@ const SENTINEL_PASSWORD = "sentinel-master-password-5528";
 function backend(init = {}) {
   const state = {
     pin: { allowed: true, after_restart: true, min_length: 6, set: false, location: null, failures_left: 5, wait_ms: 0, offline_ok: true, ...init.pin },
-    prf: { enabled: true, count: 2, ...init.prf },
+    prf: { enabled: true, ...init.prf },
     server: init.server ?? SERVER,
     /** What the server's list says (prf_options): a count, or undefined for "cannot say". */
-    passkeys: init.passkeys,
+    passkeys: "passkeys" in init ? init.passkeys : 2,
     vault: "unlocked",
     /** @type {any} */
     reply: null,
@@ -58,7 +58,7 @@ function backend(init = {}) {
     log.push([type, JSON.parse(JSON.stringify(body))]);
     switch (type) {
       case "unlock_policy":
-        return { pin: { ...state.pin }, prf: { ...state.prf } };
+        return { pin_state: { ...state.pin }, prf: { ...state.prf } };
       case "pin_set":
         if (state.hold) await state.hold;
         if (state.reply) return state.reply;
@@ -133,11 +133,11 @@ function press(/** @type {any} */ target, /** @type {string} */ key) {
 // ------------------------------------------------------------------------------------------------ the steps, no DOM
 
 test("the_unlock_flow_reads_only_an_answer_of_the_right_shape", async () => {
-  const good = { pin: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 3, wait_ms: 5000, offline_ok: false, last_contact_at: 1_700_000_000_000 }, prf: { enabled: true, count: 2 } };
+  const good = { pin_state: { allowed: true, after_restart: true, min_length: 6, set: true, location: "disk", failures_left: 3, wait_ms: 5000, offline_ok: false, last_contact_at: 1_700_000_000_000 }, prf: { enabled: true } };
   const read = readUnlockState(good);
   assert.deepEqual(read?.pin, { allowed: true, afterRestart: true, minLength: 6, set: true, location: "disk", failuresLeft: 3, waitMs: 5000, offlineOk: false, lastContactAt: 1_700_000_000_000 });
-  assert.deepEqual(read?.prf, { enabled: true, count: 2 });
-  for (const odd of [null, {}, { pin: null, prf: {} }, { ...good, pin: { ...good.pin, allowed: "yes" } }, { ...good, pin: { ...good.pin, min_length: 3 } }, { ...good, pin: { ...good.pin, min_length: 65 } }, { ...good, pin: { ...good.pin, set: true, location: "tape" } }, { ...good, prf: { enabled: true, count: -1 } }, { ...good, prf: { enabled: 1, count: 0 } }]) {
+  assert.deepEqual(read?.prf, { enabled: true });
+  for (const odd of [null, {}, { pin_state: null, prf: {} }, { pin: good.pin_state, prf: good.prf }, { ...good, pin_state: { ...good.pin_state, allowed: "yes" } }, { ...good, pin_state: { ...good.pin_state, min_length: 3 } }, { ...good, pin_state: { ...good.pin_state, min_length: 65 } }, { ...good, pin_state: { ...good.pin_state, set: true, location: "tape" } }, { ...good, prf: { enabled: 1 } }]) {
     assert.equal(readUnlockState(odd), null, JSON.stringify(odd));
   }
   const flow = createUnlockFlow(async () => ({ nonsense: true }));
@@ -179,9 +179,23 @@ test("the_unlock_flow_sends_a_pin_only_in_one_request_and_refuses_what_needs_no_
 test("the_rule_counts_characters_the_way_the_core_does", () => {
   assert.equal(PIN_FLOOR, 4);
   assert.equal(pinLength("abcd"), 4);
-  // NFKD: the ligature "fi" is two characters, "é" written as one letter is two after the split.
+  // The core counts scalar values of NFC applied to the NFKD form: the ligature "fi" is two characters, and a letter with an
+  // accent is one whether it is written composed or as a letter and a combining mark.
   assert.equal(pinLength("ﬁx"), 3);
-  assert.equal(pinLength("é"), 2);
+  assert.equal(pinLength("é"), 1);
+  assert.equal(pinLength("é"), 1);
+  assert.equal(pinLength("éééé"), 4);
+  // Hangul: four syllables are four, written as syllables or as twelve separate jamo (which NFKD would count as twelve).
+  assert.equal(pinLength("한글한글"), 4);
+  assert.equal(pinLength("한글한글"), 4);
+  // So a PIN of four composed characters is not "long enough" for a rule of six in any spelling, and one of six is.
+  assert.deepEqual(checkPin("한글한글", 6), { ok: false, reason: "too_short" });
+  assert.deepEqual(checkPin("한글한글", 6), { ok: false, reason: "too_short" });
+  assert.deepEqual(checkPin("éééééé", 6), { ok: true });
+  assert.deepEqual(checkPin("한글한글한글", 6), { ok: true });
+  // The maximum is the other count: scalar values of the NFKD form, so 33 accented letters (66 after the split) are too long.
+  assert.deepEqual(checkPin("é".repeat(33), 6), { ok: false, reason: "too_long" });
+  assert.deepEqual(checkPin("é".repeat(32), 6), { ok: true });
   assert.deepEqual(checkPin("1234", 4), { ok: true });
   assert.deepEqual(checkPin("123", 4), { ok: false, reason: "too_short" });
   assert.deepEqual(checkPin("12345", 6), { ok: false, reason: "too_short" });
@@ -263,19 +277,19 @@ test("the_section_shows_what_is_true_of_the_pin_and_the_passkeys", async () => {
   // The passkeys: a count, none, and off.
   assert.equal(one(none.root, "unlock-passkey-count")?.textContent, "Passkeys set up: 2.");
   assert.ok(one(none.root, "unlock-manage"));
-  // The policy's count is 0 (the background does not read the list for it): the server's list decides, and when it cannot be
+  // The policy has no count (the background does not read the list for it): the server's list decides, and when it cannot be
   // read the text does not claim there is none.
-  const zero = await sectionOf(on, { prf: { count: 0 }, passkeys: 0 });
+  const zero = await sectionOf(on, { passkeys: 0 });
   assert.equal(one(zero.root, "unlock-passkey-count")?.textContent, "No passkey is set up for unlocking.");
-  const listed = await sectionOf(on, { prf: { count: 0 }, passkeys: 3 });
+  const listed = await sectionOf(on, { passkeys: 3 });
   assert.equal(one(listed.root, "unlock-passkey-count")?.textContent, "Passkeys set up: 3.");
   // A refusal that says nothing about the account (no server, a device whose state is not known, a pinned record that is
   // missing) does not make the page claim there is no passkey.
-  const refused = await sectionOf(on, { prf: { count: 0 }, passkeys: "unavailable" });
+  const refused = await sectionOf(on, { passkeys: "unavailable" });
   assert.equal(one(refused.root, "unlock-passkey-count")?.textContent, "Passkeys are listed in the web vault.");
-  const unknown = await sectionOf(on, { prf: { count: 0 } });
+  const unknown = await sectionOf(on, { passkeys: undefined });
   assert.equal(one(unknown.root, "unlock-passkey-count")?.textContent, "Passkeys are listed in the web vault.");
-  const noPrf = await sectionOf(on, { prf: { enabled: false, count: 0 } });
+  const noPrf = await sectionOf(on, { prf: { enabled: false } });
   assert.match(one(noPrf.root, "unlock-passkey-count")?.textContent ?? "", /not turned on/);
   assert.equal(one(noPrf.root, "unlock-manage"), null);
   // The explanation names the difference between a synced passkey and one that stays on this device.
@@ -689,7 +703,7 @@ test("the_pin_and_the_passwords_are_never_in_the_page_after_use", async () => {
   // Only `pin_set` carried a secret; the rest of the traffic is the policy, the state and the off request.
   for (const [type, body] of world.log) if (type !== "pin_set") assert.doesNotMatch(JSON.stringify(body), /sentinel/, type);
   await click(one(world.root, "unlock-pin-off"));
-  assert.deepEqual(world.log.at(-2), ["pin_off", {}]);
+  assert.deepEqual(world.log.filter(([type]) => type === "pin_off"), [["pin_off", {}]]);
   assert.deepEqual(leaks(), []);
   // The modules write nothing to a store and nothing to a log.
   for (const file of ["unlockFlow.mjs", "unlockDialog.mjs", "unlockSettings.mjs"]) {
