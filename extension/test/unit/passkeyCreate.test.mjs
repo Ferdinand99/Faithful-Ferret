@@ -677,7 +677,8 @@ test("offline_create_says_why_and_offers_the_browser", async () => {
   assert.equal(w.core.filter((c) => c.op === "passkey_create").length, 0);
   assert.deepEqual(await w.requests.ops.passkey_browser.run(null, { request_id: rid, session: SESSION }), { ok: true });
   await flush();
-  assert.deepEqual(w.pushed.map((p) => [p.type, p.body.once]), [["passkey_handover", false]]);
+  // "Use the browser" hands over once (the page is asked to call again; the next call of the same kind goes through).
+  assert.deepEqual(w.pushed.map((p) => [p.type, p.body.once]), [["passkey_handover", true]]);
 });
 
 test("the_new_item_name_is_the_host_and_editable", async () => {
