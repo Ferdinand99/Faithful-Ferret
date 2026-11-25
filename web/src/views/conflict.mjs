@@ -100,7 +100,10 @@ function rowsOf(data) {
     rows.push({ key: URLS, label: "", kind: "urls", same: bothShown && JSON.stringify(urlsOf(mine)) === JSON.stringify(urlsOf(theirs)) });
   }
   if (mine?.has_totp === true || theirs?.has_totp === true) {
-    rows.push({ key: TOTP, label: "", kind: "totp", same: bothShown && (mine.has_totp === true) === (theirs.has_totp === true) });
+    // When both versions have one, the secrets are not shown and cannot be compared here: "not compared", never "same" (a
+    // device may have replaced the secret, and keeping the other version would lose it).
+    const both = mine?.has_totp === true && theirs?.has_totp === true;
+    rows.push({ key: TOTP, label: "", kind: "totp", same: !bothShown ? false : both ? null : (mine.has_totp === true) === (theirs.has_totp === true) });
   }
   // The folders are labels inside the item: a version that is chosen keeps its own list, so a difference is shown.
   if (foldersOf(mine).length > 0 || foldersOf(theirs).length > 0) {

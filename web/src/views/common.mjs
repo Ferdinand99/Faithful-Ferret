@@ -91,7 +91,7 @@ const SYNC_ERRORS = new Set([
 
 /** Codes with a text under `vault.error.`. */
 const VAULT_ERRORS = new Set([
-  "clipboard", "item_changed", "name_required", "read_only_schema", "reveal_failed", "stopped", "unknown", "worker_failed",
+  "clipboard", "item_changed", "malformed_otpauth", "name_required", "read_only_schema", "reveal_failed", "stopped", "unknown", "worker_failed",
 ]);
 
 /** The core's refusals of folder names, with a text under `folders.error.` (the most a list may have is 20). */
