@@ -4,7 +4,8 @@
 //
 // Registered exactly when all of these hold, and never otherwise:
 //   - "Use Ferret for passkeys" is on (`storage.local`, off when it is not there or not `true`);
-//   - the extension has the optional permission for `https` pages (the same one as saving passwords);
+//   - the extension has the optional permission for `https` pages (the same one as saving passwords: it is shared, and a grant
+//     never switches this feature on by itself, see background/httpsAccess.mjs);
 //   - the extension is signed in: a server is stored (`storage.local` `server`, as the session keeps it).
 // `reconcile` makes it so. It runs at every start of the background page (an install or an update, which clears the
 // registrations, starts it too), when the permission is given or taken back (taken back, the setting goes off too), when the
@@ -19,8 +20,12 @@
 //
 // Nothing here is a vault value or a key.
 
+import { createHttpsAccess } from "./httpsAccess.mjs";
+
 /** The setting, in `storage.local`: a boolean, false when it is not there or not a boolean. */
 export const PASSKEY_SETTING_KEY = "use_passkeys";
+/** The setting "Count an unlock in the last 5 minutes as verification" (`storage.local`): on unless it is `false`. */
+export const PASSKEY_RECENT_UNLOCK_KEY = "passkey_recent_unlock";
 /** Where the session keeps the address of the signed-in server (background/session.mjs SERVER_KEY). */
 export const SERVER_KEY = "server";
 /** The permission the scripts need, and the pages they are registered for. */
@@ -115,10 +120,11 @@ function same(held, want) {
 
 /**
  * The registration of the passkey scripts.
- * @param {{ scripting: Scripting, permissions: Permissions, storageLocal: StorageLocal, release: boolean }} deps
- *   `release`: the build is a release (localhost is left to the browser)
+ * @param {{ scripting: Scripting, permissions: Permissions, storageLocal: StorageLocal, release: boolean, access?: ReturnType<typeof createHttpsAccess> }} deps
+ *   `release`: the build is a release (localhost is left to the browser); `access`: the permission for https pages that saving
+ *   passwords shares (one is made when none is given)
  */
-export function createPasskeyRegistry({ scripting, permissions, storageLocal, release }) {
+export function createPasskeyRegistry({ scripting, permissions, storageLocal, release, access = createHttpsAccess({ permissions, storageLocal }) }) {
   /** The registration is changed one step at a time. @type {Promise<unknown>} */
   let chain = Promise.resolve();
   /** @template T @param {() => Promise<T>} job @returns {Promise<T>} */
@@ -218,29 +224,46 @@ export function createPasskeyRegistry({ scripting, permissions, storageLocal, re
       return exclusive(async () => {
         if (!(await permitted())) return { ok: false, reason: /** @type {const} */ ("permission_missing") };
         await storageLocal.set({ [PASSKEY_SETTING_KEY]: true });
+        // This switch is turning the feature on: its own grant, if one is still to come, needs no mark any more.
+        await access.clearPending("passkeys");
         await reconcileNow();
         return { ok: /** @type {const} */ (true) };
       });
     },
 
-    /** Turns the setting off and the scripts away. The permission stays: saving passwords may use it. */
+    /**
+     * Turns the setting off and the scripts away, and takes the permission back unless saving passwords is on and needs it (the
+     * permission is shared, see background/httpsAccess.mjs).
+     */
     disable() {
       return exclusive(async () => {
         await setOff();
         await unregister();
+        await access.clearPending("passkeys");
+        await access.release("passkeys");
         return { ok: true };
       });
     },
 
+    /** The switch is about to ask the browser for the permission: a grant that follows is this feature's to finish. */
+    markPending: () => access.markPending("passkeys"),
+    /** The person said no, or the request failed: the mark is not needed. */
+    clearPending: () => access.clearPending("passkeys"),
+
     /**
-     * The browser's `permissions.onAdded`: the permission alone turns nothing on, but a setting that is on and a signed-in
-     * extension get their scripts now.
+     * The browser's `permissions.onAdded`: the permission alone turns nothing on. When this feature's switch marked that it was
+     * asking (the browser's prompt may have closed the page that asked), the grant finishes the turn-on here; any other grant
+     * (saving passwords, the browser's add-on page) only brings the scripts to a setting that is on already, for a signed-in
+     * extension.
      * @param {{ origins?: string[] } | undefined} added
+     * @returns {Promise<boolean>} whether the permission was one this feature uses
      */
-    onPermissionAdded(added) {
+    async onPermissionAdded(added) {
       const given = Array.isArray(added?.origins) && added.origins.some((origin) => PASSKEY_ORIGINS.includes(origin));
-      if (!given) return Promise.resolve(false);
+      if (!given) return false;
+      const asked = await access.takePending("passkeys");
       return exclusive(async () => {
+        if (asked && (await permitted())) await storageLocal.set({ [PASSKEY_SETTING_KEY]: true });
         await reconcileNow();
         return true;
       });

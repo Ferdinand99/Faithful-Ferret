@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createPasskeyGet, getRequestOf, PASSKEY_GET_OPS } from "../../src/background/passkeyGet.mjs";
 import { createPasskeyRequests, PASSKEY_WINDOW_OPS } from "../../src/background/passkeyRequests.mjs";
-import { createPasskeyVerify, markingUnlocks, RECENT_UNLOCK_MS, UNLOCK_OPS, VERIFY_METHODS } from "../../src/background/passkeyVerify.mjs";
+import { createPasskeyVerify, markingUnlocks, passwordCheck, RECENT_UNLOCK_MS, UNLOCK_OPS, VERIFY_METHODS } from "../../src/background/passkeyVerify.mjs";
 import { CORE_OPS } from "../../src/background/coreHost.mjs";
 import { LOCK_EXEMPT } from "../../src/background/lock.mjs";
 import { decode, PUSH_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
@@ -51,7 +51,8 @@ const ITEMS = Object.freeze([
 function world(o = {}) {
   /** @type {any[]} */
   const pushed = [];
-  const mono = { t: 50_000 };
+  /** The two clocks of the five minutes: the monotonic one (`t`) and the wall clock (`w`). */
+  const mono = { t: 50_000, w: 1_700_000_000_000 };
   const state = {
     online: true,
     setting: true,
@@ -98,6 +99,7 @@ function world(o = {}) {
     marks: { mark: (id, session) => requests.markVerified(id, session), take: (id, session) => requests.takeVerified(id, session) },
     online: async () => state.online,
     now: () => mono.t,
+    wall: () => mono.w,
   });
   if (!state.password) /** @type {any} */ (verify).noPassword = true;
   /** @type {Map<number, FakeItem>} */
@@ -188,11 +190,13 @@ test("uv_is_true_only_with_a_token_issued_for_this_request", async () => {
   assert.equal(w.state.signs.length, 1);
   assert.deepEqual(w.state.signs[0].uv, { user_present: true, user_verified: true });
   assert.equal(w.answerOf(first.bridgeId)?.type, "passkey_result");
-  // UV is never given from anywhere else: only passkeyGet.mjs passes `user_present: true` to the core.
-  const files = ["background/passkeyGet.mjs", "background/passkeyRequests.mjs", "background/passkeyVerify.mjs", "pages/passkeyChooser.mjs", "pages/passkeyFlow.mjs", "pages/passkeyVerify.mjs"];
+  // UV is never given from anywhere else: only the window's choice (a get here, a create in background/passkeyFlow.mjs) passes
+  // `user_present: true` to the core, with the UV of the one decision of passkeyVerify.mjs.
+  const files = ["background/passkeyFlow.mjs", "background/passkeyGet.mjs", "background/passkeyRequests.mjs", "background/passkeyVerify.mjs", "pages/passkeyChooser.mjs", "pages/passkeyFlow.mjs", "pages/passkeyVerify.mjs"];
   const present = files.filter((f) => /user_present:\s*true/.test(readFileSync(join(src, f), "utf8")));
-  assert.deepEqual(present, ["background/passkeyGet.mjs"]);
-  assert.match(readFileSync(join(src, "background/passkeyGet.mjs"), "utf8"), /user_present: true, user_verified: verified \}/);
+  assert.deepEqual(present, ["background/passkeyFlow.mjs", "background/passkeyGet.mjs"]);
+  assert.match(readFileSync(join(src, "background/passkeyGet.mjs"), "utf8"), /user_present: true, user_verified: decided\.uv \}/);
+  assert.match(readFileSync(join(src, "background/passkeyFlow.mjs"), "utf8"), /user_present: true, user_verified: decided\.uv \}/);
 });
 
 test("a_token_is_used_once_and_dies_with_the_request", async () => {
@@ -220,11 +224,10 @@ test("a_token_is_used_once_and_dies_with_the_request", async () => {
 test("a_recent_unlock_within_5_minutes_needs_only_the_click", async () => {
   const w = world();
   w.verify.markUnlocked();
-  // The five minutes are measured on the monotonic clock: the wall clock says nothing.
-  const wall = Date.now;
-  Date.now = () => wall() + 365 * 24 * 3600 * 1000;
-  try {
+  // The five minutes are measured on both clocks; within them on both, the click is enough.
+  {
     w.mono.t += RECENT_UNLOCK_MS - 1;
+    w.mono.w += RECENT_UNLOCK_MS - 1;
     const { id, bridgeId } = await w.ask({ user_verification: "required" });
     const listed = /** @type {any} */ (await w.candidates(id));
     assert.equal(listed.recent, true, "the window says one click is enough");
@@ -233,17 +236,25 @@ test("a_recent_unlock_within_5_minutes_needs_only_the_click", async () => {
     assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
     // At five minutes it no longer counts.
     w.mono.t += 1;
+    w.mono.w += 1;
     const later = await w.ask({ user_verification: "required" });
     assert.equal(/** @type {any} */ (await w.candidates(later.id)).recent, false);
     assert.deepEqual(await w.choose(later.id), { ok: false, reason: "verification_needed" });
-  } finally {
-    Date.now = wall;
   }
-  // A clock that went backwards (it cannot, but) counts as expired.
-  const back = world();
-  back.verify.markUnlocked();
-  back.mono.t -= 1;
-  assert.equal(await back.verify.recent(), false);
+  // Either clock ends it: a machine that slept (the monotonic clock stood still while the wall clock went on), or a wall clock set
+  // forward. And either going backwards ends it too: setting the system clock back cannot stretch it.
+  for (const [what, move] of /** @type {Array<[string, (c: { t: number, w: number }) => void]>} */ ([
+    ["asleep for six minutes", (c) => void (c.w += 6 * 60_000)],
+    ["the monotonic clock past five minutes", (c) => void (c.t += RECENT_UNLOCK_MS)],
+    ["the wall clock set back", (c) => void (c.w -= 1)],
+    ["the monotonic clock back", (c) => void (c.t -= 1)],
+  ])) {
+    const c = world();
+    c.verify.markUnlocked();
+    assert.equal(await c.verify.recent(), true, what);
+    move(c.mono);
+    assert.equal(await c.verify.recent(), false, what);
+  }
 });
 
 test("the_recent_unlock_is_forgotten_on_every_lock_and_when_the_setting_is_off", async () => {
@@ -397,11 +408,33 @@ test("password_verification_compares_pk_a_and_says_it_signs_in", async () => {
   assert.deepEqual(await w.verifyOp(id, { method: "password", mp: "wrong" }), { ok: false, reason: "wrong_credentials" });
   assert.deepEqual(await w.verifyOp(id, { method: "password", mp: "right-password" }), { ok: true });
   assert.deepEqual(await w.choose(id), { ok: true });
-  // The PIN host's check is `verifyPassword` of the session: OPAQUE with the server and the core's `confirm_password`, which
-  // compares the account key of the password wrap with the pinned one.
-  const host = readFileSync(join(src, "background/pinHost.mjs"), "utf8");
-  assert.match(host, /async function verifyPassword\(input\)[\s\S]*?open\.session\.verifyPassword\(/);
-  assert.match(readFileSync(join(src, "background/pinSession.mjs"), "utf8"), /async verifyPassword[\s\S]*?confirm_password/);
+  // The check is the session's `verifyPassword` (OPAQUE with the server and the core's `confirm_password`, which compares the
+  // account key of the password wrap with the pinned one; pinBackground.test.mjs runs it over the real session), for the open
+  // vault of this device's account, and it needs nothing of the PIN.
+  /** @type {any[]} */
+  const asked = [];
+  /** @type {unknown} */
+  let refusal = null;
+  const session = {
+    deviceAccount: async () => "acc",
+    current: () => ({ accountId: "acc" }),
+    verifyPassword: async (/** @type {any} */ input) => {
+      asked.push(input);
+      if (refusal !== null) throw refusal;
+    },
+  };
+  const check = passwordCheck({ sessionHost: { storedServer: async () => "https://vault.example", sessionFor: async () => session } });
+  assert.deepEqual(await check.verify({ mp: "pw", sk: "A3-XYZ" }), { ok: true });
+  assert.deepEqual(asked, [{ password: "pw", skCode: "A3-XYZ" }]);
+  for (const [code, reason] of [["decrypt", "wrong_credentials"], ["pinned_auth_key", "attack_warning"], ["method_list_changed", "attack_warning"], ["sk_required", "sk_required"], ["session_ended", "signed_out"]]) {
+    refusal = Object.assign(new Error(code), { code });
+    assert.deepEqual(await check.verify({ mp: "pw" }), { ok: false, reason }, code);
+  }
+  refusal = Object.assign(new Error("network"), { status: 0 });
+  assert.deepEqual(await check.verify({ mp: "pw" }), { ok: false, reason: "network" });
+  // Another account's vault, or none, is not the one to verify for.
+  session.current = () => ({ accountId: "other" });
+  assert.deepEqual(await check.verify({ mp: "pw" }), { ok: false, reason: "vault_locked" });
   // The window says that it signs in.
   const en = JSON.parse(readFileSync(join(src, "locales/en/passkeys.json"), "utf8"));
   assert.match(en["passkeys.verify.signs_in"], /signing in/);
@@ -569,4 +602,28 @@ test("the_get_types_are_in_the_ui_table_the_core_ops_and_the_windows_handler", a
     // They use the vault: a locked one is opened in the window first.
     assert.ok(!LOCK_EXEMPT.includes(type), type);
   }
+});
+
+test("only_a_refusal_of_the_request_itself_ends_it", async () => {
+  const w = world();
+  const { id, bridgeId } = await w.ask();
+  // An item that changed since the list (or a busy engine): the window says it did not work, and the request waits for the person.
+  const view = w.client.vault.item_view;
+  w.client.vault.item_view = async () => {
+    throw Object.assign(new Error("not_found"), { code: "not_found" });
+  };
+  assert.deepEqual(await w.candidates(id), { ok: false, reason: "internal_error" });
+  w.client.vault.item_view = view;
+  const sign = w.client.vault.passkey_get;
+  w.client.vault.passkey_get = async () => {
+    throw Object.assign(new Error("busy"), { code: "busy" });
+  };
+  assert.deepEqual(await w.verifyOp(id, { method: "pin", pin: "123456" }), { ok: true });
+  assert.deepEqual(await w.choose(id, ID(3)), { ok: false, reason: "internal_error" });
+  w.client.vault.passkey_get = sign;
+  await flush();
+  assert.ok(w.requests.forUi(id, SESSION), "the request still waits");
+  assert.equal(w.answerOf(bridgeId), undefined);
+  // (The PIN verified the person, which starts the five minutes: the next click is enough.)
+  assert.deepEqual(await w.choose(id, ID(3)), { ok: true });
 });

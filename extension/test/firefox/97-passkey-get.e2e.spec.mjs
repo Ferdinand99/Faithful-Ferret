@@ -6,17 +6,20 @@
 // "none" (as Ferret's own would be), and the key goes into a new item of the vault through the core's import (the test build's
 // `item_import_probe`), so that this spec does not depend on making a passkey in Ferret. Then the page calls `get` after a real
 // click: the chooser window lists the passkey from the vault, the person clicks it, and
-//   - `userVerification: "required"` with no recent unlock: the window asks the person to verify (the master password, which
-//     signs in to the server), the core signs with UV, and the relying party sees UV;
+//   - `userVerification: "required"` with no recent unlock: the window asks the person to verify (at the first relying party with
+//     a sentinel PIN, at the second with the "recent unlock" setting off and the master password, which signs in to the server),
+//     the core signs with UV, and the relying party sees UV;
 //   - `discouraged`: the click only, and the relying party sees no UV;
 //   - `required` again within five minutes of that verification: the click only, with UV.
-// The relying party checks the signature, the RP ID hash, the origin, the flags (BE and BS as registered) and the counter.
+// The relying party checks the signature, the RP ID hash, the origin, the flags (BE and BS as registered) and the counter. At the
+// end no file of the browser's profile holds the sentinel PIN (the run also scans the stack's logs for it).
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { KEEP_BACKGROUND, SLOW, extensionSignIn, webVaultAccount } from "./e2e.mjs";
 import { revokeLeftDevices } from "./adversary.mjs";
 import { TEST_ADDON_ID, channels, launch, openBridge, stopFixtures } from "./harness.mjs";
 import { chooserHandle, core, grantHttps, pressInWindow, readWindow, registerTestKey } from "./passkeyFerret.mjs";
+import { SENTINEL_PREFIX, scanFolder, setPin } from "./unlock.mjs";
 
 after(() => stopFixtures());
 
@@ -65,6 +68,9 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
       await grantHttps(session);
       await bridge.invoke("storage.local.set", { use_passkeys: true });
       await core(session, "passkey_reconcile");
+      // A PIN to verify with: a sentinel that must reach the background and the core and nothing else.
+      const sentinel = `${SENTINEL_PREFIX}${channel}-${Math.random().toString(16).slice(2, 8)}`;
+      await setPin(session, account, sentinel, "session");
       const pageTab = await session.newTab();
 
       for (const [n, lib] of LIBS.entries()) {
@@ -92,7 +98,9 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         const planted = await core(session, "item_import_probe", { name: `Test ${lib}`, rp_id: RP_ID, user_name: `anna-${lib}`, cred_id: key.cred_id, user_handle: key.user_handle, key_pkcs8: key.key_pkcs8 });
         assert.match(planted.item_id, /^[0-9a-f]{32}$/);
 
-        // 1. `required`, nothing recent (the sign-in is no unlock; the first round only): the window asks to verify first.
+        // 1. `required`, nothing recent (the sign-in is no unlock; in the second round the setting is off): the window asks to
+        // verify first.
+        if (n === 1) await bridge.invoke("storage.local.set", { passkey_recent_unlock: false });
         await session.switchTo(pageTab);
         let handle = await startGet(session, { lib, sid: key.sid, uv: "required" });
         let shown = await readWindow(session);
@@ -100,8 +108,13 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         assert.equal(shown.candidates.length, 1, `${channel} ${lib}: the passkey from the vault (${JSON.stringify(shown)})`);
         assert.match(shown.candidates[0], new RegExp(`anna-${lib}`));
         await pressInWindow(session, "passkey-candidate");
+        await session.waitFor(async () => (await session.findAll('[data-role="passkey-verify-step"]')).length === 1, 15_000, "the verification step");
         if (n === 0) {
-          await session.waitFor(async () => (await session.findAll('[data-role="passkey-verify-step"]')).length === 1, 15_000, "the verification step");
+          // The PIN, checked like an unlock (an attempt of the five), in a worker of its own.
+          const [field] = await session.findAll('[data-role="passkey-verify-pin"]');
+          await session.type(field, sentinel);
+          await pressInWindow(session, "passkey-verify-pin-submit");
+        } else {
           assert.equal((await session.findAll('[data-role="passkey-verify-signs-in"]')).length, 1, "the master password says it signs in");
           const [field] = await session.findAll('[data-role="passkey-verify-password"]');
           await session.type(field, account.password);
@@ -123,7 +136,12 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         assert.equal(result.ok, true, `${channel} ${lib}: discouraged: ${JSON.stringify(result)}`);
         assert.equal(result.steps[0].server.flags.uv, false, `${channel} ${lib}: no UV without verification`);
 
-        // 3. `required` again, within five minutes of the verification: the click is enough, with UV.
+        // 3. `required` again, within five minutes of the verification (and the setting on): the click is enough, with UV.
+        if (n === 1) {
+          await session.switchTo(bridgeTab);
+          await bridge.invoke("storage.local.set", { passkey_recent_unlock: true });
+          await session.switchTo(pageTab);
+        }
         handle = await startGet(session, { lib, sid: key.sid, uv: "required" });
         shown = await readWindow(session);
         assert.equal(shown.recent, true, `${channel} ${lib}: the window says one click is enough`);
@@ -133,6 +151,9 @@ test("get_on_both_fixtures_verifies_with_uv_and_without", async () => {
         assert.equal(result.ok, true, `${channel} ${lib}: recent: ${JSON.stringify(result)}`);
         assert.equal(result.steps[0].server.flags.uv, true);
       }
+      // The PIN was used (the relying party saw UV after it), and no file of the profile holds it.
+      const leaked = scanFolder(session.profileDir, [sentinel, sentinel.normalize("NFKD")]);
+      assert.deepEqual(leaked, [], `${channel}: the sentinel PIN is in a file of the profile`);
     } finally {
       await session.quit();
     }

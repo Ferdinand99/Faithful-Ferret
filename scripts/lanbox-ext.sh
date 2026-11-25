@@ -70,7 +70,8 @@
 #                                 with ... down). Every run starts with a self-test of the virtual authenticator and the
 #                                 fixture's TLS. --provider stub (the default) lets the browser's own path answer where Ferret
 #                                 would, so the route cannot be seen and the cases that need Ferret are counted as not run;
-#                                 --provider ferret is for when the extension answers (U4-8). --bridge turns the test build's
+#                                 --provider ferret: the extension answers, signed in to an end-to-end stack of this run's own
+#                                 (started as for e2e; the runner joins both internal networks). --bridge turns the test build's
 #                                 passkey scripts on first (permission, setting, a signed-in server); while the background hands
 #                                 every request back to the browser, the stub judgement then also shows that the bridge leaves
 #                                 each ceremony as the browser alone would end it. A case that did not run counts as
@@ -519,18 +520,20 @@ make_run() {
   # The passkey matrix sits on the fixture container's internal network and on no other; the demo set is the one run that
   # needs the internet, on the ordinary bridge, and trusts no test CA.
   if [ "$step" = passkey-matrix ]; then net="$passkey_network"; fi
-  # Ferret answering passkey requests needs both: the stack's server (the vault) and the fixture container's relying parties.
-  # The runner joins the stack's network and the fixture's internal one, and no other.
+  # An end-to-end run in which Ferret answers the fixture container's relying parties (--passkey-rp) also joins that container's
+  # internal network.
   local extra_net=""
   if [ "$step" = e2e ] && [ "$passkey_rp" = 1 ]; then extra_net="$passkey_network"; fi
-  if [ "$step" = passkey-matrix ] && [ "$passkey_provider" = ferret ]; then net="$network"; extra_net="$passkey_network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
     "${dev_args_out[@]}"
     --network "$net")
   if [ -n "$extra_net" ]; then run+=(--network "$extra_net"); fi
-  if [ "$step" = e2e ] || [ "$step" = matrix ] || { [ "$step" = passkey-matrix ] && [ "$passkey_provider" = ferret ]; }; then run+=("${e2e_volume_args[@]}"); fi
+  if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
+  # The passkey matrix with the Ferret provider also joins this run's end-to-end stack (the server the extension signs in to); both
+  # networks are internal.
+  if [ "$step" = passkey-matrix ] && [ "$network" != none ]; then run+=(--network "$network" "${e2e_volume_args[@]}"); fi
   # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
   local test_grep="$grep_name"
   if [ "$step" = matrix ] || [ "$step" = passkey-matrix ]; then test_grep=""; fi
@@ -636,10 +639,12 @@ if [ "$mode" = passkey-matrix ]; then
   if [ "$passkey_set" = demo ]; then
     passkey_network=bridge
   else
-    passkey_rp_setup
+    passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
+    passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
+    [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+    # The Ferret provider: the extension answers, signed in to an end-to-end stack of this run's own.
+    if [ "$passkey_provider" = ferret ]; then e2e_setup; fi
   fi
-  # Ferret as the provider signs in at a stack of this run's own (the vault), beside the fixture container's network.
-  if [ "$passkey_provider" = ferret ]; then e2e_setup; fi
   make_run "${channel:-release,esr}" "passkey-matrix" passkey-matrix 0
   rc=0
   "${run[@]}" < "$work/in.tar" > "$work/passkey-matrix.tar" || rc=$?

@@ -1048,7 +1048,9 @@ test("offline_pin_verification_only_within_seven_days_of_contact", async () => {
 
 test("the_master_password_verification_confirms_the_pinned_account_key_without_a_second_vault", async () => {
   const w = await withPin();
-  const v = w.pinHost.verifier;
+  // The check of the session itself (passkeyVerify.mjs), which a build without the PIN has too.
+  const { passwordCheck } = await (await pkg()).load("background/passkeyVerify.mjs");
+  const v = { password: passwordCheck({ sessionHost: w.sessionHost }) };
   const before = w.state.confirmCalls.length;
   const vaults = w.client.calls.filter((/** @type {any} */ c) => c.method === "unlock_password").length;
   assert.deepEqual(await v.password.verify({ mp: "Not-the-password-1" }), { ok: false, reason: "wrong_credentials" });
@@ -1066,4 +1068,8 @@ test("the_master_password_verification_confirms_the_pinned_account_key_without_a
   w.state.confirmCheck = null;
   w.state.online = false;
   assert.equal((await v.password.verify({ mp: MP })).reason, "network");
+  w.state.online = true;
+  // With the vault locked there is nothing to verify for.
+  await w.lockNow();
+  assert.deepEqual(await v.password.verify({ mp: MP }), { ok: false, reason: "vault_locked" });
 });

@@ -253,7 +253,7 @@ test("the_never_list_is_shown_and_editable_in_settings", async () => {
   assert.equal(w.offers.size(), 1);
   // The page never sends a host to add: the request has no such key.
   const schema = UI_TYPES.capture_settings.request;
-  assert.deepEqual(Object.keys(/** @type {any} */ (schema).shape).sort(), ["auto_open", "enable", "never_clear", "never_remove"]);
+  assert.deepEqual(Object.keys(/** @type {any} */ (schema).shape).sort(), ["auto_open", "enable", "never_clear", "never_remove", "pending"]);
 });
 
 test("a_locked_vault_asks_for_the_password_in_the_popup_and_then_shows_the_offer", async () => {

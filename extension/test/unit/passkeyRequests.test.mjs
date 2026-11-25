@@ -735,7 +735,10 @@ test("the_window_operations_belong_to_the_window_that_named_the_request_first", 
   // passkey_browser: the browser answers with the page's own options; passkey_cancel: NotAllowedError.
   const b = /** @type {any} */ (await w.requests.open(senderOf(), getBody("w2"))).request_id;
   assert.deepEqual(await ops.passkey_browser.run(null, { request_id: b, session: "win2" }), { ok: true });
-  assert.deepEqual(pushesOf(w.pushed, "w2").map((p) => [p.type, p.body.once]), [["passkey_handover", false]]);
+  // The browser is not called at once: this call ends and the next one of the kind from this document goes through (a pass).
+  assert.deepEqual(pushesOf(w.pushed, "w2").map((p) => [p.type, p.body.once]), [["passkey_handover", true]]);
+  // (The pass it made is for the next call of this kind: the tab is closed here, so that the next request below is Ferret's.)
+  w.requests.onTabRemoved(4);
   const c = /** @type {any} */ (await w.requests.open(senderOf(), getBody("w3"))).request_id;
   assert.deepEqual(await ops.passkey_cancel.run(null, { request_id: c, session: "win3" }), { ok: true });
   // The window's port ending is a cancel too.
@@ -969,7 +972,10 @@ test("passkey_never_keeps_the_cores_rp_id_on_the_list_and_hands_the_call_to_the_
   // The core's RP ID is kept (a private window's choice carries the flag), and the browser answers with the page's own options.
   assert.deepEqual(await ops.passkey_never.run(client("rp-a.test"), { request_id: id, session: "win" }), { ok: true });
   assert.deepEqual(added, [["rp-a.test", { incognito: false }]]);
-  assert.deepEqual(pushesOf(w.pushed, "n1").map((p) => [p.type, p.body.once]), [["passkey_handover", false]]);
+  // The site is on the list now; this call ends like the browser's own after the window closed, the next goes to the browser by the
+  // list (no pass is made, and nothing waits on the toolbar button).
+  assert.deepEqual(pushesOf(w.pushed, "n1").map((p) => [p.type, p.body.once]), [["passkey_handover", true]]);
+  assert.equal(w.requests.passPendingFor(4), null);
   assert.equal(w.requests.size(), 0);
   const priv = /** @type {any} */ (await w.requests.open(senderOf({ incognito: true }), getBody("n2"))).request_id;
   await ops.passkey_never.run(client("rp-a.test"), { request_id: priv, session: "win2" });

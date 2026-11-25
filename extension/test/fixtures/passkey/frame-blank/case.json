@@ -2,7 +2,7 @@
   "id": "frame-blank",
   "set": "fixtures",
   "category": "frames",
-  "title": "an about:blank frame made by the page: the browser answers",
+  "title": "an about:blank frame the page writes with document.open(): it takes the page's address and origin, so Ferret answers",
   "rp": {
     "lib": "rs",
     "client": "manual"
@@ -39,7 +39,7 @@
   "gesture": "click",
   "expected": {
     "ceremony": "ok",
-    "route": "browser"
+    "route": "ferret"
   },
   "unsafe": [
     {
@@ -54,5 +54,6 @@
       "id": "signature-for-other-rp-id",
       "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
     }
-  ]
+  ],
+  "note": "Changed after the set was frozen, with the reviewer's yes (U4-7): document.open() gives the frame the URL of the page that wrote it, and the frame already has that page's origin, so every frame is rp-a.test. The browser's own answer here has crossOrigin false (sameOriginWithAncestors), and Ferret's is the same. A frame that is still about:blank or srcdoc goes to the browser (frame-srcdoc)."
 }

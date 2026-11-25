@@ -98,6 +98,8 @@ export function createChooser({
   let titleNode = null;
   /** The line the window speaks errors through. @type {HTMLElement | null} */
   let alertNode = null;
+  /** The line that says a new passkey is being saved with the server. @type {HTMLElement | null} */
+  let savingNode = null;
   /** The timers: the guard's end, the poll, the close. @type {unknown} */
   let guardTimer = null;
   /** @type {unknown} */
@@ -106,7 +108,12 @@ export function createChooser({
   let shownSignature = "";
   /** Counts the builds, so an answer for a window that is gone is dropped. */
   let build = 0;
-  /** The passkey the person chose while the background asks to verify them first: the step shows in place of the list. @type {import("./passkeyFlow.mjs").Candidate | null} */
+  /**
+   * The choice the person made while the background asks to verify them first (a passkey to sign in with, a new item, an item to
+   * add to): the step shows in place of the choices, and the same choice goes again once the person is verified.
+   * @typedef {{ kind: "get", itemId: string } | { kind: "create", mode: "new", name: string, folderId: string | null } | { kind: "create", mode: "attach", itemId: string }} Choice
+   * @type {{ choice: Choice, doneKey: string, name: string, userName: string, itemId: string | null } | null}
+   */
   let verifying = null;
 
   // ------------------------------------------------------------ small pieces
@@ -293,6 +300,7 @@ export function createChooser({
       "div",
       { class: "ff-pk-others", "data-role": "passkey-others" },
       browserButton,
+      el("p", { class: "ff-hint ff-pk-again", "data-role": "passkey-browser-again" }, t("passkeys.browser.again")),
       el("div", { class: "ff-pk-foot" }, never, cancelButton),
       el(
         "details",
@@ -304,23 +312,24 @@ export function createChooser({
   }
 
   /**
-   * The person's choice of a passkey. When the background must verify the person first, the step takes the list's place; once
-   * it has, the same choice goes again.
-   * @param {import("./passkeyFlow.mjs").Candidate} c
+   * The person's choice. When the background must verify the person first, the step takes the choices' place; once it has, the
+   * same choice goes again.
+   * @param {Choice} choice @param {string} doneKey @param {{ name: string, userName: string, itemId: string | null }} shown what the
+   *   step shows of the choice
    */
-  function chooseGet(c) {
-    return send(() => backend.choose({ kind: "get", itemId: c.itemId }), "passkeys.done.used", (reason) => {
+  function choose(choice, doneKey, shown) {
+    return send(() => backend.choose(choice), doneKey, (reason) => {
       if (reason !== "verification_needed") return false;
-      verifying = c;
+      verifying = { choice, doneKey, ...shown };
       render();
       return true;
     });
   }
 
   /**
-   * The verification step for the chosen passkey: the passkey (its name and user name from the vault), the ways to verify, "Back to
-   * the list", and the other choices.
-   * @param {View} v @param {import("./passkeyFlow.mjs").Candidate} c
+   * The verification step for the choice: what was chosen (the passkey, or the item a new passkey goes to), the ways to verify,
+   * "Back", and the other choices.
+   * @param {View} v @param {NonNullable<typeof verifying>} c
    */
   function verifyParts(v, c) {
     const step = createVerifyStep({
@@ -329,7 +338,7 @@ export function createChooser({
       verify: (method, input) => backend.verify(method, input),
       proof,
       action,
-      onVerified: () => void chooseGet(c),
+      onVerified: () => void choose(c.choice, c.doneKey, c),
     });
     const previous = teardown;
     teardown = () => {
@@ -344,7 +353,7 @@ export function createChooser({
     });
     const chosen = el(
       "section",
-      { class: "ff-pk-ferret", "data-role": "passkey-chosen", "data-item": c.itemId },
+      { class: "ff-pk-ferret", "data-role": "passkey-chosen", "data-item": c.itemId ?? "" },
       el("p", { class: "ff-pk-row-main" }, el("span", { class: "ff-pk-row-name" }, name), el("span", { class: "ff-pk-row-sub" }, user)),
       back,
     );
@@ -353,9 +362,9 @@ export function createChooser({
 
   /** @param {View} v */
   function getParts(v) {
-    if (verifying !== null) return verifyParts(v, verifying);
     const list = v.candidates;
-    const choose = (/** @type {import("./passkeyFlow.mjs").Candidate} */ c) => () => chooseGet(c);
+    const pick = (/** @type {import("./passkeyFlow.mjs").Candidate} */ c) => () =>
+      choose({ kind: "get", itemId: c.itemId }, "passkeys.done.used", { name: c.name, userName: c.userName, itemId: c.itemId });
     const ferret =
       list.length === 0
         ? el(
@@ -372,7 +381,7 @@ export function createChooser({
               "div",
               { class: "ff-pk-rows", "data-role": "passkey-candidates", tabindex: list.length > 3 ? "0" : null },
               // The date shows only when there is more than one passkey to tell apart.
-              ...list.map((c) => itemRow(c, list.length > 1 && c.created !== null ? formatDate(c.created) : "", t("passkeys.get.use"), "passkey-candidate", choose(c))),
+              ...list.map((c) => itemRow(c, list.length > 1 && c.created !== null ? formatDate(c.created) : "", t("passkeys.get.use"), "passkey-candidate", pick(c))),
             ),
           );
     return [ferret, verifySlot(v), others(v, list.length === 0 ? ["passkeys.more.private"] : [])];
@@ -421,7 +430,7 @@ export function createChooser({
         return;
       }
       const folderId = folder !== null && folder.value !== "" ? folder.value : null;
-      return send(() => backend.choose({ kind: "create", mode: "new", name: chosen, folderId }), "passkeys.done.created");
+      return choose({ kind: "create", mode: "new", name: chosen, folderId }, "passkeys.done.created", { name: chosen, userName: v.userName, itemId: null });
     });
     // Name and folder share a row; the box has no visible heading (the button says what it does) but a name for a screen reader.
     const fresh = el(
@@ -442,7 +451,7 @@ export function createChooser({
               { class: "ff-pk-rows", "data-role": "passkey-targets", tabindex: v.targets.length > 3 ? "0" : null },
               ...v.targets.map((target) =>
                 itemRow(target, target.sameUser ? t("passkeys.make.same_user") : "", t("passkeys.make.add"), "passkey-target", () =>
-                  send(() => backend.choose({ kind: "create", mode: "attach", itemId: target.itemId }), "passkeys.done.added"),
+                  choose({ kind: "create", mode: "attach", itemId: target.itemId }, "passkeys.done.added", { name: target.name, userName: target.userName, itemId: target.itemId }),
                 ),
               ),
             ),
@@ -597,17 +606,18 @@ export function createChooser({
     touch();
     shownSignature = signature(view);
     alertNode = el("p", { class: "ff-error", role: "alert", tabindex: "-1", "data-role": "passkey-error", hidden: true });
+    savingNode = el("p", { class: "ff-hint", role: "status", "data-role": "passkey-saving", hidden: true }, t("passkeys.make.saving"));
     const v = view;
     const key = v.state === "locked" ? "passkeys.title.locked" : v.kind === "get" ? "passkeys.title.get" : "passkeys.title.make";
     const parts =
       v.state === "locked"
         ? lockedParts(v)
-        : [siteBlock(v), siteTexts(v), foreignNote(v), ...(v.kind === "get" ? getParts(v) : createParts(v))];
+        : [siteBlock(v), siteTexts(v), foreignNote(v), ...(verifying !== null ? verifyParts(v, verifying) : v.kind === "get" ? getParts(v) : createParts(v))];
     root.setAttribute("data-kind", v.kind);
     root.setAttribute("data-state", v.state);
     root.setAttribute("aria-busy", "false");
     busy = false;
-    mount(root, heading(key), ...(/** @type {HTMLElement[]} */ ([...parts, alertNode].filter((part) => part !== null))));
+    mount(root, heading(key), ...(/** @type {HTMLElement[]} */ ([...parts, savingNode, alertNode].filter((part) => part !== null))));
   }
 
   /** The request is over: the window says so and closes. @param {string} key */
@@ -638,6 +648,9 @@ export function createChooser({
     if (busy || closed) return;
     say(null);
     holding(true);
+    // A new passkey is saved with the server before the website gets it (it may take a while when the connection is poor).
+    const saving = doneKey === "passkeys.done.created" || doneKey === "passkeys.done.added";
+    if (saving && savingNode !== null) savingNode.hidden = false;
     const mine = build;
     const kept = { name: nameDraft, folder: folderDraft };
     /** @type {{ ok: true } | { ok: false, reason: string }} */
@@ -648,6 +661,7 @@ export function createChooser({
       outcome = { ok: false, reason: "internal_error" };
     }
     if (closed || mine !== build) return;
+    if (savingNode !== null) savingNode.hidden = true;
     if (outcome.ok) {
       wipe();
       ended(doneKey);

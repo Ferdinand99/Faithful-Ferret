@@ -211,6 +211,15 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
   assert.ok(wraps.includes("Ferret's own AAGUID is refused as an extra guard (§ 9.4)"));
   assert.ok(section("### 4.6 Sensitive operations and signed proofs (F-15, F-05, F-07)").includes("A local PIN is **no unlock method on the server**"));
   assert.ok(section("### 9.4 Choice between Ferret and the browser (F-13)").includes('an all-zero AAGUID is accepted and shown as "unknown"'));
+  // The handover is the one-time pass on both channels, with the reason and what would reopen it.
+  const handover = section("### 9.4 Choice between Ferret and the browser (F-13)");
+  for (const rule of [
+    "**The one-time pass is the handover on both channels, Release and ESR; the original is not called at the moment the window closes.**",
+    "the probe of 2026-11-25 ran headless with a virtual authenticator",
+    "ESR 153 under the same harness already made it a race",
+    "the hand tests on real hardware (§ 15)",
+    '"Never on this site" has no pass',
+  ]) assert.ok(handover.includes(rule), rule);
   const server = section("## 11. Server and vole-kit – limits");
   for (const rule of [
     "**Allow PIN** (on; an emergency switch), **Allow PIN after restart** (on;",
@@ -279,7 +288,9 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "There is no setting that answers without a click.",
     "**Recent unlock (on by default; the user can turn it off in the settings):** the vault was unlocked with MP, PIN or a passkey (PRF) at most **5 minutes** ago, and the user clicks in Ferret's window or popup.",
     "A verification in the chooser counts as a new unlock.",
-    "is measured on a monotonic clock and is erased at every lock.",
+    "is measured on a monotonic clock and on the wall clock",
+    "and is erased at every lock.",
+    "`prf_output` in `prf_unlock` and `passkey_verify`",
     "A restored session, a renewal of tokens and an unlock that verified nobody do not.",
     "**A passkey for unlock (PRF):** Windows Hello, Touch ID or a phone, as a real WebAuthn call against the vault's host **in Ferret's window, never in the popup** (§ 7.2).",
     "**PIN:** the same check and the same limit of five attempts as at unlock (§ 7.2). Without a network only within seven days after the last contact with the server (§ 7.6).",

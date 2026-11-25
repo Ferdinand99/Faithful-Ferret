@@ -16,9 +16,16 @@
 //
 // What starts the five minutes (`markUnlocked`): only an unlock the person made (master password, PIN or passkey) and a
 // verification in Ferret's window. Never a sign-in of a new device, a session or a background page that comes back, a
-// renewal of the device's tokens, or an answer given through the recent unlock itself. The time is measured on a monotonic
-// clock (`performance.now()` of the background page): setting the system clock back cannot stretch it, and a background page
-// that was unloaded starts without one. Every lock forgets it.
+// renewal of the device's tokens, or an answer given through the recent unlock itself. The time is measured on two clocks, a
+// monotonic one (`performance.now()` of the background page) and the wall clock, and the five minutes are over when either says
+// so or went backwards: setting the system clock back cannot stretch them, and neither can a machine asleep (a monotonic clock
+// may stand still then). A background page that was unloaded starts without one. Every lock forgets it.
+//
+// The decision for a request (`decide`), the same for a get and a create: `discouraged` gives the click only (a mark that is there
+// is dropped); otherwise the request's mark, or the recent unlock (which issues one), gives UV; without either, the window is told
+// to verify when there is a way to (`verification_needed`); when there is none, `preferred` is answered without UV after the click
+// and `required` is told `verification_unavailable` (the window offers the browser). A mark is used when it is taken; a create
+// whose write the server refused gives it back (`restore`), so the person's next try of the same request needs no new verification.
 //
 // The marks themselves are the request broker's (`markVerified`/`takeVerified`): bound to the request and the window session
 // that owns it, used once, and gone with the request and at every lock. Nothing here signs or reads a key: the checks are
@@ -27,9 +34,6 @@
 
 /** How long an unlock or a verification by the person counts as verification (milliseconds). */
 export const RECENT_UNLOCK_MS = 5 * 60_000;
-
-/** The setting "Accept an unlock in the last 5 minutes as verification" (`storage.local`; on when it is not there). */
-export const PASSKEY_RECENT_SETTING_KEY = "passkey_recent_unlock";
 
 /** The ways to verify, in the order the window offers them. */
 export const VERIFY_METHODS = Object.freeze(["recent", "prf", "pin", "password"]);
@@ -61,24 +65,36 @@ export const UNLOCK_OPS = Object.freeze(["unlock", "pin_unlock", "prf_unlock"]);
  *   marks: { mark(id: string, session: string): boolean, take(id: string, session: string): boolean },
  *   online?: () => Promise<boolean>,
  *   now?: () => number,
- * }} deps `password`, `pin` and `prf`: the checks of the unlock (pinHost.mjs's `verifier`; null where the build has none); `now` is a
- *   monotonic clock (`performance.now()`); `marks` are the broker's one-time marks of a request
+ *   wall?: () => number,
+ * }} deps `password`: the master password (`passwordCheck`); `pin` and `prf`: the checks of the unlock (pinHost.mjs's `verifier`; null
+ *   where the build has none); `now` is a monotonic clock (`performance.now()`), `wall` the wall clock; `marks` are the broker's
+ *   one-time marks of a request
  */
-export function createPasskeyVerify({ password, pin = null, prf = null, settings, marks, online = async () => true, now = () => globalThis.performance.now() }) {
-  const session = password;
-  const localUnlock = pin;
-  const prfUnlock = prf;
-  /** When the person last unlocked or verified, on the monotonic clock; null: not since this page started or the last lock. @type {number | null} */
+export function createPasskeyVerify({
+  password,
+  pin = null,
+  prf = null,
+  settings,
+  marks,
+  online = async () => true,
+  now = () => globalThis.performance.now(),
+  wall = () => Date.now(),
+}) {
+  /** When the person last unlocked or verified, on both clocks; null: not since this page started or the last lock. @type {{ mono: number, wall: number } | null} */
   let lastVerifiedAt = null;
   /** Moves at every lock: a verification that ends after a lock counts for nothing. */
   let epoch = 0;
 
-  /** Whether the last unlock or verification is within the five minutes (a clock that went back counts as expired). */
-  const withinWindow = () => {
-    if (lastVerifiedAt === null) return false;
-    const at = now();
-    return Number.isFinite(at) && at >= lastVerifiedAt && at - lastVerifiedAt < RECENT_UNLOCK_MS;
+  /** The five minutes start now. */
+  const start = () => {
+    lastVerifiedAt = { mono: now(), wall: wall() };
   };
+
+  /** @param {number} at @param {number} since */
+  const within = (at, since) => Number.isFinite(at) && at >= since && at - since < RECENT_UNLOCK_MS;
+
+  /** Whether the last unlock or verification is within the five minutes on both clocks (a clock that went back counts as expired). */
+  const withinWindow = () => lastVerifiedAt !== null && within(now(), lastVerifiedAt.mono) && within(wall(), lastVerifiedAt.wall);
 
   /** The recent unlock counts now: within the window and the setting on (read now; an error is "off"). */
   const recent = async () => {
@@ -111,7 +127,7 @@ export function createPasskeyVerify({ password, pin = null, prf = null, settings
   const issue = (ref, started, renews) => {
     if (epoch !== started) return { ok: false, reason: "vault_locked" };
     if (!marks.mark(ref.request_id, ref.session)) return { ok: false, reason: "gone" };
-    if (renews) lastVerifiedAt = now();
+    if (renews) start();
     return { ok: true };
   };
 
@@ -124,23 +140,23 @@ export function createPasskeyVerify({ password, pin = null, prf = null, settings
       const net = await isOnline();
       const isRecent = await recent();
       let prfOk = false;
-      if (net && prfUnlock !== null) {
+      if (net && prf !== null) {
         try {
-          prfOk = (await prfUnlock.available()) === true;
+          prfOk = (await prf.available()) === true;
         } catch {
           prfOk = false;
         }
       }
       let pinOk = false;
-      if (localUnlock !== null) {
+      if (pin !== null) {
         try {
-          const status = await localUnlock.status();
+          const status = await pin.status();
           pinOk = status?.set === true && (status.offlineOk === true || net);
         } catch {
           pinOk = false;
         }
       }
-      return { recent: isRecent, prf: prfOk, pin: pinOk, password: net && session !== null, online: net };
+      return { recent: isRecent, prf: prfOk, pin: pinOk, password: net && password !== null, online: net };
     },
 
     /** Whether the recent unlock counts now (the window says "one click is enough"). */
@@ -162,21 +178,21 @@ export function createPasskeyVerify({ password, pin = null, prf = null, settings
           if (!(await recent())) return { ok: false, reason: "verification_needed" };
           return issue(ref, started, false);
         case "prf": {
-          if (prfUnlock === null) return { ok: false, reason: "not_available" };
+          if (prf === null) return { ok: false, reason: "not_available" };
           if (typeof input.credential_id !== "string" || typeof input.prf_output !== "string") return { ok: false, reason: "invalid_input" };
-          const done = await prfUnlock.verify({ credential_id: input.credential_id, prf_output: input.prf_output });
+          const done = await prf.verify({ credential_id: input.credential_id, prf_output: input.prf_output });
           return done.ok ? issue(ref, started, true) : done;
         }
         case "pin": {
-          if (localUnlock === null) return { ok: false, reason: "not_available" };
+          if (pin === null) return { ok: false, reason: "not_available" };
           if (typeof input.pin !== "string") return { ok: false, reason: "invalid_input" };
-          const done = await localUnlock.verify(input.pin);
+          const done = await pin.verify(input.pin);
           return done.ok ? issue(ref, started, true) : done;
         }
         case "password": {
-          if (session === null) return { ok: false, reason: "not_available" };
+          if (password === null) return { ok: false, reason: "not_available" };
           if (typeof input.mp !== "string") return { ok: false, reason: "invalid_input" };
-          const done = await session.verify({ mp: input.mp, ...(typeof input.sk === "string" ? { sk: input.sk } : {}) });
+          const done = await password.verify({ mp: input.mp, ...(typeof input.sk === "string" ? { sk: input.sk } : {}) });
           return done.ok ? issue(ref, started, true) : done;
         }
         default:
@@ -186,7 +202,7 @@ export function createPasskeyVerify({ password, pin = null, prf = null, settings
 
     /** The person unlocked the vault (master password, PIN or passkey): the five minutes start. */
     markUnlocked() {
-      lastVerifiedAt = now();
+      start();
     },
 
     /** Every lock: the five minutes are forgotten, and a check that is under way counts for nothing. */
@@ -201,6 +217,79 @@ export function createPasskeyVerify({ password, pin = null, prf = null, settings
      */
     take(ref) {
       return valid(ref) && marks.take(ref.request_id, ref.session) === true;
+    },
+
+    /**
+     * Gives a taken mark back to its request (a create whose write the server refused: the page got nothing, and the person's next
+     * try of the same request needs no new verification). Nothing when the request has ended.
+     * @param {RequestRef} ref
+     */
+    restore(ref) {
+      if (valid(ref)) marks.mark(ref.request_id, ref.session);
+    },
+
+    /**
+     * User verification for a request, as a get and a create both decide it (see the head of the file): UV when the request has
+     * the person's mark or the recent unlock counts (the mark is used), else what the window must do.
+     * @param {RequestRef} ref @param {unknown} level the page's `userVerification` (anything else is `preferred`)
+     * @returns {Promise<{ ok: true, uv: boolean } | { ok: false, reason: "verification_needed" | "verification_unavailable" }>}
+     */
+    async decide(ref, level) {
+      const wanted = level === "required" || level === "discouraged" ? level : "preferred";
+      if (wanted === "discouraged") {
+        // The click is enough. A mark that is there is not used for anything.
+        this.take(ref);
+        return { ok: true, uv: false };
+      }
+      if (this.take(ref)) return { ok: true, uv: true };
+      if ((await this.verify(ref, "recent")).ok && this.take(ref)) return { ok: true, uv: true };
+      const ways = await this.methods();
+      if (ways.recent || ways.prf || ways.pin || ways.password) return { ok: false, reason: "verification_needed" };
+      // No way to verify now: `preferred` is answered without UV after the click; `required` goes to the browser.
+      return wanted === "required" ? { ok: false, reason: "verification_unavailable" } : { ok: true, uv: false };
+    },
+  });
+}
+
+/**
+ * The master password as a way to verify: the session's `verifyPassword` (the sign-in exchange with the server, OPAQUE, and the
+ * password wrap opened against the pinned account key `pk_a`, as setting a PIN asks for it), for the vault that is open. No vault is
+ * made and nothing is posted. It needs the session only, so a build without the PIN has it too.
+ * @param {{ sessionHost: { storedServer(): Promise<string | null>, sessionFor(server: string): Promise<any> } }} deps
+ * @returns {PasswordCheck}
+ */
+export function passwordCheck({ sessionHost }) {
+  /** @param {unknown} error */
+  const codeOf = (error) => {
+    const code = /** @type {{ code?: unknown }} */ (error)?.code;
+    return typeof code === "string" ? code : "unknown";
+  };
+  /** @param {unknown} error */
+  const statusOf = (error) => {
+    const status = /** @type {{ status?: unknown }} */ (error)?.status;
+    return typeof status === "number" ? status : null;
+  };
+  return Object.freeze({
+    /** @param {{ mp: string, sk?: string }} input @returns {Promise<Outcome>} */
+    async verify(input) {
+      const server = await sessionHost.storedServer();
+      if (server === null) return { ok: false, reason: "signed_out" };
+      const session = await sessionHost.sessionFor(server);
+      const account = await session.deviceAccount?.();
+      if (typeof account !== "string" || session.current?.()?.accountId !== account) return { ok: false, reason: "vault_locked" };
+      try {
+        await session.verifyPassword({ password: input.mp, ...(typeof input.sk === "string" ? { skCode: input.sk } : {}) });
+      } catch (error) {
+        const code = codeOf(error);
+        const status = statusOf(error);
+        if (code === "sk_required" || code === "sk_answer_required") return { ok: false, reason: "sk_required" };
+        if (status === 401 || code === "signed_out" || code === "session_ended") return { ok: false, reason: "signed_out" };
+        if (code.startsWith("pinned_") || code.startsWith("method_list_")) return { ok: false, reason: "attack_warning" };
+        if (code === "decrypt" || code === "denied" || code === "password_required" || code === "input_not_utf8") return { ok: false, reason: "wrong_credentials" };
+        if (status === 0 || code === "network" || (status !== null && status >= 500)) return { ok: false, reason: "network" };
+        return { ok: false, reason: "not_verified" };
+      }
+      return { ok: true };
     },
   });
 }

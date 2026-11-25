@@ -71,6 +71,7 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("passkey_pending", { ok: false, reason: "gone" }),
     record("passkey_cancel", { ok: false, reason: "gone" }),
     record("passkey_browser", { ok: false, reason: "gone" }),
+    record("passkey_settings", { ok: true, on: false, permission: false, signed_in: false, never: [], recent_unlock: true }),
     record("unlock_policy", { pin_state: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false } }),
     record("form_capture", undefined),
     record("form_gone", undefined),
@@ -111,6 +112,7 @@ const requests = {
   passkey_pending: () => encode("passkey_pending", { request_id: "a".repeat(32) }),
   passkey_cancel: () => encode("passkey_cancel", { request_id: "a".repeat(32) }),
   passkey_browser: () => encode("passkey_browser", { request_id: "a".repeat(32) }),
+  passkey_settings: () => encode("passkey_settings", {}),
 };
 
 /** The refusal as the page decodes it: a typed reply of the UI channel. @param {string} text */

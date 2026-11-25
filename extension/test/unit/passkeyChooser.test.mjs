@@ -199,6 +199,9 @@ test("ferret_is_the_first_choice_and_browser_and_never_are_beside_it", async () 
     assert.equal(byRole(ferret, role).length, 0, `${role} is not one of Ferret's choices`);
   }
   assert.equal(one(others, "passkey-browser").textContent, "Use the browser or a security key");
+  // The person is told BEFORE the choice that the page's button is clicked once more (the window closes as soon as it is made).
+  assert.equal(one(others, "passkey-browser-again").textContent, "Then click the button on the page once more.");
+  assert.ok(order(get.root, one(others, "passkey-browser")) < order(get.root, one(others, "passkey-browser-again")), "right under the browser button");
   assert.equal(one(others, "passkey-never").textContent, "Never on this site");
   // A new passkey: Ferret first as well, with "Use the browser instead".
   const create = await open(world, { view: raw({ kind: "create", user: { name: "anna", display_name: "" }, targets: [{ item_id: ID(5), name: "Example login", user_name: "anna", same_user: true }] }) });

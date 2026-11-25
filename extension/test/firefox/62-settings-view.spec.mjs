@@ -4,6 +4,7 @@
 // off switch look different) and a real Space and Enter on a focused row.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { shotPath } from "./adversary.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, launch, openSettingsPage, stopFixtures } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -15,8 +16,10 @@ const SETTINGS_URL = `${EXTENSION_ORIGIN}/pages/settings.html`;
 
 /** What the page shows of one switch row: the state, the words, and how the track and the knob are drawn. @param {import("./driver.mjs").Session} session @param {string} role */
 const look = (session, role) =>
-  session.content((/** @type {string} */ r) => {
+  session.content(async (/** @type {string} */ r) => {
     const row = /** @type {HTMLElement} */ (document.querySelector(`[data-role="${r}"]`));
+    // The switch animates its track and knob: read the colours and the place only when the transitions are done.
+    await Promise.all(row.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
     const track = /** @type {HTMLElement} */ (row.querySelector(".ff-switch-track"));
     const knob = /** @type {HTMLElement} */ (row.querySelector(".ff-switch-knob"));
     return {
@@ -42,8 +45,8 @@ test("the_settings_view_shows_groups_opens_a_page_and_its_switches_tell_on_from_
         pagesShown: [...document.querySelectorAll('[data-role="settings-page"]')].filter((p) => p.getClientRects().length > 0).length,
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       }));
-      assert.deepEqual(main.rows, ["settings-row-capture", "settings-row-never", "settings-row-pin", "settings-row-passkeys", "settings-row-lock", "settings-row-credits"], channel);
-      assert.deepEqual(main.groups, ["Filling and saving", "Unlocking", "Security", "About"], channel);
+      assert.deepEqual(main.rows, ["settings-row-capture", "settings-row-never", "settings-row-pin", "settings-row-passkeys", "settings-row-provider", "settings-row-provider-never", "settings-row-lock", "settings-row-credits"], channel);
+      assert.deepEqual(main.groups, ["Filling and saving", "Unlocking", "Passkeys on websites", "Security", "About"], channel);
       assert.equal(main.pagesShown, 0, `${channel}: a page that is hidden is not drawn`);
       assert.equal(main.overflow, false, `${channel}: nothing pushes the page wider`);
 
@@ -81,6 +84,24 @@ test("the_settings_view_shows_groups_opens_a_page_and_its_switches_tell_on_from_
       await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="capture"] [data-role="settings-back"]')).click());
       await session.waitFor(() => session.content(() => (document.querySelector('[data-role="settings-main"]')?.getClientRects().length ?? 0) > 0), 10_000, "the main screen");
       assert.equal(await session.content(() => document.activeElement?.getAttribute("data-role")), "settings-row-capture", `${channel}: the focus is back on the row`);
+
+      // The passkeys page: the switch and the recent-unlock choice, as switches that tell on from off, and the never list behind its own row.
+      await openSettingsPage(session, "provider");
+      const provider = await session.content(() => ({
+        switches: [...document.querySelectorAll('[data-page="provider"] [role="switch"]')].map((b) => [b.getAttribute("data-role"), b.getAttribute("aria-checked")]),
+        title: document.querySelector('[data-page="provider"] [data-role="settings-page-title"]')?.textContent,
+        feature: document.querySelector('[data-page="provider"]')?.getAttribute("data-feature"),
+      }));
+      assert.deepEqual(provider.switches, [["passkeys-switch", "false"], ["passkeys-recent-switch", "true"]], channel);
+      assert.equal(provider.title, "Passkeys in Ferret", channel);
+      assert.equal(provider.feature, "passkeys", channel);
+      assert.equal(await session.content(() => document.querySelector('[data-role="passkeys-recent-switch"]')?.getClientRects().length), 0, `${channel}: the recent-unlock row is not drawn while the passkeys are off`);
+      await session.screenshot(shotPath(channel, "ext-settings-passkeys"));
+      await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="provider"] [data-role="settings-back"]')).click());
+      await openSettingsPage(session, "provider-never");
+      await session.screenshot(shotPath(channel, "ext-settings-passkeys-never"));
+      assert.equal(await session.content(() => document.querySelector('[data-role="passkeys-never-empty"]')?.getClientRects().length > 0), true, `${channel}: an empty list says so`);
+      await session.content(() => /** @type {HTMLElement} */ (document.querySelector('[data-page="provider-never"] [data-role="settings-back"]')).click());
 
       // The lock is a compact row with the select on the right, and the row of the main screen says the choice.
       await openSettingsPage(session, "lock");

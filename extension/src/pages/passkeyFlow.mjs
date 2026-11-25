@@ -342,6 +342,7 @@ export function createChooserBackend(request, requestId, { has = (type) => Objec
           raw.existing = isRecord(options.existing) ? options.existing : null;
           raw.folders = Array.isArray(options.folders) ? options.folders : [];
           raw.recent = options.recent === true;
+          raw.methods = Array.isArray(options.methods) ? options.methods : [];
         }
       }
       const view = viewOf(raw);

@@ -89,8 +89,7 @@ export const SECRET_KEY_EXCEPTIONS = Object.freeze({
   // The 32 bytes a passkey gave the unlock window, on their one way to the background (a request from the window, never a
   // reply). The window wipes its copy as soon as the message is sent.
   prf_unlock: Object.freeze(["prf_output"]),
-  // The verification step of Ferret's chooser window for a page's passkey request (the `passkeys` feature): the PIN as typed, or
-  // the 32 bytes a passkey of the vault gave the window, one way to the background (a request, never a reply).
+  // The passkey chooser's verification step: the PIN or a passkey's 32 bytes, one way (a request only).
   passkey_verify: Object.freeze(["pin", "prf_output"]),
 });
 
@@ -112,7 +111,7 @@ export const TYPED_CREDENTIAL_KEYS = Object.freeze({
   pin_unlock: Object.freeze(["pin"]),
   // Not typed, but it travels the same way: from the unlock window to the background, one way, in this one type.
   prf_unlock: Object.freeze(["prf_output"]),
-  // The verification step of the passkey chooser window: the master password (and the secret key), the PIN, or a passkey's bytes.
+  // The passkey chooser's verification step.
   passkey_verify: Object.freeze(["mp", "sk", "pin", "prf_output"]),
 });
 
@@ -376,8 +375,6 @@ export const PASSKEY_RESPONSE = object(
  * never leaves the background.
  */
 const pkRequestRef = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
-/** An item id of the vault (16 bytes in lower-case hex), as the chooser window names a passkey or an item. */
-const pkItemId = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
 /**
  * A waiting request as Ferret's chooser window may see it (the `passkeys` feature). `origin` is the calling frame's
  * origin as the browser gave it (never a value of the page); `rp_id` is the RP ID the page asked for, unchecked (null: the
@@ -405,6 +402,9 @@ export const PASSKEY_REQUEST_VIEW = object({
   incognito: boolean(),
 });
 /** The site of a request as the core checked it (`passkey_site`): canonical forms (A-labels) and the forms for reading. */
+/** The ways to verify for a passkey request, in the order the window offers them. */
+const PK_WAYS = ["recent", "prf", "pin", "password"];
+const pkWays = array(string({ max: 16, oneOf: PK_WAYS }), { max: 4 });
 const pkSite = object({
   origin: string({ min: 1, max: 300 }),
   host_unicode: string({ min: 1, max: 300 }),
@@ -481,60 +481,26 @@ export const UI_TYPES = defineTypes({
     request: object({ request_id: pkRequestRef }),
     reply: okReply,
   },
-  // A page's `get`, from Ferret's chooser window (the `passkeys` feature; needs the open vault). `passkey_candidates`: the passkeys of
-  // the vault the core says may answer the request (exact RP ID, the page's allow list), each named by the vault; `recent`: an
-  // unlock in the last five minutes is enough; `methods`: the ways to verify there are now, in the order they are offered;
-  // `online`: whether the server answers. `passkey_choose`: the person's choice,
-  // an item for a get, a new item or an item to add to for a create; the click is the evidence of presence, and the background
-  // answers the page. `passkey_verify`: the verification step (the recent unlock, a passkey of the vault, the PIN or the master
-  // password); what the person typed and a passkey's 32 bytes go to the background one way, never in a reply.
-  passkey_candidates: {
-    request: object({ request_id: pkRequestRef }),
+  // The passkey provider's settings, from the settings page (the `passkeys` feature): `enable` follows the page's own request for the
+  // permission for https pages (the background checks it again), `pending` marks that the switch is about to ask for it, `never_remove`
+  // takes one RP ID off the "never" list and `never_clear` empties it, `recent_unlock` is "Count an unlock in the last 5 minutes as
+  // verification". A request with none of them only reads. The reply is what is true now.
+  passkey_settings: {
+    request: object(
+      { enable: boolean(), pending: boolean(), never_remove: host, never_clear: boolean(), recent_unlock: boolean() },
+      { optional: ["enable", "pending", "never_remove", "never_clear", "recent_unlock"] },
+    ),
     reply: object(
       {
         ok: boolean(),
         reason,
-        candidates: array(
-          object({ item_id: pkItemId, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: integer({ min: 0, max: 8_640_000_000_000_000 }) }),
-          { max: 200 },
-        ),
-        recent: boolean(),
-        methods: array(string({ max: 16, oneOf: ["recent", "prf", "pin", "password"] }), { max: 4 }),
-        online: boolean(),
+        on: boolean(),
+        permission: boolean(),
+        signed_in: boolean(),
+        never: array(host, { max: 500 }),
+        recent_unlock: boolean(),
       },
-      { optional: ["reason", "candidates", "recent", "methods", "online"] },
-    ),
-  },
-  passkey_choose: {
-    request: object(
-      {
-        request_id: pkRequestRef,
-        kind: string({ max: 8, oneOf: ["create", "get"] }),
-        item_id: pkItemId,
-        mode: string({ max: 8, oneOf: ["new", "attach"] }),
-        name: string({ min: 1, max: 200 }),
-        folder_id: pkItemId,
-      },
-      { optional: ["item_id", "mode", "name", "folder_id"] },
-    ),
-    reply: okReply,
-  },
-  passkey_verify: {
-    request: object(
-      {
-        request_id: pkRequestRef,
-        method: string({ max: 16, oneOf: ["recent", "prf", "pin", "password"] }),
-        pin: string({ min: 1, max: 256 }),
-        mp: string({ min: 1, max: 1024 }),
-        sk: string({ min: 1, max: 128 }),
-        credential_id: string({ min: 1, max: 1024, pattern: B64U }),
-        prf_output: string({ min: 43, max: 43, pattern: B64U }),
-      },
-      { optional: ["pin", "mp", "sk", "credential_id", "prf_output"] },
-    ),
-    reply: object(
-      { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
-      { optional: ["reason", "left", "wait_ms"] },
+      { optional: ["reason"] },
     ),
   },
   // The PIN (design document, sections 7.2 and 7.6). `unlock_policy`: the administrator's rule as this device last saw
@@ -635,6 +601,78 @@ export const UI_TYPES = defineTypes({
   },
   passkey_cancel: { request: object({ request_id: pkRequestRef }), reply: okReply },
   passkey_browser: { request: object({ request_id: pkRequestRef }), reply: okReply },
+  // What the vault has for a create request (the window's choices; needs the open vault): the items a new passkey can be added
+  // to (`same_user`: its user name is the page's), the item that already holds a passkey for the same RP ID and user handle, and
+  // the folders, each named by a reference good for this request only. Names are the vault's, as stored: the window cleans them.
+  passkey_create_options: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        targets: array(object({ item_id: pkRequestRef, name: string({ max: 4096 }), user_name: string({ max: 4096 }), same_user: boolean() }), { max: 200 }),
+        existing: nullable(object({ item_id: pkRequestRef, name: string({ max: 4096 }) })),
+        folders: array(object({ id: pkRequestRef, name: string({ max: 4096 }) }), { max: 500 }),
+        recent: boolean(),
+        methods: pkWays,
+      },
+      { optional: ["reason", "targets", "existing", "folders", "recent", "methods"] },
+    ),
+  },
+  // The person's choice in the window: for a create request a new item (`name`, `folder_id` from passkey_create_options) or an
+  // item to add to (`item_id`); for a get request a passkey of the vault (`item_id`). Nothing about presence or verification: the
+  // click in this window is the background's evidence of presence, and verification is its own mark for the request.
+  passkey_choose: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        kind: string({ max: 8, oneOf: ["create", "get"] }),
+        mode: string({ max: 8, oneOf: ["new", "attach"] }),
+        name: string({ min: 1, max: 800 }),
+        folder_id: pkRequestRef,
+        item_id: pkRequestRef,
+      },
+      { optional: ["mode", "name", "folder_id", "item_id"] },
+    ),
+    reply: okReply,
+  },
+  // A get in the window: the passkeys the core says may answer, the ways to verify now (in order), whether the server answers.
+  passkey_candidates: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object(
+      {
+        ok: boolean(),
+        reason,
+        candidates: array(
+          object({ item_id: pkRequestRef, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: nullable(integer({ min: 0, max: 8_640_000_000_000_000 })) }),
+          { max: 200 },
+        ),
+        recent: boolean(),
+        methods: pkWays,
+        online: boolean(),
+      },
+      { optional: ["reason", "candidates", "recent", "methods", "online"] },
+    ),
+  },
+  // The window's verification step (chooser window of the request only; request only, never a reply).
+  passkey_verify: {
+    request: object(
+      {
+        request_id: pkRequestRef,
+        method: string({ max: 16, oneOf: PK_WAYS }),
+        pin: string({ min: 1, max: 256 }),
+        mp: string({ min: 1, max: 1024 }),
+        sk: string({ min: 1, max: 128 }),
+        credential_id: string({ min: 1, max: 1024, pattern: B64U }),
+        prf_output: string({ min: 43, max: 43, pattern: B64U }),
+      },
+      { optional: ["pin", "mp", "sk", "credential_id", "prf_output"] },
+    ),
+    reply: object(
+      { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
+      { optional: ["reason", "left", "wait_ms"] },
+    ),
+  },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
   // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`
@@ -888,11 +926,13 @@ export const UI_TYPES = defineTypes({
   },
   // "Offer to save passwords" and the never list, from the settings page. `enable` follows the page's own request for
   // the permission for https pages (the background checks it again); `never_remove` takes one host off the list and
-  // `never_clear` empties it. A request with none of them only reads. The reply is what is true now.
+  // `never_clear` empties it. `pending` marks that the switch is about to ask the browser for the permission (true) or that it
+  // will not (false): only a grant that follows a mark switches the feature on (the permission is shared with the passkeys). A
+  // request with none of them only reads. The reply is what is true now.
   capture_settings: {
     request: object(
-      { enable: boolean(), never_remove: host, never_clear: boolean(), auto_open: boolean() },
-      { optional: ["enable", "never_remove", "never_clear", "auto_open"] },
+      { enable: boolean(), never_remove: host, never_clear: boolean(), auto_open: boolean(), pending: boolean() },
+      { optional: ["enable", "never_remove", "never_clear", "auto_open", "pending"] },
     ),
     reply: object(
       {

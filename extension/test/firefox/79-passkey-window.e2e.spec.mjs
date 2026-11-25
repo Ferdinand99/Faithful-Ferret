@@ -6,9 +6,11 @@
 // the browser's own WebAuthn (Firefox's virtual authenticator) answers what is handed over to it.
 //
 // What this shows, in Release and ESR: a request really reaches the window (the first proof of the broker's document id check),
-// the window names the site the core checked, "Use the browser" hands the call over and closes the window, "Cancel" ends the call
-// with NotAllowedError, and "Never on this site" puts the RP ID on the list, so that the next call goes to the browser without a
-// window.
+// the window names the site the core checked, "Use the browser" closes the window and ends the page's call (the person is told to
+// click the page again), and the page's next call of that kind goes to the browser untouched, once, and the browser's own
+// authenticator answers it (the one-time pass: the same answer in both channels, where calling the browser at once was a race on
+// ESR), "Cancel" ends the call with NotAllowedError, and "Never on this site" puts the RP ID on the list, so that the next call
+// goes to the browser without a window.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { KEEP_BACKGROUND, SLOW, extensionSignIn, webVaultAccount } from "./e2e.mjs";
@@ -135,26 +137,10 @@ async function pressInWindow(session, role) {
   await session.click(button);
 }
 
-/**
- * What the browser gives for a call that was handed over from the window, by channel. Release: the original call works at once
- * (probe outcome H1): the browser's own credential, exactly. ESR: it is a race (seen in three runs: NotAllowedError twice, the
- * credential once): the original call runs while the window has just closed and the page's tab may not have the focus back yet, and
- * the browser refuses a call from a page that is not focused. So on ESR exactly these two answers are allowed and nothing else, and
- * the one seen is written to the log. It is an item of the handover task (U4-9): the one-time pass-through and the "click the page
- * again" text of UK109 H2 make it deterministic. The window's own part (it opened, showed the core's site, handed over and closed)
- * holds on both.
- */
-const HANDED_OVER = Object.freeze({
-  release: Object.freeze([Object.freeze({ ok: true, type: "public-key" })]),
-  esr: Object.freeze([Object.freeze({ ok: true, type: "public-key" }), Object.freeze({ ok: false, name: "NotAllowedError" })]),
-});
-
-/** Checks a handed-over call's answer against the channel's allowed answers. @param {string} channel @param {unknown} got @param {string} what */
-function assertHandedOver(channel, got, what) {
-  const allowed = HANDED_OVER[/** @type {"release" | "esr"} */ (channel)];
-  assert.ok(allowed.some((answer) => JSON.stringify(answer) === JSON.stringify(got)), `${channel}: ${what}: ${JSON.stringify(got)} is not one of ${JSON.stringify(allowed)}`);
-  if (channel === "esr") console.error(`# 79-passkey-window: esr: ${what}: ${JSON.stringify(got)}`);
-}
+/** What the page sees when its own call ended because the person chose the browser (or "never") in the window: the browser's own "left" error. */
+const ENDED = Object.freeze({ ok: false, name: "NotAllowedError" });
+/** What the browser's own authenticator (Firefox's virtual one) gives for the call that went through. */
+const BROWSER_MADE = Object.freeze({ ok: true, type: "public-key" });
 
 /** @param {import("./driver.mjs").Session} session @param {string} name */
 async function result(session, name) {
@@ -206,12 +192,19 @@ test("the_chooser_window_opens_for_a_page_request_in_release_and_esr", async () 
       assert.equal(shown.focused, "passkey-title", `${channel}: the focus starts on the heading`);
       for (const role of ["passkey-browser", "passkey-never", "passkey-cancel"]) assert.ok(shown.buttons.includes(role), `${channel}: ${role}`);
       assert.equal((await session.windowHandles()).filter((h) => !first.has(h)).length, 1, `${channel}: one window`);
-      // Handed to the browser: the window closes, and the browser's own authenticator makes the passkey.
+      // "Use the browser": the window closes and the page's call ends (the person clicks the page again), with the same answer in
+      // both channels.
       await pressInWindow(session, "passkey-browser");
       await session.switchTo(pageTab).catch(() => {});
       await session.waitFor(async () => !(await session.windowHandles()).includes(created), 20_000, "the window closed");
       await session.switchTo(pageTab);
-      assertHandedOver(channel, await result(session, "created"), "the handed-over call");
+      assert.deepEqual(await result(session, "created"), ENDED, `${channel}: the call that opened the window ended`);
+      // The click on the page again: the next call of that kind goes to the browser untouched, with no window, and the browser's own
+      // authenticator makes the passkey, deterministically in Release and ESR (a real click, the page has the focus).
+      const afterBrowser = new Set(await session.windowHandles());
+      await callFromPage(session, "do-create", "created");
+      assert.deepEqual(await result(session, "created"), BROWSER_MADE, `${channel}: the pass lets the browser answer`);
+      assert.deepEqual((await session.windowHandles()).filter((h) => !afterBrowser.has(h)), [], `${channel}: no window for the call that goes through`);
 
       // 2. A get: the window shows although Ferret has no passkey; "Cancel" ends the call with NotAllowedError.
       const second = new Set(await session.windowHandles());
@@ -226,7 +219,8 @@ test("the_chooser_window_opens_for_a_page_request_in_release_and_esr", async () 
       await session.switchTo(pageTab);
       assert.deepEqual(await result(session, "got"), { ok: false, name: "NotAllowedError" }, `${channel}: cancel is NotAllowedError`);
 
-      // 3. "Never on this site": the call goes to the browser, and the next one needs no window.
+      // 3. "Never on this site": the call that opened the window ends, the site goes on the list, and the next call goes to the
+      // browser by the list (the pass of step 1 was used up, so only the list lets it through).
       const third = new Set(await session.windowHandles());
       await callFromPage(session, "do-create", "created");
       const never = await chooserHandle(session, third);
@@ -235,14 +229,14 @@ test("the_chooser_window_opens_for_a_page_request_in_release_and_esr", async () 
       await session.switchTo(pageTab).catch(() => {});
       await session.waitFor(async () => !(await session.windowHandles()).includes(never), 20_000, "the window closed");
       await session.switchTo(pageTab);
-      assertHandedOver(channel, await result(session, "created"), "never hands the call to the browser");
+      assert.deepEqual(await result(session, "created"), ENDED, `${channel}: never ends the call that opened the window`);
       await session.switchTo(bridgeTab);
       const stored = await bridge.invoke("storage.local.get", "passkey_never");
       await session.switchTo(pageTab);
       assert.deepEqual(stored.passkey_never, [PAGE_HOST], `${channel}: the core's RP ID is on the list`);
       const fourth = new Set(await session.windowHandles());
       await callFromPage(session, "do-create", "created");
-      assert.equal((await result(session, "created")).ok, true, `${channel}: the next call goes to the browser`);
+      assert.deepEqual(await result(session, "created"), BROWSER_MADE, `${channel}: the next call goes to the browser`);
       assert.deepEqual((await session.windowHandles()).filter((h) => !fourth.has(h)), [], `${channel}: no window for a site on the never list`);
     } finally {
       await session.quit();

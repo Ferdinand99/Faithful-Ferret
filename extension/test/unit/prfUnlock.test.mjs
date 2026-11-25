@@ -784,3 +784,34 @@ test("a_passkey_verification_for_a_passkey_request_runs_the_checks_of_an_unlock_
   w.state.prfEnabled = true;
   assert.deepEqual(await verify(), { ok: false, reason: "vault_locked" });
 });
+
+test("a_passkey_verification_deletes_the_pin_by_the_rule_of_an_unlock_not_by_a_list_of_codes", async () => {
+  const { makeBlob } = await import("./localUnlockHelpers.mjs");
+  /** @param {string} code */
+  const refusing = async (code) => {
+    const w = await prfWorld();
+    assert.equal((await w.signIn()).ok, true);
+    await settle();
+    await w.pinStore.save(SERVER, ACCOUNT, makeBlob({ minLength: 6 }), { location: "disk", acknowledged: true });
+    w.state.unlockBehaviour = () => {
+      throw coded(code);
+    };
+    const reply = await w.pinHost.verifier.prf.verify({ credential_id: b64u(PASSKEY.credential), prf_output: b64u(PASSKEY.output) });
+    return { reply, kept: (await w.pinStore.status(SERVER, ACCOUNT)).set, open: w.coreHost.state() };
+  };
+  // A refusal of the core that is not an answer of the server and not only about the passkey deletes the PIN, whatever its code
+  // (`methods_invalid` has no `pinned_` prefix): an offline PIN would otherwise open the vault without the checks that just failed.
+  for (const code of ["methods_invalid", "pinned_auth_key", "method_list_changed"]) {
+    const { reply, kept, open } = await refusing(code);
+    assert.equal(reply.ok, false, code);
+    assert.equal(reply.reason, "attack_warning", code);
+    assert.equal(kept, false, `${code}: the PIN is deleted`);
+    assert.equal(open, "unlocked", `${code}: the open vault is not touched`);
+  }
+  // A refusal that says something about the passkey only (or a worker that went) leaves it, as after an unlock.
+  for (const [code, reason] of /** @type {Array<[string, string]>} */ ([["pinned_missing", "prf_unavailable"], ["decrypt", "prf_failed"], ["method_removed", "prf_failed"], ["worker_failed", "prf_failed"]])) {
+    const { reply, kept } = await refusing(code);
+    assert.deepEqual(reply, { ok: false, reason }, code);
+    assert.equal(kept, true, `${code}: the PIN stays`);
+  }
+});

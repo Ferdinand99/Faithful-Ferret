@@ -1,10 +1,11 @@
 // Ferret's chooser window for a page's passkey request (the `passkeys` feature, design document § 9.2 and § 9.4): what the
 // window may see of the request (`passkey_pending`), the site as the core checked it (`passkey_site`), the user's cancel
-// (`passkey_cancel`), "use the browser instead" (`passkey_browser`) and "never on this site" (`passkey_never`: the core's RP ID goes on
-// the never list, then the browser answers; it needs the open vault). For a get: the passkeys of the vault that may answer
-// (`passkey_candidates`), the person's choice (`passkey_choose`: the click is the evidence of presence, so only this window may
-// send it) and the verification step (`passkey_verify`: the recent unlock, Windows Hello or another passkey of the vault, the PIN
-// or the master password; a passkey's 32 bytes come only from this window, never the popup).
+// (`passkey_cancel`), "use the browser instead" (`passkey_browser`), "never on this site" (`passkey_never`: the core's RP ID goes on
+// the never list, then the browser answers; it needs the open vault), what the vault has for a create request
+// (`passkey_create_options`), the passkeys of the vault that may answer a get (`passkey_candidates`), the person's choice
+// (`passkey_choose`: the click is the evidence of presence, so only this window may send it) and the verification step
+// (`passkey_verify`: a passkey of the vault, the PIN or the master password; a passkey's 32 bytes come only from this window,
+// never the popup).
 //
 // Only from the window itself: a top-level page of this extension at `pages/passkey.html?r=<the request's id>` (the router
 // accepted its port already; this checks the page), and, where the browser names it, from the browser window the
@@ -59,7 +60,7 @@ async function handle(body, ctx) {
 }
 
 export default {
-  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never", "passkey_candidates", "passkey_choose", "passkey_verify"],
+  types: ["passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser", "passkey_never", "passkey_create_options", "passkey_candidates", "passkey_choose", "passkey_verify"],
   channel: /** @type {"ui"} */ ("ui"),
   handle,
 };

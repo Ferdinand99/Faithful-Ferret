@@ -45,7 +45,8 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * `pin_unlock`, `pin_off`) and the passkey's (`prf_options`, `prf_unlock`) are the PIN host's (pinHost.mjs); a build without the `unlock` feature does not have them.
  * `passkey_event` (the reports of the passkey bridge) belongs to the `passkeys` feature (passkeyRequests.mjs); a build
  * without the feature does not have it, nor the chooser window's (`passkey_pending`, `passkey_site`, `passkey_cancel`,
- * `passkey_browser`, `passkey_never`) and of a get (`passkey_candidates`, `passkey_choose`, `passkey_verify`: passkeyGet.mjs).
+ * `passkey_browser`, `passkey_never`), its choices (`passkey_create_options`, passkeyFlow.mjs), and a get and verification
+ * (`passkey_candidates`, `passkey_choose`, `passkey_verify`, passkeyGet.mjs).
  * `passkey_reconcile` is the test build's only (its hooks).
  */
 export const CORE_OPS = Object.freeze([
@@ -113,6 +114,8 @@ export const CORE_OPS = Object.freeze([
   "passkey_cancel",
   "passkey_browser",
   "passkey_never",
+  "passkey_settings",
+  "passkey_create_options",
   "passkey_candidates",
   "passkey_choose",
   "passkey_verify",

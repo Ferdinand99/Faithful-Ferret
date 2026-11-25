@@ -42,6 +42,8 @@ const UV = Object.freeze(["required", "preferred", "discouraged"]);
 const ITEM_ID = /^[0-9a-f]{32}$/;
 /** The core's codes that say the vault or its worker is gone: the core host handles those (the window unlocks first). */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
+/** The core's codes that refuse the request itself (its options, its RP ID, its caller): the request ends as the browser would end it. */
+const REQUEST_CODES = Object.freeze(["malformed_rp_id", "invalid_input", "too_large", "invalid_state", "not_allowed"]);
 /** What the window is told when the core refused the request itself (the page gets the error the browser would give). */
 const REFUSED_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
 
@@ -145,6 +147,9 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
   const refusal = (error, ref) => {
     const code = /** @type {{ code?: unknown }} */ (error)?.code;
     if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+    // Only the core's refusal of the request itself ends it; anything else (an item that changed since the list, a busy engine)
+    // leaves the request to the person, who can choose again or use the browser.
+    if (typeof code !== "string" || !REQUEST_CODES.includes(code)) return { ok: false, reason: "internal_error" };
     const name = pageErrorOf(code);
     requests.fail(ref.request_id, ref.session, name);
     return { ok: false, reason: /** @type {Record<string, string>} */ (REFUSED_REASONS)[name] ?? "not_allowed" };
@@ -220,7 +225,7 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
       }
       const source = items();
       if (source === null) return { ok: false, reason: "busy" };
-      /** @type {Array<{ item_id: string, name: string, user_name: string, created: number }>} */
+      /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
       const list = [];
       try {
         await eachCandidate(client, source, passkeyItems(source), got.caller, got.request, async (id, handle) => {
@@ -230,14 +235,17 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
             item_id: id,
             name: typeof view?.name === "string" ? view.name.slice(0, 1024) : "",
             user_name: typeof view?.passkey?.user_name === "string" ? view.passkey.user_name.slice(0, 1024) : "",
-            created: Number.isSafeInteger(created) && created >= 0 ? created : 0,
+            created: Number.isSafeInteger(created) && created > 0 ? created : null,
           });
-          return list.length >= MAX_CANDIDATES;
+          return false;
         });
       } catch (error) {
         return refusal(error, ref);
       }
       const ways = await verify.methods();
+      // The order of the window (oldest first, the item id breaking a tie), then the cap: a vault with more keeps the oldest.
+      list.sort((x, y) => (x.created ?? Number.MAX_SAFE_INTEGER) - (y.created ?? Number.MAX_SAFE_INTEGER) || (x.item_id < y.item_id ? -1 : x.item_id > y.item_id ? 1 : 0));
+      list.length = Math.min(list.length, MAX_CANDIDATES);
       return { ok: true, candidates: list, recent: await verify.recent(), methods: VERIFY_METHODS.filter((m) => /** @type {Record<string, boolean>} */ (/** @type {unknown} */ (ways))[m] === true), online: ways.online };
     },
   };
@@ -263,27 +271,12 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     try {
       await eachCandidate(client, source, passkeyItems(source).filter((id) => id === itemId), got.caller, request, async (_id, handle) => {
         // The item is a candidate of this request (the core said so just now). Then UV, and only then the signature.
-        let verified = false;
-        if (wanted === "discouraged") {
-          // The click is enough. A mark that is there is not used for anything.
-          verify.take(ref);
-        } else {
-          verified = verify.take(ref);
-          if (!verified && (await verify.verify(ref, "recent")).ok) verified = verify.take(ref);
-          if (!verified) {
-            const ways = await verify.methods();
-            if (ways.recent || ways.prf || ways.pin || ways.password) {
-              refused = { ok: false, reason: "verification_needed" };
-              return true;
-            }
-            // No way to verify now: `preferred` is answered without UV after the click; `required` goes to the browser.
-            if (wanted === "required") {
-              refused = { ok: false, reason: "verification_unavailable" };
-              return true;
-            }
-          }
+        const decided = await verify.decide(ref, wanted);
+        if (!decided.ok) {
+          refused = decided;
+          return true;
         }
-        const signed = await client.vault.passkey_get(handle, request, got.caller, { user_present: true, user_verified: verified });
+        const signed = await client.vault.passkey_get(handle, request, got.caller, { user_present: true, user_verified: decided.uv });
         answer = getAnswerOf(signed, request.prf !== undefined);
         return true;
       });

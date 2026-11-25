@@ -156,6 +156,7 @@ export const PASSKEY_FILES = Object.freeze([
   "background/passkeyGet.mjs",
   "background/passkeyHandover.mjs",
   "background/passkeyNever.mjs",
+  "background/passkeySettings.mjs",
   "pages/passkey.html",
   "pages/passkey.mjs",
   "pages/passkeyFlow.mjs",
@@ -973,7 +974,10 @@ export function passkeysModule(on, dist) {
     lines.push('export { createPasskeyRegistry } from "./passkeyRegistry.mjs";');
     lines.push('export { chooserWindows, createPasskeyRequests } from "./passkeyRequests.mjs";');
     lines.push('export { createPasskeyNever } from "./passkeyNever.mjs";');
-    lines.push('export { createPasskeyVerify, markingUnlocks, PASSKEY_RECENT_SETTING_KEY } from "./passkeyVerify.mjs";');
+    lines.push('export { createPasskeyFlow } from "./passkeyFlow.mjs";');
+    lines.push('export { createPasskeyWrite } from "./passkeyWrite.mjs";');
+    lines.push('export { createPasskeySettings, recentUnlockOn } from "./passkeySettings.mjs";');
+    lines.push('export { createPasskeyVerify, markingUnlocks, passwordCheck } from "./passkeyVerify.mjs";');
     lines.push('export { createPasskeyGet } from "./passkeyGet.mjs";');
     lines.push(`export const PASSKEY_WINDOW_PAGE = ${dist.has(PASSKEY_WINDOW_PAGE) ? JSON.stringify(PASSKEY_WINDOW_PAGE) : "null"};`);
   } else {
@@ -981,9 +985,13 @@ export function passkeysModule(on, dist) {
     lines.push("export const createPasskeyRequests = null;");
     lines.push("export const chooserWindows = null;");
     lines.push("export const createPasskeyNever = null;");
+    lines.push("export const createPasskeyFlow = null;");
+    lines.push("export const createPasskeyWrite = null;");
+    lines.push("export const createPasskeySettings = null;");
+    lines.push("export const recentUnlockOn = null;");
     lines.push("export const createPasskeyVerify = null;");
     lines.push("export const markingUnlocks = null;");
-    lines.push("export const PASSKEY_RECENT_SETTING_KEY = null;");
+    lines.push("export const passwordCheck = null;");
     lines.push("export const createPasskeyGet = null;");
     lines.push("export const PASSKEY_WINDOW_PAGE = null;");
   }
