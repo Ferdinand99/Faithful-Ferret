@@ -111,7 +111,7 @@ test("set_change_and_turn_off_a_pin_from_settings", async () => {
       assert.equal(seen.ack, false, `${channel}: and the box is unticked`);
       assert.deepEqual(await pinPlaces(session), { disk: false, sessionKeys: [], localKeys: [] }, `${channel}: nothing was stored`);
 
-      // The two PINs differ: said on the page, nothing is asked of the background (the sign-in starts are not counted).
+      // The two PINs differ: said on the page, and no PIN is stored (that nothing is sent to the background is shown by the unit test of the dialog).
       await submitDialog(session, { password: account.password, pin: "246810", again: "246811" });
       seen = await look(session);
       assert.match(seen.problem ?? "", /not the same/, `${channel}: the mismatch is said`);

@@ -2,11 +2,11 @@
 // the real core and its 256 MiB Argon2id in WASM, the real server. A PIN is set, and the vault is locked and opened with it
 // twenty times; each time is the whole request over the UI port, from "pin_unlock" to the answer (the Argon2id, the opening of
 // the wrap and the checks against the server that follow it). The runner is a small machine on purpose (two CPUs and a few GiB):
-// the budget here is the one for a weak reference, 8 seconds at the 95th percentile. The budget for the owner's own machine
+// the budget here is the one for a weak reference, 8 seconds at the 95th percentile. The budget for a developer machine
 // (3 seconds) is measured by hand, with the same steps (docs/TESTING-U3.md).
 //
-// The numbers are reported as one line (`pin-unlock-timing {json}`), the run's evidence. The spec also ends the worker of the
-// vault between runs (a lock ends it) and reads that the vault is locked after each: a worker that stayed would hold the memory.
+// The numbers are reported as one line (`pin-unlock-timing {json}`), the run's evidence. The spec locks the vault before each run and
+// reads that it is locked (a lock ends the vault's worker, which is shown by the unit tests, not here).
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { SLOW, extensionSignIn, start, webVaultAccount } from "./e2e.mjs";

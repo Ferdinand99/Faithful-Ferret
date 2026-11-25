@@ -152,6 +152,13 @@ test("the_unlock_matrix_passes_in_release_and_esr", async () => {
       await editDiskRecord(session, { kind: "flip_wrap_byte", at: 20 });
       const flipped = await refuses(SENTINEL_DISK, "wrong_pin", "a changed byte of the wrap");
       assert.equal(flipped.left, 4, `${channel}: and it counted`);
+      // The counter lies in the record, in the clear and outside what the wrap is bound to: whoever can write the profile can set it to
+      // zero. That is the accepted limit (a copy of the profile is attacked offline anyway); the limit of five holds against everyone
+      // who cannot write the profile. The edit is seen, and the changed record is still a record (it is not wiped).
+      await editDiskRecord(session, { kind: "failures", value: 0 });
+      policy = await pinPolicy(session);
+      assert.deepEqual([policy.set, policy.failures_left, policy.wait_ms], [true, 5, 0], `${channel}: a counter set to zero gives the tries back`);
+      await refuses(SENTINEL_DISK, "wrong_pin", "the changed byte is still no way in, with the counter at zero");
       // An unknown profile, a later vault key epoch and a record with one field too many end the PIN, at once and for good.
       /** @type {Array<[Parameters<typeof editDiskRecord>[1], string, string]>} */
       const ended = [

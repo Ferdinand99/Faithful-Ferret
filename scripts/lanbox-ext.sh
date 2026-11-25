@@ -533,13 +533,19 @@ fi
 # stack's containers: a PIN is not sent to the server, and the server logs nothing a person typed. Returns 1 when one is.
 SENTINEL_PIN_PREFIX="ferret-sentinel-pin-"
 scan_stack_logs_for_sentinels() {
-  local id found=0
+  local id found=0 count=0
   for id in $(docker "${docker_args[@]}" ps -a -q --filter "label=owner=ferret-${FERRET_E2E_SUFFIX:-e2e}"); do
+    count=$((count + 1))
     if docker "${docker_args[@]}" logs "$id" 2>&1 | grep -q -F "$SENTINEL_PIN_PREFIX"; then
       echo "lanbox-ext.sh: the log of the container $id of the stack holds a sentinel PIN" >&2
       found=1
     fi
   done
+  # A scan that read no container (a label that does not match, a stack that is already gone) proves nothing.
+  if [ "$count" -eq 0 ]; then
+    echo "lanbox-ext.sh: no container of the stack ferret-${FERRET_E2E_SUFFIX:-e2e} was found, so no log was scanned for a sentinel PIN" >&2
+    return 1
+  fi
   return "$found"
 }
 
@@ -598,6 +604,7 @@ if [ "$mode" = gate ]; then
     echo "lanbox-ext.sh: gate: the e2e step failed ($rc)" >&2
     status=$rc
   fi
+  scan_stack_logs_for_sentinels || { echo "lanbox-ext.sh: gate: the stack's logs were not clean of sentinel PINs" >&2; status=1; }
   echo "lanbox-ext.sh: gate: screenshots are in $out_dir/gate-shots/ (exit status $status)" >&2
   # The detection matrix: the corpus, the hold-out set and the parity set, each channel on a stack of its own. What a container writes comes
   # out as a tar archive on stdout and is unpacked, also after a failure.

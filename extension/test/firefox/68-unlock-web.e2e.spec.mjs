@@ -179,7 +179,7 @@ test("full_u3_flow_end_to_end", async () => {
       const output = await prfOutputOf(session);
       assert.equal(output.length, 32, `${channel}: the passkey gives 32 bytes`);
 
-      // The passkey is removed in the web vault: the extension locks, no longer offers it, and the PIN still opens the vault.
+      // The passkey is removed in the web vault; the extension is locked, no longer offers it, and the PIN still opens the vault.
       await session.content(() => {
         location.hash = "#/unlock-methods";
       });
