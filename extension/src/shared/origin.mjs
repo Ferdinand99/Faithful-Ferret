@@ -10,7 +10,7 @@ const WEB_URL = /^https?:\/\//i;
 const MAX_URL = 8192;
 
 /**
- * @typedef {{ id?: string, url?: string, origin?: string, frameId?: number, documentId?: string, tab?: { id?: number } }} Sender
+ * @typedef {{ id?: string, url?: string, origin?: string, frameId?: number, documentId?: string, tab?: { id?: number, incognito?: boolean } }} Sender
  * @typedef {{ id?: string, getURL: (path: string) => string }} Runtime
  */
 
@@ -113,6 +113,25 @@ export function contentSender(sender, runtime) {
   if (typeof sender.documentId === "string" && sender.documentId !== "") {
     out.documentId = sender.documentId;
   }
+  return out;
+}
+
+/**
+ * A content sender (`contentSender`) with what else the browser says about the frame: its `origin` (when the browser
+ * gives one other than "null") and `incognito` (the tab is in a private window). For the passkey bridge, whose broker
+ * takes the frame's origin from the browser and checks it against the frame's address. Nothing in it comes from a
+ * message.
+ *
+ * @param {{ tabId: number, frameId: number, documentId?: string, url: string }} from what `contentSender` returned
+ * @param {Sender | null | undefined} sender the browser's sender
+ * @returns {{ tabId: number, frameId: number, documentId?: string, url: string, origin?: string, incognito?: true }}
+ */
+export function withBrowserOrigin(from, sender) {
+  /** @type {{ tabId: number, frameId: number, documentId?: string, url: string, origin?: string, incognito?: true }} */
+  const out = { ...from };
+  const origin = sender?.origin;
+  if (typeof origin === "string" && origin !== "" && origin !== "null" && origin.length <= 300) out.origin = origin;
+  if (/** @type {{ incognito?: unknown } | undefined} */ (sender?.tab)?.incognito === true) out.incognito = true;
   return out;
 }
 

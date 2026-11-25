@@ -366,6 +366,46 @@ export const PASSKEY_RESPONSE = object(
 );
 
 /**
+ * The background's own name for a waiting request of a page: 16 random bytes as hex. It is what Ferret's chooser window has
+ * in its address (`?r=`) and sends back; it is never the bridge's id, which the bridge of the page's frame chose and which
+ * never leaves the background.
+ */
+const pkRequestRef = string({ min: 32, max: 32, pattern: /^[0-9a-f]{32}$/ });
+/**
+ * A waiting request as Ferret's chooser window may see it (the `passkeys` feature). `origin` is the calling frame's
+ * origin as the browser gave it (never a value of the page); `rp_id` is the RP ID the page asked for, unchecked (null: the
+ * origin's host): the checked one and the host to show come from the core (`passkey_site`). `rp_name`, `user_name` and
+ * `user_display_name` are texts the page chose (create only; null for a get), raw: the window shows them only as the
+ * site's, isolated and stripped of control characters. `credentials`: how many credentials the page listed
+ * (`allowCredentials` of a get, `excludeCredentials` of a create). `expires_in`: milliseconds left (null: a conditional
+ * request, which has no deadline). `foreign`: the page's top document found create or get changed by something else (text
+ * only, never routing). `incognito`: the request comes from a private window.
+ */
+export const PASSKEY_REQUEST_VIEW = object({
+  request_id: pkRequestRef,
+  kind: string({ max: 8, oneOf: ["create", "get"] }),
+  mediation: string({ max: 16, oneOf: ["optional", "required", "conditional"] }),
+  origin: string({ min: 1, max: 300 }),
+  rp_id: nullable(pkText),
+  rp_name: nullable(pkText),
+  user_name: nullable(pkText),
+  user_display_name: nullable(pkText),
+  user_verification: string({ max: 16, oneOf: ["required", "preferred", "discouraged"] }),
+  credentials: integer({ min: 0, max: PASSKEY_LIMITS.list }),
+  prf: boolean(),
+  expires_in: nullable(integer({ min: 0, max: 600_000 })),
+  foreign: boolean(),
+  incognito: boolean(),
+});
+/** The site of a request as the core checked it (`passkey_site`): canonical forms (A-labels) and the forms for reading. */
+const pkSite = object({
+  origin: string({ min: 1, max: 300 }),
+  host_unicode: string({ min: 1, max: 300 }),
+  rp_id: string({ min: 1, max: 300 }),
+  rp_id_unicode: string({ min: 1, max: 300 }),
+});
+
+/**
  * @template {Record<string, { request: import("./schema.mjs").Schema, reply?: import("./schema.mjs").Schema }>} T
  * @param {T} table
  * @returns {Readonly<T>}
@@ -509,6 +549,22 @@ export const UI_TYPES = defineTypes({
     request: object({ credential_id: string({ min: 1, max: 1024, pattern: B64U }), prf_output: string({ min: 43, max: 43, pattern: B64U }) }),
     reply: object({ ok: boolean(), reason, account_email: email, server: serverUrl }, { optional: ["reason", "account_email", "server"] }),
   },
+  // Ferret's chooser window for a page's passkey request (the `passkeys` feature), only from that window
+  // (`pages/passkey.html?r=<request_id>`). The first window session that asks for a request owns it; any other gets
+  // `gone`, as for a request that has ended. `passkey_pending`: the request as the window may show it (works while the vault
+  // is locked). `passkey_site`: the site as the core checked it (needs the open vault); an RP ID the page may not use ends
+  // the request with SecurityError (`reason: "security_error"`). `passkey_cancel`: the user cancelled (the page gets
+  // NotAllowedError, the same as for no match). `passkey_browser`: the browser answers instead, with the page's own options.
+  passkey_pending: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object({ ok: boolean(), reason, request: PASSKEY_REQUEST_VIEW }, { optional: ["reason", "request"] }),
+  },
+  passkey_site: {
+    request: object({ request_id: pkRequestRef }),
+    reply: object({ ok: boolean(), reason, site: pkSite }, { optional: ["reason", "site"] }),
+  },
+  passkey_cancel: { request: object({ request_id: pkRequestRef }), reply: okReply },
+  passkey_browser: { request: object({ request_id: pkRequestRef }), reply: okReply },
   // The items a tab is offered, each once, with a reference good for filling it in this popup session only (all of
   // the tab's fillable frames, or only the one `frame_id` names: the menu's frame). The host is the core's
   // `display_host` of the page, missing when the tab shows no web page; `insecure` marks a plain `http` page; `grant`
