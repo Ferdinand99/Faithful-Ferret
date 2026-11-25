@@ -26,7 +26,12 @@ export const PASSKEY_EVENT_OP = "passkey_event";
  * @param {{ tabs: { sendMessage(tabId: number, message: unknown, options: { frameId: number, documentId: string }): Promise<unknown> } }} deps
  */
 export function createPasskeyRequests({ tabs }) {
-  /** The tabs in which a page's script found another provider's create or get (memory only). @type {Set<number>} */
+  /**
+   * The tabs whose top document's script found create or get changed by something else: another password manager or the site
+   * itself (the script cannot tell which). Memory only, cleared when the top frame moves to a new document. It is for the
+   * text of Ferret's UI only and never changes where a call goes: any page can set it.
+   * @type {Set<number>}
+   */
   const foreign = new Set();
 
   /**
@@ -50,17 +55,22 @@ export function createPasskeyRequests({ tabs }) {
       // The default until the broker decides: the browser answers, with the page's own options.
       await push(sender, "passkey_handover", { request_id: body.request_id, once: false });
     } else if (type === "passkey_foreign") {
-      foreign.add(sender.tabId);
+      // Only the top document's report counts (a frame of another site must not mark the page).
+      if (sender.frameId === 0) foreign.add(sender.tabId);
     }
     // passkey_abort, passkey_ping: nothing waits here.
   };
 
   return {
     push,
-    /** Whether a page of the tab found another provider's create or get. @param {number} tabId */
+    /** Whether the tab's top document found create or get changed by something else (text only). @param {number} tabId */
     foreignIn: (tabId) => foreign.has(tabId),
     /** A tab that closed. @param {number} tabId */
     onTabRemoved: (tabId) => void foreign.delete(tabId),
+    /** `webNavigation.onCommitted`: a new top document has no mark. @param {{ tabId: number, frameId: number }} details */
+    onNavigation: (details) => {
+      if (details?.frameId === 0) foreign.delete(details.tabId);
+    },
     ops: Object.freeze({
       [PASSKEY_EVENT_OP]: {
         vault: false,

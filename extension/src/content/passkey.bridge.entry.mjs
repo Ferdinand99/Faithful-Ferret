@@ -19,7 +19,10 @@
 //   frame and document only (`tabs.sendMessage` with `frameId` and `documentId`); the bridge passes on an answer only for an
 //   id it issued and still waits for, once, and drops everything else.
 // - While a request waits it pings the background every 20 seconds (a Manifest V3 event page is suspended after 30
-//   seconds otherwise), and never when nothing waits. If the extension cannot be reached, the browser answers.
+//   seconds otherwise), and never when nothing waits; with each ping it tells the page's script it is alive. It tells the
+//   page's script "taken" when the background took a request. The page's script hands a request that is not taken in
+//   time to the browser, and ends a taken one that hears nothing for 50 seconds (a bridge that died with the extension).
+//   If the extension cannot be reached, the browser answers.
 
 import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
 import { optionsToWire, responseFromWire } from "../shared/webauthnWire.mjs";
@@ -89,6 +92,7 @@ function startBridge(runtime) {
         return;
       }
       void toBackground("passkey_ping", { request_ids: [...waiting.keys()].slice(0, 64) });
+      toPage({ t: "alive" });
     }, PING_MS);
   };
 
@@ -142,6 +146,8 @@ function startBridge(runtime) {
       // Too large for a message, not taken (a refused sender, such as a frame with an opaque origin), or the extension cannot
       // be reached: the browser answers.
       if (settle(id) !== null) handover();
+    } else if (waiting.has(id)) {
+      toPage({ n, outcome: "taken" });
     }
   };
 
@@ -227,6 +233,6 @@ function startBridge(runtime) {
 }
 
 const runtime = /** @type {any} */ (globalThis).browser?.runtime;
-// Not in a frame with an opaque origin (a sandbox): the background answers no call from there, so the page's script finds no
-// partner and leaves every call to the browser.
-if (runtime && /^https:/.test(location.href) && window.origin !== "null") startBridge(runtime);
+// Only in a secure context (WebAuthn exists nowhere else) and not in a frame with an opaque origin (a sandbox), where the
+// page's script does not install either: no lone listener a frame's own script could connect to.
+if (runtime && /^https:/.test(location.href) && window.isSecureContext === true && window.origin !== "null") startBridge(runtime);

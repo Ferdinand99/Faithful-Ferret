@@ -12,7 +12,7 @@
 // the registration only keeps the scripts out of pages where they have nothing to do.
 //
 // The scripts are left out of the origins of the signed-in Ferret server (`excludeMatches`; a match pattern has no port,
-// so every port of the host is left out), and, in a release, of `https://localhost`. The test variant keeps
+// so every port of the host is left out), and, in a release, of localhost and the loopback addresses. The test variant keeps
 // `https://localhost` for its fixtures; `http://localhost` is never matched (the feature asks for no permission beyond
 // `https://*/*`). Extension pages are never matched: a registered script runs only in web pages.
 //
@@ -31,8 +31,11 @@ const IDS = Object.freeze([PASSKEY_MAIN_ID, PASSKEY_BRIDGE_ID]);
 /** The files in the package. */
 export const PASSKEY_MAIN_FILE = "/content/passkey.main.inject.js";
 export const PASSKEY_BRIDGE_FILE = "/content/passkey.bridge.inject.js";
-/** What a release leaves to the browser whatever else holds (design § 9.2 c). */
-export const RELEASE_EXCLUDED = Object.freeze(["https://localhost/*"]);
+/**
+ * What a release leaves to the browser whatever else holds (design § 9.2 c): localhost, its subdomains and the loopback
+ * addresses a match pattern can name. (The background refuses the rest of 127.0.0.0/8 itself; this is only a filter.)
+ */
+export const RELEASE_EXCLUDED = Object.freeze(["https://localhost/*", "https://*.localhost/*", "https://127.0.0.1/*", "https://[::1]/*"]);
 
 /**
  * @typedef {{

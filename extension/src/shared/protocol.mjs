@@ -861,7 +861,8 @@ export const CONTENT_TYPES = defineTypes({
   },
   // The page's AbortSignal ended a request of this bridge (or a modal request replaced a conditional one).
   passkey_abort: { request: object({ request_id: requestId }) },
-  // The page's create or get were not the browser's own when the page script started, or Ferret's were replaced later.
+  // The page's create or get were not the browser's own when the page script started, or Ferret's were replaced later: by
+  // another password manager or by the site itself (the script cannot tell). Text for Ferret's UI only, never routing.
   passkey_foreign: { request: empty },
   // Every 20 seconds while requests of this bridge wait, and never otherwise: a suspended event page must not lose them.
   passkey_ping: { request: object({ request_ids: array(requestId, { min: 1, max: 64 }) }) },

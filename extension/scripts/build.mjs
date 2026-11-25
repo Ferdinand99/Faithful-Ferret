@@ -64,7 +64,7 @@ import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packZip, readTarGz, readZip, sha256 } from "./lib/archive.mjs";
 import {
-  CAPTURE_BUNDLE, CAPTURE_ENTRY, CAPTURE_MAX_BYTES, CONTENT_BUNDLE, CONTENT_ENTRY, PASSKEY_BRIDGE_BUNDLE, PASSKEY_BRIDGE_ENTRY,
+  CAPTURE_BUNDLE, CAPTURE_ENTRY, CAPTURE_MAX_BYTES, CONTENT_BUNDLE, CONTENT_ENTRY, PASSKEY_BRIDGE_BUNDLE, PASSKEY_BRIDGE_ENTRY, PASSKEY_BRIDGE_MAX_BYTES,
   PASSKEY_MAIN_BUNDLE, PASSKEY_MAIN_ENTRY, PASSKEY_MAIN_MAX_BYTES, classicScript, contentMayInclude, passkeyBridgeMayInclude,
   passkeyMainMayInclude,
 } from "./lib/classic.mjs";
@@ -1234,12 +1234,14 @@ export async function build({
     dist.set(CAPTURE_BUNDLE, Buffer.from(script));
   }
   // The passkey scripts of the `passkeys` feature: the one in the page's own world (slim, with its size budget, built from
-  // its own folder only) and the bridge of the isolated world.
+  // its own folder only) and the bridge of the isolated world (slim, with its own budget: it runs in every https frame).
   if (on.includes("passkeys") && dist.has(PASSKEY_MAIN_ENTRY) && dist.has(PASSKEY_BRIDGE_ENTRY)) {
     const main = classicScript(PASSKEY_MAIN_ENTRY, dist, passkeyMainMayInclude, { slim: true, name: PASSKEY_MAIN_BUNDLE });
     if (Buffer.byteLength(main) > PASSKEY_MAIN_MAX_BYTES) throw new Error(`${PASSKEY_MAIN_BUNDLE}: ${Buffer.byteLength(main)} bytes, over the ${PASSKEY_MAIN_MAX_BYTES} of its size budget`);
     dist.set(PASSKEY_MAIN_BUNDLE, Buffer.from(main));
-    dist.set(PASSKEY_BRIDGE_BUNDLE, Buffer.from(classicScript(PASSKEY_BRIDGE_ENTRY, dist, passkeyBridgeMayInclude, { slim: true, name: PASSKEY_BRIDGE_BUNDLE })));
+    const bridge = classicScript(PASSKEY_BRIDGE_ENTRY, dist, passkeyBridgeMayInclude, { slim: true, name: PASSKEY_BRIDGE_BUNDLE });
+    if (Buffer.byteLength(bridge) > PASSKEY_BRIDGE_MAX_BYTES) throw new Error(`${PASSKEY_BRIDGE_BUNDLE}: ${Buffer.byteLength(bridge)} bytes, over the ${PASSKEY_BRIDGE_MAX_BYTES} of its size budget`);
+    dist.set(PASSKEY_BRIDGE_BUNDLE, Buffer.from(bridge));
   }
   for (const [lang, text] of generateLocales(root)) dist.set(`locales.${lang}.json`, Buffer.from(text));
   const css = generateCss(root);

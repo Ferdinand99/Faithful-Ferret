@@ -126,7 +126,8 @@ const REALM_DOM = String.raw`
     get userActivation() { return { isActive: host.activation(), hasBeenActive: host.activation() }; },
   };
   globalThis.location = { href: host.href };
-  globalThis.origin = "https://rp.example";
+  globalThis.origin = host.origin;
+  globalThis.isSecureContext = host.secure;
   host.register({
     wrap,
     event: (core) => wrap("event", core),
@@ -140,7 +141,7 @@ const REALM_DOM = String.raw`
  * before the scripts install. `order` is the order the two scripts run in at `document_start`.
  * @param {{ order?: "main-first" | "bridge-first", foreign?: boolean, activation?: boolean, mainScript?: boolean, bridgeScript?: boolean }} [o]
  */
-export function createPasskeyPage({ order = "main-first", foreign = false, activation = true, mainScript = true, bridgeScript = true } = {}) {
+export function createPasskeyPage({ order = "main-first", foreign = false, activation = true, mainScript = true, bridgeScript = true, origin = "https://rp.example", secure = true } = {}) {
   const scripts = passkeyScripts();
   /** @type {Map<object, Array<{ type: string, fn: any, capture: boolean, self: any, realm: any }>>} */
   const listeners = new Map();
@@ -157,6 +158,11 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
   let active = activation;
   let sendFails = false;
   let takes = true;
+  let hangs = false;
+  /** The page world's timers (the page's script keeps setTimeout at install). @type {Array<{ id: number, at: number, fn: () => void }>} */
+  let pageTimers = [];
+  let pageClock = 0;
+  let pageTimerId = 0;
 
   /** @type {any} */
   let currentRealm = null;
@@ -189,6 +195,8 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
   const host = (/** @type {string} */ name) => ({
     document,
     href: "https://rp.example/login",
+    origin,
+    secure,
     activation: () => active,
     register: (/** @type {any} */ r) => {
       currentRealm = r;
@@ -262,6 +270,15 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     realms[name] = currentRealm;
   }
   // The bridge's world has the extension's API, its own crypto and timers.
+  const pageWorld = /** @type {any} */ (contexts.page);
+  pageWorld.setTimeout = (/** @type {() => void} */ fn, /** @type {number} */ ms) => {
+    pageTimerId += 1;
+    pageTimers.push({ id: pageTimerId, at: pageClock + ms, fn });
+    return pageTimerId;
+  };
+  pageWorld.clearTimeout = (/** @type {number} */ id) => {
+    pageTimers = pageTimers.filter((t) => t.id !== id);
+  };
   const bridgeWorld = /** @type {any} */ (contexts.bridge);
   bridgeWorld.crypto = globalThis.crypto;
   bridgeWorld.TextEncoder = TextEncoder;
@@ -278,6 +295,10 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
       id: RUNTIME_ID,
       sendMessage: async (/** @type {string} */ raw) => {
         if (sendFails) throw new Error("Could not establish connection. Receiving end does not exist.");
+        if (hangs) {
+          sent.push({ type: JSON.parse(raw).type, body: JSON.parse(raw).body });
+          return new Promise(() => {});
+        }
         const message = JSON.parse(raw);
         sent.push({ type: message.type, body: message.body });
         // The router's answer: "taken" for a request (when the background takes it), nothing for a report.
@@ -331,6 +352,33 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
     /** Whether the background takes a request (a refused sender gets no answer). @param {boolean} yes */
     setTakes: (yes) => {
       takes = yes;
+    },
+    /** The background never answers a message (it is busy or asleep). @param {boolean} yes */
+    setHangs: (yes) => {
+      hangs = yes;
+    },
+    /**
+     * The extension goes away (an update, a disable, a reload): its isolated world is gone, so the bridge hears nothing and
+     * says nothing more; the page's world stays.
+     */
+    killBridge: () => {
+      for (const [core, list] of listeners) listeners.set(core, list.filter((l) => l.realm !== realms.bridge));
+      pushListeners.length = 0;
+      intervals = [];
+    },
+    /** Moves the page world's clock and runs its timers that fall due. @param {number} ms */
+    advance: async (ms) => {
+      const end = pageClock + ms;
+      for (;;) {
+        const due = pageTimers.filter((t) => t.at <= end).sort((a, b) => a.at - b.at || a.id - b.id)[0];
+        if (!due) break;
+        pageTimers = pageTimers.filter((t) => t !== due);
+        pageClock = Math.max(pageClock, due.at);
+        due.fn();
+        for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+      }
+      pageClock = end;
+      for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
     },
     /** A push of the background to the bridge, the way tabs.sendMessage delivers it. @param {string} type @param {unknown} body @param {{ id?: string }} [sender] */
     push: async (type, body, sender = { id: RUNTIME_ID }) => {

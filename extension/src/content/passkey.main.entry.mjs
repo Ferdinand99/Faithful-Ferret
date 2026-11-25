@@ -16,7 +16,11 @@
 //   function at once with the page's own arguments. Anything else is copied (bytes into fresh ArrayBuffers) and sent to
 //   the bridge, which asks the background. The answer is the browser (the page's own arguments, untouched), an error, or
 //   the bytes of Ferret's credential.
-// - It fails closed: anything unexpected sends the call to the browser's own function, never a malformed request.
+// - It fails closed: anything unexpected sends the call to the browser's own function, never a malformed request. That
+//   includes a bridge that died (the extension was updated, disabled or reloaded while the page was open: its isolated
+//   world goes, this world stays): a request the bridge does not say "taken" for within TAKEN_MS goes to the browser, and
+//   a taken one that hears no "alive" from the bridge for ALIVE_MS ends as one the user left (NotAllowedError; a
+//   conditional one goes to the browser, whose own list then works as before).
 // - It tells the bridge when create or get were not the browser's own at install (another extension came first), or
 //   when Ferret's own were replaced later.
 //
@@ -25,6 +29,10 @@
 // Objects it builds have no prototype (or are made by literals), and property descriptors have no prototype, so a
 // setter or a getter the page puts on `Object.prototype` or `Array.prototype` never runs with our values.
 
+/** How long a request waits for the bridge's "taken" before the browser gets it. */
+const TAKEN_MS = 3_000;
+/** How long a taken request waits without the bridge's "alive" (sent every 20 seconds while a request waits). */
+const ALIVE_MS = 50_000;
 /** The type of the handshake event. Not a secret: the package is public (design § 10.8). */
 const HANDSHAKE = "ferret.passkeys.handshake";
 /** The two functions it replaces, by name (read by index: a list of its own, which the page cannot reach). */
@@ -49,6 +57,8 @@ function credentialFrom(_kind, _response) {
 function install() {
   const W = window;
   if (typeof W.CredentialsContainer !== "function" || typeof W.MessageChannel !== "function") return;
+  // Not in a frame with an opaque origin (a sandbox): the bridge does not start there, and a lone listener is no use.
+  if (W.origin === "null") return;
   const container = W.navigator.credentials;
   if (!container) return;
 
@@ -89,6 +99,8 @@ function install() {
   const AS = W.AbortSignal.prototype;
   const signalAborted = getterOf(AS, "aborted");
   const signalReason = getterOf(AS, "reason");
+  const setTimer = W.setTimeout;
+  const clearTimer = W.clearTimeout;
   const fnText = Function.prototype.toString;
   const reTest = RegExp.prototype.test;
   const NATIVE = /\{\s*\[native code\]\s*\}\s*$/;
@@ -122,6 +134,12 @@ function install() {
     } catch {
       return false;
     }
+  };
+  /** @param {() => void} fn @param {number} ms */
+  const later = (fn, ms) => R(setTimer, W, [fn, ms]);
+  /** @param {unknown} id */
+  const cancelTimer = (id) => {
+    if (id !== undefined) R(clearTimer, W, [id]);
   };
   const notAllowed = () => new DOMEx(NOT_ALLOWED_TEXT, "NotAllowedError");
   const aborted = () => new DOMEx("The operation was aborted. ", "AbortError");
@@ -161,6 +179,8 @@ function install() {
     if (pending[entry.key] !== entry) return false;
     delete pending[entry.key];
     if (conditionalKey === entry.key) conditionalKey = null;
+    cancelTimer(entry.timer);
+    entry.timer = undefined;
     if (entry.signal !== undefined) {
       try {
         R(unlisten, entry.signal, ["abort", entry.onAbort]);
@@ -169,6 +189,29 @@ function install() {
       }
     }
     return true;
+  };
+
+  /** The browser answers a request, with the page's own arguments. @param {any} entry */
+  const toBrowser = (entry) => {
+    try {
+      entry.resolve(R(entry.original, entry.self, entry.args));
+    } catch (error) {
+      entry.reject(error);
+    }
+  };
+
+  /**
+   * A taken request waits for the bridge's next "alive". Without it (the bridge died with the extension) a modal request
+   * ends as one the user left, and a conditional one goes to the browser.
+   * @param {any} entry
+   */
+  const watch = (entry) => {
+    cancelTimer(entry.timer);
+    entry.timer = later(() => {
+      if (!finish(entry)) return;
+      if (entry.conditional) toBrowser(entry);
+      else entry.reject(notAllowed());
+    }, ALIVE_MS);
   };
 
   /** One answer of the bridge. @param {Event} event */
@@ -180,18 +223,31 @@ function install() {
     } catch {
       return;
     }
+    if (own(data, "t") === "alive") {
+      // The bridge lives: every taken request may wait another ALIVE_MS.
+      const keys = OK(pending);
+      for (let i = 0; i < keys.length; i += 1) {
+        const waiting = pending[keys[i]];
+        if (waiting.taken) watch(waiting);
+      }
+      return;
+    }
     const n = own(data, "n");
     if (typeof n !== "number") return;
     const entry = pending[`r${n}`];
-    if (entry === undefined || !finish(entry)) return;
+    if (entry === undefined) return;
     const outcome = own(data, "outcome");
+    if (outcome === "taken") {
+      if (!entry.taken) {
+        entry.taken = true;
+        watch(entry);
+      }
+      return;
+    }
+    if (!finish(entry)) return;
     if (outcome === "handover" && own(data, "once") !== true) {
       // The browser answers, with the page's own arguments.
-      try {
-        entry.resolve(R(entry.original, entry.self, entry.args));
-      } catch (error) {
-        entry.reject(error);
-      }
+      toBrowser(entry);
     } else if (outcome === "result") {
       const credential = credentialFrom(entry.kind, own(data, "response"));
       if (credential === null || credential === undefined) entry.reject(notAllowed());
@@ -428,6 +484,8 @@ function install() {
     request.mediation = mediation;
     request.signal = signal;
     request.options = kind === "create" ? copyCreate(publicKey) : copyGet(publicKey);
+    // A getter of the page may have fired the signal while the options were copied: then the browser rejects with its reason.
+    if (signal !== undefined && R(signalAborted, signal, []) !== false) return null;
     return request;
   };
 
@@ -438,7 +496,7 @@ function install() {
   const call = (kind, self, args) => {
     const original = originals[kind];
     const held = OGOPD(CCP, kind);
-    if (held === undefined || held.value !== mine[kind]) tellForeign();
+    if (held === undefined || own(held, "value") !== mine[kind]) tellForeign();
     /** @type {any} */
     let request = null;
     try {
@@ -459,6 +517,8 @@ function install() {
       entry.resolve = resolve;
       entry.reject = reject;
       entry.signal = request.signal;
+      entry.conditional = request.mediation === "conditional";
+      entry.taken = false;
       // A modal request replaces a conditional one that waits, which ends as the browser ends it.
       if (request.mediation !== "conditional" && conditionalKey !== null) {
         const replaced = pending[conditionalKey];
@@ -498,12 +558,20 @@ function install() {
       } catch {
         // No way to the bridge: the browser answers.
         finish(entry);
-        try {
-          resolve(R(original, self, args));
-        } catch (error) {
-          reject(error);
-        }
+        toBrowser(entry);
+        return;
       }
+      // A bridge that does not say "taken" in time is gone (or the background did not take the request): the browser answers.
+      entry.timer = later(() => {
+        if (entry.taken || !finish(entry)) return;
+        try {
+          // A bridge that is only slow drops the request with the background.
+          send({ t: "abort", n });
+        } catch {
+          // Gone.
+        }
+        toBrowser(entry);
+      }, TAKEN_MS);
     });
   };
 

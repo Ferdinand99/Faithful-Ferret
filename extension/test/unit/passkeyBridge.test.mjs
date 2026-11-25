@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { CONTENT_TYPES, PASSKEY_LIMITS, PUSH_TYPES } from "../../src/shared/protocol.mjs";
 import { walk } from "../../src/shared/schema.mjs";
 import { fromB64u, optionsToWire, responseFromWire, responseToWire, toB64u } from "../../src/shared/webauthnWire.mjs";
-import { PASSKEY_MAIN_MAX_BYTES } from "../../scripts/lib/classic.mjs";
+import { PASSKEY_BRIDGE_MAX_BYTES, PASSKEY_MAIN_MAX_BYTES } from "../../scripts/lib/classic.mjs";
 import { createPasskeyPage, passkeyScripts } from "./passkeyWorld.mjs";
 
 /** A create call of the page, as page code (the result lands in `globalThis.out`). */
@@ -37,6 +37,8 @@ const lastRequest = (page) => [...page.sent].reverse().find((m) => m.type === "p
 test("both_scripts_join_and_the_main_script_stays_within_its_budget", () => {
   const { main, bridge } = passkeyScripts();
   assert.ok(Buffer.byteLength(main) <= PASSKEY_MAIN_MAX_BYTES, `${Buffer.byteLength(main)} bytes`);
+  // The bridge runs in every https frame: it has a budget too (the build refuses a bigger one).
+  assert.ok(Buffer.byteLength(bridge) <= PASSKEY_BRIDGE_MAX_BYTES, `${Buffer.byteLength(bridge)} bytes`);
   // The page's script is built from its own file only: no protocol, no shared module.
   assert.match(main, /^\/\/ Files: content\/passkey\.main\.entry\.mjs$/m);
   assert.match(bridge, /^\/\/ Files: .*shared\/webauthnWire\.mjs.*content\/passkey\.bridge\.entry\.mjs$/m);
@@ -193,9 +195,23 @@ test("tampered_intrinsics_after_install_fail_closed_to_the_original", async () =
     JSON.stringify = () => { note("stringify"); return "{}"; };
     RegExp.prototype.test = function () { note("test", this); return true; };
     Object.keys = (o) => { note("keys", o); return []; };
-    Promise.prototype.then = new Proxy(Promise.prototype.then, { apply(t, self, a) { note("promise-then", self); return Reflect.apply(t, self, a); } });
+    const RA = Reflect.apply;
+    Promise.prototype.then = new Proxy(Promise.prototype.then, { apply(t, self, a) { note("promise-then", self); return RA(t, self, a); } });
+    const remove = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.removeEventListener = function (...a) { note("removeEventListener", this); return RA(remove, this, a); };
+    const start = MessagePort.prototype.start;
+    MessagePort.prototype.start = function (...a) { note("start", this); return RA(start, this, a); };
+    for (const name of ["aborted", "reason"]) Object.defineProperty(AbortSignal.prototype, name, { get() { note("signal-" + name, this); return false; }, configurable: true });
+    globalThis.DOMException = function () { note("DOMException"); };
+    globalThis.setTimeout = () => { note("setTimeout"); return 0; };
+    globalThis.clearTimeout = () => { note("clearTimeout"); };
+    Array.isArray = () => { note("isArray"); return false; };
+    Object.hasOwn = () => { note("hasOwn"); return false; };
     // Last: from here on a descriptor the page writes without a value of its own inherits this one.
     Object.defineProperty(Object.prototype, "value", { set(v) { note("value-setter", v); }, get() { return undefined; }, configurable: true });
+    const ODP = Object.defineProperty;
+    Object.defineProperty = (o, k, d) => { note("defineProperty", o); return ODP(o, k, d); };
+    Reflect.apply = (f, self, a) => { note("reflect-apply", self); return RA(f, self, a); };
   })()`);
   page.page(GET());
   await page.flush();
@@ -207,7 +223,8 @@ test("tampered_intrinsics_after_install_fail_closed_to_the_original", async () =
   assert.equal(page.page("globalThis.stolenPort === undefined"), true, "no port reached the page");
   const seen = /** @type {string[]} */ (JSON.parse(JSON.stringify([...page.page("seen")])));
   // The page's own calls of its own functions are its business; the script never called one of them.
-  for (const what of ["postMessage", "addEventListener", "dispatchEvent", "call", "apply", "then", "value-setter", "index-setter", "data", "indexOf", "stringify", "test", "keys"]) {
+  for (const what of ["postMessage", "addEventListener", "dispatchEvent", "call", "apply", "then", "value-setter", "index-setter", "data", "indexOf", "stringify", "test", "keys",
+    "removeEventListener", "start", "signal-aborted", "signal-reason", "DOMException", "setTimeout", "clearTimeout", "isArray", "hasOwn", "defineProperty", "reflect-apply"]) {
     assert.equal(seen.includes(what), false, `the script never called the page's ${what}`);
   }
 });
@@ -313,6 +330,85 @@ test("the_page_abort_and_a_modal_request_end_a_waiting_one", async () => {
   assert.equal(page.page("out.done"), false);
 });
 
+test("a_dead_bridge_fails_closed_to_the_original", async () => {
+  // The extension went away after the handshake (an update, a disable, a reload): nothing says "taken", so the browser gets
+  // the call after TAKEN_MS (3 s), with the page's own options.
+  const page = createPasskeyPage();
+  page.killBridge();
+  page.page(GET());
+  await page.flush();
+  assert.equal(page.nativeCalls.length, 0);
+  await page.advance(2_900);
+  assert.equal(page.page("out.done"), false, "it waits for the bridge a moment");
+  await page.advance(200);
+  assert.equal(page.nativeCalls.length, 1);
+  assert.equal(page.nativeCalls[0].args[0], page.page("globalThis.lastOptions"));
+  assert.equal(page.page("out.value"), "browser");
+
+  // Taken, then the extension goes: a modal request ends as one the user left after ALIVE_MS (50 s) without "alive".
+  const taken = createPasskeyPage();
+  taken.page(GET());
+  await taken.flush();
+  await taken.advance(10_000);
+  assert.equal(taken.page("out.done"), false, "taken: no handover after 3 s");
+  // "alive" with every ping keeps it waiting (a Ferret window can stay open for minutes).
+  await taken.advance(30_000);
+  await taken.tick();
+  await taken.advance(40_000);
+  assert.equal(taken.page("out.done"), false, "the bridge is alive");
+  taken.killBridge();
+  await taken.advance(9_000);
+  assert.equal(taken.page("out.done"), false);
+  await taken.advance(2_000);
+  assert.equal(taken.page("out.error"), "NotAllowedError");
+  assert.equal(taken.nativeCalls.length, 0);
+
+  // A conditional request in the same case goes to the browser, whose own list then works as before.
+  const conditional = createPasskeyPage();
+  conditional.page(GET(', mediation: "conditional"'));
+  await conditional.flush();
+  conditional.killBridge();
+  await conditional.advance(50_000);
+  assert.equal(conditional.nativeCalls.length, 1);
+  assert.equal(conditional.page("out.value"), "browser");
+
+  // A background that never answers (the bridge is alive but nothing is taken): the browser after 3 s, and the bridge drops
+  // the request with the background.
+  const slow = createPasskeyPage();
+  slow.setHangs(true);
+  slow.page(GET());
+  await slow.flush();
+  await slow.advance(3_000);
+  assert.equal(slow.page("out.value"), "browser");
+  const id = /** @type {any} */ (lastRequest(slow)).body.request_id;
+  assert.ok(slow.sent.some((m) => m.type === "passkey_abort" && m.body.request_id === id));
+});
+
+test("a_signal_fired_while_the_options_are_copied_goes_to_the_original", async () => {
+  const page = createPasskeyPage();
+  page.page(`(() => {
+    const c = new AbortController();
+    const publicKey = { get challenge() { c.abort(new Error("during the copy")); return new Uint8Array(16); } };
+    globalThis.p = navigator.credentials.get({ signal: c.signal, publicKey });
+  })()`);
+  await page.flush();
+  assert.equal(page.nativeCalls.length, 1, "the browser gets it and rejects with the signal's reason");
+  assert.deepEqual(page.sent.filter((m) => m.type === "passkey_request"), []);
+});
+
+test("no_listener_waits_without_its_partner_in_opaque_or_insecure_frames", async () => {
+  // A sandboxed frame (opaque origin): neither script starts; the browser's own functions stay.
+  const sandboxed = createPasskeyPage({ origin: "null" });
+  assert.equal(sandboxed.page("/\\[native code\\]/.test(Function.prototype.toString.call(CredentialsContainer.prototype.get))"), true);
+  assert.equal(sandboxed.documentListeners("ferret.passkeys.handshake"), 0);
+  // An https frame under an http parent (not a secure context): no bridge, so no channel, and every call goes to the browser.
+  const insecure = createPasskeyPage({ secure: false });
+  insecure.page(GET());
+  await insecure.flush();
+  assert.equal(insecure.nativeCalls.length, 1);
+  assert.deepEqual(insecure.sent, []);
+});
+
 test("a_flood_beyond_the_waiting_limit_goes_to_the_browser", async () => {
   const page = createPasskeyPage();
   page.page(`globalThis.flood = []; for (let i = 0; i < 70; i += 1) navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16) } }).then((v) => flood.push(v), (e) => flood.push(e.name));`);
@@ -364,10 +460,15 @@ test("the_main_script_has_no_secret_no_network_and_no_dom_change", () => {
     ["window.postMessage", /\b(?:window|self|top|parent|opener|globalThis|frames)\s*\.\s*postMessage\b/],
     ["crypto", /\b(?:crypto|subtle|importKey|sign)\b/],
     ["a global", /\b(?:globalThis|window|self)\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/],
-    ["dynamic code", /\beval\s*\(|\bFunction\s*\(|\b(?:setTimeout|setInterval)\b/],
+    ["dynamic code", /\beval\s*\(|\bFunction\s*\(|\bsetInterval\b/],
   ])) {
     assert.doesNotMatch(code, pattern, `the page's script has no ${what}`);
   }
+  // A timer only through the binding kept at install, and only with a function (never a string of code).
+  assert.deepEqual([...code.matchAll(/\b(?:setTimeout|clearTimeout)\b/g)].map((m) => m[0]), ["setTimeout", "clearTimeout"]);
+  assert.match(code, /const setTimer = W\.setTimeout;/);
+  assert.match(code, /const clearTimer = W\.clearTimeout;/);
+  assert.deepEqual([...code.matchAll(/R\(setTimer, W, \[([^\]]*)\]\)/g)].map((m) => m[1]), ["fn, ms"]);
   // At run time: no new global and no change in the document.
   const page = createPasskeyPage({ mainScript: false, bridgeScript: false });
   const before = page.page("Object.getOwnPropertyNames(globalThis).sort().join(',')");

@@ -10,6 +10,7 @@
 //   calls_that_are_not_ours_go_to_the_original_untouched
 //   registration_follows_permission_setting_and_sign_in
 //   the_override_is_off_on_ferret_servers_and_extension_pages
+//   a_dead_bridge_hands_the_call_to_the_browser                     (the add-on disabled and enabled under an open tab)
 //
 // The extension's own pages hear what a content script sends (runtime.sendMessage reaches every page of the extension), so
 // the test bridge tab records the bridge's messages: that is how a spec sees that a request went through the bridge, and
@@ -17,6 +18,7 @@
 import assert from "node:assert/strict";
 import { after, describe, test } from "node:test";
 import { ABOUT_URL, channels, fixtures, launch, openBridge, stopFixtures, TEST_ADDON_ID } from "./harness.mjs";
+import { RELEASE_EXCLUDED } from "../../src/background/passkeyRegistry.mjs";
 
 after(() => stopFixtures());
 
@@ -298,11 +300,62 @@ describe("passkey_bridge", () => {
           }
           assert.equal(scripts.find((/** @type {any} */ x) => x.id === "ferret-passkey-main")?.world, "MAIN", `${label}: the page's own world`);
           assert.notEqual(scripts.find((/** @type {any} */ x) => x.id === "ferret-passkey-bridge")?.world, "MAIN", `${label}: the bridge is isolated`);
+          // The patterns a release leaves to the browser (localhost, its subdomains, the loopback addresses) are ones Firefox
+          // takes: a registration with them is accepted (and removed again).
+          const accepted = await s.inBridge(() => s.session.content(async (/** @type {string[]} */ excluded) => {
+            try {
+              await browser.scripting.registerContentScripts([{ id: "pattern-probe", js: ["content/passkey.bridge.inject.js"], matches: ["https://*/*"], excludeMatches: excluded, persistAcrossSessions: false }]);
+              await browser.scripting.unregisterContentScripts({ ids: ["pattern-probe"] });
+              return "ok";
+            } catch (error) {
+              return String(error);
+            }
+          }, [...RELEASE_EXCLUDED]));
+          assert.equal(accepted, "ok", `${label}: the release's excluded patterns`);
           // The permission taken back: the scripts and the setting go.
           await s.revoke();
           await s.session.waitFor(async () => (await s.registered()).length === 0, 15_000, "the scripts gone (permission removed)");
           const stored = await s.inBridge(() => s.bridge.invoke("storage.local.get", "use_passkeys"));
           assert.equal(stored.use_passkeys, false, `${label}: the setting went with the permission`);
+        } finally {
+          await s.session.quit();
+        }
+      }
+    }
+  });
+
+  test("a_dead_bridge_hands_the_call_to_the_browser", async () => {
+    for (const channel of channels()) {
+      for (const manifest of MANIFESTS) {
+        const label = `${channel}/${manifest}`;
+        const s = await setup(channel, manifest);
+        try {
+          await turnOn(s);
+          await s.session.navigate(s.server.url("fixture.test", "/pk-calls/"));
+          await s.session.waitFor(() => s.session.content(() => typeof (/** @type {any} */ (window)).ceremony === "function"), 15_000, "the page");
+          assert.deepEqual(await press(s.session, "go", "result"), ANSWERED, `${label}: through the bridge`);
+          // The add-on goes away under the open tab (what an update or a disable does): the page's script stays, its bridge
+          // is gone. The next call must not hang: the browser answers it.
+          const addon = /** @type {(on: boolean) => Promise<boolean>} */ ((on) => s.session.chrome(async (/** @type {string} */ id, /** @type {boolean} */ enable) => {
+            const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+            const found = await AddonManager.getAddonByID(id);
+            if (enable) await found.enable();
+            else await found.disable();
+            return found.isActive;
+          }, TEST_ADDON_ID, on));
+          assert.equal(await addon(false), false, `${label}: disabled`);
+          await s.session.switchTo(s.pageTab);
+          assert.deepEqual(await press(s.session, "go", "result"), ANSWERED, `${label}: the add-on disabled under the tab`);
+          // Enabled again (a new instance of the extension): the old tab still has no bridge, and still gets the browser.
+          assert.equal(await addon(true), true, `${label}: enabled`);
+          await s.session.switchTo(s.pageTab);
+          assert.deepEqual(await press(s.session, "go", "result"), ANSWERED, `${label}: the old tab after the add-on came back`);
+          // A page loaded now has Ferret's functions again (the registration is made again when the extension starts).
+          const fresh = await s.session.waitFor(async () => {
+            const first = await openAndRead(s.session, s.server.url("fixture.test", "/pk-first/"), "first");
+            return first.createNative === false ? first : null;
+          }, 30_000, "the scripts registered again");
+          assert.equal(fresh.createNative, false, label);
         } finally {
           await s.session.quit();
         }

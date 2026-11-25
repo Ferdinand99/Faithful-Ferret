@@ -14,7 +14,10 @@ import { LOCK_EXEMPT } from "../../src/background/lock.mjs";
 import { createRouter, PASSKEY_OP } from "../../src/background/router.mjs";
 import { CAPTURE_ORIGINS } from "../../src/shared/captureConfig.mjs";
 import { CONTENT_TYPES, decode, encode, PUSH_TYPES } from "../../src/shared/protocol.mjs";
-import { PASSKEY_GEN_FILE, passkeysModule } from "../../scripts/build.mjs";
+import { build, PASSKEY_GEN_FILE, passkeysModule } from "../../scripts/build.mjs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { makeRoot } from "./buildHelpers.mjs";
 
 /**
  * A browser with the three things the registration follows, and the scripts it holds.
@@ -172,7 +175,8 @@ test("the_override_is_off_on_ferret_servers_and_extension_pages", () => {
   }
   // A release also leaves localhost to the browser; the test variant keeps https://localhost for its fixtures.
   const [released] = passkeyScripts({ server: "https://vault.example", release: true });
-  assert.deepEqual(released.excludeMatches, ["https://localhost/*", "https://vault.example/*"]);
+  // A release also leaves the subdomains of localhost and the loopback addresses a pattern can name to the browser.
+  assert.deepEqual(released.excludeMatches, ["https://*.localhost/*", "https://127.0.0.1/*", "https://[::1]/*", "https://localhost/*", "https://vault.example/*"]);
 });
 
 test("the_answer_goes_only_to_the_frame_and_document_that_asked", async () => {
@@ -190,9 +194,18 @@ test("the_answer_goes_only_to_the_frame_and_document_that_asked", async () => {
   // Without a document id there is no answer at all (it could reach another document of the frame).
   await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_request", sender: { tabId: 4, frameId: 0, url: "https://rp.example/" }, body: { request_id: id } });
   assert.equal(pushed.length, 1);
-  // Another provider in a tab is remembered for the tab, until it closes.
+  // Something else changed create or get: only the top document's report marks the tab (text only), and a frame's does not.
   await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender, body: {} });
+  assert.equal(requests.foreignIn(4), false, "a frame's report does not mark the page");
+  const top = { ...sender, frameId: 0 };
+  await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender: top, body: {} });
   assert.equal(requests.foreignIn(4), true);
+  // A new document in a frame keeps it; a new top document clears it; so does a closed tab.
+  requests.onNavigation({ tabId: 4, frameId: 17179869185 });
+  assert.equal(requests.foreignIn(4), true);
+  requests.onNavigation({ tabId: 4, frameId: 0 });
+  assert.equal(requests.foreignIn(4), false);
+  await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender: top, body: {} });
   requests.onTabRemoved(4);
   assert.equal(requests.foreignIn(4), false);
   assert.equal(PASSKEY_EVENT_OP, PASSKEY_OP);
@@ -237,6 +250,32 @@ test("a_report_of_the_bridge_reaches_the_passkey_operation_with_the_browsers_sen
   // Not from a content script of this extension: nothing.
   await router.onMessage(encode("passkey_abort", { request_id: id }), { ...sender, id: "other" });
   assert.equal(calls.length, 2);
+});
+
+test("the_handler_takes_only_a_request_it_can_answer", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, out: env.out, wasmTar: env.tarPath, manifest: "mv3", variant: "test" });
+    const handler = (await import(pathToFileURL(join(result.dir, "background", "handlers", "passkey.handler.mjs")).href)).default;
+    /** @type {unknown[]} */
+    const passed = [];
+    const ctx = (/** @type {Record<string, unknown>} */ sender, type = "passkey_request") => ({ channel: "content", type, sender, state: () => "locked", passkey: async (/** @type {unknown} */ b) => void passed.push(b) });
+    const sender = { tabId: 1, frameId: 0, documentId: "d-1", url: "https://rp.example/" };
+    const get = { challenge: "AAAA", allow_credentials: [], hints: [], extensions: {} };
+    const body = { request_id: "c".repeat(32), kind: "get", mediation: "optional", get, activation: true, policy: null };
+    assert.deepEqual(await handler.handle(body, ctx(sender)), { accepted: true });
+    // The options of another kind, both, or none: not taken.
+    for (const bad of [{ ...body, kind: "create" }, { ...body, create: get }, { request_id: body.request_id, kind: "get", mediation: "optional", activation: true, policy: null }]) {
+      await assert.rejects(handler.handle(bad, ctx(sender)), { code: "invalid_input" });
+    }
+    // A sender with no document to answer: not taken (the bridge hands the call to the browser at once).
+    await assert.rejects(handler.handle(body, ctx({ tabId: 1, frameId: 0, url: "https://rp.example/" })), { code: "invalid_input" });
+    assert.equal(passed.length, 1);
+    // A report needs neither and answers nothing.
+    assert.equal(await handler.handle({ request_ids: [body.request_id] }, ctx({ tabId: 1, frameId: 0, url: "https://rp.example/" }, "passkey_ping")), undefined);
+  } finally {
+    env.cleanup();
+  }
 });
 
 test("the_background_reaches_the_feature_only_through_the_generated_module", () => {

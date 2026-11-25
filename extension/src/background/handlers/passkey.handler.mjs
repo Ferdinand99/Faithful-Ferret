@@ -14,6 +14,7 @@
 import { FEATURES } from "../../shared/features.mjs";
 
 const notAvailable = () => Object.assign(new Error("not_available"), { code: "not_available" });
+const invalid = () => Object.assign(new Error("invalid_input"), { code: "invalid_input" });
 
 /** @param {any} body @param {import("../router.mjs").HandlerContext} ctx */
 async function handle(body, ctx) {
@@ -21,6 +22,14 @@ async function handle(body, ctx) {
   // Only a content script's report: a message of an extension page never gets here (the content table does not hold these
   // types for a page), and the sender the router checked has a tab.
   if (ctx.channel !== "content" || typeof ctx.passkey !== "function") throw notAvailable();
+  if (ctx.type === "passkey_request") {
+    // An answer goes only to the document that asked: a sender without one is not taken (the bridge hands the call to the
+    // browser at once instead of waiting for an answer that cannot come).
+    if (typeof ctx.sender?.documentId !== "string" || ctx.sender.documentId === "") throw invalid();
+    // The options of the kind asked for, and no others.
+    const given = ["create", "get"].filter((kind) => Object.hasOwn(body, kind));
+    if (given.length !== 1 || given[0] !== body.kind) throw invalid();
+  }
   await ctx.passkey(body);
   // `passkey_request` is the one with a reply: taken (the answer follows as a push).
   return ctx.type === "passkey_request" ? { accepted: true } : undefined;

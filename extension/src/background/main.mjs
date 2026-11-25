@@ -163,6 +163,7 @@ if (passkeyRegistry) {
     passkeyRegistry.reconcile().catch(() => {});
   });
   browser.tabs.onRemoved?.addListener((/** @type {number} */ tabId) => passkeyRequests?.onTabRemoved(tabId));
+  browser.webNavigation.onCommitted?.addListener((/** @type {any} */ details) => passkeyRequests?.onNavigation(details));
 }
 
 // Ferret's copies: the background writes the clipboard itself, and clears it 30 seconds later (its alarm listener is

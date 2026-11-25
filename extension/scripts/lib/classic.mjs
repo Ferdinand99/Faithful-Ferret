@@ -61,6 +61,8 @@ export const PASSKEY_MAIN_BUNDLE = "content/passkey.main.inject.js";
 export const PASSKEY_MAIN_MAX_BYTES = 30 * 1024;
 export const PASSKEY_BRIDGE_ENTRY = "content/passkey.bridge.entry.mjs";
 export const PASSKEY_BRIDGE_BUNDLE = "content/passkey.bridge.inject.js";
+/** The bridge runs in every https page and frame, like the capture script: it has a size budget too. */
+export const PASSKEY_BRIDGE_MAX_BYTES = 48 * 1024;
 /** @param {string} path */
 export const passkeyMainMayInclude = (path) => /^content\/passkey[A-Za-z.]*\.mjs$/.test(path);
 /** @param {string} path */
