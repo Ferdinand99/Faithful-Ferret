@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.11.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.10.0...v0.11.0) (2026-11-25)
+
+
+### Features
+
+* **build:** test builds can compile the WASM from the commit's tree ([#283](https://github.com/Ferdinand99/Faithful-Ferret/issues/283)) ([fb9879e](https://github.com/Ferdinand99/Faithful-Ferret/commit/fb9879e15f45bb500cb7da0f34a2b00c5572e3e0))
+* **core:** passkey method name, synced flag and AAGUID in the add request ([#289](https://github.com/Ferdinand99/Faithful-Ferret/issues/289)) ([8a9ec1f](https://github.com/Ferdinand99/Faithful-Ferret/commit/8a9ec1fde480d63c6ef3ed1aa4c0ea1a5b6f0631))
+* **core:** text PINs, a strong PIN profile and the kdf in the PIN wrap AAD ([#281](https://github.com/Ferdinand99/Faithful-Ferret/issues/281)) ([804d16d](https://github.com/Ferdinand99/Faithful-Ferret/commit/804d16d42504fbc91f1b52001079f46775948a24))
+* dark build flags and design text for PIN and passkey unlock ([#285](https://github.com/Ferdinand99/Faithful-Ferret/issues/285)) ([92fdcaf](https://github.com/Ferdinand99/Faithful-Ferret/commit/92fdcafc7f46986bd40fd845ae4f189252cb161c))
+* **ext:** local PIN store with attempt counter and offline window ([#282](https://github.com/Ferdinand99/Faithful-Ferret/issues/282)) ([fe8a442](https://github.com/Ferdinand99/Faithful-Ferret/commit/fe8a442c8176ea38395671e704f3d2202b44fce4))
+* **ext:** one-time codes in the popup ([#296](https://github.com/Ferdinand99/Faithful-Ferret/issues/296)) ([ae7a122](https://github.com/Ferdinand99/Faithful-Ferret/commit/ae7a122125b581891b3fb3fb5a0b71e07d6bdc53))
+* **ext:** PIN field on the locked popup with the refusal texts ([#291](https://github.com/Ferdinand99/Faithful-Ferret/issues/291)) ([d9264c3](https://github.com/Ferdinand99/Faithful-Ferret/commit/d9264c37dad858e3fb12b3e9a30a491961a355ab))
+* **ext:** PIN set, used and wiped in the background ([#290](https://github.com/Ferdinand99/Faithful-Ferret/issues/290)) ([f68a767](https://github.com/Ferdinand99/Faithful-Ferret/commit/f68a767eecb7065509acb6b09149099bf61aaca2))
+* **ext:** settings view inside the popup ([#278](https://github.com/Ferdinand99/Faithful-Ferret/issues/278)) ([6805e82](https://github.com/Ferdinand99/Faithful-Ferret/commit/6805e821202004ce078334f06a392899ba373f43))
+* **ext:** Unlock section in the settings view with the PIN dialog and warning ([#288](https://github.com/Ferdinand99/Faithful-Ferret/issues/288)) ([5abc479](https://github.com/Ferdinand99/Faithful-Ferret/commit/5abc479ec8354fac22829e323bcdd6609bdd4528))
+* **ext:** unlock the vault with a passkey in the extension ([#298](https://github.com/Ferdinand99/Faithful-Ferret/issues/298)) ([7a993dc](https://github.com/Ferdinand99/Faithful-Ferret/commit/7a993dc1e19fa31830d841005ccaf176a4a3b920))
+* **server:** add and remove passkey unlock methods ([#292](https://github.com/Ferdinand99/Faithful-Ferret/issues/292)) ([4ee6d27](https://github.com/Ferdinand99/Faithful-Ferret/commit/4ee6d276585b59d54a0e515c9c84f72e2b155924))
+* **server:** PIN rule, Unlock admin tab and GET /api/vault/policy ([#284](https://github.com/Ferdinand99/Faithful-Ferret/issues/284)) ([223349e](https://github.com/Ferdinand99/Faithful-Ferret/commit/223349ee7490e20315d87c6ab281eaf5282f0874))
+* turn on quick unlock in release builds ([#302](https://github.com/Ferdinand99/Faithful-Ferret/issues/302)) ([374cae3](https://github.com/Ferdinand99/Faithful-Ferret/commit/374cae305dcba851776df9675cab51895ca12b0d))
+* **wasm:** PIN functions with the rule, timing and a pinned record ([#287](https://github.com/Ferdinand99/Faithful-Ferret/issues/287)) ([ef8d0fe](https://github.com/Ferdinand99/Faithful-Ferret/commit/ef8d0fe5b65f8ce3051e5ae3db7cc73329845372))
+* **web:** list, add and remove passkey unlock methods ([#294](https://github.com/Ferdinand99/Faithful-Ferret/issues/294)) ([d71e861](https://github.com/Ferdinand99/Faithful-Ferret/commit/d71e861c4c627e7e658580fecc8cadd7d0207350))
+* **web:** one-time passwords for websites in the web vault ([#297](https://github.com/Ferdinand99/Faithful-Ferret/issues/297)) ([14773a2](https://github.com/Ferdinand99/Faithful-Ferret/commit/14773a22d73191f9c39f31e0f6156139acf9169b))
+* **web:** password generator page ([#279](https://github.com/Ferdinand99/Faithful-Ferret/issues/279)) ([e8dcc41](https://github.com/Ferdinand99/Faithful-Ferret/commit/e8dcc41b6f5355b728fb0a93a07f0783c9067cbb))
+* **web:** unlock the vault with a passkey while the session lives ([#295](https://github.com/Ferdinand99/Faithful-Ferret/issues/295)) ([496c612](https://github.com/Ferdinand99/Faithful-Ferret/commit/496c612d76a8ed77057f52245a68114878fbc65a))
+
+
+### Bug Fixes
+
+* **core:** refuse a higher vault key epoch at a recovery with the recovery key ([#299](https://github.com/Ferdinand99/Faithful-Ferret/issues/299)) ([9e657ea](https://github.com/Ferdinand99/Faithful-Ferret/commit/9e657ea2ae9063b0ddc816430e4c4250ff54f656))
+* **core:** refuse a vault key epoch ahead of the pinned one ([#293](https://github.com/Ferdinand99/Faithful-Ferret/issues/293)) ([8dfda6a](https://github.com/Ferdinand99/Faithful-Ferret/commit/8dfda6a5fe02b05d3b20df25d96b6eaca503216f))
+* **ext:** count a PIN as the core does and keep pin out of the unlock_policy reply ([#303](https://github.com/Ferdinand99/Faithful-Ferret/issues/303)) ([c38ba2a](https://github.com/Ferdinand99/Faithful-Ferret/commit/c38ba2ac26d3ed0e2e7510fcacca6746ccb3a6f3))
+* **ext:** keep opening the popup for offers after one refused attempt ([#286](https://github.com/Ferdinand99/Faithful-Ferret/issues/286)) ([b830d7d](https://github.com/Ferdinand99/Faithful-Ferret/commit/b830d7d3200d45adb37103aae1324b4dc04e8280))
+* **web,ext:** one name for the show-password toggle, popup bar texts and Health focus ([#277](https://github.com/Ferdinand99/Faithful-Ferret/issues/277)) ([cab2020](https://github.com/Ferdinand99/Faithful-Ferret/commit/cab202094167f20e3fa56fd244772658bea13492))
+
 ## [0.10.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.9.0...v0.10.0) (2026-11-24)
 
 
