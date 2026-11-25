@@ -293,8 +293,8 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "`credProps: { rk: true }`",
     "`NotAllowedError` for cancelled, no match, timeout, verification impossible and a wrong RP at signing (the same type, and a cancellation is answered no sooner than a normal answer would be",
     "`InvalidStateError` only for `excludeCredentials`, **after** the user's click; `SecurityError` for an RP ID the page cannot use; `AbortError` with the page's `signal.reason`; `TypeError` for malformed options",
-    "**Imported passkeys** (§ 9.6) keep the counter they had.",
-    "so such a passkey must be registered again at the site.",
+    "**Imported passkeys** (§ 9.6) get counter 0 like every Ferret passkey.",
+    "so a passkey that had a counter above zero must be registered again at the site.",
     // The privacy rule.
     "cannot be told apart by the page, neither by error type nor by timing, **because the chooser is always shown**: also when Ferret has no passkey for the site, the window opens",
     "with \"No Ferret passkey for this site\" and the choice \"Use the browser or a security key\".",
