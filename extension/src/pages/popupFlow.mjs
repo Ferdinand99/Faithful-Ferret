@@ -558,9 +558,9 @@ export const actionErrorKey = (reason) =>
 
 /**
  * @typedef {{
- *   ref: string, name: string, username: string, favorite: boolean, type: string, site: boolean, insecure: boolean,
- *   frameId: number | null, next?: true,
- * }} Row `next`: the item was filled in this tab a short while ago and holds a one-time code, so the page may ask for it next
+ *   ref: string, name: string, username: string, favorite: boolean, type: string, site: boolean, hasTotp: boolean,
+ *   insecure: boolean, frameId: number | null, next?: true,
+ * }} Row `hasTotp`: the item holds a one-time code, so the copy menu offers it. `next`: the item was filled in this tab a short while ago and holds a one-time code, so the page may ask for it next
  * @typedef {{ rows: Row[], total: number }} Section
  * @typedef {{ origin: string, host: string }} Grant a frame of the page's site that waits for its host permission
  * @typedef {{ host: string, insecure: boolean, rows: Row[], grant: Grant[] }} PageSection `host` is "" when the tab shows no web page
@@ -582,6 +582,7 @@ export function rowsOf(reply) {
       favorite: h.favorite === true,
       type: typeof h.type === "string" ? h.type : "other",
       site: h.site === true,
+      hasTotp: h.has_totp === true,
       insecure: h.insecure === true,
       ...(h.next === true ? { next: /** @type {const} */ (true) } : {}),
       frameId: Number.isSafeInteger(h.frame_id) && h.frame_id >= 0 ? h.frame_id : null,

@@ -14,7 +14,7 @@ import { pkg } from "./sessionHelpers.mjs";
 
 // The menu imports the shared DOM helpers, which exist only in a build: it is loaded from the built package.
 /** @type {typeof import("../../src/pages/copyMenu.mjs")} */
-const { ROW_ONE_TIME_CODE, copyEntries, copyLabel, createCopyMenu, isEmailAddress, menuKey } = await (await pkg()).load("pages/copyMenu.mjs");
+const { copyEntries, copyLabel, createCopyMenu, isEmailAddress, menuKey } = await (await pkg()).load("pages/copyMenu.mjs");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "..", "src");
@@ -177,8 +177,8 @@ const press = (doc, key) => fire(doc.activeElement, "keydown", { key });
  */
 const textsOf = (lang) => (key, vars = {}) => (catalog(lang)[key] ?? `?${key}`).replace(/\{(\w+)\}/g, (/** @type {string} */ all, /** @type {string} */ name) => (name in vars ? String(vars[name]) : all));
 
-/** The menu of a row, with what it asked for. @param {{ username: string, name?: string }} row @param {{ oneTimeCode?: boolean }} [options] */
-function menuOf(row, options = {}) {
+/** The menu of a row, with what it asked for. @param {{ username: string, name?: string, hasTotp?: boolean }} row */
+function menuOf(row) {
   const doc = useDocument();
   /** @type {Array<[string, string]>} */
   const copied = [];
@@ -195,7 +195,6 @@ function menuOf(row, options = {}) {
     onClose: () => {
       closed += 1;
     },
-    ...options,
   });
   const root = /** @type {FakeElement} */ (/** @type {unknown} */ (menu.root));
   const button = /** @type {FakeElement} */ (/** @type {unknown} */ (menu.button));
@@ -204,7 +203,7 @@ function menuOf(row, options = {}) {
   return { doc, menu, root, button, list, items, copied, counts: () => ({ opened, closed }) };
 }
 
-test("the_copy_menu_offers_the_user_name_or_the_e_mail_and_the_password_and_keeps_the_one_time_code_for_later", () => {
+test("the_copy_menu_offers_the_user_name_or_the_e_mail_and_the_password_and_the_one_time_code_of_an_item_that_holds_one", () => {
   assert.deepEqual(copyEntries({ username: "ola" }), [
     { field: "username", label: "popup.row.copy_username", done: "popup.copied.username" },
     { field: "password", label: "popup.row.copy_password", done: "popup.copied.password" },
@@ -215,21 +214,25 @@ test("the_copy_menu_offers_the_user_name_or_the_e_mail_and_the_password_and_keep
   ]);
   // No user name: the password only.
   assert.deepEqual(copyEntries({ username: "" }).map((e) => e.field), ["password"]);
-  // The one-time code is built, but not shown in this version.
-  assert.equal(ROW_ONE_TIME_CODE, false);
-  assert.deepEqual(copyEntries({ username: "ola" }, { oneTimeCode: true }).map((e) => [e.field, e.label]), [
+  // The one-time code is offered for a row that is marked as holding one, and only for that row.
+  assert.deepEqual(copyEntries({ username: "ola", hasTotp: true }).map((e) => [e.field, e.label]), [
     ["username", "popup.row.copy_username"],
     ["password", "popup.row.copy_password"],
     ["totp", "popup.row.copy_totp"],
   ]);
-  const { items } = menuOf({ username: "ola" });
-  assert.deepEqual(items().map((i) => i.getAttribute("data-field")), ["username", "password"], "no one-time code in the menu");
+  assert.deepEqual(copyEntries({ username: "", hasTotp: true }).map((e) => e.field), ["password", "totp"]);
+  for (const hasTotp of [false, undefined]) assert.deepEqual(copyEntries({ username: "ola", hasTotp }).map((e) => e.field), ["username", "password"], `hasTotp ${hasTotp}`);
+  assert.deepEqual(menuOf({ username: "ola" }).items().map((i) => i.getAttribute("data-field")), ["username", "password"], "no one-time code in the menu of an unmarked row");
+  const marked = menuOf({ username: "ola", hasTotp: true });
+  assert.deepEqual(marked.items().map((i) => i.getAttribute("data-field")), ["username", "password", "totp"], "the one-time code in the menu of a marked row");
+  fire(marked.items()[2], "click");
+  assert.deepEqual(marked.copied, [["totp", "popup.copied.totp"]]);
   for (const name of ["ola@example.net", "o.la+x@mail.example.org", " ola@example.net "]) assert.equal(isEmailAddress(name), true, name);
   for (const name of ["ola", "ola@localhost", "@example.net", "ola@", "o la@example.net", "ola@exa mple.net", ""]) assert.equal(isEmailAddress(name), false, name);
   // Every label and note is in both languages.
   const en = catalog("en");
   const nb = catalog("nb");
-  const keys = ["popup.row.copy", ...copyEntries({ username: "a@b.c" }, { oneTimeCode: true }).flatMap((e) => [e.label, e.done]), ...copyEntries({ username: "a" }).flatMap((e) => [e.label, e.done])];
+  const keys = ["popup.row.copy", ...copyEntries({ username: "a@b.c", hasTotp: true }).flatMap((e) => [e.label, e.done]), ...copyEntries({ username: "a" }).flatMap((e) => [e.label, e.done])];
   for (const key of keys) {
     assert.ok(Object.hasOwn(en, key), key);
     assert.ok(Object.hasOwn(nb, key), key);
@@ -424,7 +427,7 @@ test("each_copy_button_names_its_row_for_screen_readers", () => {
 test("the_copy_note_says_the_clipboard_is_cleared_after_30_seconds_even_if_you_copied_something_else", () => {
   const en = catalog("en");
   const nb = catalog("nb");
-  const notes = [...new Set([...copyEntries({ username: "a@b.c" }, { oneTimeCode: true }), ...copyEntries({ username: "a" })].map((e) => e.done))];
+  const notes = [...new Set([...copyEntries({ username: "a@b.c", hasTotp: true }), ...copyEntries({ username: "a" })].map((e) => e.done))];
   assert.deepEqual(notes.sort(), ["popup.copied.email", "popup.copied.password", "popup.copied.totp", "popup.copied.username"]);
   for (const key of notes) {
     assert.match(en[key], /clears the clipboard after 30 seconds, even if you have copied something else in the meantime\.$/, key);

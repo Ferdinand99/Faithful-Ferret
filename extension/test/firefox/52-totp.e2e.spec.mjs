@@ -2,6 +2,7 @@
 // secret reaches the extension through the sync, the popup's view of it shows the live code (the same code an RFC 6238
 // reference gives for the clock), "Copy" says the clipboard is cleared, and "Fill the code" puts the code into the page's
 // one-time-code field. After the sign-in of the same item is filled, the popup offers the code on the page that follows.
+// A row of the search result offers "Copy one-time code" in its copy menu when its item holds a code, and copies it.
 //
 // The item is made with the test build's probe (the web vault's edit form is another change), with a secret of this run's
 // making. The popup runs in a window of its own that names the tab (`?tab=`), as a popped-out popup does; activeTab comes
@@ -144,6 +145,42 @@ test("the_popup_shows_copies_and_fills_the_one_time_code_and_offers_it_after_the
       await session.waitFor(async () => (await page.text('[data-role="toast"]')) === "Code filled in.", 20_000, "the code fill note");
       await session.switchTo(pageTab);
       assert.ok(recentCodes(secret).includes(await value("code")), `${channel}: the next step got the code`);
+
+      // ---- a row of the search result: its copy menu offers the code for the item that holds one, and only for it.
+      const plainName = `Plain-login-${tag}`;
+      await session.switchTo(extensionTab);
+      await core("item_probe", { name: plainName, url: server.url(host, "/"), matching: "host", username: `bob-${tag}@fixture.example`, password: `Plain-${tag}-correct-horse` });
+      await popupFor(await visit(codeUrl));
+      await page.type('[data-role="search"]', tag);
+      /** Marks the rows of the two items (the list draws its rows again when the sync brings a change). @param {string[]} wanted */
+      const markRows = (wanted) =>
+        session.content((/** @type {string[]} */ names) => {
+          const rows = [...document.querySelectorAll('[data-role="item-row"]')];
+          const found = names.map((w) => rows.find((r) => r.querySelector('[data-role="row-name"]')?.textContent?.trim() === w));
+          found.forEach((r, i) => r?.setAttribute("data-e2e-row", String(i)));
+          return found.every(Boolean);
+        }, wanted);
+      /** Opens the copy menu of a marked row (0: the item with a code, 1: the one without) and waits for it to show. @param {number} at */
+      const openCopyMenu = (at) =>
+        session.waitFor(
+          async () => {
+            if (!(await markRows([name, plainName]))) return false;
+            const shown = `[data-e2e-row="${at}"] [data-role="copy-password"]`;
+            if (!(await page.visible(shown))) await page.click(`[data-e2e-row="${at}"] [data-role="copy"]`);
+            return page.visible(shown);
+          },
+          SLOW,
+          `the copy menu of row ${at}`,
+        );
+      // The row of the item without a code has no entry for it.
+      await openCopyMenu(1);
+      assert.equal(await page.visible('[data-e2e-row="1"] [data-role="copy-totp"]'), false, `${channel}: no code entry for an item without a code`);
+      // The row of the item with a code copies it.
+      await openCopyMenu(0);
+      assert.equal(await page.visible('[data-e2e-row="0"] [data-role="copy-totp"]'), true, `${channel}: the code entry for an item with a code`);
+      await page.click('[data-e2e-row="0"] [data-role="copy-totp"]');
+      await page.waitVisible('[data-role="toast"]', 20_000);
+      assert.match(await page.text('[data-role="toast"]'), /^One-time code copied\. Ferret clears the clipboard after 30 seconds/);
     } finally {
       await session.quit();
     }

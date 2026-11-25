@@ -77,6 +77,19 @@ test("create_update_delete_roundtrip_against_the_model", async () => {
   assert.ok(d.events.changed.length > 0);
 });
 
+test("the_list_says_whether_an_item_holds_a_one_time_code_and_nothing_more", async () => {
+  const d = await device({ model: new Model() });
+  await d.engine.start();
+  const plain = await d.engine.create(DRAFT);
+  const coded = await d.engine.create({ ...DRAFT, has_totp: true });
+  const byId = new Map(d.engine.list().map((s) => [s.id, s]));
+  assert.equal(byId.get(plain).hasTotp, false);
+  assert.equal(byId.get(coded).hasTotp, true);
+  await until(() => d.engine.list().every((s) => s.pending === false), "no longer pending");
+  await d.engine.update(coded, { has_totp: false }, currentRev(d.engine, coded));
+  assert.equal(d.engine.list().find((s) => s.id === coded).hasTotp, false, "an item that lost its code is shown without it");
+});
+
 test("second_engine_sees_the_change_within_one_poll", async () => {
   const model = new Model();
   const client = createFakeClient();

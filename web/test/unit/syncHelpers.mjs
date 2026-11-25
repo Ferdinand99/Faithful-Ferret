@@ -613,7 +613,8 @@ export function createFakeClient({ key = Buffer.alloc(32, 7), now = () => 1_700_
       }));
       return {
         item_type, name, fields: shown, urls: urls.map((url) => ({ url, matching: "domain" })),
-        has_totp: false, passkey: null, has_notes: false, created: modified, modified, favorite,
+        // The fake knows a code only as the flag `has_totp` in the draft.
+        has_totp: open.body.has_totp === true, passkey: null, has_notes: false, created: modified, modified, favorite,
         device: open.body.device ?? null, read_only: open.body.read_only === true,
         // Like the core: the folder names as stored, [] for none.
         folders: Array.isArray(open.body.folders) ? [...open.body.folders] : [],

@@ -14,12 +14,6 @@
 
 import { el } from "../shared/dom.mjs";
 
-/**
- * Whether a row's menu offers the one-time code. Off: the list does not know yet which items hold one, so the entry
- * would be offered for every login. `copyEntries` builds it already; turn it on together with a mark on the handles.
- */
-export const ROW_ONE_TIME_CODE = false;
-
 /** An e-mail address, roughly: something, an @, a host with a dot. Only the label depends on it. */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,12 +28,12 @@ export const isEmailAddress = (text) => EMAIL.test(text.trim());
 
 /**
  * The entries of a row's copy menu, in the order the menu shows them: the user name (when the row has one), the
- * password and, once offered, the one-time code.
- * @param {{ username: string }} row
- * @param {{ oneTimeCode?: boolean }} [options]
+ * password and, when the row's item holds a one-time code (the row's `hasTotp` mark), the one-time code. The mark can
+ * be stale (the item lost its code since the list was made); the copy then ends in the background's plain refusal.
+ * @param {{ username: string, hasTotp?: boolean }} row
  * @returns {CopyEntry[]}
  */
-export function copyEntries(row, { oneTimeCode = ROW_ONE_TIME_CODE } = {}) {
+export function copyEntries(row) {
   /** @type {CopyEntry[]} */
   const entries = [];
   if (row.username !== "") {
@@ -51,7 +45,7 @@ export function copyEntries(row, { oneTimeCode = ROW_ONE_TIME_CODE } = {}) {
     });
   }
   entries.push({ field: "password", label: "popup.row.copy_password", done: "popup.copied.password" });
-  if (oneTimeCode) entries.push({ field: "totp", label: "popup.row.copy_totp", done: "popup.copied.totp" });
+  if (row.hasTotp === true) entries.push({ field: "totp", label: "popup.row.copy_totp", done: "popup.copied.totp" });
   return entries;
 }
 
@@ -100,17 +94,16 @@ export function menuKey(key, { open, at, count }) {
  * The copy button of a row and its menu. The button and the menu are named after the row ("Copy from <name>"), so a
  * screen reader that lists the buttons of the popup tells one row's from the next; the tooltip stays "Copy".
  * @param {{
- *   row: { ref: string, username: string, name?: string },
+ *   row: { ref: string, username: string, name?: string, hasTotp?: boolean },
  *   t: (key: string, vars?: Record<string, string | number>) => string,
  *   copy: (field: string, done: string) => unknown,
  *   onOpen: (close: () => void) => void,
  *   onClose: () => void,
- *   oneTimeCode?: boolean,
  * }} options `copy` asks the background for the copy and says how it went; `onOpen` runs when the menu opens (the
  *   list closes its other menus and keeps `close` for a click elsewhere), `onClose` when it closes
  */
-export function createCopyMenu({ row, t, copy, onOpen, onClose, oneTimeCode = ROW_ONE_TIME_CODE }) {
-  const entries = copyEntries(row, { oneTimeCode });
+export function createCopyMenu({ row, t, copy, onOpen, onClose }) {
+  const entries = copyEntries(row);
   const label = copyLabel(row, t);
   const button = el(
     "button",

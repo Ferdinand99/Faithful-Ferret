@@ -60,6 +60,31 @@ test("the_popup_never_shows_a_password", async () => {
   }
 });
 
+test("a_row_carries_only_the_mark_that_its_item_holds_a_one_time_code", async () => {
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const reply = await popup.request("search", { query: "" });
+  /** @type {Map<string, any>} */
+  const byName = new Map(reply.handles.map((/** @type {any} */ h) => [h.name, h]));
+  assert.equal(byName.get("Example").has_totp, true);
+  assert.equal(byName.get("Bank").has_totp, false);
+  assert.equal(byName.get("Recipe").has_totp, false);
+  assert.ok(!JSON.stringify(reply).includes(TOTP_CODE), "never the code itself");
+  const rows = (await popup.list.search({ query: "" })).rows;
+  assert.deepEqual(rows.map((r) => [r.name, r.hasTotp]).sort(), [["Bank", false], ["Example", true], ["Recipe", false]]);
+});
+
+test("a_stale_mark_gives_the_plain_refusal_when_the_copy_asks_for_a_code_the_item_no_longer_has", async () => {
+  const world = await itemWorld();
+  await world.open();
+  const popup = world.popup();
+  const [row] = (await popup.list.search({ query: "Bank" })).rows;
+  assert.equal(row.hasTotp, false);
+  // A row that still says it holds a code (the list is older than the item) asks for one: the background says no.
+  assert.deepEqual(await popup.list.copy(row.ref, "totp"), { ok: false, reason: "no_value" });
+});
+
 test("search_lists_names_and_usernames_only_with_copy_actions", async () => {
   const many = Array.from({ length: 45 }, (_, i) => ({
     id: idOf(10 + i), name: `Site ${String(i).padStart(2, "0")}`, username: `user${i}`, password: `pw-${i}-secret`, favorite: i % 10 === 0, type: "login", urls: [`https://s${i}.example.com/`], totp: false,
@@ -71,7 +96,7 @@ test("search_lists_names_and_usernames_only_with_copy_actions", async () => {
   assert.equal(reply.total, 48);
   assert.equal(reply.handles.length, 40, "one page");
   for (const handle of reply.handles) {
-    assert.deepEqual(Object.keys(handle).filter((k) => !["ref", "name", "username", "favorite", "type", "site"].includes(k)), [], JSON.stringify(handle));
+    assert.deepEqual(Object.keys(handle).filter((k) => !["ref", "name", "username", "favorite", "type", "site", "has_totp"].includes(k)), [], JSON.stringify(handle));
     assert.match(handle.ref, /^[0-9a-f]{32}$/);
   }
   const next = await popup.request("search", { query: "", offset: 40 });
@@ -125,7 +150,7 @@ test("the_list_shows_suggestions_favourites_and_all_items_and_a_search_hides_the
   assert.deepEqual(page, {
     host: "løgin.example.net (xn--lgin-ura.example.net)",
     insecure: true,
-    rows: [{ ref: "c1", name: "Example", username: "ola", favorite: false, type: "other", site: false, insecure: true, frameId: 0 }],
+    rows: [{ ref: "c1", name: "Example", username: "ola", favorite: false, type: "other", site: false, hasTotp: false, insecure: true, frameId: 0 }],
     grant: [{ origin: "https://www.example.net", host: "www.example.net" }],
   });
   // The request names no frame (all of the tab's), and a tab that shows no web page has no host.
@@ -161,8 +186,9 @@ test("the_list_shows_suggestions_favourites_and_all_items_and_a_search_hides_the
 });
 
 test("rows_keep_only_what_the_popup_shows", () => {
-  const rows = rowsOf({ handles: [{ ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, frame_id: 3, extra: "x" }, { name: "no ref" }, null] });
-  assert.deepEqual(rows, [{ ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, insecure: false, frameId: 3 }]);
+  const rows = rowsOf({ handles: [{ ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, has_totp: true, frame_id: 3, extra: "x" }, { ref: "r2", has_totp: "yes" }, { name: "no ref" }, null] });
+  assert.deepEqual(rows.map((r) => [r.ref, r.hasTotp]), [["r1", true], ["r2", false]], "only a true mark counts");
+  assert.deepEqual(rows[0], { ref: "r1", name: "N", username: "u", favorite: true, type: "card", site: true, hasTotp: true, insecure: false, frameId: 3 });
   assert.deepEqual(rowsOf(null), []);
   // The mark of a code the page may ask for next is kept only when it is true.
   assert.deepEqual(rowsOf({ handles: [{ ref: "r2", next: true }, { ref: "r3", next: "yes" }] }).map((r) => r.next), [true, undefined]);
