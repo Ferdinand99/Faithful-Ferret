@@ -58,8 +58,9 @@ function prfResults(seed, ev) {
   };
 }
 
-// The texts of the site are stored without control characters (C0, DEL and C1); nothing left means no text.
-const noControls = (t) => t.replace(/[\u0000-\u001f\u007f-\u009f]/gu, '');
+// The texts of the site are stored without the characters a name may not hold (controls, line and paragraph
+// separators, bidirectional controls, zero-width space, byte order mark); nothing left means no text.
+const noControls = (t) => t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu, '');
 const storedText = (t) => (noControls(t) === '' ? null : noControls(t));
 const MAX_TEXT = 1024;
 
@@ -129,7 +130,7 @@ export function create(input, rng) {
         public_key_spki: hex(spki(pub)),
         alg: -7,
         authenticator_attachment: 'platform',
-        transports: ['internal', 'hybrid'],
+        transports: ['hybrid', 'internal'],
         cred_props: req.cred_props ? { rk: true } : null,
         prf: prfOut,
       },

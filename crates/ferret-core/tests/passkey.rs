@@ -18,7 +18,7 @@ use ferret_core::testing::{TestRng, hex_decode};
 use ferret_core::{
     CallerContext, CreateRequest, Error, ExistingCredential, GetRequest, MalformedKind, Passkey,
     PasskeyRecord, PrfSeed, StoredPasskeyRef, UserVerification, UvOutcome, canonical_origin,
-    passkey_candidates, passkey_create, passkey_get, passkey_site,
+    passkey_candidates, passkey_candidates_for, passkey_create, passkey_get, passkey_site,
 };
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -1200,6 +1200,52 @@ fn candidates_judge_the_request_as_get_does() {
 }
 
 #[test]
+fn candidates_for_a_request_check_the_whole_request() {
+    let id = [1u8; 32];
+    let stored = [stored_ref("example.com", &id)];
+    let page = ctx("https://example.com");
+    let mut req = get_req();
+    req.allow = vec![id.to_vec()];
+    assert_eq!(passkey_candidates_for(&page, &req, &stored).unwrap(), [0]);
+    // What `passkey_get` would refuse is refused before a chooser is shown.
+    let mut big = get_req();
+    big.challenge = vec![0; 1025];
+    assert_eq!(
+        passkey_candidates_for(&page, &big, &stored).err(),
+        Some(Error::TooLarge)
+    );
+    assert_eq!(passkey_get_check(&big), Some(Error::TooLarge));
+    let mut prf = get_req();
+    prf.prf = Some(PrfRequest {
+        eval: None,
+        eval_by_credential: vec![(
+            vec![9; 32],
+            PrfEval {
+                first: vec![1],
+                second: None,
+            },
+        )],
+    });
+    let err = passkey_candidates_for(&page, &prf, &stored).err();
+    assert!(err.is_some(), "evalByCredential without allowCredentials");
+    assert_eq!(passkey_get_check(&prf), err);
+    // The same errors for the parts it shares with passkey_candidates.
+    let mut bad_rp = get_req();
+    bad_rp.rp_id = Some("com".into());
+    assert_eq!(
+        passkey_candidates_for(&page, &bad_rp, &stored).err(),
+        Some(Error::Malformed(MalformedKind::RpId))
+    );
+}
+
+/// The error `passkey_get` gives for a request that does not pass
+/// validation, for a record that would otherwise match.
+fn passkey_get_check(req: &GetRequest) -> Option<Error> {
+    let (record, _) = make(&create_req(), YES);
+    passkey_get(&record, req, &ctx("https://example.com"), YES).err()
+}
+
+#[test]
 fn passkey_site_gives_the_canonical_origin_rp_id_and_a_label() {
     let site = passkey_site(&ctx("https://Login.Example.COM:443"), None).unwrap();
     assert_eq!(site.origin, "https://login.example.com");
@@ -1250,14 +1296,14 @@ fn passkey_site_gives_the_canonical_origin_rp_id_and_a_label() {
 fn create_response_has_platform_attachment_and_transports() {
     let (_, response) = make(&create_req(), YES);
     assert_eq!(response.authenticator_attachment, "platform");
-    assert_eq!(response.transports, ["internal", "hybrid"]);
+    assert_eq!(response.transports, ["hybrid", "internal"]);
     // The same for every request, with or without UV and with prf.
     let mut req = create_req();
     req.prf = Some(PrfCreate::default());
     for uv in [YES, NO_UV] {
         let (_, response) = make(&req, uv);
         assert_eq!(response.authenticator_attachment, "platform");
-        assert_eq!(response.transports, ["internal", "hybrid"]);
+        assert_eq!(response.transports, ["hybrid", "internal"]);
     }
     // And a get says it was a platform authenticator too.
     let (record, _) = make(&create_req(), YES);
@@ -1517,6 +1563,37 @@ fn control_characters_are_removed_from_site_texts() {
     let item = item_of(&record);
     assert_eq!(item.rp_name.as_deref(), Some("Example site"));
     assert_eq!(item.user_name, "al[31mice@example.com");
+    // Every class the name rule of folders and methods refuses goes: bidi
+    // controls (an override would reorder the RP ID next to the name),
+    // line and paragraph separators, the Arabic letter mark, zero-width
+    // space and the byte order mark. A joiner is no part of the list.
+    for c in [
+        '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}',
+        '\u{2068}', '\u{2069}', '\u{200e}', '\u{200f}', '\u{061c}', '\u{2028}', '\u{2029}',
+        '\u{200b}', '\u{feff}',
+    ] {
+        req.rp_name = format!("ab{c}cd");
+        req.user_name = format!("{c}name{c}");
+        req.user_display_name = format!("{c}{c}");
+        let (record, _) = make(&req, YES);
+        assert_eq!(
+            record.rp_name.as_deref(),
+            Some("abcd"),
+            "U+{:04X}",
+            u32::from(c)
+        );
+        assert_eq!(record.user_name, "name", "U+{:04X}", u32::from(c));
+        assert_eq!(record.user_display_name, None, "U+{:04X}", u32::from(c));
+    }
+    req.rp_name = "\u{202e}moc.elgoog\u{2066} bank".into();
+    req.user_name = "x".into();
+    req.user_display_name = "Al\u{200d}ice \u{1f469}\u{200d}\u{1f4bb}".into();
+    let (record, _) = make(&req, YES);
+    assert_eq!(record.rp_name.as_deref(), Some("moc.elgoog bank"));
+    assert_eq!(
+        record.user_display_name.as_deref(),
+        Some("Al\u{200d}ice \u{1f469}\u{200d}\u{1f4bb}")
+    );
     // Text of other scripts and emoji is text: kept as it is.
     req.rp_name = "Caf\u{e9} \u{65e5}\u{672c} \u{1f980}".into();
     req.user_display_name = "\u{c5}se".into();

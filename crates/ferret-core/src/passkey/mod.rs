@@ -50,7 +50,9 @@ mod prf;
 mod psl;
 
 pub use authdata::{AAGUID, FLAG_AT, FLAG_BE, FLAG_BS, FLAG_ED, FLAG_UP, FLAG_UV};
-pub use candidates::{PasskeySite, StoredPasskeyRef, passkey_candidates, passkey_site};
+pub use candidates::{
+    PasskeySite, StoredPasskeyRef, passkey_candidates, passkey_candidates_for, passkey_site,
+};
 pub use client_data::Ceremony;
 pub use cose::{COSE_ALG_ES256, PasskeyPrivateKey};
 pub use origin::{CanonicalOrigin, RpId, canonical_origin, validate_rp_id};
@@ -95,9 +97,9 @@ pub const CREDENTIAL_ID_LEN: usize = 32;
 /// `authenticatorAttachment` of every answer: Ferret is a platform
 /// authenticator, as the synced passkeys of the operating systems are.
 pub const AUTHENTICATOR_ATTACHMENT: &str = "platform";
-/// `getTransports()` of a new passkey, in the order of WebAuthn's
-/// `AuthenticatorTransport`: what synced passkeys report today.
-pub const TRANSPORTS: [&str; 2] = ["internal", "hybrid"];
+/// `getTransports()` of a new passkey, in lexicographical order as WebAuthn
+/// requires (§ 5.2.1): what synced passkeys report today.
+pub const TRANSPORTS: [&str; 2] = ["hybrid", "internal"];
 
 fn bad_options() -> Error {
     Error::Malformed(MalformedKind::WebauthnOptions)
@@ -420,11 +422,16 @@ pub struct CreatedPasskey {
 
 redacted_debug!(CreatedPasskey);
 
-/// A text the site chose, as it is stored and shown: control characters
-/// removed (they have no place in a name and can move the cursor or hide
-/// text in a window). The length limit is checked on the request before this.
+/// A text the site chose, as it is stored and shown: the characters that
+/// may not be in a folder or method name are removed (control characters,
+/// line and paragraph separators, bidirectional controls, zero-width space
+/// and byte order mark). They can move the cursor, reorder what stands next
+/// to the text or hide it in a window. A site's text cannot be refused, so
+/// they are dropped. The length limit is checked on the request before this.
 fn site_text(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect()
+    s.chars()
+        .filter(|c| !crate::item::folders::is_refused(*c))
+        .collect()
 }
 
 /// [`site_text`], or `None` when nothing is left.

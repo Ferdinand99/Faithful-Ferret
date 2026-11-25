@@ -77,8 +77,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -150,8 +150,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -231,8 +231,8 @@
           },
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -315,8 +315,8 @@
           },
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -399,8 +399,8 @@
           },
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -472,8 +472,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -545,8 +545,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -626,8 +626,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -701,8 +701,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -774,8 +774,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -847,8 +847,81 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
+          ]
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/create/valid/014",
+      "title": "bidirectional controls, separators, zero-width space and byte order mark are removed, a joiner stays",
+      "op": "passkey.create",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+      ],
+      "input": {
+        "created_ms": "1700000000000",
+        "existing_credentials": [],
+        "origin": "https://example.com",
+        "request": {
+          "algorithms": [
+            -7,
+            -257
+          ],
+          "challenge": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "cred_props": false,
+          "exclude": [],
+          "prf": null,
+          "rp_id": null,
+          "rp_name": "‮moc.elgoog⁦⁩‎‏ bank",
+          "user_display_name": "⁧⁨Al‍ice",
+          "user_id": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "a b c​d﻿e؜f‪‫‬‭",
+          "user_verification": "preferred"
+        },
+        "top_origin_is_same": true,
+        "uv": {
+          "user_present": true,
+          "user_verified": true
+        }
+      },
+      "intermediate": {
+        "cose_key": "a50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+        "flags": 93
+      },
+      "expect": {
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "private_scalar": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+          "rp_id": "example.com",
+          "rp_name": "moc.elgoog bank",
+          "user_display_name": "Al‍ice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "abcdef"
+        },
+        "response": {
+          "alg": -7,
+          "attestation_object": "a363666d74646e6f6e656761747453746d74a068617574684461746158a4a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "authenticator_attachment": "platform",
+          "authenticator_data": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d00000000dc704a44b994410ca689ed8d71a84ac30020a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfa50102032620012158204c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574225820f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "client_data_json": "{\"type\":\"webauthn.create\",\"challenge\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"origin\":\"https://example.com\",\"crossOrigin\":false}",
+          "cred_props": null,
+          "id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf": null,
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "transports": [
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -917,8 +990,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -990,8 +1063,8 @@
           "prf": null,
           "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
           "transports": [
-            "internal",
-            "hybrid"
+            "hybrid",
+            "internal"
           ]
         }
       },
@@ -2843,6 +2916,93 @@
       "expect_error": null
     },
     {
+      "id": "passkey/candidates/valid/013",
+      "title": "a requested RP ID with a trailing dot is the same RP ID without it",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com",
+        "rp_id": "example.com.",
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          0
+        ]
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/candidates/valid/014",
+      "title": "an origin with a trailing dot has the host without it",
+      "op": "passkey.candidates",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "allow": [],
+        "origin": "https://login.example.com.",
+        "rp_id": null,
+        "stored": [
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "example.com"
+          },
+          {
+            "id": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+            "rp_id": "login.example.com"
+          },
+          {
+            "id": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+            "rp_id": "other.test"
+          },
+          {
+            "id": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+            "rp_id": "xn--bcher-kva.example"
+          }
+        ],
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "indexes": [
+          1,
+          2
+        ]
+      },
+      "expect_error": null
+    },
+    {
       "id": "passkey/candidates/valid/012",
       "title": "a subdomain without passkeys of its own finds none of the parent's",
       "op": "passkey.candidates",
@@ -3438,6 +3598,27 @@
         "origin": "https://xn--exmple-4nf.com",
         "rp_id": "xn--exmple-4nf.com",
         "rp_id_unicode": "xn--exmple-4nf.com"
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey/site/valid/008",
+      "title": "a trailing dot is removed from the origin and from the RP ID",
+      "op": "passkey.site",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "origin": "https://login.example.com.",
+        "rp_id": "example.com.",
+        "top_origin_is_same": true
+      },
+      "expect": {
+        "host_unicode": "login.example.com",
+        "origin": "https://login.example.com",
+        "rp_id": "example.com",
+        "rp_id_unicode": "example.com"
       },
       "expect_error": null
     },

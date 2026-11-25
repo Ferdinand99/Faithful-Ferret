@@ -214,11 +214,28 @@ struct Create {
     display_name: String,
 }
 
-/// Control characters are removed from the texts of the site (the C0 and C1
-/// controls and DEL), written out as code point ranges.
+/// The characters that may not be in a name are removed from the texts of the
+/// site: the C0 and C1 controls and DEL, the line and paragraph separators, the
+/// bidirectional controls, the zero-width space and the byte order mark,
+/// written out as code point ranges.
 fn without_controls(s: &str) -> String {
     s.chars()
-        .filter(|c| !matches!(u32::from(*c), 0..=0x1f | 0x7f..=0x9f))
+        .filter(|c| {
+            !matches!(
+                u32::from(*c),
+                0..=0x1f
+                    | 0x7f..=0x9f
+                    | 0x2028
+                    | 0x2029
+                    | 0x061c
+                    | 0x200b
+                    | 0x200e
+                    | 0x200f
+                    | 0x202a..=0x202e
+                    | 0x2066..=0x2069
+                    | 0xfeff
+            )
+        })
         .collect()
 }
 
@@ -354,7 +371,7 @@ fn valid_create(id: &str, title: &str, c: &Create, rp_id: &str) -> Result<Case, 
             "public_key_spki": hex(&spki(&p)),
             "alg": -7,
             "authenticator_attachment": "platform",
-            "transports": ["internal", "hybrid"],
+            "transports": ["hybrid", "internal"],
             "cred_props": if c.cred_props { json!({ "rk": true }) } else { Value::Null },
             "prf": prf,
         },
@@ -708,6 +725,19 @@ fn candidate_cases(cases: &mut Vec<Case>) {
         "the requested RP ID is made canonical (lower case) before the comparison",
         &[0],
     ));
+    let mut c = Cand::new(page, &stored);
+    c.rp_id = Some("example.com.".into());
+    cases.push(c.valid(
+        "passkey/candidates/valid/013",
+        "a requested RP ID with a trailing dot is the same RP ID without it",
+        &[0],
+    ));
+    let c = Cand::new("https://login.example.com.", &stored);
+    cases.push(c.valid(
+        "passkey/candidates/valid/014",
+        "an origin with a trailing dot has the host without it",
+        &[1, 2],
+    ));
     let c = Cand::new("https://sub.login.example.com", &stored);
     cases.push(c.valid(
         "passkey/candidates/valid/012",
@@ -827,6 +857,17 @@ fn site_cases(cases: &mut Vec<Case>) {
             "xn--exmple-4nf.com",
             "xn--exmple-4nf.com",
             "xn--exmple-4nf.com",
+        ),
+    ));
+    let s = Site::new("https://login.example.com.", Some("example.com."));
+    cases.push(s.valid(
+        "passkey/site/valid/008",
+        "a trailing dot is removed from the origin and from the RP ID",
+        (
+            "https://login.example.com",
+            "login.example.com",
+            "example.com",
+            "example.com",
         ),
     ));
     let s = Site::new("http://localhost", None);
@@ -993,6 +1034,17 @@ pub(crate) fn passkey() -> Result<Vec<u8>, Error> {
     cases.push(valid_create(
         "passkey/create/valid/011",
         "an empty rp name and a display name of control characters only are not stored",
+        &c,
+        "example.com",
+    )?);
+    let mut c = Create::new(base);
+    c.rp_name = "\u{202e}moc.elgoog\u{2066}\u{2069}\u{200e}\u{200f} bank".into();
+    c.user_name =
+        "a\u{2028}b\u{2029}c\u{200b}d\u{feff}e\u{061c}f\u{202a}\u{202b}\u{202c}\u{202d}".into();
+    c.display_name = "\u{2067}\u{2068}Al\u{200d}ice".into();
+    cases.push(valid_create(
+        "passkey/create/valid/014",
+        "bidirectional controls, separators, zero-width space and byte order mark are removed, a joiner stays",
         &c,
         "example.com",
     )?);

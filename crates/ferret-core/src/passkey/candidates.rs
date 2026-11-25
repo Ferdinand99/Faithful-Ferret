@@ -13,7 +13,9 @@
 //! whether the user has a passkey for the site; the chooser is shown in every
 //! case (Fase 1 § 9.3).
 
-use super::{CallerContext, MAX_NAME, check_id_list, require_same_origin, resolve_rp_id};
+use super::{
+    CallerContext, GetRequest, MAX_NAME, check_id_list, require_same_origin, resolve_rp_id,
+};
 use crate::error::Error;
 use crate::item::display_host;
 
@@ -39,6 +41,9 @@ pub struct StoredPasskeyRef<'a> {
 /// limits of the request are those of Fase 1 § 9.2. An empty result is not an
 /// error.
 ///
+/// This checks only what it uses (`allow`, `rp_id`, the origin); call
+/// [`passkey_candidates_for`] to check the whole request.
+///
 /// Spec: Fase 1 § 9.2, § 9.3.
 pub fn passkey_candidates(
     ctx: &CallerContext,
@@ -61,6 +66,21 @@ pub fn passkey_candidates(
         })
         .map(|(i, _)| i)
         .collect())
+}
+
+/// [`passkey_candidates`] for a whole `get` request: the request is checked
+/// first as `passkey_get` checks it (`GetRequest::validate`: challenge size,
+/// lists, `prf` input), so that a request that cannot be answered gives its
+/// error before a chooser is shown and not after the user has clicked.
+///
+/// Spec: Fase 1 § 9.2, § 9.3.
+pub fn passkey_candidates_for(
+    ctx: &CallerContext,
+    req: &GetRequest,
+    stored: &[StoredPasskeyRef<'_>],
+) -> Result<Vec<usize>, Error> {
+    req.validate()?;
+    passkey_candidates(ctx, req.rp_id.as_deref(), &req.allow, stored)
 }
 
 /// The site of a request as Ferret's chooser shows it.
