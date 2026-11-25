@@ -98,6 +98,11 @@ test("passkey_matrix_runs_every_selected_case_and_writes_the_report", async (t) 
     for (const c of run.cases) assert.ok(run.results.has(c.id), `${channel}: ${c.id} has no result`);
     assert.equal(run.matrix.unsafe, 0, `${channel}: unsafe answers: ${JSON.stringify(run.matrix.rows.filter((r) => r.unsafe.length))}`);
     console.error(`${channel}: ${run.matrix.passed} of ${run.matrix.total} passed, ${run.matrix.notRun} not run (${run.matrix.needsProvider} need the Ferret provider), route not checked for ${run.matrix.routeUnchecked}`);
+    if (run.throughBridge !== null) {
+      // The passkey scripts were on: a run in which no request went through the bridge proves nothing about it.
+      console.error(`${channel}: ${run.throughBridge} requests went through the passkey bridge`);
+      if (run.matrix.rows.some((r) => r.status !== "not-run")) assert.ok(run.throughBridge > 0, `${channel}: the passkey scripts were on, and no request went through the bridge`);
+    }
   }
 });
 

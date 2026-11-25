@@ -284,7 +284,7 @@ test("a_content_script_reaches_only_the_content_types_and_never_while_locked", a
   assert.equal(await router.onMessage(report, sender), undefined);
   assert.deepEqual(log.map((e) => [e.type, e.ctx.channel, e.ctx.sender.tabId, e.ctx.sender.frameId]), [["frame_report", "content", 7, 2]]);
   // A report handler reads the state and hands the report on, and nothing else: no call, no lock, no touch.
-  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["capture", "channel", "report", "sender", "state", "type"]);
+  assert.deepEqual(Object.keys(log[0].ctx).sort(), ["capture", "channel", "passkey", "report", "sender", "state", "type"]);
   // The report reaches the one report operation and no other, and answers nothing.
   /** @type {Array<[string, unknown]>} */
   const reached = [];

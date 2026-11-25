@@ -47,6 +47,8 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * passkey) and `prf_options` reads what the unlock window needs for it; all three work while locked (`prf_window` only opens the page). `pin_off` only deletes the PIN (the safe
  * direction, and it needs no key: someone who forgot the PIN turns it off from the locked popup). `pin_set` makes a copy of
  * the vault key, so it is checked like every other message.
+ * `passkey_request`, `passkey_abort`, `passkey_foreign` and `passkey_ping` are the passkey bridge's reports of a page:
+ * taken while the vault is locked (Ferret's own window opens it), and a page's activity never moves the deadline.
  */
 export const LOCK_EXEMPT = Object.freeze([
   "sign_in",
@@ -68,6 +70,10 @@ export const LOCK_EXEMPT = Object.freeze([
   "prf_options",
   "prf_unlock",
   "prf_window",
+  "passkey_request",
+  "passkey_abort",
+  "passkey_foreign",
+  "passkey_ping",
 ]);
 
 export const LOCK_AT_KEY = "lock_at";

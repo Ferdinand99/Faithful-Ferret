@@ -51,6 +51,12 @@ export const REPORT_OP = "fill_report";
 export const CAPTURE_OP = "capture_event";
 
 /**
+ * The one core operation the passkey bridge's reports may reach (the `passkeys` feature): like the capture's, the router
+ * names the type and the sender it checked, and the handler hands on only the body.
+ */
+export const PASSKEY_OP = "passkey_event";
+
+/**
  * @typedef {"ui" | "content"} Channel
  * @typedef {{
  *   channel: Channel,
@@ -63,6 +69,7 @@ export const CAPTURE_OP = "capture_event";
  *   call?: (op: string, args?: unknown) => Promise<unknown>,
  *   report?: (args: unknown) => Promise<void>,
  *   capture?: (body: unknown) => Promise<void>,
+ *   passkey?: (body: unknown) => Promise<void>,
  *   touch?: () => void,
  *   setSeconds?: (n: number) => Promise<void>,
  *   getSeconds?: () => Promise<number>,
@@ -72,7 +79,8 @@ export const CAPTURE_OP = "capture_event";
  *   `runtime` (UI only) is the extension's id and address of its own pages, for a handler that checks the sender again
  *   (`isTopLevelExtensionPage`).
  *   `report` (content only) hands a report to `REPORT_OP`. `capture` (content only) hands the body of a capture message to
- *   `CAPTURE_OP`, with the type and the sender the router has checked.
+ *   `CAPTURE_OP`, with the type and the sender the router has checked. `passkey` (content only) does the same for
+ *   `PASSKEY_OP`.
  * @typedef {{ types: readonly string[], channel: Channel, handle: (body: any, ctx: HandlerContext) => unknown }} Handler
  */
 
@@ -299,6 +307,9 @@ export function createRouter({
         report,
         capture: async (/** @type {unknown} */ body) => {
           await call(CAPTURE_OP, { type: message.type, sender: from, body });
+        },
+        passkey: async (/** @type {unknown} */ body) => {
+          await call(PASSKEY_OP, { type: message.type, sender: from, body });
         },
       });
       try {
