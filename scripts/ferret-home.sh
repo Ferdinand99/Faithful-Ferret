@@ -12,7 +12,7 @@
 #       the tag is a release tag of this checkout and this checkout is at it; the image
 #       of that release exists for this machine's architecture and for arm64; its
 #       signature is good (cosign, when it is installed; --no-cosign says so openly);
-#       the image's revision label is the commit of the tag; it has no test features;
+#       the image's revision label is the commit of the tag; it has no test features (a release has the cargo feature quick-unlock; releases from before it have none);
 #       and the compose file passes `config`. The digest of the image is written down
 #       (docker/home-image, docker/home-releases.log) and the stack runs by digest.
 #       Runs on the host of the stack. Never run it without a yes for that host.
@@ -362,7 +362,9 @@ up() {
   [ "$built_version" = "$version" ] || refuse "the version of the image (${built_version:-none}) is not $version"
   info="$(dk run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint /usr/local/bin/ferret "$digest_ref" --build-info)"
   printf '%s\n' "$info" | grep -qx "ferret $version" || refuse "the image says it is not version $version"
-  printf '%s\n' "$info" | grep -qx 'features: none' || refuse "the image has cargo features ($(printf '%s' "$info" | sed -n 's/^features: //p')); a stack with real data runs a release build"
+  # A release has the cargo feature quick-unlock (PIN and passkey unlock) and nothing else; a release from before that
+  # has none. Anything else (the test clock of the end-to-end image, for one) is not a release build.
+  printf '%s\n' "$info" | grep -Eqx 'features: (none|quick-unlock)' || refuse "the image has cargo features ($(printf '%s' "$info" | sed -n 's/^features: //p')); a stack with real data runs a release build"
   # The web vault of the image was built with the locked WebAssembly package or with the package of its own
   # release run, never with one built from the tree (a test build). The line is required: this script
   # only runs for a tag whose server prints it.
@@ -474,14 +476,14 @@ drill() {
     if printf '%s\n' "$listeners" | grep -qE "[:.]${p}[[:space:]]"; then refuse "port $p is in use on the build machine"; fi
   done
 
-  say "building the images (the server without cargo features, the copy container, the test target)"
+  say "building the images (the server with the release's cargo feature, the copy container, the test target)"
   dk build --label "$drill_label" -t ferret-drill-app:local \
-    --build-arg VERSION=drill --build-arg REVISION="$revision" \
+    --build-arg FEATURES=quick-unlock --build-arg VERSION=drill --build-arg REVISION="$revision" \
     -f docker/server.Dockerfile . >&2
   export FERRET_IMAGE=ferret-drill-app:local
   dcd build ferret-drill-copy ferret-drill-target >&2
   # The info of the build, for the record.
-  drill_check "the image has no test features" "features: none" "$(dk run --rm --network none --label "$drill_label" --entrypoint /usr/local/bin/ferret ferret-drill-app:local --build-info | sed -n 's/^\(features: .*\)$/\1/p')"
+  drill_check "the image has the release's feature and no test feature" "features: quick-unlock" "$(dk run --rm --network none --label "$drill_label" --entrypoint /usr/local/bin/ferret ferret-drill-app:local --build-info | sed -n 's/^\(features: .*\)$/\1/p')"
 
   say "test keys and the stack"
   dcd run -T --rm ferret-drill-keys >&2

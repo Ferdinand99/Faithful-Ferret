@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! ferret 0.1.0
-//! features: none
+//! features: quick-unlock
 //! wasm: lock 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c
 //! ```
 //!
@@ -13,15 +13,16 @@
 //! run that built the image, equal to its entry in the signed SHA256SUMS) or `tree` (a test
 //! build from the commit, never a release image). `wasm: none` is a build without a vault.
 //!
-//! The test stack uses it to tell a release image (no features) from the image
-//! of the end-to-end stack (`features: e2e-clock, quick-unlock`).
+//! The release image says `features: quick-unlock` (the release workflow, the stack with real data and
+//! the deploy drill require exactly that line); the image of the end-to-end stack says
+//! `features: e2e-clock, quick-unlock`, so a release image is told from a test image by the clock.
 
 use std::ffi::{OsStr, OsString};
 
 use crate::product::VERSION;
 
 /// The cargo features of this build that change what the server does, in
-/// alphabetical order. Empty for a release build.
+/// alphabetical order. A release build has `quick-unlock` and nothing else.
 ///
 /// Each name is pushed under its own `cfg`, so a feature that is off leaves no
 /// trace of its name in the binary.

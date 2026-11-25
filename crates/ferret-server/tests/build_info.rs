@@ -1,9 +1,11 @@
-//! `ferret --build-info` and the cargo features that only a test or a later release has on:
-//! `e2e-clock` (the test clock) and `quick-unlock` (PIN and passkey unlock). A release build reports no
-//! features, contains neither the clock hook nor the name of its variable, nor the name of the unlock
-//! feature, has no Unlock tab and no passkey routes, and ignores `FERRET_E2E_CLOCK_FILE`. The same tests
-//! run against the real binary (`CARGO_BIN_EXE_ferret`); the image tests of the test stack
-//! (scripts/lanbox-ferret-e2e-check.sh) run them again on the built images.
+//! `ferret --build-info` and the cargo features `e2e-clock` (the test clock, only in the end-to-end image) and
+//! `quick-unlock` (PIN and passkey unlock, on in a release). A release build reports `quick-unlock` and nothing
+//! else, contains neither the clock hook nor the name of its variable, has the Unlock tab and the passkey routes,
+//! and ignores `FERRET_E2E_CLOCK_FILE`. A build with the unlock feature off (the variant that proves the flag
+//! off) reports no features and has no trace of the feature. Whether a release image is built with the feature
+//! is not decided here: cargo cannot tell a release from a test build, so the release workflow, the deploy
+//! scripts and the image checks of scripts/lanbox-ferret-e2e-check.sh require the `features: quick-unlock` line.
+//! The same tests run against the real binary (`CARGO_BIN_EXE_ferret`).
 //!
 //! The binary also says where its web vault's WebAssembly package came from (the `wasm:` line),
 //! and a release image refuses one that was built from the tree.
@@ -26,7 +28,7 @@ const HOOK_MARKERS: [&str; 3] = ["FERRET_E2E_CLOCK_FILE", "e2e-clock", "e2e_cloc
 
 /// Bytes whose presence in a binary means that the unlock feature is in it: the feature name (both spellings) and the
 /// path of the Unlock tab of the admin pages. Each part of the feature that has a route or a page of its own adds its
-/// path here, in the change that adds it.
+/// path here, in the change that adds it. A build with the feature off holds none of them; a release has them all.
 #[cfg(not(feature = "quick-unlock"))]
 const UNLOCK_MARKERS: [&str; 4] = [
     "quick-unlock",
@@ -295,6 +297,19 @@ mod unlock_build {
     fn a_build_with_the_unlock_feature_says_so() {
         assert!(run_build_info(&[]).contains("quick-unlock"));
         assert!(contains(&std::fs::read(BIN).unwrap(), "quick-unlock"));
+    }
+
+    /// The build of a release: the Unlock tab of the admin pages is in the binary, and the features line is exactly
+    /// the unlock feature unless the test clock is built in too (only the end-to-end image has it).
+    #[test]
+    fn a_build_with_the_unlock_feature_has_the_unlock_tab() {
+        assert!(contains(&std::fs::read(BIN).unwrap(), "/settings/unlock"));
+        let expected = if cfg!(feature = "e2e-clock") {
+            "features: e2e-clock, quick-unlock"
+        } else {
+            "features: quick-unlock"
+        };
+        assert_eq!(run_build_info(&[]).lines().nth(1), Some(expected));
     }
 }
 

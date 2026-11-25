@@ -199,8 +199,8 @@ jobs:
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"
 
   # The server image: one image for linux/amd64 and linux/arm64, built from the tag on a native runner
-  # of each architecture (no emulation), without cargo features (a release build, nothing from the
-  # test stacks), with the version and the commit of the tag in its labels. The build jobs
+  # of each architecture (no emulation), with the one cargo feature a release has (quick-unlock: PIN and
+  # passkey unlock) and nothing from the test stacks (no e2e-clock), with the version and the commit of the tag in its labels. The build jobs
   # push each platform image by digest only (no tag): nothing refers to it until the publish job,
   # which runs in the protected environment "release", gives the tag and signs.
   #
@@ -285,7 +285,7 @@ jobs:
           file: docker/server.Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
-            FEATURES=
+            FEATURES=quick-unlock
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ steps.meta.outputs.revision }}
             WASM_SOURCE=release
@@ -305,7 +305,7 @@ jobs:
           info="$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint /usr/local/bin/ferret "$IMAGE@$DIGEST" --build-info)"
           printf '%s\n' "$info"
           printf '%s\n' "$info" | grep -qx "ferret $VERSION" || { echo "the image says it is not version $VERSION" >&2; exit 1; }
-          printf '%s\n' "$info" | grep -qx 'features: none' || { echo "the image has cargo features" >&2; exit 1; }
+          printf '%s\n' "$info" | grep -qx 'features: quick-unlock' || { echo "the image must have exactly the cargo feature quick-unlock" >&2; exit 1; }
           printf '%s\n' "$info" | grep -qx "wasm: release $WASM_SHA256" || { echo "the image does not say that its web vault carries the package $WASM_SHA256 of this run" >&2; exit 1; }
       - name: Note the digest
         env:

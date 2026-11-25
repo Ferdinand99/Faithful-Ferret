@@ -10,12 +10,15 @@
 #   scripts/lanbox-ferret-e2e-check.sh snapshot the snapshot and restore check only
 #
 # What it checks:
-#  * release_image_has_no_e2e_clock: an image built without FEATURES says
-#    `features: none`, and its binary holds neither the clock hook nor the name
-#    of its variable nor the name of the unlock feature; the image of the e2e stack
-#    says `features: e2e-clock, quick-unlock`.
+#  * release_image_has_no_e2e_clock: an image built as a release is (FEATURES=quick-unlock, the
+#    value of the release workflow) says `features: quick-unlock`, and its binary holds neither the
+#    clock hook nor the name of its variable but does hold the unlock feature (its name and the
+#    source path of its passkey routes); the image of the e2e stack says `features: e2e-clock, quick-unlock`.
+#  * unlock_flag_off_leaves_no_trace: an image built with FEATURES= says `features: none`, and its
+#    binary holds none of the markers of the clock or of the unlock feature.
 #  * e2e_clock_cannot_be_enabled_by_environment_alone: the release image ignores
 #    FERRET_E2E_CLOCK_FILE.
+#  * the release features: the FEATURES value of the release workflow is what the checks above build with.
 #  * image_runs_as_uid_1000: the server process of the image runs as uid/gid 1000
 #    with no capabilities, and owns its data.
 #  * reset_removes_only_ferret_test_resources: the reset step removes the
@@ -60,15 +63,24 @@ contains() { # name, text, needle
 }
 # Whether a line is in a text.
 has() { printf '%s\n' "$2" | grep -qxF -- "$1"; }
+# yes when a line is in a text, no otherwise.
+line_in() { if has "$1" "$2"; then echo yes; else echo no; fi; }
 
 release_image=ferret-e2e-check-release:latest
+off_image=ferret-e2e-check-off:latest
 probe=ferret-e2e-check-run
 uid_probe=ferret-e2e-check-uid
-markers=(FERRET_E2E_CLOCK_FILE e2e-clock e2e_clock quick-unlock quick_unlock /settings/unlock)
+clock_markers=(FERRET_E2E_CLOCK_FILE e2e-clock e2e_clock)
+# Strings of the unlock feature that a build with it off holds none of (tests/build_info.rs has the same list), and the ones of
+# them that a build with it on is known to hold (the feature name of --build-info and the source path of the passkey routes).
+unlock_markers=(quick-unlock quick_unlock /settings/unlock prf_routes)
+unlock_present=(quick-unlock prf_routes)
+# The cargo features of a release: what the release workflow builds the image with (the first FEATURES= line of it).
+release_features="$(grep -m1 -oE 'FEATURES=.*' .github/workflows/release.yml | cut -d= -f2)"
 
 cleanup() {
   dk rm -f "$uid_probe" "$probe" >/dev/null 2>&1 || true
-  dk image rm "$release_image" >/dev/null 2>&1 || true
+  dk image rm "$release_image" "$off_image" >/dev/null 2>&1 || true
   e2e_down >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -78,10 +90,11 @@ binary_has() { # image, string
   if dk run --rm --name "$probe" --label "$e2e_label" --entrypoint grep "$1" -q -- "$2" /usr/local/bin/ferret 2>/dev/null; then echo yes; else echo no; fi
 }
 # How many of the marker strings the binary holds.
-marker_count() { # image
-  local n=0 m
-  for m in "${markers[@]}"; do
-    [ "$(binary_has "$1" "$m")" = yes ] && n=$((n + 1))
+marker_count() { # image, marker...
+  local n=0 m image="$1"
+  shift
+  for m in "$@"; do
+    [ "$(binary_has "$image" "$m")" = yes ] && n=$((n + 1))
   done
   echo "$n"
 }
@@ -90,15 +103,27 @@ check_images() {
   echo "images"
   local log
   log="$(mktemp)"
-  dk build --label "$e2e_label" -t "$release_image" --build-arg FEATURES= -f docker/server.Dockerfile . >"$log" 2>&1 \
+  expect "the release workflow builds the image with the one cargo feature quick-unlock" quick-unlock "$release_features"
+  dk build --label "$e2e_label" -t "$release_image" --build-arg "FEATURES=$release_features" -f docker/server.Dockerfile . >"$log" 2>&1 \
     || { tail -n 40 "$log" >&2; rm -f "$log"; echo "the release image did not build" >&2; exit 1; }
   rm -f "$log"
   local info
   info="$(dk run --rm --name "$probe" --label "$e2e_label" "$release_image" --build-info)"
-  contains "release_image_has_no_e2e_clock: --build-info" "$info" "features: none"
-  expect "release_image_has_no_e2e_clock: the binary holds none of ${markers[*]}" 0 "$(marker_count "$release_image")"
+  expect "release_image_has_no_e2e_clock: --build-info says the release's feature line" yes "$(line_in "features: quick-unlock" "$info")"
+  expect "release_image_has_no_e2e_clock: the binary holds none of ${clock_markers[*]}" 0 "$(marker_count "$release_image" "${clock_markers[@]}")"
+  expect "release_image_has_the_unlock_feature: the binary holds all of ${unlock_present[*]}" "${#unlock_present[@]}" "$(marker_count "$release_image" "${unlock_present[@]}")"
   info="$(dk run --rm --name "$probe" --label "$e2e_label" -e FERRET_E2E_CLOCK_FILE=/tmp/clock "$release_image" --build-info)"
-  contains "e2e_clock_cannot_be_enabled_by_environment_alone" "$info" "features: none"
+  expect "e2e_clock_cannot_be_enabled_by_environment_alone" yes "$(line_in "features: quick-unlock" "$info")"
+
+  # unlock_flag_off_leaves_no_trace: the same image built with the flag off (the variant that proves it).
+  log="$(mktemp)"
+  dk build --label "$e2e_label" -t "$off_image" --build-arg FEATURES= -f docker/server.Dockerfile . >"$log" 2>&1 \
+    || { tail -n 40 "$log" >&2; rm -f "$log"; echo "the image with the flag off did not build" >&2; exit 1; }
+  rm -f "$log"
+  info="$(dk run --rm --name "$probe" --label "$e2e_label" "$off_image" --build-info)"
+  expect "unlock_flag_off_leaves_no_trace: --build-info says features: none" yes "$(line_in "features: none" "$info")"
+  expect "unlock_flag_off_leaves_no_trace: the binary holds none of ${clock_markers[*]} ${unlock_markers[*]}" 0 "$(marker_count "$off_image" "${clock_markers[@]}" "${unlock_markers[@]}")"
+  dk image rm "$off_image" >/dev/null 2>&1 || true
 
   # image_runs_as_uid_1000: start the release image and look at the process.
   dk run -d --name "$uid_probe" --label "$e2e_label" --tmpfs /data --cpus 1 --memory 256m \
