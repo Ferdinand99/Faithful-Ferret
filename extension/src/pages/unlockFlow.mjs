@@ -199,7 +199,9 @@ export function createUnlockFlow(request, { openTab = null } = {}) {
       try {
         const reply = await request("prf_options", {});
         if (reply?.ok === true && Array.isArray(reply.credentials)) return reply.credentials.length;
-        return reply?.ok === false && reply.reason === "prf_unavailable" ? 0 : null;
+        // Only a list can say how many there are: a refusal (`prf_unavailable` among them: no server, a device whose state is not
+        // known, a pinned record that is missing) says nothing about the account's passkeys.
+        return null;
       } catch {
         return null;
       }

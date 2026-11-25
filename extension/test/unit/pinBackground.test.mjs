@@ -409,12 +409,14 @@ test("a_higher_vk_epoch_wipes_without_counting", async () => {
   assert.equal((await v.status()).set, false);
 });
 
-test("an_epoch_of_the_server_other_than_the_pins_wipes_and_locks", async () => {
+test("an_epoch_of_the_server_above_the_pins_is_an_attack_warning_that_wipes_and_locks", async () => {
+  // No rekey proof is checked in this release: a server that shows a newer vault key than the device knows is refused as the
+  // core refuses it at a master password unlock. It is not "the PIN is out of date" (pin_stale is for the PIN's own record).
   const w = await withPin();
   await w.lockNow();
   w.state.vkEpoch = 2;
   const reply = await w.unlockWithPin();
-  assert.deepEqual(reply, { ok: false, reason: "pin_stale" });
+  assert.deepEqual(reply, { ok: false, reason: "attack_warning" });
   assert.equal(w.coreHost.state(), "locked");
   assert.equal((await w.status()).set, false);
 });

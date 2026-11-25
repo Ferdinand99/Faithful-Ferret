@@ -85,6 +85,16 @@ A password field whose verdict does not depend on the page carries
 `data-fixture-expect="fill"` (a clear control field) or `"reject"` (a hidden,
 covered or off-screen one that must never be filled).
 
+## The unlock specs
+
+`61` and `63` to `69` run the PIN and the passkey against the end-to-end stack (the list, and the matrix cell each one covers, is in
+`docs/TESTING-U3.md`). They share `unlock.mjs`: requests over the UI port from the test bridge, the PIN record as it lies in the
+extension's own database (read and changed from a page of the extension), a switch that takes the server away from the browser (a
+proxy that nothing listens on; the browser's own offline switch also stops workers from starting), and a scan of the profile folder
+for texts that must never be in it. The PINs that the specs use as sentinels start with `ferret-sentinel-pin-`: after an `e2e` run
+`scripts/lanbox-ext.sh` also reads the logs of every container of the stack for that text. `66` injects the test bridge's two
+content-script probes (`content.unlock_flood`, `content.unlock_storage`, in `test/bridge.mjs`) into a test page.
+
 ## The detection matrix
 
 `scripts/lanbox-ext.sh matrix [--channel release|esr] [--manifest mv3|mv2] [--part fill|capture|all] [--set corpus|holdout|parity] [--grep <case id>]`

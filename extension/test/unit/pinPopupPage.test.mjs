@@ -181,6 +181,50 @@ test("a_person_who_has_started_typing_the_master_password_keeps_that_form", asyn
   }
 });
 
+test("a_policy_answer_in_the_middle_of_a_master_password_unlock_keeps_the_form_for_its_error", async () => {
+  /** @type {() => void} */
+  let releasePolicy = () => {};
+  const heldPolicy = new Promise((resolve) => {
+    releasePolicy = () => resolve(undefined);
+  });
+  /** @type {() => void} */
+  let releaseUnlock = () => {};
+  const heldUnlock = new Promise((resolve) => {
+    releaseUnlock = () => resolve(undefined);
+  });
+  const world = await popupOf(
+    on,
+    locked({
+      unlock_policy: async () => (await heldPolicy, policy()),
+      unlock: async () => (await heldUnlock, { ok: false, reason: "wrong_credentials" }),
+    }),
+  );
+  try {
+    // The master password is sent: the submit empties the fields before it awaits the answer, so the fields say nothing.
+    /** @type {any} */ (one(world.root, "password")).value = "a master password";
+    const sent = submit(one(world.root, "unlock-form"));
+    await settle();
+    assert.equal(/** @type {any} */ (one(world.root, "password")).value, "");
+    assert.equal(one(world.root, "unlock-form")?.getAttribute("aria-busy"), "true");
+    // The policy answers now, in the middle of that unlock: the form stays, and only "Use PIN instead" is added.
+    releasePolicy();
+    await settle();
+    assert.equal(hidden(one(world.root, "unlock-form")), false);
+    assert.equal(hidden(one(world.root, "pin-unlock-form")), true);
+    assert.ok(one(world.root, "use-pin"));
+    // The unlock fails: its error is in the form the person can see.
+    releaseUnlock();
+    await sent;
+    await settle();
+    const error = /** @type {any} */ (byRole(one(world.root, "unlock-form"), "error")[0]);
+    assert.equal(error.hidden, false);
+    assert.notEqual(error.textContent, "");
+    assert.equal(hidden(one(world.root, "unlock-form")), false);
+  } finally {
+    world.cleanup();
+  }
+});
+
 test("a_pin_that_is_gone_shows_the_master_password_form_with_the_reason_in_the_alert", async () => {
   for (const [reply, expected] of /** @type {Array<[any, (c: Record<string, string>) => string]>} */ ([
     [{ ok: false, reason: "pin_wiped" }, (c) => c["unlock.pin.error.pin_wiped"]],

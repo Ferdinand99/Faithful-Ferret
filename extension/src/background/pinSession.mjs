@@ -113,9 +113,11 @@ export function pinSessionMethods(inner) {
       }
     }
     if (methods !== null) {
-      // Below the epoch this device has pinned is a downgrade (an attack); above it, the vault was rekeyed since.
+      // Below the epoch this device has pinned is a downgrade (an attack). Above it is no sign of a rekey either: this release
+      // checks no rekey proof, so a server that shows a newer vault key than the device knows is refused as the core refuses it
+      // at a master password unlock (`pinned_epoch_ahead`), and the page shows the attack warning, not "the PIN is out of date".
       if (num(methods.vk_epoch) < num(ready.vkEpoch)) throw new AccountError("pinned_epoch_downgrade");
-      if (num(methods.vk_epoch) > num(ready.vkEpoch)) throw new AccountError("epoch_mismatch");
+      if (num(methods.vk_epoch) > num(ready.vkEpoch)) throw new AccountError("pinned_epoch_ahead");
       const manifest = rowToCore(methods.manifest);
       const seeded = await env.client.vault.seed_pinned(ready.pinned, manifest);
       await env.client.vault.check_server_methods(manifest, serverMethods(methods.methods));
@@ -208,8 +210,8 @@ export function pinSessionMethods(inner) {
 
     /**
      * The checks that follow an unlock, then the session is opened (see the top of this file). Rejects with the code of
-     * a refusal: a `pinned_*` or `method_list_*` code of the core, `epoch_mismatch` (the server's vault key epoch is
-     * above the one the PIN's key has: the vault was rekeyed), `pinned_epoch_downgrade` (below it), or the `ApiError` of
+     * a refusal: a `pinned_*` or `method_list_*` code of the core, `pinned_epoch_ahead` (the server's vault key epoch is
+     * above the one the PIN's key has), `pinned_epoch_downgrade` (below it), or the `ApiError` of
      * a request the server refused (the device was revoked). The generation floors of the unlock methods are those of
      * `seed_pinned` (from the manifest) and `check_server_methods` (the server's list against the manifest), the same
      * calls as after a master password; the password wrap itself is not opened here, which is what the PIN replaces.
@@ -237,8 +239,8 @@ export function pinSessionMethods(inner) {
 
     /**
      * What the unlock window needs for its WebAuthn call. Needs live tokens (a device whose tokens have ended has nothing
-     * to unlock) and the network: the list is read now and kept nowhere. Rejects with an `AccountError` of `signed_out`,
-     * `pinned_missing` or `prf_unavailable` (no passkey is an unlock method), or the `ApiError` of the read.
+     * to unlock) and the network: the list is read now and kept nowhere. Rejects with an `AccountError` of `signed_out`
+     * or `pinned_missing`, or the `ApiError` of the read. An account with no passkey method gives an empty list.
      * @returns {Promise<{ rpId: string, credentials: Array<{ id: string, salt: string }> }>}
      */
     async prfOptions() {
@@ -246,7 +248,8 @@ export function pinSessionMethods(inner) {
       await livingDevice();
       const methods = await env.api.get("/api/vault/unlock-methods", { shape: "methods_res" });
       const credentials = passkeyWraps(methods).map((wrap) => ({ id: wrap.credential_id, salt: wrap.prf_salt }));
-      if (credentials.length === 0) throw new AccountError("prf_unavailable");
+      // An account with no passkey method has an empty list (the answer is true, and the settings page says "none"); the unlock
+      // window refuses to start with it. A refusal (`prf_unavailable`) is kept for what cannot be told.
       // The relying party id of every passkey is the exact host of the vault, never a parent domain.
       return { rpId: new URL(env.server).hostname, credentials };
     },

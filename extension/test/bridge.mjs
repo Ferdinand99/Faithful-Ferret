@@ -20,8 +20,96 @@ const ALLOWED = {
   "action.getBadgeText": (/** @type {any[]} */ args) => (browser.action ?? browser.browserAction).getBadgeText({ tabId: args[0]?.tab_id }),
   // What the offers store of the background holds for a tab: the offers' metadata and the SHA-256 of each
   // password, never a password. A build without saving passwords has no store, and says there is nothing to read.
+  // A content script of the extension in the top frame of a tab, for the specs that treat one as hostile (66-unlock-adversarial):
+  // the first sends every message of the unlock the way a content script can, the second reads what a content script can see of
+  // the extension's storage. Each function is a fixed one of this file; the harness names it and gives its arguments.
+  "content.unlock_flood": (/** @type {any[]} */ args) => runInTab(args[0].tab_id, unlockFloodProbe, args[0].messages),
+  "content.unlock_storage": (/** @type {any[]} */ args) => runInTab(args[0].tab_id, unlockStorageProbe, args[0].record),
   offers_peek: (/** @type {any[]} */ args) => testCore("offers_peek", { tab_id: args[0]?.tab_id, session: freshSession(), ...(args[0]?.clear === true ? { clear: true } : {}) }).catch(() => ({ available: false, offers: [] })),
 };
+
+/**
+ * Runs `func` as a content script in the top frame of a tab and returns its result. The tab needs the permission the real shortcut
+ * gives (activeTab) or a host permission, as for the extension's own injections.
+ * @param {number} tabId
+ * @param {(argument: any) => unknown} func
+ * @param {unknown} argument
+ */
+async function runInTab(tabId, func, argument) {
+  const [injected] = await browser.scripting.executeScript({ target: { tabId, frameIds: [0] }, func, args: [argument] });
+  return injected?.result ?? null;
+}
+
+/**
+ * Content-script side: sends each message the ways a content script can (the object and the text the pages use, on a runtime
+ * message and on the extension pages' port) and returns what came back. Nothing here may use a name of this file.
+ * @param {Array<{ type: string, body: unknown }>} messages
+ */
+async function unlockFloodProbe(messages) {
+  /** @type {{ replies: any[], port: any }} */
+  const out = { replies: [], port: null };
+  for (const [i, message] of messages.entries()) {
+    const wire = { v: 1, id: `c${i}`, type: message.type, body: message.body };
+    for (const payload of [wire, JSON.stringify(wire)]) {
+      try {
+        out.replies.push({ type: message.type, reply: (await browser.runtime.sendMessage(payload)) ?? null });
+      } catch (error) {
+        out.replies.push({ type: message.type, error: String(/** @type {any} */ (error)?.message ?? error).slice(0, 80) });
+      }
+    }
+  }
+  out.port = await new Promise((resolve) => {
+    const port = browser.runtime.connect({ name: "ferret-ui" });
+    /** @type {any[]} */
+    const got = [];
+    let disconnected = false;
+    port.onMessage.addListener((raw) => got.push(raw));
+    port.onDisconnect.addListener(() => {
+      disconnected = true;
+    });
+    try {
+      for (const [i, message] of messages.entries()) port.postMessage(JSON.stringify({ v: 1, id: `p${i}`, type: message.type, body: message.body }));
+    } catch {
+      // A closed port throws: that is the answer.
+    }
+    setTimeout(() => resolve({ got, disconnected }), 4000);
+  });
+  return out;
+}
+
+/**
+ * Content-script side: what a content script can do with the extension's storage and databases. `record` is a key and a value
+ * of the extension's session storage that the content script writes to the local storage, where it can.
+ * @param {{ key: string, value: unknown }} record
+ */
+async function unlockStorageProbe(record) {
+  const brief = (/** @type {any} */ error) => `threw: ${String(error?.message ?? error).slice(0, 60)}`;
+  /** @type {Record<string, any>} */
+  const out = { sessionArea: typeof (/** @type {any} */ (browser.storage).session), sessionRead: null, sessionWrite: null, databases: null, local: null };
+  try {
+    out.sessionRead = JSON.stringify(await /** @type {any} */ (browser.storage).session.get(null));
+  } catch (error) {
+    out.sessionRead = brief(error);
+  }
+  try {
+    await /** @type {any} */ (browser.storage).session.set({ "ferretPin|forged": "x" });
+    out.sessionWrite = "wrote";
+  } catch (error) {
+    out.sessionWrite = brief(error);
+  }
+  try {
+    out.databases = (await indexedDB.databases()).map((d) => d.name);
+  } catch (error) {
+    out.databases = brief(error);
+  }
+  try {
+    await browser.storage.local.set({ [record.key]: record.value });
+    out.local = Object.keys(await browser.storage.local.get(null)).filter((k) => k.startsWith("ferretPin"));
+  } catch (error) {
+    out.local = brief(error);
+  }
+  return out;
+}
 
 /** A popup session of the bridge's own: the offers it is told of are the ones it reads. */
 function freshSession() {

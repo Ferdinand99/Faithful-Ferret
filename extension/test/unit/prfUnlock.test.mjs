@@ -294,8 +294,9 @@ test("prf_unlock_needs_live_tokens_and_the_network", async () => {
   w.state.prfEnabled = true;
 
   // An account with no passkey method has nothing to offer.
+  // The background says so with an empty list (it is the truth; the window refuses to start with it, the settings page says "none").
   const none = await lockedWorld({ passkeys: [] });
-  assert.deepEqual(await none.options(), { ok: false, reason: "prf_unavailable" });
+  assert.deepEqual(await none.options(), { ok: true, rp_id: HOST, credentials: [] });
 
   // Tokens that have ended (the access token ran out and the renewal is refused): no options and no unlock, whatever the
   // passkey said, and the core is never asked.
