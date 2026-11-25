@@ -155,6 +155,8 @@ for arg in "$@"; do
       exit 0
       ;;
     ps)
+      # The log scan of a run asks for the ids of the stack's containers (-q): it needs one to read.
+      if grep -qx -- -q "$DOCKER_STUB_DIR/call-$n"; then echo stubcontainer; exit 0; fi
       # The containers the host has: "<owner label> <created at>" lines from DOCKER_STUB_PS (| between lines).
       [ -z "${DOCKER_STUB_PS:-}" ] || printf '%s\n' "$DOCKER_STUB_PS" | tr '|' '\n'
       exit 0
