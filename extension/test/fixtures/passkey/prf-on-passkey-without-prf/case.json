@@ -45,7 +45,7 @@
     "prf": "none",
     "stub": {
       "ceremony": "server-refused",
-      "prf": "none"
+      "prf": "results"
     }
   },
   "unsafe": [
@@ -53,5 +53,6 @@
       "id": "key-outside-core",
       "definition": "a private key or a PRF seed anywhere but inside the WASM core"
     }
-  ]
+  ],
+  "note": "The virtual authenticator returns PRF results for a passkey made without prf; Ferret returns none (UK120)."
 }
