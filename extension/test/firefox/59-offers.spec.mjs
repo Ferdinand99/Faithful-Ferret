@@ -132,3 +132,52 @@ test("submitting_the_sign_up_fixture_creates_one_offer_with_the_typed_values", a
     }
   }
 });
+
+test("the_https_access_is_shared_by_saving_passwords_and_the_passkeys_and_each_switch_turns_on_only_its_own_feature", async () => {
+  for (const channel of channels()) {
+    const { session, bridge, fromBridge } = await open(channel);
+    try {
+      const granted = async () => ((await fromBridge(() => bridge.invoke("permissions.getAll"))).origins ?? []).includes("https://*/*");
+      const stored = async (/** @type {string} */ key) => (await fromBridge(() => bridge.invoke("storage.local.get", key)))[key];
+      const checked = (/** @type {string} */ role) => session.content((/** @type {string} */ r) => document.querySelector(`[data-role="${r}"]`)?.getAttribute("aria-checked"), role);
+      const press = async (/** @type {string} */ role) => {
+        const [row] = await session.findAll(`[data-role="${role}"]`);
+        await session.click(row);
+      };
+      const goBack = (/** @type {string} */ id) => session.content((/** @type {string} */ i) => /** @type {HTMLElement} */ (document.querySelector(`[data-page="${i}"] [data-role="settings-back"]`)).click(), id);
+      await session.navigate(SETTINGS_URL);
+      await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page");
+      assert.equal(await granted(), false, `${channel}: no access to https pages before`);
+
+      // 1. Passkeys on first: the access is given, the passkeys are on and saving passwords stays off (no capture script).
+      await openSettingsPage(session, "provider");
+      await press("passkeys-switch");
+      await session.waitFor(async () => (await checked("passkeys-switch")) === "true", 15_000, "the passkeys switch on");
+      assert.equal(await granted(), true, channel);
+      assert.equal(await stored("use_passkeys"), true, channel);
+      assert.equal(await stored("offer_to_save"), undefined, `${channel}: the grant did not switch saving passwords on`);
+      await goBack("provider");
+      await openSettingsPage(session, "capture");
+      assert.equal(await checked("capture-switch"), "false", `${channel}: saving passwords is still off in the page`);
+
+      // 2. Saving passwords on as well, then off: the access stays for the passkeys, which stay on.
+      await press("capture-switch");
+      await session.waitFor(async () => (await checked("capture-switch")) === "true", 15_000, "the capture switch on");
+      await press("capture-switch");
+      await session.waitFor(async () => (await checked("capture-switch")) === "false", 15_000, "the capture switch off");
+      assert.equal(await stored("offer_to_save"), false, channel);
+      assert.equal(await stored("use_passkeys"), true, `${channel}: the passkeys stay on`);
+      assert.equal(await granted(), true, `${channel}: the access stays while the passkeys need it`);
+
+      // 3. The passkeys off with saving passwords off: the access goes.
+      await goBack("capture");
+      await openSettingsPage(session, "provider");
+      await press("passkeys-switch");
+      await session.waitFor(async () => (await checked("passkeys-switch")) === "false", 15_000, "the passkeys switch off");
+      await session.waitFor(async () => !(await granted()), 15_000, "the access removed");
+      assert.equal(await stored("use_passkeys"), false, channel);
+    } finally {
+      await session.quit();
+    }
+  }
+});

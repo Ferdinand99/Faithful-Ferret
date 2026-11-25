@@ -18,7 +18,6 @@ async function main() {
   const ui = connectUi(browser.runtime);
   const flow = createSettingsFlow(ui.request, {
     requestPermission: (wanted) => browser.permissions.request(wanted),
-    removePermission: (gone) => browser.permissions.remove(gone),
     openTab: (url) => browser.tabs.create({ url }),
   });
   const view = createSettingsView({ texts, flow });

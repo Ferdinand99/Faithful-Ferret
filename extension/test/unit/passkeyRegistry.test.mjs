@@ -288,7 +288,8 @@ test("the_background_wires_the_registry_to_the_session_and_the_permissions", () 
   // Only the registry writes the setting; the request broker reads it at every request and writes no storage at all.
   const sources = readSources();
   const named = [...sources].filter(([path, bytes]) => path.endsWith(".mjs") && /use_passkeys|PASSKEY_SETTING_KEY/.test(bytes.toString("utf8"))).map(([path]) => path);
-  assert.deepEqual(named.sort(), ["background/passkeyRegistry.mjs", "background/passkeyRequests.mjs"]);
+  // (httpsAccess.mjs names it as one of the two features that share the permission for https pages and only reads it; the cleanup of a build without the feature names it to remove it.)
+  assert.deepEqual(named.sort(), ["background/httpsAccess.mjs", "background/passkeyCleanup.mjs", "background/passkeyRegistry.mjs", "background/passkeyRequests.mjs"]);
   assert.doesNotMatch(/** @type {Buffer} */ (sources.get("background/passkeyRequests.mjs")).toString("utf8"), /storageLocal\.(?:set|remove)/);
 });
 

@@ -222,7 +222,7 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       // The main screen first: the groups with a row each, and no sub-page; the popup's bar stays.
       assert.deepEqual(
         await w.session.content(() => [...document.querySelectorAll('[data-role="settings-main"] [class~="ff-nav-row"]')].map((b) => b.getAttribute("data-role"))),
-        ["settings-row-capture", "settings-row-never", "settings-row-pin", "settings-row-passkeys", "settings-row-lock", "settings-row-credits"],
+        ["settings-row-capture", "settings-row-never", "settings-row-pin", "settings-row-passkeys", "settings-row-provider", "settings-row-provider-never", "settings-row-lock", "settings-row-credits"],
         channel,
       );
       assert.equal(await w.page.visible('[data-role="settings-page"]'), false, `${channel}: no sub-page on the main screen`);
@@ -234,9 +234,10 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       await w.session.chrome(() => Services.prefs.setIntPref("layout.css.prefers-color-scheme.content-override", 0));
       await sleep(500);
       await w.session.screenshot(shotPath(channel, "ext-settings-1-main"));
-      for (const [n, id] of /** @type {const} */ ([[2, "capture"], [3, "pin"], [4, "lock"]])) {
+      for (const [n, id] of /** @type {const} */ ([[2, "capture"], [3, "pin"], [4, "lock"], [6, "provider"], [7, "provider-never"]])) {
         await openSettingsPage(w.session, id);
         if (id === "pin") await w.session.waitFor(() => w.session.content(() => (document.querySelector('[data-role="unlock-pin-status"]')?.textContent ?? "") !== ""), 20_000, "the PIN status");
+        if (id === "provider") await w.session.waitFor(() => w.session.content(() => (document.querySelector('[data-role="passkeys-summary"]')?.textContent ?? "") !== ""), 20_000, "the passkeys state");
         await sleep(500);
         await w.session.screenshot(shotPath(channel, `ext-settings-${n}-${id}`));
         await w.page.click(`[data-page="${id}"] [data-role="settings-back"]`);

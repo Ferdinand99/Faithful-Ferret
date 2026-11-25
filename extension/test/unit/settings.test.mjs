@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { join as joinPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "../../scripts/build.mjs";
-import { LOCK_CHOICES, captureErrorKey, choiceKey, createSettingsFlow, errorKey } from "../../src/pages/settingsFlow.mjs";
+import { LOCK_CHOICES, captureErrorKey, choiceKey, createSettingsFlow, errorKey, passkeyErrorKey } from "../../src/pages/settingsFlow.mjs";
 import { UiError } from "../../src/pages/ui.mjs";
 import { UI_TYPES, encode } from "../../src/shared/protocol.mjs";
 import { extensionRoot, makeRoot } from "./buildHelpers.mjs";
@@ -168,7 +168,7 @@ test("turning_on_offer_to_save_asks_for_https_access_in_the_settings_tab_and_exp
   // Turning it on asks for https pages, first and in the click, and only then tells the background.
   assert.deepEqual(await flow.capture.turnOn(), { ok: true, on: true, permission: true, never: [] });
   assert.deepEqual(asked, [{ origins: ["https://*/*"] }]);
-  assert.deepEqual(order.slice(-2), ["permission", 'request {"enable":true}']);
+  assert.deepEqual(order.slice(-3), ["permission", 'request {"pending":true}', 'request {"enable":true}']);
   // The user says no: the background is only asked what is true (nothing is switched on) and the reason is shown.
   order.length = 0;
   const refused = await make(false).capture.turnOn();
@@ -243,42 +243,35 @@ test("the_eff_word_list_credit_is_on_the_settings_page_with_saving_on_and_off", 
   }
 });
 
-test("turning_offer_to_save_off_takes_the_access_to_https_pages_back", async () => {
+test("turning_offer_to_save_off_leaves_the_access_to_the_background", async () => {
   /** @type {string[]} */
   const order = [];
-  const make = (/** @type {{ refuse?: boolean, removeFails?: boolean, withRemove?: boolean }} */ { refuse = false, removeFails = false, withRemove = true } = {}) =>
-    createSettingsFlow(
-      async (type, body) => {
-        encode(type, body);
-        order.push(`request ${JSON.stringify(body)}`);
-        return refuse && body.enable === false ? { ok: false, reason: "unknown", on: true, permission: true, never: [] } : { ok: true, on: body.enable !== false, permission: body.enable !== false, never: [] };
-      },
-      withRemove
-        ? {
-            removePermission: async (gone) => {
-              order.push(`remove ${JSON.stringify(gone)}`);
-              if (removeFails) throw new Error("x");
-              return true;
-            },
-          }
-        : {},
-    );
-  // The background switches capture off first; then the access goes; the state is read again.
+  const make = (/** @type {{ refuse?: boolean }} */ { refuse = false } = {}) =>
+    createSettingsFlow(async (type, body) => {
+      encode(type, body);
+      order.push(`request ${JSON.stringify(body)}`);
+      return refuse && body.enable === false ? { ok: false, reason: "unknown", on: true, permission: true, never: [] } : { ok: true, on: body.enable !== false, permission: body.enable !== false, never: [] };
+    });
+  // The page only says "off": the background switches capture off and takes the access back itself, unless the passkeys need it
+  // (the permission is shared). The page never removes it.
   const off = await make().capture.turnOff();
-  assert.deepEqual(order, ['request {"enable":false}', 'remove {"origins":["https://*/*"]}', "request {}"]);
+  assert.deepEqual(order, ['request {"enable":false}']);
   assert.equal(off.ok, true);
-  // A background that refuses leaves the access alone.
+  // A background that refuses is shown as it is.
   order.length = 0;
   const refused = await make({ refuse: true }).capture.turnOff();
   assert.deepEqual(order, ['request {"enable":false}']);
   assert.equal(refused.ok, false);
-  // An access that cannot be removed is not an error of turning it off (the state read next says what is true).
-  order.length = 0;
-  assert.equal((await make({ removeFails: true }).capture.turnOff()).ok, true);
-  // A page with no way to remove it only switches capture off.
-  order.length = 0;
-  assert.equal((await make({ withRemove: false }).capture.turnOff()).ok, true);
-  assert.deepEqual(order, ['request {"enable":false}']);
+  // The same for the passkeys' switch.
+  /** @type {string[]} */
+  const seen = [];
+  const passkeys = createSettingsFlow(async (type, body) => {
+    encode(type, body);
+    seen.push(`${type} ${JSON.stringify(body)}`);
+    return { ok: true, on: body.enable === true, permission: true, signed_in: true, never: [], recent_unlock: true };
+  }).passkeys;
+  assert.equal((await passkeys.turnOff()).ok, true);
+  assert.deepEqual(seen, ['passkey_settings {"enable":false}']);
 });
 
 /** The settings view of a built package, with a flow over a fake background that keeps what it is told. */
@@ -287,7 +280,7 @@ async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boole
   const flowModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsFlow.mjs")).href);
   const viewModule = await import(pathToFileURL(joinPath(dir, "pages", "settingsView.mjs")).href);
   const catalog = JSON.parse(readFileSync(joinPath(dir, `locales.${lang}.json`), "utf8"));
-  const state = { lock, on, permission, never: ["shop.example.net"], autoOpen: true };
+  const state = { lock, on, permission, never: ["shop.example.net"], autoOpen: true, pk: { on: false, never: ["bank.example"], recent: true } };
   /** @type {string[]} */
   const log = [];
   const flow = flowModule.createSettingsFlow(
@@ -296,6 +289,14 @@ async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boole
       if (type === "settings") {
         if (typeof body.lock_seconds === "number") state.lock = body.lock_seconds;
         return { lock_seconds: state.lock };
+      }
+      if (type === "passkey_settings") {
+        if (body.enable === true) state.pk.on = state.permission;
+        if (body.enable === false) state.pk.on = false;
+        if (typeof body.recent_unlock === "boolean") state.pk.recent = body.recent_unlock;
+        if (typeof body.never_remove === "string") state.pk.never = state.pk.never.filter((h) => h !== body.never_remove);
+        if (body.never_clear === true) state.pk.never = [];
+        return { ok: true, on: state.pk.on, permission: state.permission, signed_in: true, never: state.pk.never, recent_unlock: state.pk.recent };
       }
       if (body.enable === true) state.on = state.permission;
       if (body.enable === false) state.on = false;
@@ -308,11 +309,6 @@ async function viewOf(/** @type {string} */ dir, /** @type {{ permission?: boole
         log.push("permission request");
         if (grant) state.permission = true;
         return grant;
-      },
-      removePermission: async () => {
-        log.push("permission remove");
-        state.permission = false;
-        return true;
       },
     },
   );
@@ -369,23 +365,25 @@ test("the_settings_view_turns_offer_to_save_on_and_off_with_the_permission_asked
     assert.equal(toggle.getAttribute("role"), "switch");
     on.log.length = 0;
     fire(toggle, "click");
-    assert.deepEqual(on.log, ["permission request"], "the request is made before the click handler returns");
+    assert.deepEqual(on.log, ["permission request", 'capture_settings {"pending":true}'], "the request is made first, in the click, then the mark");
     await settle();
-    assert.deepEqual(on.log, ["permission request", 'capture_settings {"enable":true}']);
+    // The switch marks that it asked (the permission is shared with the passkeys), the grant lands, and the background is told to turn on.
+    assert.deepEqual(on.log, ["permission request", 'capture_settings {"pending":true}', 'capture_settings {"enable":true}']);
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     assert.equal(one(on.root, "capture-state")?.textContent, "On");
     assert.equal(one(on.root, "capture-summary")?.textContent, "On", "the row of the main screen says it too");
     assert.equal(one(on.root, "never-host")?.textContent.includes("shop.example.net"), true, "the never list is shown");
-    // Turning it off: the background first, then the access goes.
+    // Turning it off: only the background is told (it takes the access back unless the passkeys need it).
     on.log.length = 0;
     await click(toggle);
-    assert.deepEqual(on.log.slice(0, 2), ['capture_settings {"enable":false}', "permission remove"]);
+    assert.deepEqual(on.log, ['capture_settings {"enable":false}']);
     assert.equal(toggle.getAttribute("aria-checked"), "false");
     // The user says no in the prompt: nothing is switched on.
     const refused = await viewOf(result.dir, { grant: false });
     await click(/** @type {any} */ (one(refused.root, "capture-switch")));
     assert.equal(refused.state.on, false);
     assert.equal(refused.log.some((line) => line.includes('"enable":true')), false);
+    assert.ok(refused.log.includes('capture_settings {"pending":false}'), "the mark is cleared when the person says no");
     // The prompt closed the popup that asked and the user said yes: the next time the view is built it says the access is there, and
     // the next press turns it on (a request for an access that is held is answered at once, with no prompt).
     const closed = await viewOf(result.dir, { permission: true });
@@ -425,7 +423,8 @@ test("the_settings_view_groups_its_rows_and_a_group_goes_with_its_flag", async (
   const env = makeRoot();
   try {
     const cases = /** @type {const} */ ([
-      ["all", undefined, ["capture", "never", "pin", "passkeys", "lock", "credits"], ["Filling and saving", "Unlocking", "Security", "About"]],
+      ["all", undefined, ["capture", "never", "pin", "passkeys", "provider", "provider-never", "lock", "credits"], ["Filling and saving", "Unlocking", "Passkeys on websites", "Security", "About"]],
+      ["only-provider", ["passkeys"], ["provider", "provider-never", "lock", "credits"], ["Passkeys on websites", "Security", "About"]],
       ["no-unlock", ["save"], ["capture", "never", "lock", "credits"], ["Filling and saving", "Security", "About"]],
       ["no-save", ["unlock"], ["pin", "passkeys", "lock", "credits"], ["Unlocking", "Security", "About"]],
       ["none", [], ["lock", "credits"], ["Security", "About"]],
@@ -441,6 +440,7 @@ test("the_settings_view_groups_its_rows_and_a_group_goes_with_its_flag", async (
       // Nothing of a flag that is off is left in the view.
       assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "save"), rows.includes("capture"), name);
       assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "unlock"), rows.includes("pin"), name);
+      assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "passkeys"), rows.includes("provider"), name);
       // No inline style anywhere (the page's content security policy has none).
       assert.deepEqual(withAttribute(root, "style"), [], name);
     }
@@ -501,7 +501,7 @@ test("every_setting_that_is_on_or_off_is_a_switch_that_says_so_in_words", async 
     for (const lang of ["en", "nb"]) {
       const { root } = await viewOf(result.dir, { lang });
       const [on, off] = lang === "en" ? ["On", "Off"] : ["På", "Av"];
-      for (const [role, state] of /** @type {const} */ ([["capture-switch", "capture-state"], ["auto-open-switch", "auto-open-state"]])) {
+      for (const [role, state] of /** @type {const} */ ([["capture-switch", "capture-state"], ["auto-open-switch", "auto-open-state"], ["passkeys-switch", "passkeys-state"], ["passkeys-recent-switch", "passkeys-recent-state"]])) {
         const row = /** @type {any} */ (one(root, role));
         assert.equal(row.tagName, "BUTTON", role);
         assert.equal(row.getAttribute("type"), "button", role);
@@ -538,6 +538,11 @@ test("the_long_explanations_are_behind_more_about_this_and_still_there", async (
       ["capture-idle", "capture.idle"],
       ["auto-open-hint", "capture.auto_open.hint"],
       ["never-hint", "capture.never.hint"],
+      ["passkeys-why", "passkeys.settings.why"],
+      ["passkeys-shared", "passkeys.settings.shared"],
+      ["passkeys-recent-hint", "passkeys.settings.recent.hint"],
+      ["passkeys-reload", "passkeys.settings.reload"],
+      ["passkeys-never-hint", "passkeys.settings.never.hint"],
       ["lock-hint", "settings.lock.hint"],
       ["unlock-pin-about", "settings.unlock.pin.about"],
       ["unlock-lead", "settings.unlock.lead"],
@@ -566,7 +571,7 @@ test("the_settings_view_speaks_norwegian_with_the_new_words", async () => {
   try {
     const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "nb"), manifest: "mv2", variant: "test" });
     const { root } = await viewOf(result.dir, { lang: "nb" });
-    assert.deepEqual(outline(root).groups, ["Fylling og lagring", "Opplåsing", "Sikkerhet", "Om"]);
+    assert.deepEqual(outline(root).groups, ["Fylling og lagring", "Opplåsing", "Passkeys på nettsteder", "Sikkerhet", "Om"]);
     assert.equal(one(root, "settings-title")?.textContent, "Innstillinger");
     assert.equal(one(root, "capture-state")?.textContent, "Av");
     assert.equal(one(byRole(root, "settings-page")[0], "settings-back")?.getAttribute("aria-label"), "Tilbake til innstillinger");
@@ -589,6 +594,84 @@ test("the_auto_open_note_keeps_the_badge_sentence_and_a_page_does_not_repeat_its
       const title = withAttribute(one(root, card), "class").find((n) => (n.getAttribute("class") ?? "").includes("ff-scard-title"))?.textContent;
       assert.ok(heading && title && heading !== title, `${id}: "${heading}" and "${title}" are not the same`);
     }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_passkeys_pages_turn_the_feature_on_with_the_permission_asked_in_the_click_and_list_the_never_sites", async () => {
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "view-passkeys"), manifest: "mv2", variant: "test" });
+    const on = await viewOf(result.dir);
+    const toggle = /** @type {any} */ (one(on.root, "passkeys-switch"));
+    assert.equal(toggle.getAttribute("role"), "switch");
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    assert.equal(one(on.root, "passkeys-state")?.textContent, "Off");
+    // The access is asked for in the click itself, the switch marks its grant, and only then is the background told to turn on.
+    on.log.length = 0;
+    fire(toggle, "click");
+    assert.deepEqual(on.log, ["permission request", 'passkey_settings {"pending":true}'], "the request is made first, in the click, then the mark");
+    await settle();
+    assert.deepEqual(on.log, ["permission request", 'passkey_settings {"pending":true}', 'passkey_settings {"enable":true}']);
+    assert.equal(toggle.getAttribute("aria-checked"), "true");
+    assert.equal(one(on.root, "passkeys-summary")?.textContent, "On", "the row of the main screen says it too");
+    // Off: only the background is told; the permission is not the page's to take back.
+    on.log.length = 0;
+    await click(toggle);
+    assert.deepEqual(on.log, ['passkey_settings {"enable":false}']);
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    // The recent-unlock choice is on to begin with, and a click turns it off and on.
+    const recent = /** @type {any} */ (one(on.root, "passkeys-recent-switch"));
+    assert.equal(recent.getAttribute("aria-checked"), "true");
+    on.log.length = 0;
+    await click(recent);
+    assert.deepEqual(on.log, ['passkey_settings {"recent_unlock":false}']);
+    assert.equal(recent.getAttribute("aria-checked"), "false");
+    await click(recent);
+    assert.equal(recent.getAttribute("aria-checked"), "true");
+    // The never list: the sites, how many on the row, remove one, remove all.
+    assert.equal(byRole(on.root, "passkeys-never-host").length, 1);
+    assert.equal(one(on.root, "passkeys-never-host")?.textContent.includes("bank.example"), true);
+    assert.equal(one(on.root, "passkeys-never-summary")?.textContent, "1");
+    on.log.length = 0;
+    await click(/** @type {any} */ (one(on.root, "passkeys-never-remove")));
+    assert.deepEqual(on.log, ['passkey_settings {"never_remove":"bank.example"}']);
+    assert.equal(byRole(on.root, "passkeys-never-host").length, 0);
+    assert.equal(byRole(on.root, "passkeys-never-empty").length, 1);
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-clear")).hidden, true);
+    // The person says no in the prompt: nothing is switched on and the mark is cleared.
+    const refused = await viewOf(result.dir, { grant: false });
+    await click(/** @type {any} */ (one(refused.root, "passkeys-switch")));
+    assert.equal(refused.state.pk.on, false);
+    assert.equal(refused.log.some((line) => line.includes('"enable":true')), false);
+    assert.ok(refused.log.includes('passkey_settings {"pending":false}'));
+    // Norwegian says "passkey".
+    const nb = await viewOf(result.dir, { lang: "nb" });
+    assert.equal(one(nb.root, "passkeys-state")?.textContent, "Av");
+    assert.equal(one(nb.root, "passkeys-switch")?.textContent.includes("Bruk Ferret til passkeys"), true);
+    assert.equal(one(nb.root, "passkeys-recent-switch")?.textContent.includes("Godta opplåsing de siste 5 minuttene som verifisering"), true);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("the_passkeys_texts_exist_in_both_languages_and_the_pages_are_gone_without_the_feature", async () => {
+  const read = (/** @type {string} */ lang) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, "passkeys.json"), "utf8"));
+  const [en, nb] = [read("en"), read("nb")];
+  assert.deepEqual(Object.keys(en).sort(), Object.keys(nb).sort(), "the same keys in en and nb");
+  for (const key of Object.keys(en).filter((k) => k.startsWith("passkeys.settings."))) {
+    assert.ok(typeof nb[key] === "string" && nb[key].length > 0, key);
+  }
+  for (const reason of ["disconnected", "not_available", "permission_missing", "permission_refused", "unknown"]) assert.ok(en[passkeyErrorKey(reason)], reason);
+  assert.equal(passkeyErrorKey("odd"), "passkeys.settings.error.unknown");
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "view-no-passkeys"), manifest: "mv2", variant: "test", features: ["save", "unlock"] });
+    const { root, log } = await viewOf(result.dir);
+    assert.equal(byRole(root, "passkeys-section").length, 0);
+    assert.equal(withAttribute(root, "data-feature").some((n) => n.getAttribute("data-feature") === "passkeys"), false);
+    assert.equal(log.some((line) => line.startsWith("passkey_settings")), false, "nothing is asked of the background");
   } finally {
     env.cleanup();
   }
