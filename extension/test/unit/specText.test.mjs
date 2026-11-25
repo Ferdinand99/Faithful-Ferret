@@ -234,3 +234,197 @@ test("the_pin_and_prf_rules_are_in_the_spec", () => {
   assert.ok(section("## 15. What phase 0A has not proven yet (affects choices)").includes("It does not work in the toolbar popup, which closes when the system dialog takes focus."));
   assert.ok(decisions.includes("| E17 ✅ | Synced passkeys as an unlock method |"));
 });
+
+test("the_passkey_rules_are_in_the_spec", () => {
+  // 9.2: when Ferret acts, the origin and the frames, the binding, the user activation and the limits.
+  const origin = section("### 9.2 Origin and RP ID (F-12)");
+  for (const rule of [
+    'Only when all of these hold. Otherwise the call goes to the browser **untouched**:',
+    '(a) "Use Ferret for passkeys" is on (**off** by default;',
+    "(c) the origin is `https` and **not `localhost`**: a release build never acts on `localhost`, with any scheme, and leaves the call to the browser",
+    "(d) the calling frame and **every ancestor up to the top** have the origin of the top",
+    '(e) the origin is not a signed-in Ferret server and is not on the "Never on this site" list',
+    "(f) where `document.featurePolicy` exists, it says that `publickey-credentials-create` and `publickey-credentials-get` are allowed (Firefox 159 and ESR 153 do not have it",
+    "Never from the page: the messages from a page have no field for origin, top or frame.",
+    '**Cross-origin is not supported in v1,** and neither are "related origins"',
+    "The background goes up the `parentFrameId` chain with `webNavigation.getAllFrames`, the same rule as for filling (§ 10.5)",
+    "Anything else goes **untouched to the browser**, which then answers: a cross-origin frame, a frame inside a foreign frame, a frame with an opaque origin, `about:blank`, `srcdoc` and `data:`.",
+    "Ferret never writes `crossOrigin: false` into `clientDataJSON` where the browser would have said something else.",
+    "A new document in the frame (`webNavigation.onCommitted`, or a new `documentId`) cancels it. A change of address with `pushState` (`onHistoryStateUpdated`) **does not** cancel it",
+    "the origin is checked again before the answer is sent, and the answer goes only to the same `documentId`.",
+    "The bridge in the page passes on an answer or an error only for a request id that it issued itself, and drops everything else.",
+    // The relaxation of "create requires user activation".
+    "Ferret opens its window only for a request that came with transient user activation in the page (`navigator.userActivation.isActive`, read in the isolated world and never in the MAIN world). That goes for `get` and for `create`.",
+    "A request without it is not refused and opens no window: it is shown as a badge on the toolbar button and a card in the popup, and the click on the card opens the window. That click is the user action, in Ferret's own UI.",
+    "*Relaxed 2026-11-25:* earlier text said that `create` requires transient activation in the page.",
+    // Limits (the bounds, the one window, the calm period).
+    "challenge at most 1 KiB, `allowCredentials` and `excludeCredentials` at most 200, a credential id at most 1 023 bytes, texts at most 1 KiB, a message at most 64 KiB",
+    "One pending **modal** request per tab",
+    "a request from another tab while the window is busy gets a badge and waits, and never replaces the open one.",
+    "`timeout` is clamped to 30 seconds to 10 minutes (default 5 minutes); a conditional request has none.",
+    "**Calm period:** three cancelled requests within one minute from the same tab give five minutes in which new requests from that tab only get the badge and the card in the popup, with no window.",
+    "the stored `rp_id` must be **exactly equal** to the requested `rpId`.",
+  ]) {
+    assert.ok(origin.includes(rule), rule);
+  }
+  assert.equal(origin.includes("Cross-origin is denied in v1."), false, "the old cross-origin rule is gone");
+  assert.equal(origin.includes("Requires transient user activation for `create`."), false, "the old activation rule is gone");
+  assert.equal(origin.includes("On `webNavigation.onCommitted` or `onHistoryStateUpdated` for the frame, it is cancelled."), false, "pushState no longer cancels");
+
+  // 9.3: UP, UV in practice, the answer fields, the errors, imported passkeys and the privacy rule.
+  const flags = section("### 9.3 Flags and responses (F-29)");
+  for (const rule of [
+    "**`UP`** is set only after a click with `isTrusted` in **Ferret's own UI**: the chooser window or the popup, never DOM in the page.",
+    "only 400 ms after the window got focus or its content last changed",
+    "There is no setting that answers without a click.",
+    "**Recent unlock (on by default; the user can turn it off in the settings):** the vault was unlocked with MP, PIN or a passkey (PRF) at most **5 minutes** ago, and the user clicks in Ferret's window or popup.",
+    "A verification in the chooser counts as a new unlock.",
+    "is measured on a monotonic clock and is erased at every lock.",
+    "A restored session, a renewal of tokens and an unlock that verified nobody do not.",
+    "**A passkey for unlock (PRF):** Windows Hello, Touch ID or a phone, as a real WebAuthn call against the vault's host **in Ferret's window, never in the popup** (§ 7.2).",
+    "**PIN:** the same check and the same limit of five attempts as at unlock (§ 7.2). Without a network only within seven days after the last contact with the server (§ 7.6).",
+    "**MP:** the same job as at unlock, with the same `pk_a`: **a full OPAQUE sign-in to the server**, which the window says.",
+    "Unlocking a locked vault in the same window counts as verification.",
+    "**`required` and `preferred`** ask for verification; **`discouraged`** gives the click only (`UV = 0`).",
+    "`preferred` answers with `UV = 0` after the click, like an authenticator without verification; `required` says why and offers the browser, and the page gets `NotAllowedError` only if the user cancels.",
+    "**The result is a one-time token** in the background's memory, bound to the request id, used at signing and then deleted.",
+    "**PRF exists only for a passkey whose `create` asked for `prf`** (as CTAP `hmac-secret`)",
+    "`authenticatorAttachment: \"platform\"` and `getTransports()` = `[\"internal\", \"hybrid\"]`",
+    "`credProps: { rk: true }`",
+    "`NotAllowedError` for cancelled, no match, timeout, verification impossible and a wrong RP at signing (the same type, and a cancellation is answered no sooner than a normal answer would be",
+    "`InvalidStateError` only for `excludeCredentials`, **after** the user's click; `SecurityError` for an RP ID the page cannot use; `AbortError` with the page's `signal.reason`; `TypeError` for malformed options",
+    "**Imported passkeys** (§ 9.6) keep the counter they had.",
+    "so such a passkey must be registered again at the site.",
+    // The privacy rule.
+    "cannot be told apart by the page, neither by error type nor by timing, **because the chooser is always shown**: also when Ferret has no passkey for the site, the window opens",
+    "with \"No Ferret passkey for this site\" and the choice \"Use the browser or a security key\".",
+    "**Automatic handover** to the browser without a window is decided only by properties of the request, never by what the vault holds (§ 9.4).",
+  ]) {
+    assert.ok(flags.includes(rule), rule);
+  }
+  assert.equal(flags.includes("That option is off by default"), false, "recent unlock is no longer off by default");
+
+  // 9.4: the chooser, the wording about the browser's dialog, the handover, "Never", the servers and another extension.
+  const choice = section("### 9.4 Choice between Ferret and the browser (F-13)");
+  for (const rule of [
+    "**a window of its own** from the extension (`windows.create` with `type: \"popup\"`), at the top level, with `frame-ancestors 'none'`, never in `web_accessible_resources`.",
+    "The page cannot see, imitate or click the window. **Ferret comes first:**",
+    "**\"Use the browser instead\"**",
+    "**\"Never on this site\"** and **Cancel**",
+    "no default button, no initial focus on an action, and Enter does nothing; a click counts only with `isTrusted` and 400 ms after the window got focus or its content changed.",
+    "**The browser's own dialog is given only when the user chooses it, or when Ferret cannot or must not answer.**",
+    "`pubKeyCredParams` that is not empty and has no ES256 (an **empty** list means ES256 and RS256, and Ferret answers it); `extensions.appid` or `appidExclude`; `attestation: \"enterprise\"`",
+    "and a call without `publicKey` (`password`, `federated`, `identity`, `otp`).",
+    "The script calls the saved original with the page's **own options**, which Ferret never changes.",
+    "the **next** call of the same kind (`create` or `get`) from the same tab, frame, `documentId` and origin within 60 seconds goes untouched to the browser, once.",
+    "is kept per host of the RP ID in `storage.local` (only in memory in private windows), can be edited in the settings, and holds at most 500 hosts.",
+    "The background refuses such requests itself as well, because the registration of the script excludes a server by address and lags behind a change of server",
+    "**Another extension** may already have replaced `navigator.credentials` before the script runs",
+    "\"Another password manager also handles passkeys on this page. Turn the passkey feature off in it, or use it.\"",
+  ]) {
+    assert.ok(choice.includes(rule), rule);
+  }
+  assert.equal(choice.includes("The browser's own dialog** is given only if the user chooses it."), false, "the old wording is gone");
+
+  // 9.5 and 9.6: conditional UI as a part of the popup and a badge, PRF from Ferret, the import.
+  const conditional = section("### 9.5 Conditional UI and PRF via Ferret");
+  for (const rule of [
+    "**as a part of the popup and a badge, not a list in the page.**",
+    "(a) a new **modal** request from the same document **replaces** a waiting conditional one",
+    "(b) a conditional request has **no timeout**",
+    "(c) **at the same time** the script gives a conditional call to the browser's original with its own `AbortController`",
+    "**only a successful answer** from the original wins",
+    "(d) if a probe shows that the browser runs one WebAuthn transaction at a time",
+    "**PRF delivered by Ferret** (E10: yes)",
+  ]) {
+    assert.ok(conditional.includes(rule), rule);
+  }
+  const imports = section("### 9.6 Export, import and passkeys");
+  for (const rule of [
+    "Unencrypted JSON has them only after an explicit choice; CSV never.",
+    "reads **Bitwarden's unencrypted JSON** (`login.fido2Credentials`) and **AliasVault's `.avux`** (`items[].passkeys`)",
+    "The key goes from the file straight to the core's `passkey_import`",
+    "JavaScript holds only the file, as with passwords in an import (L6).",
+    "**A passkey that is not discoverable**",
+    "AliasVault's `prfKey` uses the same PRF formula as Ferret (§ 9.5) and is **one secret**, so **both seeds are set to it**",
+    "An encrypted Bitwarden export and `.avex` are not read.",
+  ]) {
+    assert.ok(imports.includes(rule), rule);
+  }
+
+  // 9.8: the known limits.
+  const limits = section("### 9.8 Known limits of the passkey provider in the extension");
+  for (const rule of [
+    "**A recent unlock counts as verification for 5 minutes** (§ 9.3).",
+    "**There is no official provider API in Firefox.**",
+    "a page that loads in that very moment can miss the script and then uses the browser's own WebAuthn, which is safe.",
+    "**The browser's event page can be suspended**",
+  ]) {
+    assert.ok(limits.includes(rule), rule);
+  }
+
+  // 10.8: the bridge between the MAIN world and the content script.
+  const bridge = section10Item(8);
+  for (const rule of [
+    "no `window.postMessage` at all, not even for the handshake",
+    "`scripting.registerContentScripts` (`world: \"MAIN\"` and the isolated world, `runAt: \"document_start\"`, `allFrames: true`, `matches: [\"https://*/*\"]`, `persistAcrossSessions: true`",
+    "The background registers them at start and in `onInstalled`, because an update of the extension clears the registrations.",
+    "**The handshake is synchronous.** One script makes a `MessageChannel` and calls `document.dispatchEvent` with a cancelable `MessageEvent`",
+    "**It does not depend on which script runs first:** both listen and both send",
+    "**The MAIN script keeps every built-in it uses** when it is installed",
+    "It **fails closed:** on anything unexpected the call goes to the browser's original, never a malformed request.",
+    "**Answers are boxed.** What comes from the port is put in an object with a null prototype before any promise resolves it",
+    "**The MAIN script is untrusted and dumb:** no secrets, no keys, no decisions, no network, no change to the DOM, no dependencies, at most 30 KiB.",
+    "never from the MAIN script, and the messages have no field for them.",
+    "The bridge pings the background every 20 seconds, only while a request waits",
+    "the request fails closed with `NotAllowedError`.",
+  ]) {
+    assert.ok(bridge.includes(rule), rule);
+  }
+  assert.equal(bridge.includes("a private `MessageChannel` or `CustomEvent` handshake"), false, "the old wording is gone");
+
+  // 8.3 and 8.5: the write of a new passkey.
+  const idempotency = section("### 8.3 Idempotency");
+  for (const rule of [
+    "**A new passkey is written online only** (§ 9.3, § 9.4). The write of an item that `create` just made never goes into the offline outbox and never to the conflict view.",
+    "It is sent at once with an `idem` of its own, and the answer to the page waits for the outcome.",
+    "**An unknown outcome** (timeout, broken connection): the same request with the same `idem` is sent again until a sure answer, for at most 30 seconds",
+    "**Accepted too late:** if the server accepts the item after the page has gone, has navigated or has cancelled, or the user cancelled, the item is deleted at once with an ordinary tombstone",
+  ]) {
+    assert.ok(idempotency.includes(rule), rule);
+  }
+  assert.ok(section("### 8.5 Conflicts (maintainer's decision: the user chooses)").includes("**A new passkey never makes a conflict** (§ 8.3)"));
+
+  // 2.2: the person at the unlocked machine (the cost of the recent-unlock rule).
+  const threats = section("### 2.2 Attackers and what they must not achieve");
+  for (const rule of [
+    "| A10 | Someone at the unlocked machine |",
+    "an unlock within the last 5 minutes counts as user verification for a passkey, so one click in Ferret's window gives `UV = 1`.",
+    "Every lock erases the time, auto-lock and screen lock apply (§ 7.2), and the user can turn the rule off.",
+  ]) {
+    assert.ok(threats.includes(rule), rule);
+  }
+
+  // 11: the server's build feature and the policy answer.
+  const server = section("## 11. Server and vole-kit – limits");
+  for (const rule of [
+    '"passkeys": { "import" } }`. `passkeys.import` says whether the build of this server has the cargo feature `passkey-import`',
+    "**Build feature `passkey-import`**",
+    "answers `passkeys: { import: false }` in `GET /api/vault/policy`",
+  ]) {
+    assert.ok(server.includes(rule), rule);
+  }
+
+  // 15 and 16: the probe, and the decisions E7 (on, 5 minutes) and E10 (yes).
+  assert.ok(section("## 15. What phase 0A has not proven yet (affects choices)").includes("*Probed on 2026-11-25 with a virtual authenticator (Firefox Release 159.0.1 and ESR 153.6.0, Manifest V2 and V3):*"));
+  const decisions = section("## 16. Decisions the maintainer must make");
+  assert.ok(decisions.includes('| E7 ✅ | "Trust recent unlock" for passkey UV | **Decided 2026-11-25: on by default, 5 minutes,**'));
+  assert.equal(decisions.includes('| E7 | "Trust recent unlock" for passkey UV | Off by default |'), false);
+  assert.ok(decisions.includes("| E10 ✅ | PRF delivered by Ferret (§ 9.5) in v1? | **Decided 2026-11-25: yes,**"));
+
+  // Appendix B: the two texts of the site, and the change log.
+  const appendixB = section("## Appendix B – Schema: body, manifest, export");
+  assert.ok(appendixB.includes('"rp_name": text?, "user_display_name": text?,'));
+  assert.ok(appendixB.includes("`rp_name` and `user_display_name` are optional, at most 1 KiB each"));
+  assert.ok(spec.includes("**Changes for the passkey provider in the extension (2026-11-25).**"));
+});
