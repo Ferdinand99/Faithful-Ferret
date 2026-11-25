@@ -45,7 +45,7 @@ function clockAndTimers() {
         }
       }
     },
-    pending: () => [...pending.values()],
+    pending: () => [...pending].map(([id, t]) => ({ id, ...t })),
     timers: {
       setTimeout: (/** @type {() => void} */ fn, /** @type {number} */ ms) => {
         const id = next++;
@@ -341,11 +341,13 @@ test("a_request_from_another_tab_waits_with_a_badge_and_never_replaces_the_open_
   assert.equal(w.requests.waitingFor(7)?.request_id, b, "the popup's card");
   assert.equal(w.requests.forUi(a, "win")?.request_id, a);
   // When the first ends, the second keeps waiting (no window opens by itself); the card's click opens it.
-  assert.equal(w.requests.cancel(a), true);
+  assert.equal(w.requests.cancel(a, "another window"), false, "only the window that owns it");
+  assert.equal(w.requests.cancel(a, "win"), true);
   assert.equal(w.closed.length, 1);
   assert.equal(w.opened.length, 1);
   assert.equal(w.requests.waitingFor(7)?.request_id, b);
-  assert.equal(await w.requests.show(b), true);
+  assert.equal(await w.requests.show(4), false, "nothing waits in that tab");
+  assert.equal(await w.requests.show(7), true);
   assert.deepEqual(w.opened.slice(1), [b]);
   assert.equal(w.marks.get(7), false);
 });
@@ -424,13 +426,13 @@ test("the_answer_goes_only_to_the_bound_frame_and_document", async () => {
   w.tabFrames.set(4, [...topOnly(), { frameId: 17179869185, parentFrameId: 0, url: `${RP}/f`, documentId: "doc-f" }]);
   const sender = senderOf({ frameId: 17179869185, documentId: "doc-f", url: `${RP}/f` });
   const id = /** @type {any} */ (await w.requests.open(sender, getBody("g1"))).request_id;
-  assert.equal(await w.requests.answer(id, RESPONSE), true);
+  assert.equal(await w.requests.answer(id, "s", RESPONSE), true);
   assert.deepEqual(sent.map((s) => [s.tabId, s.options, s.type, s.body.request_id]), [[4, { frameId: 17179869185, documentId: "doc-f" }, "passkey_result", "g1"]]);
-  assert.equal(await w.requests.answer(id, RESPONSE), false, "once");
+  assert.equal(await w.requests.answer(id, "s", RESPONSE), false, "once");
   // A frame that holds another document by the time of the answer gets no result.
   const id2 = /** @type {any} */ (await w.requests.open(sender, getBody("g2"))).request_id;
   w.tabFrames.set(4, [...topOnly(), { frameId: 17179869185, parentFrameId: 0, url: `${RP}/f`, documentId: "doc-g" }]);
-  assert.equal(await w.requests.answer(id2, RESPONSE), false);
+  assert.equal(await w.requests.answer(id2, "s", RESPONSE), false);
   w.clock.advance(1000);
   await flush();
   assert.deepEqual(sent.filter((s) => s.body.request_id === "g2").map((s) => s.type), ["passkey_error"]);
@@ -445,10 +447,10 @@ test("no_window_without_user_activation_only_the_badge_and_a_card", async () => 
   assert.equal(w.requests.waitingFor(4)?.request_id, id);
   assert.equal(w.requests.waitingFor(4)?.kind, "create");
   // The popup's card: its click is the user's activation and opens the window.
-  assert.equal(await w.requests.show(id), true);
+  assert.equal(await w.requests.show(4), true);
   assert.deepEqual(w.opened, [id]);
   assert.equal(w.marks.get(4), false);
-  assert.equal(await w.requests.show(id), false, "only once");
+  assert.equal(await w.requests.show(4), false, "only once");
 });
 
 test("the_quiet_period_gives_badge_only_and_keeps_the_request", async () => {
@@ -456,7 +458,7 @@ test("the_quiet_period_gives_badge_only_and_keeps_the_request", async () => {
   for (let i = 0; i < PASSKEY_QUIET.cancels; i += 1) {
     const id = /** @type {any} */ (await w.requests.open(senderOf(), createBody(`q${i}`))).request_id;
     w.clock.advance(1000);
-    assert.equal(w.requests.cancel(id), true);
+    assert.equal(w.requests.cancel(id, "s"), true);
   }
   assert.equal(w.opened.length, PASSKEY_QUIET.cancels);
   const kept = /** @type {any} */ (await w.requests.open(senderOf(), createBody("q-next")));
@@ -469,7 +471,7 @@ test("the_quiet_period_gives_badge_only_and_keeps_the_request", async () => {
   assert.equal(w.opened.length, PASSKEY_QUIET.cancels + 1);
   // After the period a new request opens the window again.
   w.requests.onTabRemoved(7);
-  w.requests.handover(kept.request_id, { once: false });
+  w.requests.handover(kept.request_id, "s", { once: false });
   w.clock.advance(PASSKEY_QUIET.quietMs);
   await w.requests.open(senderOf(), createBody("q-after"));
   assert.equal(w.opened.length, PASSKEY_QUIET.cancels + 2);
@@ -478,7 +480,7 @@ test("the_quiet_period_gives_badge_only_and_keeps_the_request", async () => {
   for (let i = 0; i < 5; i += 1) {
     const id = /** @type {any} */ (await s.requests.open(senderOf(), createBody(`s${i}`))).request_id;
     s.clock.advance(PASSKEY_QUIET.windowMs);
-    s.requests.cancel(id);
+    s.requests.cancel(id, "s");
   }
   assert.equal(s.opened.length, 5);
   assert.deepEqual({ ...PASSKEY_QUIET }, { cancels: 3, windowMs: 60_000, quietMs: 300_000 });
@@ -538,7 +540,7 @@ test("cancelled_and_no_match_look_the_same_in_type_and_time", async () => {
   for (const how of ["cancel", "no_match_window_closed", "expired"]) {
     const w = world();
     const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("p1", { options: how === "no_match_window_closed" ? {} : { allow_credentials: [{ type: "public-key", id: "AAAA" }] } }))).request_id;
-    if (how === "cancel") w.requests.cancel(id);
+    if (how === "cancel") w.requests.cancel(id, "s");
     else if (how === "no_match_window_closed") w.requests.onWindowRemoved(101);
     else w.clock.advance(PASSKEY_TIMEOUT_MS.default);
     // The one timer left is the error's (the deadline's went with the request).
@@ -556,18 +558,18 @@ test("cancelled_and_no_match_look_the_same_in_type_and_time", async () => {
   assert.equal(new Set(seen.map((s) => s.delay)).size, 1, JSON.stringify(seen));
 });
 
-test("every_lock_cancels_pending_requests_and_drops_verify_tokens", async () => {
+test("a_lock_of_the_open_vault_or_a_server_change_ends_requests_and_every_lock_drops_verify_marks", async () => {
   const w = world();
   const m = /** @type {any} */ (await w.requests.open(senderOf(), createBody("m1"))).request_id;
   const c = /** @type {any} */ (await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), getBody("c1", { body: { mediation: "conditional" } }))).request_id;
   assert.equal(w.requests.markVerified(m, "win"), true);
   // A lock of a vault that was locked already (a wrong PIN in the window) drops the marks and ends nothing.
   w.requests.onLock(false);
-  assert.equal(w.requests.takeVerified(m), false);
+  assert.equal(w.requests.takeVerified(m, "win"), false);
   assert.equal(w.requests.size(), 2);
   assert.equal(w.requests.markVerified(m, "win"), true);
   w.requests.onLock();
-  assert.equal(w.requests.takeVerified(m), false, "the mark is gone");
+  assert.equal(w.requests.takeVerified(m, "win"), false, "the mark is gone");
   assert.equal(w.requests.size(), 0);
   assert.deepEqual(w.closed, [101]);
   w.clock.advance(1000);
@@ -580,8 +582,16 @@ test("every_lock_cancels_pending_requests_and_drops_verify_tokens", async () => 
   const n = /** @type {any} */ (await w.requests.open(senderOf(), createBody("n1"))).request_id;
   assert.equal(w.requests.markVerified(n, "win"), true);
   assert.equal(w.requests.markVerified(n, "other"), false);
-  assert.equal(w.requests.takeVerified(n), true);
-  assert.equal(w.requests.takeVerified(n), false);
+  assert.equal(w.requests.takeVerified(n, "other"), false, "only for the session that has it");
+  assert.equal(w.requests.takeVerified(n, "win"), true);
+  assert.equal(w.requests.takeVerified(n, "win"), false);
+  // A sign-in or "forget this server", also while the vault is locked, ends every request (they were checked against the
+  // server that was there).
+  await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), getBody("c2", { body: { mediation: "conditional" } }));
+  assert.equal(w.requests.size(), 2);
+  w.requests.endAll();
+  assert.equal(w.requests.size(), 0);
+  assert.match(readFileSync(join(src, "background", "main.mjs"), "utf8"), /sessionHost\.onServerChange\(\(\) => \{[\s\S]{0,300}passkeyRequests\?\.endAll\(\)/);
   // The entry wires the lock of the open vault to the broker.
   const main = readFileSync(join(src, "background", "main.mjs"), "utf8");
   assert.match(main, /coreHost\.onLocked\(\(\) => \{[\s\S]{0,200}passkeyRequests\.onLock\(wasOpen\)/);
@@ -735,17 +745,17 @@ test("the_window_operations_belong_to_the_window_that_named_the_request_first", 
   assert.equal(w.requests.size(), 0);
   // "Use the browser" once: the next call of that kind from that document goes through, once, within the time.
   const e = /** @type {any} */ (await w.requests.open(senderOf(), getBody("w5"))).request_id;
-  w.requests.handover(e, { once: true });
+  w.requests.handover(e, "s", { once: true });
   assert.deepEqual(pushesOf(w.pushed, "w5").map((p) => p.body.once), [true]);
   assert.equal(/** @type {any} */ (await w.requests.open(senderOf(), createBody("w6"))).request_id !== undefined, true, "another kind is not let through");
   w.requests.onTabRemoved(4);
   const f = /** @type {any} */ (await w.requests.open(senderOf(), getBody("w7"))).request_id;
-  w.requests.handover(f, { once: true });
+  w.requests.handover(f, "s", { once: true });
   assert.equal(/** @type {any} */ (await w.requests.open(senderOf(), getBody("w8"))).reason, "pass_once");
   assert.ok("request_id" in (await w.requests.open(senderOf(), getBody("w9"))), "only once");
   w.requests.onTabRemoved(4);
   const g = /** @type {any} */ (await w.requests.open(senderOf(), getBody("w10"))).request_id;
-  w.requests.handover(g, { once: true });
+  w.requests.handover(g, "s", { once: true });
   w.clock.advance(PASSKEY_PASS_ONCE_MS);
   assert.ok("request_id" in (await w.requests.open(senderOf(), getBody("w11"))), "not after the time");
   assert.equal(PASSKEY_GUARD_MS, 400);
@@ -781,7 +791,13 @@ test("the_window_handler_answers_only_the_chooser_window", async () => {
   const id = "a".repeat(32);
   assert.deepEqual(await windowHandler.handle({ request_id: id }, ctx(window)), { ok: true });
   assert.deepEqual(calls, [{ op: "passkey_pending", args: { request_id: id, session: "s1" } }]);
+  // In a tab of a window the browser names: that window goes along for the broker to check.
+  await windowHandler.handle({ request_id: id }, ctx({ ...window, tab: { id: 9, windowId: 12 } }));
+  assert.deepEqual(calls[1], { op: "passkey_pending", args: { request_id: id, session: "s1", window_id: 12 } });
+  calls.length = 1;
   for (const sender of [
+    { ...window, url: "moz-extension://u/pages/passkey.html" },
+    { ...window, url: "moz-extension://u/pages/passkey.html?r=" + "b".repeat(32) },
     { ...window, url: "moz-extension://u/pages/popup.html" },
     { ...window, url: "moz-extension://u/pages/passkey.html.evil" },
     { ...window, frameId: 3, tab: { id: 1 } },
@@ -799,4 +815,135 @@ test("the_window_handler_answers_only_the_chooser_window", async () => {
   // The window works while the vault is locked, except for the core's check of the site.
   assert.deepEqual(PASSKEY_WINDOW_OPS.filter((t) => LOCK_EXEMPT.includes(t)), ["passkey_pending", "passkey_cancel", "passkey_browser"]);
   assert.ok(CORE_OPS.includes(PASSKEY_EVENT_OP));
+});
+
+// ------------------------------------------------------------------------------------------------- after review
+
+test("an_http_sender_or_an_http_ancestor_and_a_frame_without_a_document_id_go_to_the_browser", async () => {
+  const w = world();
+  // A plain http page (the router lets http senders through; the broker does not).
+  w.tabFrames.set(7, topOnly("http://rp-a.test/", "doc-7"));
+  assert.equal(/** @type {any} */ (await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: "http://rp-a.test/", origin: "http://rp-a.test" }), getBody("h1"))).reason, "origin");
+  // An https frame of the top's host under an http top.
+  w.tabFrames.set(4, [
+    { frameId: 0, parentFrameId: -1, url: "http://rp-a.test/", documentId: "doc-1" },
+    { frameId: 6, parentFrameId: 0, url: `${RP}/f`, documentId: "doc-6" },
+  ]);
+  assert.equal(/** @type {any} */ (await w.requests.open(senderOf({ frameId: 6, documentId: "doc-6", url: `${RP}/f` }), getBody("h2"))).reason, "frames");
+  // The browser lists the calling frame without its document: not trusted.
+  w.tabFrames.set(4, [{ frameId: 0, parentFrameId: -1, url: `${RP}/login` }]);
+  assert.equal(/** @type {any} */ (await w.requests.open(senderOf(), getBody("h3"))).reason, "frames");
+  assert.equal(w.opened.length, 0);
+});
+
+test("an_answer_after_a_sign_out_or_a_server_change_is_not_sent", async () => {
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("s1"))).request_id;
+  // The device was ended remotely while the request waited.
+  w.state.server = { origin: SERVER, live: false };
+  assert.equal(await w.requests.answer(id, "s", RESPONSE), false);
+  w.clock.advance(1000);
+  await flush();
+  assert.deepEqual(pushesOf(w.pushed, "s1").map((p) => [p.type, p.body.name]), [["passkey_error", "NotAllowedError"]]);
+  // The device is now signed in at a server on the page's own host.
+  w.state.server = { origin: RP, live: true };
+  const id2 = /** @type {any} */ (await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), getBody("s2")));
+  assert.equal(id2.reason, "ferret_server");
+});
+
+test("the_ending_functions_belong_to_the_session_that_owns_the_request", async () => {
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("o1"))).request_id;
+  assert.ok(w.requests.forUi(id, "win"));
+  for (const [name, call] of /** @type {Array<[string, () => unknown]>} */ ([
+    ["answer", () => w.requests.answer(id, "other", RESPONSE)],
+    ["handover", () => w.requests.handover(id, "other", { once: false })],
+    ["cancel", () => w.requests.cancel(id, "other")],
+    ["fail", () => w.requests.fail(id, "other", "SecurityError")],
+    ["takeVerified", () => w.requests.takeVerified(id, "other")],
+    ["callerOf", () => w.requests.callerOf(id, "other")],
+  ])) {
+    const out = await call();
+    assert.ok(out === false || out === null, name);
+  }
+  assert.equal(w.requests.size(), 1);
+  assert.equal(w.pushed.length, 0);
+  // A window op from another browser window than the one opened for the request is refused too.
+  const ops = /** @type {any} */ (w.requests.ops);
+  assert.deepEqual(await ops.passkey_pending.run(null, { request_id: id, session: "win", window_id: 999 }), { ok: false, reason: "gone" });
+  assert.equal((await ops.passkey_pending.run(null, { request_id: id, session: "win", window_id: 101 })).ok, true);
+  assert.equal(w.requests.fail(id, "win", "SecurityError"), true);
+  await flush();
+  assert.deepEqual(pushesOf(w.pushed, "o1").map((p) => p.body.name), ["SecurityError"]);
+});
+
+test("passkey_site_ends_the_request_for_every_code_but_a_gone_vault", async () => {
+  /** @param {string} code */
+  const failing = (code) => ({ vault: { passkey_site: async () => Promise.reject(Object.assign(new Error(code), { code })) } });
+  for (const [code, name, reason] of [
+    ["malformed_rp_id", "SecurityError", "security_error"],
+    ["too_large", "TypeError", "type_error"],
+    ["invalid_input", "TypeError", "type_error"],
+    ["not_allowed", "NotAllowedError", "not_allowed"],
+  ]) {
+    const w = world();
+    const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("x1"))).request_id;
+    const ops = /** @type {any} */ (w.requests.ops);
+    assert.deepEqual(await ops.passkey_site.run(failing(code), { request_id: id, session: "win" }), { ok: false, reason }, code);
+    w.clock.advance(1000);
+    await flush();
+    assert.deepEqual(pushesOf(w.pushed, "x1").map((p) => p.body.name), [name], code);
+    assert.equal(w.requests.size(), 0, code);
+  }
+  // The vault went (a lock, a failed worker): the core host's business; the request waits for the unlock in the window.
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("x2"))).request_id;
+  await assert.rejects(/** @type {any} */ (w.requests.ops).passkey_site.run(failing("vault_locked"), { request_id: id, session: "win" }), /vault_locked/);
+  assert.equal(w.requests.size(), 1);
+});
+
+test("a_ping_inside_the_delay_of_an_error_does_not_bring_it_early", async () => {
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("d1"))).request_id;
+  w.requests.cancel(id, "s");
+  await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["d1"] } });
+  await flush();
+  assert.equal(w.pushed.length, 0, "the error comes only after its delay");
+  w.clock.advance(PASSKEY_ERROR_DELAY_MS.min + PASSKEY_ERROR_DELAY_MS.spread);
+  await flush();
+  assert.deepEqual(pushesOf(w.pushed, "d1").map((p) => p.body.name), ["NotAllowedError"]);
+  // A request that a ping finds past its deadline gets one error, after the delay.
+  const late = /** @type {any} */ (await w.requests.open(senderOf(), getBody("d2"))).request_id;
+  // Its deadline's timer does not run (as in a sleeping machine): the clock decides when the ping comes.
+  w.clock.timers.clearTimeout(/** @type {any} */ (w.clock.pending().find((t) => t.ms === PASSKEY_TIMEOUT_MS.default)).id);
+  w.clock.advance(PASSKEY_TIMEOUT_MS.default);
+  await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["d2"] } });
+  w.clock.advance(PASSKEY_ERROR_DELAY_MS.min + PASSKEY_ERROR_DELAY_MS.spread);
+  await flush();
+  assert.deepEqual(pushesOf(w.pushed, "d2").map((p) => p.body.name), ["NotAllowedError"]);
+  assert.equal(w.requests.forUi(late, "s"), null);
+});
+
+test("aborts_that_come_first_are_kept_per_tab", async () => {
+  const w = world();
+  // Tab 7's abort before its request.
+  const other = senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` });
+  await w.requests.onEvent({ type: "passkey_abort", sender: other, body: { request_id: "k1" } });
+  // A frame of tab 4 floods aborts with made-up ids.
+  for (let i = 0; i < 500; i += 1) await w.requests.onEvent({ type: "passkey_abort", sender: senderOf(), body: { request_id: `f${i}` } });
+  assert.deepEqual(await w.requests.open(other, getBody("k1")), { error: "AbortError" }, "tab 7's abort is still there");
+  assert.equal(w.opened.length, 0);
+});
+
+test("the_broker_listeners_are_added_only_while_a_request_waits", () => {
+  const main = readFileSync(join(src, "background", "main.mjs"), "utf8");
+  // Every listener of the broker is in the list that `listen.start` and `listen.stop` walk, and nowhere else.
+  for (const name of ["committed", "sameDocument", "tabRemoved", "windowRemoved"]) {
+    const uses = [...main.matchAll(new RegExp(`passkeyListeners\\.${name}\\b`, "g"))].length;
+    assert.ok(uses >= 1, name);
+    assert.doesNotMatch(main, new RegExp(`addListener\\(passkeyListeners\\.${name}`), name);
+  }
+  assert.match(main, /start\(\) \{\s*for \(const \[event, listener\] of passkeyEvents\(\)\) \{\s*try \{\s*event\.addListener\(listener\);/);
+  assert.match(main, /stop\(\) \{\s*for \(const \[event, listener\] of passkeyEvents\(\)\) \{\s*try \{\s*event\.removeListener\(listener\);/);
+  assert.equal([...main.matchAll(/event\.addListener\(listener\)/g)].length, 1);
 });

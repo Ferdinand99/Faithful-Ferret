@@ -149,6 +149,15 @@ const passkeyListeners = {
   tabRemoved: (/** @type {number} */ tabId) => passkeyRequests?.onTabRemoved(tabId),
   windowRemoved: (/** @type {number} */ windowId) => passkeyRequests?.onWindowRemoved(windowId),
 };
+/** The broker's events and their listeners, each added on its own (a browser without one of the events still gets the others). */
+const passkeyEvents = () =>
+  /** @type {Array<[any, (...args: any[]) => void]>} */ ([
+    [browser.webNavigation?.onCommitted, passkeyListeners.committed],
+    [browser.webNavigation?.onHistoryStateUpdated, passkeyListeners.sameDocument],
+    [browser.webNavigation?.onReferenceFragmentUpdated, passkeyListeners.sameDocument],
+    [browser.tabs?.onRemoved, passkeyListeners.tabRemoved],
+    [browser.windows?.onRemoved, passkeyListeners.windowRemoved],
+  ]);
 passkeyRequests = createPasskeyRequests
   ? createPasskeyRequests({
       tabs: browser.tabs,
@@ -172,18 +181,22 @@ passkeyRequests = createPasskeyRequests
       permissions: browser.permissions,
       listen: {
         start() {
-          browser.webNavigation.onCommitted.addListener(passkeyListeners.committed);
-          browser.webNavigation.onHistoryStateUpdated.addListener(passkeyListeners.sameDocument);
-          browser.webNavigation.onReferenceFragmentUpdated.addListener(passkeyListeners.sameDocument);
-          browser.tabs.onRemoved.addListener(passkeyListeners.tabRemoved);
-          browser.windows.onRemoved.addListener(passkeyListeners.windowRemoved);
+          for (const [event, listener] of passkeyEvents()) {
+            try {
+              event.addListener(listener);
+            } catch {
+              // This browser has no such event: the others still run.
+            }
+          }
         },
         stop() {
-          browser.webNavigation.onCommitted.removeListener(passkeyListeners.committed);
-          browser.webNavigation.onHistoryStateUpdated.removeListener(passkeyListeners.sameDocument);
-          browser.webNavigation.onReferenceFragmentUpdated.removeListener(passkeyListeners.sameDocument);
-          browser.tabs.onRemoved.removeListener(passkeyListeners.tabRemoved);
-          browser.windows.onRemoved.removeListener(passkeyListeners.windowRemoved);
+          for (const [event, listener] of passkeyEvents()) {
+            try {
+              event.removeListener(listener);
+            } catch {
+              // Nothing to remove.
+            }
+          }
         },
       },
       // A release leaves localhost and the loopback addresses to the browser; the test build keeps https://localhost.
@@ -210,6 +223,9 @@ if (passkeyRegistry) {
   // A sign-in stores the server, "forget this server" removes it.
   sessionHost.onServerChange(() => {
     passkeyRegistry.reconcile().catch(() => {});
+    // A sign-in or "forget this server" (also while the vault is locked): every request was checked against the server
+    // that was there, so none of them goes on.
+    passkeyRequests?.endAll();
   });
 }
 

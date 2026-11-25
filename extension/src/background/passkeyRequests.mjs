@@ -67,7 +67,8 @@ export const PASSKEY_ERROR_DELAY_MS = Object.freeze({ min: 120, spread: 200 });
 
 /** How long an abort that came before its request is remembered. */
 const ABORT_KEPT_MS = 30_000;
-const MAX_ABORTS = 256;
+/** Per tab: a frame that floods aborts with made-up ids evicts only its own tab's. */
+const MAX_ABORTS_PER_TAB = 32;
 /** The most requests that wait at once, over all tabs (one modal and one conditional per tab in practice). */
 const MAX_PENDING = 256;
 const MAX_TABS_KEPT = 256;
@@ -78,6 +79,10 @@ const MAX_URL = 8192;
 const REF = /^[0-9a-f]{32}$/;
 const UV = Object.freeze(["required", "preferred", "discouraged"]);
 const PAGE_ERRORS = Object.freeze(["NotAllowedError", "SecurityError", "TypeError", "InvalidStateError", "AbortError"]);
+/** The core's codes that say the vault or its worker is gone: the op's caller (the core host) handles those. */
+const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
+/** What the window is told when `passkey_site` ended the request, by the page's error. */
+const SITE_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
 /** The algorithm Ferret signs with (ES256). */
 const ES256 = -7;
 
@@ -269,8 +274,10 @@ export function createPasskeyRequests({
   const requests = new Map();
   /** The background's id of a request, by its sender and the bridge's id. @type {Map<string, string>} */
   const byBridge = new Map();
-  /** Aborts that came before their request, by sender and bridge id: until when they are kept. @type {Map<string, number>} */
+  /** Aborts that came before their request, per tab, by sender and bridge id: until when they are kept. @type {Map<number, Map<string, number>>} */
   const aborts = new Map();
+  /** The requests whose NotAllowedError waits for its delay (a ping must not answer them early), by sender and bridge id. */
+  const ending = new Set();
   /** "Use the browser" once: the next call of that kind from that document. @type {Array<{ tabId: number, frameId: number, documentId: string, origin: string, kind: string, until: number }>} */
   let passes = [];
   /** Per tab: the moments its modal requests ended without an answer, and the end of its calm period. @type {Map<number, { ended: number[], until: number }>} */
@@ -345,8 +352,13 @@ export function createPasskeyRequests({
    */
   const pushError = (s, bridgeId, name) => {
     if (name !== "NotAllowedError") return push(s, "passkey_error", { request_id: bridgeId, name });
+    const key = keyOf(s, bridgeId);
+    ending.add(key);
     return new Promise((resolve) => {
-      later(() => void push(s, "passkey_error", { request_id: bridgeId, name }).then(resolve), errorDelay());
+      later(() => {
+        ending.delete(key);
+        void push(s, "passkey_error", { request_id: bridgeId, name }).then(resolve);
+      }, errorDelay());
     });
   };
 
@@ -460,12 +472,14 @@ export function createPasskeyRequests({
   };
 
   /**
-   * The request when `session` (a page's port) may act on it: the first session that names it owns it.
-   * @param {unknown} id @param {unknown} session
+   * The request when `session` (a page's port) may act on it: the first session that names it owns it. When the request
+   * has Ferret's window and the caller names the browser window it is in (`windowId`), that must be the request's window.
+   * @param {unknown} id @param {unknown} session @param {unknown} [windowId]
    */
-  const owned = (id, session) => {
+  const owned = (id, session, windowId) => {
     const req = live(id);
     if (req === null || typeof session !== "string" || session === "") return null;
+    if (windowId !== undefined && req.windowId !== null && windowId !== req.windowId) return null;
     if (req.session === null) req.session = session;
     return req.session === session ? req : null;
   };
@@ -544,7 +558,8 @@ export function createPasskeyRequests({
     }
     let frame = byId.get(s.frameId);
     if (frame === undefined) return null;
-    if (typeof frame.documentId === "string" && frame.documentId !== s.documentId) return null;
+    // The browser names each frame's document (Firefox gives `documentId` here); a frame without one is not trusted.
+    if (frame.documentId !== s.documentId) return null;
     for (let steps = 0; ; steps += 1) {
       if (steps > byId.size || frame.errorOccurred === true) return null;
       if (httpsOrigin(frame.url) !== s.origin) return null;
@@ -598,11 +613,12 @@ export function createPasskeyRequests({
     return true;
   };
 
-  /** Whether the page aborted this request before it arrived (then it is forgotten). @param {string} key */
-  const takeAbort = (key) => {
-    const until = aborts.get(key);
-    if (until === undefined) return false;
-    aborts.delete(key);
+  /** Whether the page aborted this request before it arrived (then it is forgotten). @param {number} tabId @param {string} key */
+  const takeAbort = (tabId, key) => {
+    const forTab = aborts.get(tabId);
+    const until = forTab?.get(key);
+    if (forTab === undefined || until === undefined) return false;
+    forTab.delete(key);
     return until > now();
   };
 
@@ -668,7 +684,7 @@ export function createPasskeyRequests({
     if (windows === null) return handOver("no_window");
 
     // From here on nothing awaits until the request is in place.
-    if (takeAbort(key) || byBridge.has(key)) return { error: "AbortError" };
+    if (takeAbort(s.tabId, key) || byBridge.has(key)) return { error: "AbortError" };
     if (requests.size >= MAX_PENDING) return handOver("busy");
     const conditional = body.mediation === "conditional";
     const tabId = s.tabId;
@@ -732,9 +748,13 @@ export function createPasskeyRequests({
     }
     // The abort came first (the router does not keep the order of two messages): the request is dropped when it comes.
     const at = now();
-    for (const [k, until] of aborts) if (until <= at) aborts.delete(k);
-    aborts.set(key, at + ABORT_KEPT_MS);
-    if (aborts.size > MAX_ABORTS) aborts.delete(/** @type {string} */ (aborts.keys().next().value));
+    const forTab = aborts.get(s.tabId) ?? new Map();
+    for (const [k, until] of forTab) if (until <= at) forTab.delete(k);
+    forTab.set(key, at + ABORT_KEPT_MS);
+    if (forTab.size > MAX_ABORTS_PER_TAB) forTab.delete(/** @type {string} */ (forTab.keys().next().value));
+    aborts.delete(s.tabId);
+    aborts.set(s.tabId, forTab);
+    if (aborts.size > MAX_TABS_KEPT) aborts.delete(/** @type {number} */ (aborts.keys().next().value));
   };
 
   /** @param {Sender} s @param {unknown} ids */
@@ -745,7 +765,8 @@ export function createPasskeyRequests({
       const key = keyOf(s, bridgeId);
       const id = byBridge.get(key);
       if (id !== undefined && live(id) !== null) continue;
-      if (aborts.has(key)) continue;
+      // An abort that came first, or an error that waits for its delay (it must not come early).
+      if (aborts.get(s.tabId)?.has(key) || ending.has(key)) continue;
       // Not a request of this sender that waits here (the event page was unloaded, or it ended): it fails closed.
       void push(s, "passkey_error", { request_id: bridgeId, name: "NotAllowedError" });
     }
@@ -782,10 +803,9 @@ export function createPasskeyRequests({
     else if (type === "passkey_ping") ping(s, body?.request_ids);
   };
 
-  /** @param {string} id @param {{ once: boolean }} how */
-  const handover = (id, { once }) => {
-    const req = live(id);
-    if (req === null || !end(req, false)) return false;
+  /** @param {Request} req @param {{ once: boolean }} how */
+  const handoverReq = (req, { once }) => {
+    if (!end(req, false)) return false;
     if (once === true) {
       passes.push({ tabId: req.sender.tabId, frameId: req.sender.frameId, documentId: req.sender.documentId, origin: req.origin, kind: req.kind, until: now() + PASSKEY_PASS_ONCE_MS });
       if (passes.length > MAX_PASSES) passes.shift();
@@ -794,34 +814,42 @@ export function createPasskeyRequests({
     return true;
   };
 
-  /** The user cancelled (or closed the window, or had no match): NotAllowedError. @param {string} id */
-  const cancel = (id) => {
-    const req = live(id);
-    if (req === null) return false;
+  /** The user cancelled (or closed the window, or had no match): NotAllowedError. @param {Request} req */
+  const cancelReq = (req) => {
+    if (requests.get(req.id) !== req) return false;
     void endWithError(req, "NotAllowedError", true);
     return true;
   };
 
-  /** Ends a request with an error (a core code through pageErrorOf). @param {string} id @param {string} name */
-  const fail = (id, name) => {
-    const req = live(id);
-    if (req === null) return false;
+  /** Ends a request with an error (a core code through pageErrorOf). @param {Request} req @param {string} name */
+  const failReq = (req, name) => {
+    if (requests.get(req.id) !== req) return false;
     const error = PAGE_ERRORS.includes(name) ? name : "NotAllowedError";
     void endWithError(req, error, error === "NotAllowedError");
     return true;
   };
 
   /**
+   * Whether a request may still be answered by Ferret: the device is still signed in with a live session at a server
+   * whose host is not the page's (a sign-out or a server change may have come while it waited).
+   * @param {Request} req
+   */
+  const stillAllowed = async (req) => {
+    const serverHost = await liveServerHost();
+    return serverHost !== null && serverHost !== hostOf(req.origin);
+  };
+
+  /**
    * Ferret's answer (PASSKEY_RESPONSE on the wire). The frame chain is checked again first: an answer goes only to the
    * document that asked, while it still has the origin and the chain it had.
-   * @param {string} id @param {Record<string, unknown>} response @returns {Promise<boolean>}
+   * @param {Request} req @param {Record<string, unknown>} response @returns {Promise<boolean>}
    */
-  const answer = async (id, response) => {
-    const req = live(id);
-    if (req === null) return false;
+  const answerReq = async (req, response) => {
+    if (requests.get(req.id) !== req) return false;
     const chain = await chainOf(req.sender);
-    if (requests.get(id) !== req) return false;
-    if (chain === null) {
+    const allowed = chain !== null && (await stillAllowed(req));
+    if (requests.get(req.id) !== req) return false;
+    if (!allowed) {
       void endWithError(req, "NotAllowedError", false);
       return false;
     }
@@ -898,7 +926,15 @@ export function createPasskeyRequests({
    */
   const onLock = (wasOpen = true) => {
     verified.clear();
-    if (!wasOpen) return;
+    if (wasOpen) endAll();
+  };
+
+  /**
+   * Ends every request that waits with NotAllowedError, the conditional ones too: a lock of the open vault, a sign-out, a
+   * sign-in or "forget this server" (the server a request was checked against may be another one now).
+   */
+  const endAll = () => {
+    verified.clear();
     passes = [];
     for (const req of [...requests.values()]) void endWithError(req, "NotAllowedError", false);
   };
@@ -926,7 +962,12 @@ export function createPasskeyRequests({
   };
 
   /** @param {any} args */
-  const windowArgs = (args) => ({ id: args?.request_id, session: args?.session });
+  const windowArgs = (args) => ({ id: args?.request_id, session: args?.session, windowId: args?.window_id });
+  /** The request a window's op names, for that window's session (and browser window, when the handler knows it). @param {any} args */
+  const ownedBy = (args) => {
+    const { id, session, windowId } = windowArgs(args);
+    return owned(id, session, isIndex(windowId) ? windowId : undefined);
+  };
 
   return {
     push,
@@ -941,15 +982,39 @@ export function createPasskeyRequests({
       const req = owned(id, session);
       return req === null ? null : callerFor(req);
     },
-    answer,
-    handover,
-    cancel,
-    fail,
-    /** The card in the popup opens the window for a request that waits (the click is the user's activation). @param {string} id */
-    show: async (id) => {
-      const req = live(id);
-      if (req === null || req.state !== "waiting") return false;
-      return showWindow(req);
+    // Every way to end a request names the session (the page's port) that owns it: a page can act only on a request it
+    // came to own (the first session that named it), never on any id it can name.
+    /** Ferret's answer. @param {string} id @param {string} session @param {Record<string, unknown>} response */
+    answer: async (id, session, response) => {
+      const req = owned(id, session);
+      return req === null ? false : answerReq(req, response);
+    },
+    /** The browser answers instead. @param {string} id @param {string} session @param {{ once: boolean }} how */
+    handover: (id, session, how) => {
+      const req = owned(id, session);
+      return req === null ? false : handoverReq(req, how);
+    },
+    /** @param {string} id @param {string} session */
+    cancel: (id, session) => {
+      const req = owned(id, session);
+      return req === null ? false : cancelReq(req);
+    },
+    /** @param {string} id @param {string} session @param {string} name */
+    fail: (id, session, name) => {
+      const req = owned(id, session);
+      return req === null ? false : failReq(req, name);
+    },
+    /**
+     * The popup's card opens the window for the request that waits in the tab the popup shows (the click is the user's
+     * activation). It takes the tab, not an id: the popup never needs one for it.
+     * @param {number} tabId
+     */
+    show: async (tabId) => {
+      if (!isIndex(tabId)) return false;
+      for (const req of [...requests.values()]) {
+        if (req.sender.tabId === tabId && req.state === "waiting" && live(req.id) !== null) return showWindow(req);
+      }
+      return false;
     },
     /** The user was verified for this request (one time, gone with the request and at every lock). @param {string} id @param {string} session */
     markVerified: (id, session) => {
@@ -958,8 +1023,11 @@ export function createPasskeyRequests({
       verified.add(req.id);
       return true;
     },
-    /** Takes the mark of verification of a request: true once. @param {string} id */
-    takeVerified: (id) => verified.delete(id),
+    /** Takes the mark of verification of a request, for the session that owns it: true once. @param {string} id @param {string} session */
+    takeVerified: (id, session) => {
+      const req = owned(id, session);
+      return req !== null && verified.delete(req.id);
+    },
     onEvent,
     onNavigation,
     onSameDocument,
@@ -967,6 +1035,7 @@ export function createPasskeyRequests({
     onWindowRemoved,
     endSession,
     onLock,
+    endAll,
     /** The tab's conditional request (the popup's passkey part), or null. @param {number} tabId */
     conditionalFor: (tabId) => viewIn(tabId, (r) => r.mediation === "conditional"),
     /** The tab's modal request that waits without a window (the popup's card), or null. @param {number} tabId */
@@ -991,8 +1060,7 @@ export function createPasskeyRequests({
         vault: false,
         worker: /** @type {const} */ ("none"),
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
-          const { id, session } = windowArgs(args);
-          const req = owned(id, session);
+          const req = ownedBy(args);
           return req === null ? { ok: false, reason: "gone" } : { ok: true, request: viewOf(req) };
         },
       },
@@ -1000,26 +1068,23 @@ export function createPasskeyRequests({
         vault: false,
         worker: /** @type {const} */ ("none"),
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
-          const { id, session } = windowArgs(args);
-          const req = owned(id, session);
-          return req !== null && cancel(req.id) ? { ok: true } : { ok: false, reason: "gone" };
+          const req = ownedBy(args);
+          return req !== null && cancelReq(req) ? { ok: true } : { ok: false, reason: "gone" };
         },
       },
       passkey_browser: {
         vault: false,
         worker: /** @type {const} */ ("none"),
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
-          const { id, session } = windowArgs(args);
-          const req = owned(id, session);
-          return req !== null && handover(req.id, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
+          const req = ownedBy(args);
+          return req !== null && handoverReq(req, { once: false }) ? { ok: true } : { ok: false, reason: "gone" };
         },
       },
       passkey_site: {
         vault: true,
         worker: /** @type {const} */ ("vault"),
         run: async (/** @type {{ vault: any }} */ client, /** @type {any} */ args) => {
-          const { id, session } = windowArgs(args);
-          const req = owned(id, session);
+          const req = ownedBy(args);
           if (req === null) return { ok: false, reason: "gone" };
           /** @type {any} */
           let site;
@@ -1027,12 +1092,13 @@ export function createPasskeyRequests({
             site = await client.vault.passkey_site(callerFor(req), askedRpId(req));
           } catch (error) {
             const code = /** @type {{ code?: unknown }} */ (error)?.code;
-            // An RP ID the origin may not use, or a refused caller: the page learns it as the browser would tell it.
-            if (code === "malformed_rp_id" || code === "not_allowed") {
-              fail(req.id, pageErrorOf(code));
-              return { ok: false, reason: code === "malformed_rp_id" ? "security_error" : "not_allowed" };
-            }
-            throw error;
+            // The vault or its worker went: the core host handles that (the request waits for the unlock in the window).
+            if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+            // Anything else the core refuses ends the call as the browser would end it: an RP ID the origin may not use
+            // (SecurityError), options it cannot take (TypeError), a refused caller (NotAllowedError).
+            const name = pageErrorOf(code);
+            failReq(req, name);
+            return { ok: false, reason: SITE_REASONS[name] };
           }
           if (requests.get(req.id) !== req) return { ok: false, reason: "gone" };
           return {
