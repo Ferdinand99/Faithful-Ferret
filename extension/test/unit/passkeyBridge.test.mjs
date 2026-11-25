@@ -4,7 +4,10 @@
 // test/firefox/74-passkey-bridge.spec.mjs.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONTENT_TYPES, PASSKEY_LIMITS, PUSH_TYPES } from "../../src/shared/protocol.mjs";
+import { CONTENT_TYPES, PASSKEY_LIMITS, PUSH_TYPES, UI_TYPES, decode } from "../../src/shared/protocol.mjs";
+import {
+  CONTENT_TYPES as PAGE_CONTENT_TYPES, PASSKEY_LIMITS as PAGE_PASSKEY_LIMITS, PUSH_TYPES as PAGE_PUSH_TYPES, decode as pageDecode, encode as pageEncode,
+} from "../../src/shared/contentProtocol.mjs";
 import { walk } from "../../src/shared/schema.mjs";
 import { fromB64u, optionsToWire, responseFromWire, responseToWire, toB64u } from "../../src/shared/webauthnWire.mjs";
 import { PASSKEY_BRIDGE_MAX_BYTES, PASSKEY_MAIN_MAX_BYTES } from "../../scripts/lib/classic.mjs";
@@ -42,6 +45,28 @@ test("both_scripts_join_and_the_main_script_stays_within_its_budget", () => {
   // The page's script is built from its own file only: no protocol, no shared module.
   assert.match(main, /^\/\/ Files: content\/passkeyResponse\.mjs, content\/passkey\.main\.entry\.mjs$/m);
   assert.match(bridge, /^\/\/ Files: .*shared\/webauthnWire\.mjs.*content\/passkey\.bridge\.entry\.mjs$/m);
+});
+
+test("the_bridge_carries_only_the_content_and_push_schemas", () => {
+  const { bridge } = passkeyScripts();
+  const files = /** @type {RegExpMatchArray} */ (bridge.match(/^\/\/ Files: (.+)$/m))[1].split(", ");
+  // Joined from the content channels of the protocol, never from the module with the tables of the extension pages.
+  assert.ok(files.includes("shared/contentProtocol.mjs"), files.join(", "));
+  assert.equal(files.includes("shared/protocol.mjs"), false, files.join(", "));
+  // No type of the extension pages is in the script (their names with an underscore are distinctive enough to search for).
+  const uiOnly = Object.keys(UI_TYPES).filter((t) => t.includes("_") && !Object.hasOwn(CONTENT_TYPES, t) && !Object.hasOwn(PUSH_TYPES, t));
+  assert.ok(uiOnly.length > 30, `${uiOnly.length}`);
+  for (const type of uiOnly) assert.equal(bridge.includes(type), false, `${type} is in the bridge`);
+  for (const type of [...Object.keys(CONTENT_TYPES), ...Object.keys(PUSH_TYPES)]) assert.ok(bridge.includes(`${type}:`), type);
+  // One definition of each table: what the extension pages and the background import is the bridge's module's own.
+  assert.equal(CONTENT_TYPES, PAGE_CONTENT_TYPES);
+  assert.equal(PUSH_TYPES, PAGE_PUSH_TYPES);
+  assert.equal(PASSKEY_LIMITS, PAGE_PASSKEY_LIMITS);
+  // The content codec knows its own two tables only, and never takes a refusal (a reply of the extension pages' channel).
+  assert.throws(() => pageEncode("state", {}), /unknown_type/);
+  const refusal = JSON.stringify({ v: 1, id: "x", type: "refused", body: { reason: "internal_error" } });
+  assert.throws(() => pageDecode(refusal, PAGE_PUSH_TYPES, { reply: true }), /unknown_type/);
+  assert.equal(decode(refusal, UI_TYPES, { reply: true }).type, "refused");
 });
 
 test("the_handshake_works_in_either_order_and_each_listener_takes_one", async () => {

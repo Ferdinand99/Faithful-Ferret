@@ -1,13 +1,13 @@
 // The start of the capture script. The build joins this file and what it imports into one classic script
 // (content/capture.inject.js, see scripts/lib/classic.mjs), which the extension registers for https pages. It
 // starts on an https page only (it needs no messaging until a message goes), hands the detection module of the fill engine to the capture, and sends what the
-// capture reports to the extension as a message of the protocol (shared/protocol.mjs: form_capture, form_gone and
+// capture reports to the extension as a message of the protocol (shared/contentProtocol.mjs: form_capture, form_gone and
 // page_ready). It builds the envelope itself, because the capture script has no dependencies and the extension checks
 // every message against its schema when it arrives. A message that is over the size limit is not sent.
 import { createCapture } from "./capture.mjs";
 import { SUBMIT, TEXT_TYPES, controlText, findGroups, flatParent, isInside, isSubmitControl, isToggle } from "./forms.mjs";
 
-/** The protocol version and the size limit of a capture message, as shared/protocol.mjs and the extension have them. */
+/** The protocol version and the size limit of a capture message, as shared/contentProtocol.mjs and the extension have them. */
 const VERSION = 1;
 const MAX_BYTES = 4096;
 

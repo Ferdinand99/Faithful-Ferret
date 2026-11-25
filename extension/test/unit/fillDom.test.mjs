@@ -1316,7 +1316,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   const walk = (dir) => readdirSync(join(dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const files = new Map(walk(src).filter((p) => /\.(?:mjs|js)$/.test(p)).map((p) => [posix.normalize(p.slice(src.length + 1).split("\\").join("/")), Buffer.from(readFileSync(p))]));
 
-  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/protocol.mjs", "shared/schema.mjs",
+  const ALLOWED = new Set(["content/entry.mjs", "content/fill.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/patterns.mjs", "content/capture.mjs", "content/capture.entry.mjs", "shared/contentProtocol.mjs", "shared/schema.mjs",
     // The passkey scripts of a page (each its own bundle: the one in the page's world reaches nothing; the bridge also reads the wire form).
     "content/passkey.main.entry.mjs", "content/passkeyResponse.mjs", "content/passkey.bridge.entry.mjs", "shared/webauthnWire.mjs"]);
   const FORBIDDEN_TEXT = /\bsubtle\b|SubtleCrypto|importKey|deriveKey|deriveBits|WebAssembly|\bWorker\b|indexedDB|localStorage|sessionStorage|\.storage\b|background\/|pkg-web|client\.mjs|\bargon2|\bhkdf\b|\bsha-?256\b/i;
@@ -1342,7 +1342,7 @@ test("the_content_script_imports_no_crypto_and_no_shared_store", () => {
   assert.deepEqual(problems(files), []);
   // Not vacuous: the content files exist, reach the protocol, and the reader sees their imports.
   assert.ok(files.has("content/fill.mjs") && files.has("content/entry.mjs"));
-  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/protocol.mjs", "./forms.mjs", "./passwordRules.mjs"]);
+  assert.deepEqual(importsOf(files.get("content/fill.mjs")?.toString("utf8") ?? "").specifiers, ["../shared/contentProtocol.mjs", "./forms.mjs", "./passwordRules.mjs"]);
   assert.deepEqual(importsOf(files.get("content/entry.mjs")?.toString("utf8") ?? "").specifiers, ["./fill.mjs"]);
 
   // The check finds what it is for.

@@ -54,7 +54,8 @@ export const CAPTURE_MAX_BYTES = 40 * 1024;
 /**
  * The passkey scripts (the `passkeys` feature): the one in the page's own world, which may be built from nothing but the
  * passkey files of its folder (no protocol, no shared module: it keeps the built-ins it uses at install, design § 10.8)
- * and has a size budget, and the bridge of the isolated world, which also reads the message protocol and the wire form.
+ * and has a size budget, and the bridge of the isolated world, which also reads the content channels of the message
+ * protocol (shared/contentProtocol.mjs, never the tables of the extension pages) and the wire form.
  */
 export const PASSKEY_MAIN_ENTRY = "content/passkey.main.entry.mjs";
 export const PASSKEY_MAIN_BUNDLE = "content/passkey.main.inject.js";
@@ -67,16 +68,16 @@ export const PASSKEY_BRIDGE_MAX_BYTES = 48 * 1024;
 export const passkeyMainMayInclude = (path) => /^content\/passkey[A-Za-z.]*\.mjs$/.test(path);
 /** @param {string} path */
 export const passkeyBridgeMayInclude = (path) =>
-  passkeyMainMayInclude(path) || path === "shared/protocol.mjs" || path === "shared/schema.mjs" || path === "shared/webauthnWire.mjs";
+  passkeyMainMayInclude(path) || path === "shared/contentProtocol.mjs" || path === "shared/schema.mjs" || path === "shared/webauthnWire.mjs";
 
 /**
- * The files a content script may be built from: its own folder and the message
- * protocol with the schema checker. No other shared module, nothing of the
+ * The files a content script may be built from: its own folder and the content
+ * channels of the message protocol with the schema checker. No other shared module, nothing of the
  * background, no store, no crypto.
  * @param {string} path
  */
 export const contentMayInclude = (path) =>
-  (path.startsWith("content/") && path.endsWith(".mjs")) || path === "shared/protocol.mjs" || path === "shared/schema.mjs";
+  (path.startsWith("content/") && path.endsWith(".mjs")) || path === "shared/contentProtocol.mjs" || path === "shared/schema.mjs";
 
 const IMPORT = /^import\s*(?:\{([^}]*)\}\s*from\s*)?(["'])([^"'\n]+)\2[ \t]*;?[ \t]*$/gm;
 const EXPORT_DECLARATION = /^export\s+(?:async\s+function|function|const|class)\s+([A-Za-z_$][\w$]*)/gm;
