@@ -97,6 +97,9 @@ import { memoryStore, unavailableMemory } from "../shared/sync/memory.mjs";
 import { createOfferWriter, folderNames } from "./offerWrite.mjs";
 import { permissionOf } from "./session.mjs";
 
+/** The key of the passkey writer's follow-ups in the browser session's storage (sealed bytes and public numbers only). */
+export const PASSKEY_FOLLOWUPS_KEY = "passkey_followups";
+
 /** How often the engine reads the feed on its own when no stream hint comes (and the fallback of the stream). */
 export const FALLBACK_POLL_MS = 300_000;
 
@@ -261,6 +264,7 @@ export class SyncHostError extends Error {
  *   language?: string,
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   passkeyWrite?: ((options: Record<string, any>) => any) | null,
+ *   passkeyStore?: { get(key: string): Promise<Record<string, unknown>>, set(items: Record<string, unknown>): Promise<void> } | null,
  * }} options `createEngine` and `createChannel` are the shared engine and live channel (the tests pass fakes); `win`
  *   is where the `online` event comes from; `locks` is the Web Locks of the origin (`navigator.locks`); `captures` is
  *   the store of offers (null: there is no offer to write); `fillContext` what Ferret filled where; `language` the
@@ -281,6 +285,7 @@ export function createSyncHost({
     return bytes;
   },
   passkeyWrite = null,
+  passkeyStore = null,
 }) {
   /** The follow-ups of passkey writes (passkeyWrite.mjs), kept across unlocks. @type {Map<string, any>} */
   const passkeyLeftovers = new Map();
@@ -457,6 +462,14 @@ export function createSyncHost({
             },
             scope: `${server} ${scope.accountId}`,
             leftovers: passkeyLeftovers,
+            // The follow-ups also go to the browser session's storage, so a restart of the background page keeps them.
+            store:
+              passkeyStore === null
+                ? null
+                : {
+                    load: async () => (await passkeyStore.get(PASSKEY_FOLLOWUPS_KEY))?.[PASSKEY_FOLLOWUPS_KEY] ?? [],
+                    save: (/** @type {object[]} */ list) => passkeyStore.set({ [PASSKEY_FOLLOWUPS_KEY]: list }),
+                  },
           });
     /** @type {Running} */
     const run = { engine, writer, passkeys, api, server, session, channel: null, live: "offline", seen: new Set(), ended: false, watch };

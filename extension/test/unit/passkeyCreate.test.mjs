@@ -61,8 +61,11 @@ function item(n, { name = `Item ${n}`, url = `${RP}/`, how = "host", username, p
   };
 }
 
-/** @param {{ items?: any[], halted?: string | null, put?: (call: any) => Promise<any>, options?: Record<string, any>, timeout?: number }} [o] */
-async function world({ items = [], halted = null, put, options = {}, timeout } = {}) {
+/**
+ * @param {{ items?: any[], halted?: string | null, put?: (call: any) => Promise<any>, options?: Record<string, any>, timeout?: number, retry?: number }} [o]
+ *   `retry`: the writer's wait between two tries (ms)
+ */
+async function world({ items = [], halted = null, put, options = {}, timeout, retry = 20 } = {}) {
   const { load } = await pkg();
   const [{ createPasskeyRequests }, { createPasskeyFlow }, { createPasskeyWrite }, { decode, PUSH_TYPES }] = await Promise.all([
     load("background/passkeyRequests.mjs"),
@@ -126,6 +129,10 @@ async function world({ items = [], halted = null, put, options = {}, timeout } =
   const byId = new Map(items.map((i) => [i.id, i]));
   /** What the server has accepted, by item id: the row the feed brings. @type {Map<string, any>} */
   const server = new Map();
+  /** Whether the feed brings the server's rows to the engine. */
+  const feed = { on: true };
+  /** Whether the engine refuses a deletion. */
+  const failRemove = { on: false };
   const writes = /** @type {any[]} */ ([]);
   const engineCalls = /** @type {string[]} */ ([]);
   let handleNo = 10;
@@ -146,6 +153,7 @@ async function world({ items = [], halted = null, put, options = {}, timeout } =
       return { handle, view: structuredClone(it.view), close: async () => void handles.delete(handle) };
     },
     async remove(/** @type {string} */ id) {
+      if (failRemove.on) throw Object.assign(new Error("blocked"), { code: "blocked" });
       writes.push({ op: "remove", id, rev: byId.get(id)?.rev });
       byId.delete(id);
     },
@@ -158,6 +166,7 @@ async function world({ items = [], halted = null, put, options = {}, timeout } =
     },
     async syncNow() {
       engineCalls.push("syncNow");
+      if (!feed.on) return;
       for (const [id, row] of server) {
         const it = byId.get(id);
         if (it && it.rev >= row.rev) continue;
@@ -231,8 +240,12 @@ async function world({ items = [], halted = null, put, options = {}, timeout } =
     },
   };
   /** @type {Map<string, any>} */
-  const leftovers = new Map();
-  const writer = createPasskeyWrite({ engine, vault, api, epoch: async () => 3, scope: "s", leftovers, saveMs: 300, retryMs: () => 20 });
+  let leftovers = new Map();
+  /** The browser session's storage of the follow-ups (it outlives a restart of the background page). */
+  const sessionStore = { list: /** @type {any} */ (null) };
+  const store = { load: async () => sessionStore.list ?? [], save: async (/** @type {any[]} */ list) => void (sessionStore.list = structuredClone(list)) };
+  const make = () => createPasskeyWrite({ engine, vault, api, epoch: async () => 3, scope: "s", leftovers, saveMs: 300, retryMs: () => retry, store });
+  let writer = make();
   let writerOn = true;
   const flow = createPasskeyFlow({ requests, writer: () => (writerOn ? writer : null) });
   const client = { vault };
@@ -252,9 +265,25 @@ async function world({ items = [], halted = null, put, options = {}, timeout } =
   /** @param {string} op @param {Record<string, unknown>} args */
   const call = (op, args) => /** @type {Promise<any>} */ (flow.ops[op].run(client, { session: SESSION, ...args }));
   return {
-    requests, flow, writer, engine, vault, api, puts, pushed, core, writes, engineCalls, byId, server, leftovers, clock, frames, request, call,
+    requests, flow, engine, vault, api, puts, pushed, core, writes, engineCalls, byId, server, clock, frames, request, call, feed, failRemove, sessionStore,
+    get writer() {
+      return writer;
+    },
+    get leftovers() {
+      return leftovers;
+    },
     /** @param {boolean} on */
     setWriter: (on) => void (writerOn = on),
+    /**
+     * A lock and the next unlock: the writer stops and a new one is made (`restart`: the background page started again, so only
+     * the browser session's storage has the follow-ups). @param {{ restart?: boolean }} [o]
+     */
+    relock({ restart = false } = {}) {
+      writer.stop();
+      if (restart) leftovers = new Map();
+      writer = make();
+      return writer;
+    },
   };
 }
 
@@ -462,6 +491,89 @@ test("a_create_write_never_enters_the_outbox_or_the_conflict_view", async () => 
     const text = readFileSync(join(SRC, file), "utf8").replace(/^\s*\/\/.*$/gm, "");
     for (const banned of [/engine\.create\b/, /importItems/, /enqueue/, /outbox/i, /engine\.(?:resolve|conflict|discard|acceptOlderState)\b/]) assert.doesNotMatch(text, banned, `${file}: ${banned}`);
   }
+});
+
+// -------------------------------------------------------------------------------------------------------- a lock on the way
+
+test("a_lock_during_the_retry_wait_leaves_a_follow_up_that_the_next_unlock_finishes", async () => {
+  let down = true;
+  const w = await world({ retry: 60_000, put: () => (down ? Promise.reject(apiError(0, "network")) : Promise.resolve({ rev: 1, seq: 4, replayed: true })) });
+  const id = await w.request();
+  const choosing = w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "rp-a.test" });
+  await sleep(30);
+  assert.equal(w.puts.length, 1, "the first try went, the writer waits a minute before the next");
+  // The vault locks during the wait: the choice comes back at once (nothing hangs), as a no for the person.
+  w.writer.stop();
+  const reply = await Promise.race([choosing, sleep(1000).then(() => "hung")]);
+  assert.deepEqual(reply, { ok: false, reason: "network" });
+  assert.deepEqual(results(w.pushed), []);
+  // The write is kept as a follow-up, in memory and in the browser session's storage (sealed bytes, no key).
+  assert.equal(w.leftovers.size, 1);
+  assert.equal(w.sessionStore.list.length, 1);
+  assert.equal(w.sessionStore.list[0].key, w.puts[0].body.idem);
+  // The background page starts again (memory gone) and the vault is opened: the follow-up goes on from storage, with the same key,
+  // and the item the server took (the page never got it) goes again.
+  down = false;
+  w.relock({ restart: true });
+  await sleep(150);
+  assert.equal(new Set(w.puts.map((p) => p.body.idem)).size, 1);
+  assert.ok(w.puts.length >= 2);
+  const made = w.core.find((c) => c.op === "passkey_create");
+  assert.deepEqual(w.writes, [{ op: "remove", id: made.itemId, rev: 1 }]);
+  assert.equal(w.leftovers.size, 0);
+  assert.deepEqual(w.sessionStore.list, []);
+});
+
+test("a_lock_during_the_undo_keeps_it_for_the_next_unlock_and_a_failed_undo_is_kept", async () => {
+  const gate = deferred();
+  const w = await world({ retry: 60_000, put: () => gate.promise });
+  const id = await w.request();
+  const choosing = w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "rp-a.test" });
+  await sleep(30);
+  // The page leaves; the server takes the item; the feed does not bring it yet, so the undo waits for it.
+  w.requests.onNavigation({ tabId: 4, frameId: 0, documentId: "doc-2" });
+  w.feed.on = false;
+  gate.resolve({ rev: 1, seq: 1, replayed: false });
+  assert.deepEqual(await choosing, { ok: false, reason: "gone" });
+  await sleep(30);
+  assert.equal(w.leftovers.size, 1, "the undo is kept while it waits");
+  // The vault locks during that wait: nothing hangs and the undo stays for the next unlock.
+  w.relock();
+  // The next unlock: the follow-up asks the server again (same key, a replay) and the feed now brings the item; the deletion is
+  // refused this time (the engine is busy): it is not dropped.
+  w.writer.stop();
+  w.feed.on = true;
+  w.failRemove.on = true;
+  w.relock();
+  await sleep(150);
+  assert.deepEqual(w.writes, []);
+  assert.equal(w.leftovers.size, 1, "a failed undo is kept, not dropped");
+  // And the unlock after that finishes it.
+  w.failRemove.on = false;
+  w.relock();
+  await sleep(150);
+  const made = w.core.find((c) => c.op === "passkey_create");
+  assert.deepEqual(w.writes, [{ op: "remove", id: made.itemId, rev: 1 }]);
+  assert.equal(w.leftovers.size, 0);
+  assert.equal(new Set(w.puts.map((p) => p.body.idem)).size, 1);
+});
+
+test("a_refused_write_keeps_the_verification_mark_for_the_next_try", async () => {
+  /** @type {any[]} */
+  const answers = [apiError(503, "unavailable")];
+  const w = await world({ options: { authenticator_selection: { user_verification: "required" } }, put: () => (answers.length > 0 ? Promise.reject(answers.shift()) : Promise.resolve({ rev: 1, seq: 1, replayed: false })) });
+  const id = await w.request();
+  // Without a mark a required request asks for the verification first, and nothing is made.
+  assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: false, reason: "verification_needed" });
+  assert.equal(w.core.filter((c) => c.op === "passkey_create").length, 0);
+  assert.equal(w.requests.markVerified(id, SESSION), true);
+  // The server refuses the write: the page got nothing, and the mark stays for the person's next try.
+  assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: false, reason: "network" });
+  assert.equal(w.requests.verifiedFor(id, SESSION), true);
+  assert.deepEqual(await w.call("passkey_choose", { request_id: id, kind: "create", mode: "new", name: "x" }), { ok: true });
+  assert.deepEqual(w.core.filter((c) => c.op === "passkey_create").map((c) => c.uv), [{ user_present: true, user_verified: true }, { user_present: true, user_verified: true }]);
+  // The answer ends the request, and its mark with it.
+  assert.equal(w.requests.verifiedFor(id, SESSION), false);
 });
 
 // -------------------------------------------------------------------------------------------------------- what the window is offered

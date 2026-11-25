@@ -179,8 +179,10 @@ export function createPasskeyFlow({ requests, writer, random = (bytes) => global
     }
     // Nothing is written for a page that is no longer the one that asked.
     if (!(await requests.recheck(req.id, req.session))) return { ok: false, reason: "gone" };
-    // User verification: only the broker's one-time mark for this request (a recent unlock or a verification in the window).
-    const verified = requests.takeVerified(req.id, req.session);
+    // User verification: only the broker's one-time mark for this request (a recent unlock or a verification in the window). It is
+    // spent with the answer (the request ends, and its mark with it); a write the server refused gave the page nothing, so the
+    // mark stays for the person's next try of the same request.
+    const verified = requests.verifiedFor(req.id, req.session);
     if (level === "required" && !verified) return { ok: false, reason: "verification_needed" };
     // User presence: the click in this window is the evidence (only the window's own choice reaches this op). A page that
     // discourages verification gets the click alone.
@@ -247,7 +249,7 @@ export function createPasskeyFlow({ requests, writer, random = (bytes) => global
           const req = /** @type {any} */ (requests.createOf(args));
           if (req === null) return { ok: false, reason: "gone" };
           const w = writer();
-          if (w === null) return { ok: false, reason: "network" };
+          if (w === null || !w.ready()) return { ok: false, reason: "network" };
           const found = await siteOf(client, req);
           if ("reason" in found) return { ok: false, reason: found.reason };
           const scanned = await scanFor(w, req, found.site.rp_id);

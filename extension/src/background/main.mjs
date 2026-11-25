@@ -102,6 +102,8 @@ const syncHost = createSyncHost({
   ...(hooks?.createEngine ? { createEngine: hooks.createEngine } : {}),
   // The writer of new passkeys (the `passkeys` feature), made per unlock with the engine; null in a build without the feature.
   passkeyWrite: createPasskeyWrite,
+  // Where its follow-ups outlive a restart of the background page (the browser session's storage, never written to disk).
+  passkeyStore: createPasskeyWrite ? browser.storage.session ?? null : null,
 });
 
 // The popup that opens by itself and the badge on the toolbar button (only with saving passwords). The badge tells the

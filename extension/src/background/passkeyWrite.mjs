@@ -80,6 +80,38 @@ const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "in
  * }} Scan
  */
 
+/**
+ * A follow-up as it is stored (no promise; the sealed bytes as base64url).
+ * @param {Leftover} left
+ */
+function serialize(left) {
+  return {
+    key: left.key, scope: left.scope, itemId: left.itemId, baseRev: left.baseRev, rev: left.rev, rpId: left.rpId, created: left.created,
+    attach: left.attach, bytes: b64u.encode(left.bytes), folder: left.folder,
+  };
+}
+
+/**
+ * A stored follow-up read back, or null for anything of another shape.
+ * @param {any} raw @returns {Leftover | null}
+ */
+function deserialize(raw) {
+  try {
+    const ok =
+      raw !== null && typeof raw === "object" && /^[0-9a-f]{32}$/.test(raw.key) && typeof raw.scope === "string" && raw.scope.length <= 2048 &&
+      ITEM_ID.test(raw.itemId) && Number.isSafeInteger(raw.baseRev) && raw.baseRev >= 0 && raw.rev === raw.baseRev + 1 &&
+      typeof raw.rpId === "string" && raw.rpId.length <= 1024 && Number.isSafeInteger(raw.created) && typeof raw.attach === "boolean" &&
+      typeof raw.bytes === "string" && raw.bytes.length <= 4_000_000 && (raw.folder === null || typeof raw.folder === "string");
+    if (!ok) return null;
+    return {
+      key: raw.key, scope: raw.scope, itemId: raw.itemId, baseRev: raw.baseRev, rev: raw.rev, rpId: raw.rpId, created: raw.created,
+      attach: raw.attach, bytes: b64u.decode(raw.bytes), folder: raw.folder, inflight: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** The error of this module: a short code. */
 export class PasskeyWriteError extends Error {
   /** @param {string} code */
@@ -164,6 +196,7 @@ export function judge(error, sent) {
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   saveMs?: number,
  *   retryMs?: (attempt: number) => number,
+ *   store?: { load(): Promise<unknown>, save(list: object[]): Promise<void> } | null,
  * }} options `vault`: the core client of the open vault (refused after a lock); `epoch`: the restore epoch the writes are
  *   conditional on (null: none yet); `scope`: the server and account the writes go to; `leftovers`: the follow-ups, kept by the
  *   sync across unlocks
@@ -180,19 +213,27 @@ export function createPasskeyWrite({
   random = (bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
   saveMs = PASSKEY_SAVE_MS,
   retryMs = (attempt) => Math.min(PASSKEY_RETRY_MAX_MS, 1000 * 2 ** Math.min(attempt, 16)),
+  store = null,
 }) {
   let stopped = false;
-  /** @type {Set<unknown>} */
-  const waits = new Set();
+  /** The waits that run, by timer: each is ended at once by `stop()` (a lock), so nothing waits for good. @type {Map<unknown, () => void>} */
+  const waits = new Map();
 
-  /** @param {number} ms @returns {Promise<void>} */
+  /**
+   * A wait of `ms` that a lock ends early (it then resolves at once; the caller checks `stopped`).
+   * @param {number} ms @returns {Promise<void>}
+   */
   const sleep = (ms) =>
     new Promise((resolve) => {
+      if (stopped) {
+        resolve();
+        return;
+      }
       const id = timers.setTimeout(() => {
         waits.delete(id);
         resolve();
       }, Math.max(0, ms));
-      waits.add(id);
+      waits.set(id, () => resolve());
     });
 
   /** @param {number} n */
@@ -299,11 +340,16 @@ export function createPasskeyWrite({
    */
   function within(promise, ms) {
     return new Promise((resolve) => {
+      if (stopped) {
+        resolve(null);
+        return;
+      }
       const id = timers.setTimeout(() => {
         waits.delete(id);
         resolve(null);
       }, Math.max(0, ms));
-      waits.add(id);
+      // A lock ends the wait as "no answer in time": the write is then followed up.
+      waits.set(id, () => resolve(null));
       promise.then((value) => {
         timers.clearTimeout(id);
         waits.delete(id);
@@ -312,11 +358,28 @@ export function createPasskeyWrite({
     });
   }
 
+  /** Stores the follow-ups where they outlive the background page (when the sync gives such a place). */
+  const persist = () => {
+    if (store === null) return;
+    const list = [...leftovers.values()].map(serialize);
+    Promise.resolve()
+      .then(() => store.save(list))
+      .catch(() => {
+        // Kept in memory all the same.
+      });
+  };
+
   /** @param {Leftover} left */
   const keep = (left) => {
     leftovers.delete(left.key);
     leftovers.set(left.key, left);
     while (leftovers.size > MAX_LEFTOVERS) leftovers.delete(/** @type {string} */ (leftovers.keys().next().value));
+    persist();
+  };
+
+  /** @param {string} key */
+  const drop = (key) => {
+    if (leftovers.delete(key)) persist();
   };
 
   /**
@@ -344,12 +407,10 @@ export function createPasskeyWrite({
    * @param {Leftover} left
    */
   async function undo(left) {
+    // Kept until it is done: a lock or a failure on the way leaves it for the next unlock.
+    keep({ ...left, inflight: null });
     const found = await settle(left.itemId, left.rev);
-    if (found === null) {
-      // Not here yet (or the engine stopped): the next unlock tries again.
-      keep({ ...left, inflight: null });
-      return;
-    }
+    if (found === null) return;
     /** @type {{ view: any, close(): Promise<void> } | null} */
     let opened = null;
     try {
@@ -362,11 +423,10 @@ export function createPasskeyWrite({
         if (left.attach) await engine.update(left.itemId, { remove_passkey: true }, found.rev);
         else await engine.remove(left.itemId);
       }
-      leftovers.delete(left.key);
+      drop(left.key);
     } catch {
+      // Not dropped: the next unlock tries again (at most MAX_LEFTOVERS are kept).
       await opened?.close().catch(() => {});
-      if (!stopped) leftovers.delete(left.key);
-      else keep({ ...left, inflight: null });
     }
   }
 
@@ -383,7 +443,7 @@ export function createPasskeyWrite({
       left.inflight = null;
       if (stopped) return;
       if (outcome.kind === "refused") {
-        leftovers.delete(left.key);
+        drop(left.key);
         return;
       }
       if (outcome.kind === "accepted") {
@@ -485,6 +545,8 @@ export function createPasskeyWrite({
         const wait = Math.min(retryMs(attempt), until - now());
         if (wait <= 0) break;
         await sleep(wait);
+        // A lock during the wait: the outcome stays unknown, and the write is followed up by the next unlock.
+        if (stopped) break;
       }
 
       if (outcome.kind === "refused") {
@@ -521,10 +583,27 @@ export function createPasskeyWrite({
     }
   }
 
-  // The follow-ups an earlier unlock of this account left go on now.
-  for (const left of [...leftovers.values()]) {
-    if (left.scope === scope) void followUp({ ...left, inflight: null });
-  }
+  // The follow-ups an earlier unlock of this account left go on now (those in the stored list too, after a restart of the
+  // background page).
+  void (async () => {
+    if (store !== null) {
+      /** @type {unknown} */
+      let stored = [];
+      try {
+        stored = await store.load();
+      } catch {
+        stored = [];
+      }
+      for (const raw of Array.isArray(stored) ? stored.slice(-MAX_LEFTOVERS) : []) {
+        const left = deserialize(raw);
+        if (left !== null && !leftovers.has(left.key)) leftovers.set(left.key, left);
+      }
+    }
+    if (stopped) return;
+    for (const left of [...leftovers.values()]) {
+      if (left.scope === scope) void followUp({ ...left, inflight: null });
+    }
+  })();
 
   return Object.freeze({
     scan,
@@ -541,8 +620,12 @@ export function createPasskeyWrite({
     /** The vault locked or the sync stopped: nothing more is sent from here (the follow-ups stay with the sync). */
     stop() {
       stopped = true;
-      for (const id of waits) timers.clearTimeout(id);
+      const running = [...waits];
       waits.clear();
+      for (const [id, end] of running) {
+        timers.clearTimeout(id);
+        end();
+      }
     },
   });
 }

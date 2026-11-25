@@ -382,7 +382,12 @@ export function detectUnsafe(c, o, provider) {
   // A passkey made or used where the browser had to refuse the RP ID: the answer must be an error.
   if (c.expected.ceremony === "client-error" && c.expected.error === "SecurityError" && o.ceremony === "ok" && ids.has("signature-for-other-rp-id")) out.push("signature-for-other-rp-id");
   // A frame with a foreign ancestor or another origin than the top: Ferret must not answer.
-  if (provider === "ferret" && c.expected.route === "browser" && o.windowShown && (ids.has("response-to-foreign-ancestor") || ids.has("response-to-other-frame"))) out.push("response-to-foreign-ancestor");
+  // Only when the chain really has a frame of another origin than the top (or a sandboxed one): a Ferret window for a chain of one
+  // origin is a route that does not match the case (a plain failure), not an answer to a foreign ancestor.
+  const chain = Array.isArray(c.page?.chain) ? c.page.chain : [];
+  const kinds = Array.isArray(c.page?.kinds) ? c.page.kinds : [];
+  const foreignInChain = chain.some((/** @type {string} */ host) => host !== chain[0]) || kinds.some((/** @type {string} */ k) => String(k).startsWith("sandbox"));
+  if (provider === "ferret" && c.expected.route === "browser" && o.windowShown && foreignInChain && (ids.has("response-to-foreign-ancestor") || ids.has("response-to-other-frame"))) out.push("response-to-foreign-ancestor");
   return out;
 }
 

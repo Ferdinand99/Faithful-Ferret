@@ -1084,6 +1084,14 @@ export function createPasskeyRequests({
       const req = owned(id, session);
       return req !== null && verified.delete(req.id);
     },
+    /**
+     * Whether the request has a mark of verification, without taking it: for a create, whose mark goes with the request when the
+     * page is answered and stays when the server refused the write (the page got nothing). @param {string} id @param {string} session
+     */
+    verifiedFor: (id, session) => {
+      const req = owned(id, session);
+      return req !== null && verified.has(req.id);
+    },
     onEvent,
     onNavigation,
     onSameDocument,
