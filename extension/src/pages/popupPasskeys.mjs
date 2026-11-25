@@ -241,7 +241,8 @@ export function createPopupPasskeys({
     verifying?.step.wipe();
     const step = createVerifyStep({
       texts,
-      ways: list.methods.filter((m) => POPUP_WAYS.includes(m)),
+      // One way, to keep the popup short: the PIN when there is one, else the master password.
+      ways: list.methods.includes("pin") ? ["pin"] : list.methods.filter((m) => POPUP_WAYS.includes(m)),
       verify: (method, input) => backend.verify(method, input),
       proof: null,
       action,
@@ -281,9 +282,9 @@ export function createPopupPasskeys({
       const backButton = action({ class: "ff-pk-link", "data-role": "passkey-popup-back" }, t("passkeys.verify.back"), () => back());
       // Windows Hello, Touch ID or another passkey of the vault: only Ferret's window can ask for it.
       const prf = list.methods.includes("prf")
-        ? el("div", { class: "ff-actions" }, action({ class: "ff-button", "data-role": "passkey-popup-prf" }, t("passkeys.verify.prf"), () => openWindow("conditional")))
+        ? action({ class: "ff-pk-link", "data-role": "passkey-popup-prf" }, t("passkeys.verify.prf"), () => openWindow("conditional"))
         : null;
-      return el("div", { class: "ff-pk-popup-list", "data-role": "passkey-popup-verify" }, heading, prf, verifying.step.root, backButton);
+      return el("div", { class: "ff-pk-popup-list", "data-role": "passkey-popup-verify" }, heading, verifying.step.root, prf, backButton);
     }
     const rows = list.candidates.map((c) => row(c, pickable));
     return el(

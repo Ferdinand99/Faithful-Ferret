@@ -18,7 +18,7 @@ import { after, test } from "node:test";
 import { KEEP_BACKGROUND, POPUP_URL, SLOW, extensionSignIn, webVaultAccount } from "./e2e.mjs";
 import { revokeLeftDevices, shotPath } from "./adversary.mjs";
 import { TEST_ADDON_ID, channels, launch, openBridge, stopFixtures } from "./harness.mjs";
-import { chooserHandle, core, grantHttps, pressInWindow, readWindow, registerTestKey } from "./passkeyFerret.mjs";
+import { chooserHandle, core, grantHttps, readWindow, registerTestKey } from "./passkeyFerret.mjs";
 import { SENTINEL_PREFIX, scanFolder, setPin } from "./unlock.mjs";
 
 after(() => stopFixtures());
@@ -169,7 +169,8 @@ test("conditional_sign_in_from_the_popup_on_both_fixtures", async () => {
           }
         }
         const pick = await session.content((/** @type {string} */ wanted) => {
-          const row = [...document.querySelectorAll('[data-role="passkey-popup-pick"]')].find((r) => (r.textContent ?? "").includes(wanted));
+          // The newest of them: the account may hold this name from an earlier run (the list is oldest first).
+          const row = [...document.querySelectorAll('[data-role="passkey-popup-pick"]')].filter((r) => (r.textContent ?? "").includes(wanted)).at(-1);
           return row?.getAttribute("data-item") ?? null;
         }, `anna-${lib}`);
         await pressInPopup(session, `[data-role="passkey-popup-pick"][data-item="${pick}"]`);
@@ -221,8 +222,16 @@ test("conditional_to_modal_switch_with_and_without_the_pages_abort", async () =>
         const handle = await chooserHandle(session, known);
         const shown = await readWindow(session);
         assert.equal(shown.kind, "get", label);
-        assert.equal(shown.candidates.length, 1, `${label}: ${JSON.stringify(shown)}`);
-        await pressInWindow(session, "passkey-candidate");
+        assert.ok(shown.candidates.some((c) => c.includes(`anna-${lib}`)), `${label}: ${JSON.stringify(shown)}`);
+        // The newest passkey of this relying party (this run's): the account holds others, and the list is oldest first.
+        await sleep(900);
+        const newest = await session.content((/** @type {string} */ wanted) => {
+          const row = [...document.querySelectorAll('[data-role="passkey-candidate"]')].filter((r) => (r.textContent ?? "").includes(wanted)).at(-1);
+          return row?.getAttribute("data-item") ?? null;
+        }, `anna-${lib}`);
+        const [row] = await session.findAll(`[data-role="passkey-candidate"][data-item="${newest}"]`);
+        assert.ok(row, label);
+        await session.click(row);
         await session.waitFor(async () => !(await session.windowHandles()).includes(handle), 30_000, "the window closed");
         await session.switchTo(world.pageTab);
         await session.waitFor(() => session.content(() => ["ok", "failed"].includes(document.getElementById("result")?.dataset.state ?? "")), 45_000, "the ceremony's end");

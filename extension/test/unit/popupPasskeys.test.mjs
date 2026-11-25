@@ -150,8 +150,9 @@ test("the_popup_part_picks_a_passkey_of_a_conditional_request_and_verifies_in_th
   await tap(rows[0]);
   assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_choose").map((c) => c.body), [{ tab_id: 7, kind: "get", item_id: ID(3) }]);
   // Verification: the PIN and the master password here; Windows Hello opens Ferret's window (the popup cannot ask for it).
+  // One way, to keep the popup short: the PIN when there is one (else the master password).
   assert.ok(one(view.root, "passkey-verify-pin-form"));
-  assert.ok(one(view.root, "passkey-verify-password-form"));
+  assert.equal(one(view.root, "passkey-verify-password-form"), null);
   assert.equal(one(view.root, "passkey-verify-prf"), null, "no WebAuthn call from the popup");
   const prf = one(view.root, "passkey-popup-prf");
   assert.ok(prf);

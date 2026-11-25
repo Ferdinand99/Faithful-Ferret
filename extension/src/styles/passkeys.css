@@ -399,7 +399,7 @@ body.ff-chooser-window {
 }
 
 .ff-unlocked > .ff-pk-popup {
-  max-height: 55%;
+  max-height: 70%;
   overflow-y: auto;
   padding: 8px 14px;
   border-bottom: 1px solid var(--line);
@@ -464,4 +464,10 @@ body.ff-chooser-window {
 
 .ff-pk-popup[aria-busy="true"] {
   cursor: progress;
+}
+
+/* The list's own scroll bar follows the scheme (a light one in the dark scheme would be the brightest thing in the popup). */
+.ff-pk-popup .ff-pk-rows {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }

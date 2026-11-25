@@ -873,3 +873,22 @@ test("a_get_gives_the_mark_back_when_signing_fails", async () => {
   assert.deepEqual(w.state.signs.at(-1).uv, { user_present: true, user_verified: true });
   assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
 });
+
+test("the_foreign_mark_is_text_only_and_never_routes", async () => {
+  const w = world();
+  // The top document says create or get were changed by something else (another password manager or the site itself).
+  await w.requests.onEvent({ type: "passkey_foreign", sender: PAGE, body: {} });
+  // A conditional request of that document is still Ferret's, listed in the popup: the mark changes no route.
+  const { bridgeId } = await conditional(w);
+  assert.equal(w.pushed.length, 0, "not handed to the browser");
+  assert.deepEqual(await brokerOp(w, "passkey_tab"), { ok: true, waiting: null, conditional: true, again: null, foreign: true });
+  assert.equal((await tabOp(w, "passkey_tab_list")).mode, "pick");
+  w.verify.markUnlocked();
+  assert.deepEqual(await tabOp(w, "passkey_tab_choose", { item_id: ID(3) }), { ok: true });
+  assert.equal(w.answerOf(bridgeId)?.type, "passkey_result");
+  // A frame below the top cannot set it, and a new top document has none.
+  const other = world();
+  await other.requests.onEvent({ type: "passkey_foreign", sender: { ...PAGE, frameId: 3, documentId: "doc-3" }, body: {} });
+  await conditional(other);
+  assert.equal((await other.requests.ops.passkey_tab.run(null, { tab_id: 4 })).foreign, false);
+});
