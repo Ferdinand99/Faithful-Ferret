@@ -135,7 +135,7 @@ captureHost = FEATURES.save
 
 // Ferret as a passkey provider (the flag `passkeys`): the registration of the scripts in web pages (registered exactly when
 // the setting is on, the permission for https pages is there and the extension is signed in; reconciled at every start,
-// after an install or an update, and when the permission, the setting or the server changes) and the background's side of
+// which an install or an update also is, and when the permission, the setting or the server changes) and the background's side of
 // the bridge. A build with the flag off has neither (the generated module says null) and only removes what an earlier
 // build registered (below).
 const passkeyRequests = createPasskeyRequests ? createPasskeyRequests({ tabs: browser.tabs }) : null;
@@ -155,13 +155,14 @@ if (passkeyRegistry) {
   browser.permissions.onRemoved?.addListener((/** @type {any} */ removed) => {
     passkeyRegistry.onPermissionRemoved(removed).catch(() => {});
   });
-  browser.storage.onChanged?.addListener((/** @type {any} */ changes, /** @type {string} */ area) => {
-    passkeyRegistry.onStorageChanged(changes, area).catch(() => {});
-  });
-  // An update clears the registrations: they are made again at once.
-  runtime.onInstalled?.addListener(() => {
-    passkeyRegistry.reconcile().catch(() => {});
-  });
+  // Only `storage.local` (where the setting and the server are): a listener of every area would also hear the session
+  // writes of the background itself, and an event page that is stopping would be woken by them.
+  const localChanged = /** @type {any} */ (browser.storage.local).onChanged;
+  if (typeof localChanged?.addListener === "function") {
+    localChanged.addListener((/** @type {any} */ changes) => {
+      passkeyRegistry.onStorageChanged(changes, "local").catch(() => {});
+    });
+  }
   browser.tabs.onRemoved?.addListener((/** @type {number} */ tabId) => passkeyRequests?.onTabRemoved(tabId));
   browser.webNavigation.onCommitted?.addListener((/** @type {any} */ details) => passkeyRequests?.onNavigation(details));
 }

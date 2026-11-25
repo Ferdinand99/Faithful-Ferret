@@ -6,8 +6,8 @@
 //   - "Use Ferret for passkeys" is on (`storage.local`, off when it is not there or not `true`);
 //   - the extension has the optional permission for `https` pages (the same one as saving passwords);
 //   - the extension is signed in: a server is stored (`storage.local` `server`, as the session keeps it).
-// `reconcile` makes it so. It runs at every start of the background page, after an install or an update (which clears the
-// registrations), when the permission is given or taken back (taken back, the setting goes off too), and when the
+// `reconcile` makes it so. It runs at every start of the background page (an install or an update, which clears the
+// registrations, starts it too), when the permission is given or taken back (taken back, the setting goes off too), and when the
 // setting or the server changes. The background still checks every request itself (signed in, the vault's own origin, the frames);
 // the registration only keeps the scripts out of pages where they have nothing to do.
 //
