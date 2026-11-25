@@ -291,6 +291,17 @@ export function createSessionHost({
   const openListeners = new Set();
   /** The PIN host's ears (`setPins`). @type {PinEvents | null} */
   let pins = null;
+  /** Who hears that the stored server changed (a sign-in, a forgotten server). @type {Set<() => void>} */
+  const serverListeners = new Set();
+  const serverChanged = () => {
+    for (const listener of [...serverListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener that fails must not undo the sign-in or the forget.
+      }
+    }
+  };
 
   /**
    * Tells the PIN host an event. Never throws and never makes the op wait for a failure: what the PIN host does about it
@@ -528,6 +539,7 @@ export function createSessionHost({
       await open(context, server, session);
       lastAccount = { server, email: unlocked.email };
       await storageLocal.set({ [SERVER_KEY]: server });
+      serverChanged();
       // A new sign-in makes a new device: a PIN made for an older one is gone.
       await tell("signedIn", server, session.current()?.accountId ?? null);
       return { ok: true, account_email: unlocked.email, server };
@@ -589,6 +601,17 @@ export function createSessionHost({
     storedServer,
 
     /**
+     * Calls `listener()` after the stored server changed: a sign-in stored it, or "forget this server" removed it. Returns
+     * the function that stops it. (In memory: no storage listener, which would wake a stopped event page.)
+     * @param {() => void} listener
+     * @returns {() => void}
+     */
+    onServerChange(listener) {
+      serverListeners.add(listener);
+      return () => void serverListeners.delete(listener);
+    },
+
+    /**
      * The PIN host's ears: what it must be told (see PinEvents). Called once, by the entry.
      * @param {PinEvents | null} events
      */
@@ -643,6 +666,7 @@ export function createSessionHost({
       hosts.clear();
       if (typeof storageLocal.remove === "function") await storageLocal.remove(SERVER_KEY);
       else await storageLocal.set({ [SERVER_KEY]: null });
+      serverChanged();
     },
   };
 }

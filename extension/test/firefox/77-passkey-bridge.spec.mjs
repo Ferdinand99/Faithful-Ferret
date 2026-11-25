@@ -65,10 +65,38 @@ async function setup(channel, manifest) {
     messages: () => inBridge(() => session.content(() => /** @type {any} */ (window).passkeyMessages ?? [])),
     clear: () => inBridge(() => session.content(() => { /** @type {any} */ (window).passkeyMessages = []; })),
     /** @param {Record<string, unknown>} items */
-    store: (items) => inBridge(() => bridge.invoke("storage.local.set", items)),
+    store: async (items) => {
+      await inBridge(() => bridge.invoke("storage.local.set", items));
+      await inBridge(() => reconcile(session));
+    },
+    /** The server forgotten (what "forget this server" leaves in storage). */
+    forgetServer: async () => {
+      await inBridge(() => session.content(() => browser.storage.local.remove("server")));
+      await inBridge(() => reconcile(session));
+    },
     grant: () => inBridge(() => grant(session)),
     revoke: () => inBridge(() => session.content(() => browser.permissions.remove({ origins: ["https://*/*"] }))),
   };
+}
+
+/**
+ * Asks the background to make the registration agree with storage now (the test build's `passkey_reconcile`): the specs write
+ * the setting and the server into storage themselves, and the background has no storage listener (the settings' switch and
+ * the session tell it). Run in the bridge tab.
+ * @param {import("./driver.mjs").Session} session
+ */
+async function reconcile(session) {
+  await session.content(() => new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-test-core" });
+    const timer = setTimeout(() => reject(new Error("passkey_reconcile did not answer")), 15_000);
+    port.onMessage.addListener((/** @type {any} */ reply) => {
+      clearTimeout(timer);
+      port.disconnect();
+      if (reply?.ok) resolve(true);
+      else reject(new Error(`passkey_reconcile: ${reply?.code}`));
+    });
+    port.postMessage({ id: "r1", op: "passkey_reconcile" });
+  }));
 }
 
 /** Records every message of the passkey bridge that reaches the extension's pages. @param {import("./driver.mjs").Session} session */
@@ -265,7 +293,7 @@ describe("passkey_bridge", () => {
           // Signed out: the same.
           await s.store({ use_passkeys: true });
           await s.session.waitFor(async () => (await s.registered()).length === 2, 15_000, "registered again");
-          await s.inBridge(() => s.session.content(() => browser.storage.local.remove("server")));
+          await s.forgetServer();
           await s.session.waitFor(async () => (await s.registered()).length === 0, 15_000, "the scripts gone (signed out)");
           assert.equal((await openAndRead(s.session, s.server.url("fixture.test", "/pk-first/"), "first")).createNative, true, `${label}: signed out`);
         } finally {

@@ -100,6 +100,18 @@ export async function turnOnPasskeyScripts(session) {
   const granted = await session.waitFor(() => session.content(() => document.documentElement.dataset.pkGranted), 15_000, "the permission for https pages");
   if (granted !== "true") throw new Error("the permission for https pages was not granted");
   await session.content((/** @type {string} */ server) => browser.storage.local.set({ use_passkeys: true, server }), BRIDGE_SERVER);
+  // The background has no storage listener: the test build's `passkey_reconcile` makes the registration agree now.
+  await session.content(() => new Promise((resolve, reject) => {
+    const port = browser.runtime.connect({ name: "ferret-test-core" });
+    const timer = setTimeout(() => reject(new Error("passkey_reconcile did not answer")), 15_000);
+    port.onMessage.addListener((/** @type {any} */ reply) => {
+      clearTimeout(timer);
+      port.disconnect();
+      if (reply?.ok) resolve(true);
+      else reject(new Error(`passkey_reconcile: ${reply?.code}`));
+    });
+    port.postMessage({ id: "r1", op: "passkey_reconcile" });
+  }));
   await session.waitFor(
     () => session.content(async () => (await browser.scripting.getRegisteredContentScripts({ ids: ["ferret-passkey-main", "ferret-passkey-bridge"] })).length === 2),
     15_000,

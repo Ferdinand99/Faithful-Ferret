@@ -108,21 +108,24 @@ test("registration_follows_permission_setting_and_sign_in", async () => {
   await quietRegistry.reconcile();
   assert.equal(quiet.calls.registered, 2);
 
-  // Sign-out: the scripts go, the setting stays.
+  // Sign-out (the session tells the registry, which reconciles): the scripts go, the setting stays.
   delete b.storage[SERVER_KEY];
-  assert.equal(await registry.onStorageChanged({ [SERVER_KEY]: { oldValue: "https://vault.example" } }, "local"), true);
+  await registry.reconcile();
   assert.deepEqual([...b.held.keys()], []);
   assert.equal(b.storage[PASSKEY_SETTING_KEY], true);
   // Sign-in at another server: registered again, with that server left out.
   b.storage[SERVER_KEY] = "https://other.example:8443";
-  await registry.onStorageChanged({ [SERVER_KEY]: { newValue: "https://other.example:8443" } }, "local");
+  await registry.reconcile();
   assert.deepEqual(/** @type {any} */ (b.held.get("ferret-passkey-main")).excludeMatches, ["https://other.example/*"]);
-  // A change of another key or another area is not a reason.
-  assert.equal(await registry.onStorageChanged({ lock_seconds: { newValue: 60 } }, "local"), false);
-  assert.equal(await registry.onStorageChanged({ [SERVER_KEY]: {} }, "session"), false);
+  // The server's own permission taken back ("forget this server" does it right after it removed the server): a reconcile.
+  delete b.storage[SERVER_KEY];
+  assert.equal(await registry.onPermissionRemoved({ origins: ["https://other.example/*"] }), true);
+  assert.deepEqual([...b.held.keys()], []);
+  b.storage[SERVER_KEY] = "https://other.example:8443";
+  await registry.reconcile();
   // The setting off: the scripts go.
   b.storage[PASSKEY_SETTING_KEY] = false;
-  await registry.onStorageChanged({ [PASSKEY_SETTING_KEY]: { newValue: false } }, "local");
+  await registry.reconcile();
   assert.deepEqual([...b.held.keys()], []);
   // enable checks the permission itself.
   b.state.permission = false;
@@ -143,7 +146,7 @@ test("registration_follows_permission_setting_and_sign_in", async () => {
   assert.equal(await registry.onPermissionRemoved({ origins: ["https://*/*"] }), true);
   assert.deepEqual([...b.held.keys()], []);
   assert.equal(b.storage[PASSKEY_SETTING_KEY], false);
-  assert.equal(await registry.onPermissionRemoved({ origins: ["https://vault.example/*"] }), false);
+  assert.equal(await registry.onPermissionRemoved({ origins: [] }), false);
   // disable: off, and the permission stays (saving passwords may use it).
   b.state.permission = true;
   await registry.enable();
@@ -196,18 +199,14 @@ test("the_answer_goes_only_to_the_frame_and_document_that_asked", async () => {
   assert.equal(pushed.length, 1);
   // Something else changed create or get: only the top document's report marks the tab (text only), and a frame's does not.
   await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender, body: {} });
-  assert.equal(requests.foreignIn(4), false, "a frame's report does not mark the page");
-  const top = { ...sender, frameId: 0 };
+  assert.equal(requests.foreignIn(4, "doc-1"), false, "a frame's report does not mark the page");
+  const top = { ...sender, frameId: 0, documentId: "top-1" };
   await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender: top, body: {} });
-  assert.equal(requests.foreignIn(4), true);
-  // A new document in a frame keeps it; a new top document clears it; so does a closed tab.
-  requests.onNavigation({ tabId: 4, frameId: 17179869185 });
-  assert.equal(requests.foreignIn(4), true);
-  requests.onNavigation({ tabId: 4, frameId: 0 });
-  assert.equal(requests.foreignIn(4), false);
-  await requests.ops[PASSKEY_EVENT_OP].run(null, { type: "passkey_foreign", sender: top, body: {} });
+  assert.equal(requests.foreignIn(4, "top-1"), true);
+  // A new top document (another id) is not marked by it; a closed tab forgets it.
+  assert.equal(requests.foreignIn(4, "top-2"), false);
   requests.onTabRemoved(4);
-  assert.equal(requests.foreignIn(4), false);
+  assert.equal(requests.foreignIn(4, "top-1"), false);
   assert.equal(PASSKEY_EVENT_OP, PASSKEY_OP);
   assert.ok(CORE_OPS.includes(PASSKEY_EVENT_OP));
 });

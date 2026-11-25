@@ -135,8 +135,9 @@ captureHost = FEATURES.save
 
 // Ferret as a passkey provider (the flag `passkeys`): the registration of the scripts in web pages (registered exactly when
 // the setting is on, the permission for https pages is there and the extension is signed in; reconciled at every start,
-// which an install or an update also is, and when the permission, the setting or the server changes) and the background's side of
-// the bridge. A build with the flag off has neither (the generated module says null) and only removes what an earlier
+// which an install or an update also is, when the permission or the server changes, and by the settings' switch) and the
+// background's side of the bridge. Only listeners that the browser wakes the page for rarely: no storage listener (it kept a
+// Manifest V3 event page from stopping) and no navigation listener of its own. A build with the flag off has neither (the generated module says null) and only removes what an earlier
 // build registered (below).
 const passkeyRequests = createPasskeyRequests ? createPasskeyRequests({ tabs: browser.tabs }) : null;
 const passkeyRegistry = createPasskeyRegistry
@@ -155,16 +156,10 @@ if (passkeyRegistry) {
   browser.permissions.onRemoved?.addListener((/** @type {any} */ removed) => {
     passkeyRegistry.onPermissionRemoved(removed).catch(() => {});
   });
-  // Only `storage.local` (where the setting and the server are): a listener of every area would also hear the session
-  // writes of the background itself, and an event page that is stopping would be woken by them.
-  const localChanged = /** @type {any} */ (browser.storage.local).onChanged;
-  if (typeof localChanged?.addListener === "function") {
-    localChanged.addListener((/** @type {any} */ changes) => {
-      passkeyRegistry.onStorageChanged(changes, "local").catch(() => {});
-    });
-  }
-  browser.tabs.onRemoved?.addListener((/** @type {number} */ tabId) => passkeyRequests?.onTabRemoved(tabId));
-  browser.webNavigation.onCommitted?.addListener((/** @type {any} */ details) => passkeyRequests?.onNavigation(details));
+  // A sign-in stores the server, "forget this server" removes it.
+  sessionHost.onServerChange(() => {
+    passkeyRegistry.reconcile().catch(() => {});
+  });
 }
 
 // Ferret's copies: the background writes the clipboard itself, and clears it 30 seconds later (its alarm listener is
@@ -287,7 +282,7 @@ listenForMenus({
 // page, so a port or an alarm that woke the page reaches them. `variantHooks` is null
 // in a release, so a release has no test code to run.
 if (hooks) {
-  hooks.install({ browser, runtime, coreHost, now, offers: captureHost?.offers ?? null, engine: () => (syncHost.items() !== null ? hooks.engine() : null) });
+  hooks.install({ browser, runtime, coreHost, now, offers: captureHost?.offers ?? null, engine: () => (syncHost.items() !== null ? hooks.engine() : null), passkeys: passkeyRegistry });
 }
 
 // A new page has no vault, whatever an earlier page left in `storage.session`.

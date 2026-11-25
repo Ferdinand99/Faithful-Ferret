@@ -30,9 +30,12 @@ export function createPasskeyRequests({ tabs }) {
    * The tabs whose top document's script found create or get changed by something else: another password manager or the site
    * itself (the script cannot tell which). Memory only, cleared when the top frame moves to a new document. It is for the
    * text of Ferret's UI only and never changes where a call goes: any page can set it.
-   * @type {Set<number>}
+   * By tab: the documentId of the top document that reported it (a later top document of the tab is not marked by it).
+   * @type {Map<number, string>}
    */
-  const foreign = new Set();
+  const foreign = new Map();
+  /** The most tabs the mark is kept for (the oldest goes first). */
+  const MAX_FOREIGN = 256;
 
   /**
    * An answer to one request, to the frame and document that asked and nowhere else.
@@ -56,21 +59,25 @@ export function createPasskeyRequests({ tabs }) {
       await push(sender, "passkey_handover", { request_id: body.request_id, once: false });
     } else if (type === "passkey_foreign") {
       // Only the top document's report counts (a frame of another site must not mark the page).
-      if (sender.frameId === 0) foreign.add(sender.tabId);
+      if (sender.frameId === 0 && typeof sender.documentId === "string") {
+        foreign.delete(sender.tabId);
+        foreign.set(sender.tabId, sender.documentId);
+        if (foreign.size > MAX_FOREIGN) foreign.delete(/** @type {number} */ (foreign.keys().next().value));
+      }
     }
     // passkey_abort, passkey_ping: nothing waits here.
   };
 
   return {
     push,
-    /** Whether the tab's top document found create or get changed by something else (text only). @param {number} tabId */
-    foreignIn: (tabId) => foreign.has(tabId),
+    /**
+     * Whether the tab's top document (`documentId`, from `webNavigation.getFrame` of frame 0 when the UI asks) found create or
+     * get changed by something else. Text only. A new top document has no mark: the id differs.
+     * @param {number} tabId @param {string} documentId
+     */
+    foreignIn: (tabId, documentId) => foreign.get(tabId) === documentId,
     /** A tab that closed. @param {number} tabId */
     onTabRemoved: (tabId) => void foreign.delete(tabId),
-    /** `webNavigation.onCommitted`: a new top document has no mark. @param {{ tabId: number, frameId: number }} details */
-    onNavigation: (details) => {
-      if (details?.frameId === 0) foreign.delete(details.tabId);
-    },
     ops: Object.freeze({
       [PASSKEY_EVENT_OP]: {
         vault: false,

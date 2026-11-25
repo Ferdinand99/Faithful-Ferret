@@ -7,8 +7,9 @@
 //   - the extension has the optional permission for `https` pages (the same one as saving passwords);
 //   - the extension is signed in: a server is stored (`storage.local` `server`, as the session keeps it).
 // `reconcile` makes it so. It runs at every start of the background page (an install or an update, which clears the
-// registrations, starts it too), when the permission is given or taken back (taken back, the setting goes off too), and when the
-// setting or the server changes. The background still checks every request itself (signed in, the vault's own origin, the frames);
+// registrations, starts it too), when the permission is given or taken back (taken back, the setting goes off too), when the
+// session stores or forgets its server, and when the settings turn the feature on or off (`enable`, `disable`). There is
+// no storage listener: one kept a Manifest V3 event page from stopping in Firefox. The background still checks every request itself (signed in, the vault's own origin, the frames);
 // the registration only keeps the scripts out of pages where they have nothing to do.
 //
 // The scripts are left out of the origins of the signed-in Ferret server (`excludeMatches`; a match pattern has no port,
@@ -246,25 +247,13 @@ export function createPasskeyRegistry({ scripting, permissions, storageLocal, re
     },
 
     /**
-     * The browser's `permissions.onRemoved`: when the permission for `https` pages goes, the scripts and the setting go.
+     * The browser's `permissions.onRemoved`: when the permission for `https` pages goes, the scripts and the setting go. Any
+     * other removal reconciles too ("forget this server" takes the server's own permission back right after it removed
+     * the server).
      * @param {{ origins?: string[] } | undefined} removed
      */
     onPermissionRemoved(removed) {
-      const gone = Array.isArray(removed?.origins) && removed.origins.some((origin) => PASSKEY_ORIGINS.includes(origin));
-      if (!gone) return Promise.resolve(false);
-      return exclusive(async () => {
-        await reconcileNow();
-        return true;
-      });
-    },
-
-    /**
-     * The browser's `storage.onChanged`: the setting or the server changed (a sign-in, a sign-out, another server).
-     * @param {Record<string, unknown> | undefined} changes @param {string} area
-     */
-    onStorageChanged(changes, area) {
-      if (area !== "local" || typeof changes !== "object" || changes === null) return Promise.resolve(false);
-      if (!Object.hasOwn(changes, PASSKEY_SETTING_KEY) && !Object.hasOwn(changes, SERVER_KEY)) return Promise.resolve(false);
+      if (!Array.isArray(removed?.origins) || removed.origins.length === 0) return Promise.resolve(false);
       return exclusive(async () => {
         await reconcileNow();
         return true;
