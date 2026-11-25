@@ -84,7 +84,7 @@ const PASSKEY_PATHS = Object.freeze({
   /** Package files of the feature: the one list, `PASSKEY_FILES` of the build (the guard test below finds a file that is missing from it). */
   files: PASSKEY_FILES,
   /** Message types of the feature: each change that adds a type adds it here. */
-  types: /** @type {readonly string[]} */ (Object.freeze(["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping"])),
+  types: /** @type {readonly string[]} */ (Object.freeze(["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping", "passkey_pending", "passkey_site", "passkey_cancel", "passkey_browser"])),
   /** The attribute every control of the feature carries (the popup's section included). */
   control: 'data-feature="passkeys"',
   controlInCode: /["']data-feature["']\s*:\s*["']passkeys["']|data-feature=\\?["']passkeys/,

@@ -329,6 +329,34 @@ test("every UI request and reply round-trips with a sample body", () => {
     prf_options: [{}, { ok: true, rp_id: "vault.example.com", credentials: [{ id: "AQID", salt: "a".repeat(43) }] }],
     prf_window: [{}, { ok: true }],
     prf_unlock: [{ credential_id: "AQID", prf_output: "b".repeat(43) }, { ok: false, reason: "prf_failed" }],
+    passkey_pending: [
+      { request_id: "a1".repeat(16) },
+      {
+        ok: true,
+        request: {
+          request_id: "a1".repeat(16),
+          kind: "get",
+          mediation: "optional",
+          origin: "https://rp.example",
+          rp_id: null,
+          rp_name: null,
+          user_name: null,
+          user_display_name: null,
+          user_verification: "preferred",
+          credentials: 0,
+          prf: false,
+          expires_in: 300000,
+          foreign: false,
+          incognito: false,
+        },
+      },
+    ],
+    passkey_site: [
+      { request_id: "a1".repeat(16) },
+      { ok: true, site: { origin: "https://xn--bcher-kva.example", host_unicode: "bücher.example", rp_id: "xn--bcher-kva.example", rp_id_unicode: "bücher.example" } },
+    ],
+    passkey_cancel: [{ request_id: "a1".repeat(16) }, { ok: false, reason: "gone" }],
+    passkey_browser: [{ request_id: "a1".repeat(16) }, { ok: true }],
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(UI_TYPES).sort());
   for (const [type, [request, reply]] of Object.entries(samples)) {

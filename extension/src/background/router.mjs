@@ -26,7 +26,7 @@
 // the build into `handlers.gen.mjs`; see handlers/README. A handler of several
 // types reads which one it got from `ctx.type`.
 
-import { contentSender, isUiPort } from "../shared/origin.mjs";
+import { contentSender, isUiPort, withBrowserOrigin } from "../shared/origin.mjs";
 import {
   CONTENT_TYPES,
   REFUSAL_REASONS,
@@ -309,8 +309,9 @@ export function createRouter({
         capture: async (/** @type {unknown} */ body) => {
           await call(CAPTURE_OP, { type: message.type, sender: from, body });
         },
+        // The passkey broker also gets the browser's origin of the frame (and whether the tab is private), from the sender.
         passkey: async (/** @type {unknown} */ body) => {
-          await call(PASSKEY_OP, { type: message.type, sender: from, body });
+          await call(PASSKEY_OP, { type: message.type, sender: withBrowserOrigin(from, sender), body });
         },
       });
       /** @type {unknown} */

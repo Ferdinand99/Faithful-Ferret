@@ -237,7 +237,8 @@ test("a_report_of_the_bridge_reaches_the_passkey_operation_with_the_browsers_sen
   assert.deepEqual(decode(taken, CONTENT_TYPES, { reply: true }).body, { accepted: true }, "a request is answered with taken");
   assert.equal(await router.onMessage(encode("passkey_ping", { request_ids: [id] }), sender), undefined, "a report gets nothing");
   assert.deepEqual(calls.map((c) => [c.op, c.args.type]), [[PASSKEY_OP, "passkey_request"], [PASSKEY_OP, "passkey_ping"]], "taken while the vault is locked");
-  assert.deepEqual(calls[0].args.sender, { tabId: 3, frameId: 0, documentId: "d-1", url: "https://rp.example/login" });
+  // With the browser's origin of the frame (the broker checks it against the address), never one from the message.
+  assert.deepEqual(calls[0].args.sender, { tabId: 3, frameId: 0, documentId: "d-1", url: "https://rp.example/login", origin: "https://rp.example" });
   assert.equal(calls[0].args.body.request_id, id);
   // A page's message with a key the schema does not have (an origin, say) is refused before anything happens, and not taken.
   assert.equal(await router.onMessage(JSON.stringify({ v: 1, id: "x1", type: "passkey_request", body: { ...body, origin: "https://bank.example" } }), sender), undefined);
@@ -284,17 +285,24 @@ test("the_background_wires_the_registry_to_the_session_and_the_permissions", () 
   assert.match(main, /permissions\.onRemoved\?\.addListener\([^)]*\) => \{\s*passkeyRegistry\.onPermissionRemoved\(/);
   assert.match(main, /^passkeyRegistry\?\.reconcile\(\)/m);
   assert.doesNotMatch(main, /onChanged|onInstalled/, "no listener that wakes a stopped event page");
-  // Only the registry writes the setting.
-  const writers = [...readSources()].filter(([path, bytes]) => path.endsWith(".mjs") && /use_passkeys|PASSKEY_SETTING_KEY/.test(bytes.toString("utf8"))).map(([path]) => path);
-  assert.deepEqual(writers, ["background/passkeyRegistry.mjs"]);
+  // Only the registry writes the setting; the request broker reads it at every request and writes no storage at all.
+  const sources = readSources();
+  const named = [...sources].filter(([path, bytes]) => path.endsWith(".mjs") && /use_passkeys|PASSKEY_SETTING_KEY/.test(bytes.toString("utf8"))).map(([path]) => path);
+  assert.deepEqual(named.sort(), ["background/passkeyRegistry.mjs", "background/passkeyRequests.mjs"]);
+  assert.doesNotMatch(/** @type {Buffer} */ (sources.get("background/passkeyRequests.mjs")).toString("utf8"), /storageLocal\.(?:set|remove)/);
 });
 
 test("the_background_reaches_the_feature_only_through_the_generated_module", () => {
   assert.equal(PASSKEY_GEN_FILE, "background/passkeys.gen.mjs");
   const on = passkeysModule(["passkeys", "save"], new Map());
   assert.match(on, /export \{ createPasskeyRegistry \} from "\.\/passkeyRegistry\.mjs";/);
-  assert.match(on, /export \{ createPasskeyRequests \} from "\.\/passkeyRequests\.mjs";/);
+  assert.match(on, /export \{ chooserWindows, createPasskeyRequests \} from "\.\/passkeyRequests\.mjs";/);
+  // The chooser window only when the package has its page (without it the broker hands every request to the browser).
+  assert.match(on, /export const PASSKEY_WINDOW_PAGE = null;/);
+  assert.match(passkeysModule(["passkeys"], new Map([["pages/passkey.html", Buffer.from("")]])), /export const PASSKEY_WINDOW_PAGE = "pages\/passkey\.html";/);
   const off = passkeysModule(["save", "unlock"], new Map());
+  assert.match(off, /export const PASSKEY_WINDOW_PAGE = null;/);
+  assert.match(off, /export const chooserWindows = null;/);
   assert.doesNotMatch(off, /import|from/);
   assert.match(off, /export const createPasskeyRegistry = null;/);
   assert.match(off, /export const createPasskeyRequests = null;/);

@@ -640,6 +640,11 @@ const ALLOWED_WRITES = Object.freeze({
   "background/sync.mjs": ["run.writer.update"],
   "background/offerWrite.mjs": ["engine.create", "engine.update"],
 });
+/** The same for files of a feature that is off in a release (the `passkeys` feature): checked where the package has them. */
+const ALLOWED_FEATURE_WRITES = Object.freeze({
+  // The passkey chooser window (one at a time).
+  "background/passkeyRequests.mjs": ["windows.create"],
+});
 
 test("only_offer_write_calls_engine_create_or_update", async () => {
   const shared = new Set(/** @type {string[]} */ (JSON.parse(readFileSync(join(extensionDir, "shared.json"), "utf8"))).map((p) => `shared/${p}`));
@@ -693,9 +698,10 @@ test("only_offer_write_calls_engine_create_or_update", async () => {
             continue;
           }
           scanned.push(path);
-          assert.deepEqual(writesIn(text), [...(ALLOWED_WRITES[path] ?? [])].sort(), `${variant} ${manifest}: ${path}`);
+          assert.deepEqual(writesIn(text), [...(ALLOWED_WRITES[path] ?? ALLOWED_FEATURE_WRITES[path] ?? [])].sort(), `${variant} ${manifest}: ${path}`);
         }
         for (const path of Object.keys(ALLOWED_WRITES)) assert.ok(scanned.includes(path), `${variant} ${manifest}: ${path} is in the package`);
+        if (variant === "test") for (const path of Object.keys(ALLOWED_FEATURE_WRITES)) assert.ok(scanned.includes(path), `${manifest}: ${path} is in the test package`);
         assert.deepEqual(makers, ["background/sync.mjs"], `${variant} ${manifest}: only the sync makes an engine`);
         // The test build's hooks get the sync's engine only as the second argument of their factory.
         assert.deepEqual(factories, ["background/sync.mjs"], `${variant} ${manifest}: the engine's factory is named in the sync only`);

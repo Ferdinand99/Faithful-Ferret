@@ -68,6 +68,9 @@ async function setup({ unlocked = false, handlers } = {}) {
     record("prf_options", { ok: false, reason: "prf_unavailable" }),
     record("prf_window", { ok: true }),
     record("prf_unlock", { ok: false, reason: "prf_failed" }),
+    record("passkey_pending", { ok: false, reason: "gone" }),
+    record("passkey_cancel", { ok: false, reason: "gone" }),
+    record("passkey_browser", { ok: false, reason: "gone" }),
     record("unlock_policy", { pin_state: { allowed: false, after_restart: false, min_length: 6, set: false, failures_left: 0, wait_ms: 0, offline_ok: false }, prf: { enabled: false } }),
     record("form_capture", undefined),
     record("form_gone", undefined),
@@ -105,6 +108,9 @@ const requests = {
   prf_options: () => encode("prf_options", {}),
   prf_window: () => encode("prf_window", {}),
   prf_unlock: () => encode("prf_unlock", { credential_id: "AQID", prf_output: "a".repeat(43) }),
+  passkey_pending: () => encode("passkey_pending", { request_id: "a".repeat(32) }),
+  passkey_cancel: () => encode("passkey_cancel", { request_id: "a".repeat(32) }),
+  passkey_browser: () => encode("passkey_browser", { request_id: "a".repeat(32) }),
 };
 
 /** The refusal as the page decodes it: a typed reply of the UI channel. @param {string} text */
