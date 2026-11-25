@@ -21,12 +21,13 @@ const nextId = (stem) => `${stem}-${(counter += 1)}`;
 export function createSwitchRow({ texts, role, title, description, stateRole, attrs = {} }) {
   const titleId = nextId("ff-sw-title");
   const descId = nextId("ff-sw-desc");
+  const described = description !== "";
   const stateNode = el("span", { class: "ff-switch-text", "aria-hidden": "true", ...(stateRole ? { "data-role": stateRole } : {}), ...attrs }, texts.t("settings.off"));
   const node = /** @type {HTMLButtonElement} */ (
     el(
       "button",
-      { type: "button", class: "ff-scard ff-switch-row", role: "switch", "aria-checked": "false", "aria-labelledby": titleId, "aria-describedby": descId, "data-role": role, ...attrs },
-      el("span", { class: "ff-scard-text" }, el("span", { class: "ff-scard-title", id: titleId }, title), el("span", { class: "ff-scard-desc", id: descId }, description)),
+      { type: "button", class: "ff-scard ff-switch-row", role: "switch", "aria-checked": "false", "aria-labelledby": titleId, ...(described ? { "aria-describedby": descId } : {}), "data-role": role, ...attrs },
+      el("span", { class: "ff-scard-text" }, el("span", { class: "ff-scard-title", id: titleId }, title), ...(described ? [el("span", { class: "ff-scard-desc", id: descId }, description)] : [])),
       el("span", { class: "ff-switch", "aria-hidden": "true" }, stateNode, el("span", { class: "ff-switch-track" }, el("span", { class: "ff-switch-knob" }))),
     )
   );

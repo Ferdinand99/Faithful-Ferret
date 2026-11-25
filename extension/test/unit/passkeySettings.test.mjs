@@ -171,3 +171,24 @@ test("a_build_without_the_feature_removes_the_switch_and_keeps_the_persons_choic
   assert.equal(await removePasskeyScripts(scripting, /** @type {any} */ ({ remove: () => { throw new Error("no"); } })), true);
   assert.equal(await removePasskeyScripts(scripting), true, "the old call with scripts only still works");
 });
+
+test("a_build_without_the_feature_lets_go_of_the_permission_the_switch_was_granted_for", async () => {
+  const { removePasskeyScripts } = await import("../../src/background/passkeyCleanup.mjs");
+  const scripting = { getRegisteredContentScripts: async () => [], unregisterContentScripts: async () => {} };
+  /** @param {Record<string, unknown>} storage */
+  const storageOf = (storage) => ({ get: async (/** @type {string} */ k) => (k in storage ? { [k]: storage[k] } : {}), remove: async (/** @type {string} */ k) => void delete storage[k] });
+  /** @type {string[]} */
+  const released = [];
+  const access = { release: async (/** @type {string} */ feature) => void released.push(feature) };
+  // The switch was on: its permission is let go (httpsAccess keeps it only while saving passwords is on).
+  await removePasskeyScripts(scripting, storageOf({ [PASSKEY_SETTING_KEY]: true }), access);
+  assert.deepEqual(released, ["passkeys"]);
+  // It was off or not there: nothing is released.
+  released.length = 0;
+  await removePasskeyScripts(scripting, storageOf({ [PASSKEY_SETTING_KEY]: false }), access);
+  await removePasskeyScripts(scripting, storageOf({}), access);
+  assert.deepEqual(released, []);
+  // A storage that cannot be read, or an access that fails, never throws.
+  assert.equal(await removePasskeyScripts(scripting, { remove: async () => {}, get: async () => Promise.reject(new Error("no")) }, access), true);
+  assert.equal(await removePasskeyScripts(scripting, storageOf({ [PASSKEY_SETTING_KEY]: true }), { release: async () => Promise.reject(new Error("no")) }), true);
+});

@@ -171,6 +171,23 @@ test("a_grant_nobody_marked_switches_nothing_on_and_a_marked_one_is_finished_whe
   assert.equal(passkeysOn(c), true);
   assert.equal(captureOn(c), false);
 
+  // The latest click wins: a mark of the passkeys that was never cleared (the popup closed under the prompt that was refused) does not
+  // let a later grant for saving passwords switch the passkeys on too.
+  const e = world();
+  await e.passkeys.markPending();
+  await e.capture.markPending();
+  await e.permissions.request({ origins: [...HTTPS_ORIGINS] });
+  await e.settle();
+  assert.equal(captureOn(e), true);
+  assert.equal(passkeysOn(e), false, "the older mark was dropped by the newer one");
+  const f = world();
+  await f.capture.markPending();
+  await f.passkeys.markPending();
+  await f.permissions.request({ origins: [...HTTPS_ORIGINS] });
+  await f.settle();
+  assert.equal(passkeysOn(f), true);
+  assert.equal(captureOn(f), false);
+
   // A refused prompt: the page clears its mark, so a later grant from elsewhere finishes nothing.
   const d = world();
   await d.capture.markPending();

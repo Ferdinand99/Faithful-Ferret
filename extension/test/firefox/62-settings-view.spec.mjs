@@ -16,8 +16,10 @@ const SETTINGS_URL = `${EXTENSION_ORIGIN}/pages/settings.html`;
 
 /** What the page shows of one switch row: the state, the words, and how the track and the knob are drawn. @param {import("./driver.mjs").Session} session @param {string} role */
 const look = (session, role) =>
-  session.content((/** @type {string} */ r) => {
+  session.content(async (/** @type {string} */ r) => {
     const row = /** @type {HTMLElement} */ (document.querySelector(`[data-role="${r}"]`));
+    // The switch animates its track and knob: read the colours and the place only when the transitions are done.
+    await Promise.all(row.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
     const track = /** @type {HTMLElement} */ (row.querySelector(".ff-switch-track"));
     const knob = /** @type {HTMLElement} */ (row.querySelector(".ff-switch-knob"));
     return {

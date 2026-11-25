@@ -290,3 +290,27 @@ test("a_pass_outlives_a_stopped_event_page_through_the_session_storage_and_nothi
   throwing.grant(KEY);
   assert.equal(throwing.take(KEY), true);
 });
+
+test("a_conditional_get_does_not_use_up_the_pass_and_the_modal_call_after_it_does", async () => {
+  const w = joined();
+  w.page.page(w.GET);
+  const id = /** @type {any} */ ((await w.deliverLast()).result).request_id;
+  await /** @type {any} */ (w.requests.ops).passkey_pending.run(null, { request_id: id, session: "win" });
+  await /** @type {any} */ (w.requests.ops).passkey_browser.run(null, { request_id: id, session: "win" });
+  assert.notEqual(w.requests.passPendingFor(4), null);
+  // The site starts its conditional UI again after the failed modal call: that call is Ferret's (it waits), the pass is still there.
+  const conditional = {
+    request_id: "cond-1", kind: "get", mediation: "conditional", activation: false, policy: true,
+    get: { challenge: "Y2hhbGxlbmdlLWNoYWxsZW5nZS1jaGFsbGVuZ2UtMzI", allow_credentials: [], hints: [], extensions: {} },
+  };
+  const sender = { tabId: 4, frameId: 0, documentId: "doc-1", url: `${RP}/login`, origin: RP };
+  const first = await w.requests.open(sender, conditional);
+  assert.ok("request_id" in first, JSON.stringify(first));
+  assert.notEqual(w.requests.passPendingFor(4), null, "the conditional call left the pass alone");
+  // The person clicks the page's button: the modal call takes the pass and goes to the browser.
+  await w.settle();
+  w.page.page(w.GET);
+  const modal = await w.deliverLast();
+  assert.equal(/** @type {any} */ (modal.result).reason, "pass_once");
+  assert.equal(w.requests.passPendingFor(4), null);
+});

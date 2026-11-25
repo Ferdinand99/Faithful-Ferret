@@ -676,7 +676,9 @@ export function createPasskeyRequests({
     const key = keyOf(s, bridgeId);
     if (byBridge.has(key)) return { error: "duplicate" };
     await passes.ready();
-    if (takePass(s, kind)) return handOver("pass_once");
+    // A conditional get (a site's autofill UI, started again after a failed modal call) never takes the pass: it is meant for the
+    // modal call the person makes by clicking the page's button.
+    if (body.mediation !== "conditional" && takePass(s, kind)) return handOver("pass_once");
     const checked = await checkPage(s, body);
     if ("refuse" in checked) return handOver(checked.refuse);
     if (malformedOptions(kind, body[kind])) {

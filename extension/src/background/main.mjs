@@ -389,7 +389,7 @@ coreHost.lock("restart").catch(() => {});
 // A build with PIN and passkey unlock off opens no PIN store; it only removes the one an earlier build may have left.
 if (!FEATURES.unlock) void deleteUnlockDatabase(globalThis.indexedDB);
 // A build with Ferret as a passkey provider off registers no script in pages; it removes the ones that an earlier build left.
-if (!FEATURES.passkeys) void removePasskeyScripts(browser.scripting, browser.storage.local);
+if (!FEATURES.passkeys) void removePasskeyScripts(browser.scripting, browser.storage.local, httpsAccess);
 // With it on, the registration is made to agree with the setting, the permission and the sign-in.
 passkeyRegistry?.reconcile().catch(() => {});
 // With it on, the PIN host starts its schedule (the renewal of the device's tokens, with or without a PIN).

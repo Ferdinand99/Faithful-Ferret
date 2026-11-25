@@ -122,7 +122,9 @@ export function createHttpsAccess({ permissions, storageLocal, now = () => Date.
     markPending(feature) {
       if (!known(feature)) return Promise.resolve(false);
       return exclusive(async () => {
-        await write({ ...(await marks()), [feature]: now() + PENDING_MS });
+        // The latest click wins: only this feature's mark is kept, so a prompt the person refused in a popup that Firefox closed (the
+        // page never cleared its mark) cannot let a later grant for the other feature switch this one on too.
+        await write({ [feature]: now() + PENDING_MS });
         return true;
       });
     },

@@ -176,6 +176,28 @@ test("the_https_access_is_shared_by_saving_passwords_and_the_passkeys_and_each_s
       await session.waitFor(async () => (await checked("passkeys-switch")) === "false", 15_000, "the passkeys switch off");
       await session.waitFor(async () => !(await granted()), 15_000, "the access removed");
       assert.equal(await stored("use_passkeys"), false, channel);
+
+      // 4. The access taken back from outside (the browser's add-on page does what permissions.remove does): both features go off.
+      await goBack("provider");
+      await openSettingsPage(session, "capture");
+      await press("capture-switch");
+      await session.waitFor(async () => (await checked("capture-switch")) === "true", 15_000, "the capture switch on again");
+      await goBack("capture");
+      await openSettingsPage(session, "provider");
+      await press("passkeys-switch");
+      await session.waitFor(async () => (await checked("passkeys-switch")) === "true", 15_000, "the passkeys switch on again");
+      assert.equal(await stored("offer_to_save"), true, channel);
+      assert.equal(await stored("use_passkeys"), true, channel);
+      await fromBridge(() => bridge.invoke("permissions.remove", { origins: ["https://*/*"] }));
+      await session.waitFor(async () => (await stored("offer_to_save")) === false && (await stored("use_passkeys")) === false, 15_000, "both settings off");
+      assert.equal(await granted(), false, channel);
+      await session.navigate(SETTINGS_URL);
+      await session.waitFor(() => session.content(() => document.body.dataset.ready === "1"), 15_000, "the settings page again");
+      await openSettingsPage(session, "provider");
+      assert.equal(await checked("passkeys-switch"), "false", `${channel}: the page says off`);
+      await goBack("provider");
+      await openSettingsPage(session, "capture");
+      assert.equal(await checked("capture-switch"), "false", `${channel}: the page says off`);
     } finally {
       await session.quit();
     }

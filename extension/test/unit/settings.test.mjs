@@ -512,7 +512,9 @@ test("every_setting_that_is_on_or_off_is_a_switch_that_says_so_in_words", async 
           const id = row.getAttribute(attribute);
           return withAttribute(root, "id").find((n) => n.getAttribute("id") === id)?.textContent ?? "";
         };
-        assert.ok(named("aria-labelledby").length > 0 && named("aria-describedby").length > 0, role);
+        assert.ok(named("aria-labelledby").length > 0, role);
+        // (The recent-unlock choice has a title and the "More" text only: its description repeated the title.)
+        if (role !== "passkeys-recent-switch") assert.ok(named("aria-describedby").length > 0, role);
         assert.ok(named("aria-describedby").length <= 80, `${role}: one short sentence`);
         // The state is in words, not in colour alone, and it follows the switch.
         const word = /** @type {any} */ (one(root, state));
@@ -542,7 +544,6 @@ test("the_long_explanations_are_behind_more_about_this_and_still_there", async (
       ["passkeys-shared", "passkeys.settings.shared"],
       ["passkeys-recent-hint", "passkeys.settings.recent.hint"],
       ["passkeys-reload", "passkeys.settings.reload"],
-      ["passkeys-never-hint", "passkeys.settings.never.hint"],
       ["lock-hint", "settings.lock.hint"],
       ["unlock-pin-about", "settings.unlock.pin.about"],
       ["unlock-lead", "settings.unlock.lead"],
@@ -630,6 +631,10 @@ test("the_passkeys_pages_turn_the_feature_on_with_the_permission_asked_in_the_cl
     assert.equal(recent.getAttribute("aria-checked"), "false");
     await click(recent);
     assert.equal(recent.getAttribute("aria-checked"), "true");
+    // The recent-unlock choice is there only while the feature is on, and the sentences about the list only while it has sites.
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-recent-switch")).hidden, true, "off: the choice means nothing");
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-short")).hidden, false);
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-hint")).hidden, false);
     // The never list: the sites, how many on the row, remove one, remove all.
     assert.equal(byRole(on.root, "passkeys-never-host").length, 1);
     assert.equal(one(on.root, "passkeys-never-host")?.textContent.includes("bank.example"), true);
@@ -640,6 +645,8 @@ test("the_passkeys_pages_turn_the_feature_on_with_the_permission_asked_in_the_cl
     assert.equal(byRole(on.root, "passkeys-never-host").length, 0);
     assert.equal(byRole(on.root, "passkeys-never-empty").length, 1);
     assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-clear")).hidden, true);
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-short")).hidden, true, "an empty list says what it is for itself");
+    assert.equal(/** @type {any} */ (one(on.root, "passkeys-never-hint")).hidden, true);
     // The person says no in the prompt: nothing is switched on and the mark is cleared.
     const refused = await viewOf(result.dir, { grant: false });
     await click(/** @type {any} */ (one(refused.root, "passkeys-switch")));

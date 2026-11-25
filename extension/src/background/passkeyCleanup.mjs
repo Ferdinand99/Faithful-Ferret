@@ -25,12 +25,22 @@ export const PASSKEY_SWITCH_KEY = "use_passkeys";
  *   getRegisteredContentScripts(filter: { ids: string[] }): Promise<Array<{ id: string }>>,
  *   unregisterContentScripts(filter: { ids: string[] }): Promise<void>,
  * } | null | undefined} scripting the extension's `scripting`
- * @param {{ remove(key: string): Promise<void> } | null | undefined} [storageLocal] the extension's `storage.local`
+ * @param {{ remove(key: string): Promise<void>, get?(key: string): Promise<Record<string, unknown>> } | null | undefined} [storageLocal] the extension's `storage.local`
+ * @param {{ release(feature: string): Promise<unknown> } | null | undefined} [access] the shared permission for https pages
+ *   (background/httpsAccess.mjs): when the switch was on, the permission it was granted for is let go (kept while saving passwords needs it)
  * @returns {Promise<boolean>}
  */
-export async function removePasskeyScripts(scripting, storageLocal = null) {
+export async function removePasskeyScripts(scripting, storageLocal = null, access = null) {
   try {
+    /** @type {boolean} */
+    let wasOn = false;
+    try {
+      wasOn = (await storageLocal?.get?.(PASSKEY_SWITCH_KEY))?.[PASSKEY_SWITCH_KEY] === true;
+    } catch {
+      wasOn = false;
+    }
     await storageLocal?.remove(PASSKEY_SWITCH_KEY);
+    if (wasOn) await access?.release("passkeys");
   } catch {
     // The switch stays; the next start tries again, and nothing reads it in a build without the feature.
   }

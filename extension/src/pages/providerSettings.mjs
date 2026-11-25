@@ -30,11 +30,13 @@ function buildSection(flow, texts) {
 
   const use = createSwitchRow({ texts, role: "passkeys-switch", stateRole: "passkeys-state", title: t("passkeys.settings.switch"), description: t("passkeys.settings.switch.desc"), attrs: FEATURE });
   use.set(false);
-  const recent = createSwitchRow({ texts, role: "passkeys-recent-switch", stateRole: "passkeys-recent-state", title: t("passkeys.settings.recent"), description: t("passkeys.settings.recent.desc"), attrs: FEATURE });
+  const recent = createSwitchRow({ texts, role: "passkeys-recent-switch", stateRole: "passkeys-recent-state", title: t("passkeys.settings.recent"), description: "", attrs: FEATURE });
   recent.set(true);
   const accessNote = el("p", { class: "ff-status", "data-role": "passkeys-note", "aria-live": "polite", hidden: true, ...FEATURE });
   const list = el("ul", { class: "ff-never", "data-role": "passkeys-never-list", ...FEATURE });
   const clear = /** @type {HTMLButtonElement} */ (el("button", { type: "button", class: "ff-button", "data-role": "passkeys-never-clear", ...FEATURE }, t("passkeys.settings.never.clear")));
+  const neverShort = note(t("passkeys.settings.never.short"), "passkeys-never-short", FEATURE);
+  const neverHint = note(t("passkeys.settings.never.hint"), "passkeys-never-hint", FEATURE);
   const useSummary = createSummary("passkeys-summary", FEATURE);
   const neverSummary = createSummary("passkeys-never-summary", FEATURE);
 
@@ -54,9 +56,10 @@ function buildSection(flow, texts) {
     use.set(known.on);
     useSummary.textContent = t(known.on ? "settings.on" : "settings.off");
     recent.set(known.recentUnlock);
-    // On but signed out: the scripts start when Ferret is signed in again. Off with the access already given (a grant that landed
-    // while the popup that asked was closed by the prompt): the next press does not ask again.
-    say(accessNote, known.on && known.signedIn === false ? t("passkeys.settings.signed_out") : !known.on && known.permission === true ? t("passkeys.settings.off_access_given") : "");
+    // The recent-unlock choice means nothing while the feature is off.
+    recent.node.hidden = !known.on;
+    // On but signed out: the scripts start when Ferret is signed in again.
+    say(accessNote, known.on && known.signedIn === false ? t("passkeys.settings.signed_out") : "");
     list.replaceChildren(
       ...known.never.map((rpId) => {
         const remove = el("button", { type: "button", class: "ff-button", "data-role": "passkeys-never-remove", "data-host": rpId, "aria-label": t("passkeys.settings.never.remove.label", { host: rpId }), ...FEATURE }, t("passkeys.settings.never.remove"));
@@ -69,6 +72,9 @@ function buildSection(flow, texts) {
     if (known.never.length === 0) list.replaceChildren(el("li", { class: "ff-hint", "data-role": "passkeys-never-empty", ...FEATURE }, t("passkeys.settings.never.empty")));
     neverSummary.textContent = known.never.length === 0 ? "" : String(known.never.length);
     clear.hidden = known.never.length === 0;
+    // The sentences that explain the list are there only when it has entries (an empty list says what it is for).
+    neverShort.hidden = known.never.length === 0;
+    neverHint.hidden = known.never.length === 0;
     showError(failure, texts, outcome.ok ? null : passkeyErrorKey(outcome.reason));
   };
 
@@ -121,10 +127,10 @@ function buildSection(flow, texts) {
   const never = el(
     "div",
     { class: "ff-spage-body", "data-role": "passkeys-never-section", ...FEATURE },
-    note(t("passkeys.settings.never.short"), "passkeys-never-short", FEATURE),
+    neverShort,
     list,
     clear,
-    createMore(texts, [note(t("passkeys.settings.never.hint"), "passkeys-never-hint", FEATURE)], FEATURE),
+    neverHint,
   );
   return {
     pages: [
