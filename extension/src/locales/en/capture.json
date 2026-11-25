@@ -1,7 +1,7 @@
 {
   "capture.auto_open.desc": "Shows the popup when there is an offer.",
   "capture.auto_open.fails": "This browser does not let Ferret open the popup by itself, so only the badge shows.",
-  "capture.auto_open.hint": "The popup opens by itself only on the page you are looking at, and a click on it is ignored for a moment so a click meant for the page cannot answer the offer.",
+  "capture.auto_open.hint": "The popup opens by itself only on the page you are looking at, and a click on it is ignored for a moment so a click meant for the page cannot answer the offer. The badge on Ferret's button always shows that an offer waits; with this off, the badge is all there is.",
   "capture.auto_open.switch": "Open Ferret by itself",
   "capture.error.disconnected": "Ferret's background stopped while it worked. Open this page again.",
   "capture.error.not_available": "Saving passwords is not part of this version of Ferret.",

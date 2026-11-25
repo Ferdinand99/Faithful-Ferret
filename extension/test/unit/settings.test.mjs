@@ -574,3 +574,22 @@ test("the_settings_view_speaks_norwegian_with_the_new_words", async () => {
     env.cleanup();
   }
 });
+
+test("the_auto_open_note_keeps_the_badge_sentence_and_a_page_does_not_repeat_its_heading_in_its_card", async () => {
+  const read = (/** @type {string} */ lang, /** @type {string} */ file) => JSON.parse(readFileSync(join(extensionRoot, "src", "locales", lang, file), "utf8"));
+  assert.match(read("en", "capture.json")["capture.auto_open.hint"], /badge on Ferret's button always shows that an offer waits/);
+  assert.match(read("nb", "capture.json")["capture.auto_open.hint"], /Merket på Ferret-knappen viser alltid at et tilbud venter/);
+  const env = makeRoot();
+  try {
+    const result = await build({ root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, out: joinPath(env.out, "cards"), manifest: "mv2", variant: "test" });
+    const { root } = await viewOf(result.dir);
+    for (const [card, id] of [["unlock-pin-card", "pin"], ["unlock-passkey-card", "passkeys"]]) {
+      const page = byRole(root, "settings-page").find((p) => p.getAttribute("data-page") === id);
+      const heading = one(page, "settings-page-title")?.textContent;
+      const title = withAttribute(one(root, card), "class").find((n) => (n.getAttribute("class") ?? "").includes("ff-scard-title"))?.textContent;
+      assert.ok(heading && title && heading !== title, `${id}: "${heading}" and "${title}" are not the same`);
+    }
+  } finally {
+    env.cleanup();
+  }
+});

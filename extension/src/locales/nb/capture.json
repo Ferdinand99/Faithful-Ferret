@@ -1,7 +1,7 @@
 {
   "capture.auto_open.desc": "Viser popupen når det er et tilbud.",
   "capture.auto_open.fails": "Denne nettleseren lar ikke Ferret åpne popupen av seg selv, så bare merket vises.",
-  "capture.auto_open.hint": "Popupen åpner seg bare på siden du ser på, og et klikk på den ignoreres et øyeblikk, så et klikk ment for siden ikke kan svare på tilbudet.",
+  "capture.auto_open.hint": "Popupen åpner seg bare på siden du ser på, og et klikk på den ignoreres et øyeblikk, så et klikk ment for siden ikke kan svare på tilbudet. Merket på Ferret-knappen viser alltid at et tilbud venter; når dette er av, er merket alt som vises.",
   "capture.auto_open.switch": "Åpne Ferret av seg selv",
   "capture.error.disconnected": "Bakgrunnen til Ferret stoppet mens den jobbet. Åpne denne siden på nytt.",
   "capture.error.not_available": "Lagring av passord er ikke med i denne versjonen av Ferret.",

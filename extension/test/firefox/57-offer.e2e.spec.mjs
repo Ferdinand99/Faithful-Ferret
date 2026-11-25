@@ -242,7 +242,6 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
         await w.page.click(`[data-page="${id}"] [data-role="settings-back"]`);
         await w.page.waitVisible('[data-role="settings-main"]');
       }
-      await w.session.chrome(() => Services.prefs.clearUserPref("layout.css.prefers-color-scheme.content-override"));
       // A sub-page opens in the popup, the back button returns to its row, and the bar is still there.
       await openSettingsPage(w.session, "lock");
       assert.equal(await w.page.visible('[data-role="settings-main"]'), false, channel);
@@ -254,6 +253,20 @@ test("the_popup_bottom_bar_shows_vault_generator_and_settings_and_settings_opens
       await sleep(1_000);
       assert.equal((await w.session.windowHandles()).length, before, `${channel}: Settings opens no tab or window`);
       assert.equal(await w.session.content(() => location.pathname), "/pages/popup.html", channel);
+      // The same main screen in Norwegian (the page takes the language of the browser), still in the dark scheme.
+      await w.session.chrome(() => Services.prefs.setStringPref("intl.accept_languages", "nb, en"));
+      await w.session.navigate(`${POPUP_URL}?tab=${tabId}`);
+      await w.page.ready();
+      await w.page.waitVisible('[data-role="unlocked-view"]', SLOW);
+      await w.page.click('[data-role="tab-settings"]');
+      await w.page.waitVisible('[data-role="settings-main"]', SLOW);
+      assert.equal(await w.page.text('[data-role="settings-title"]'), "Innstillinger", channel);
+      await sleep(500);
+      await w.session.screenshot(shotPath(channel, "ext-settings-5-main-nb"));
+      await w.session.chrome(() => {
+        Services.prefs.clearUserPref("intl.accept_languages");
+        Services.prefs.clearUserPref("layout.css.prefers-color-scheme.content-override");
+      });
     } finally {
       await w.quit();
     }

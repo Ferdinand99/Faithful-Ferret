@@ -214,7 +214,7 @@ function buildSection(flow, texts, { pollMs } = {}) {
   const pinCard = el(
     "div",
     { class: "ff-scard ff-scard-col", "data-role": "unlock-pin-card", ...FEATURE },
-    el("div", { class: "ff-scard-head", ...FEATURE }, el("span", { class: "ff-scard-title", ...FEATURE }, t("settings.unlock.pin.title")), chip),
+    el("div", { class: "ff-scard-head", ...FEATURE }, el("span", { class: "ff-scard-title", ...FEATURE }, t("settings.unlock.pin.card")), chip),
     status,
     detail,
     actions,
@@ -240,7 +240,7 @@ function buildSection(flow, texts, { pollMs } = {}) {
   const passkeyCard = el(
     "div",
     { class: "ff-scard ff-scard-col", "data-role": "unlock-passkey-card", ...FEATURE },
-    el("div", { class: "ff-scard-head", ...FEATURE }, el("span", { class: "ff-scard-title", ...FEATURE }, t("settings.unlock.passkey.title"))),
+    el("div", { class: "ff-scard-head", ...FEATURE }, el("span", { class: "ff-scard-title", ...FEATURE }, t("settings.unlock.passkey.card"))),
     passkeyCount,
     manageSlot,
   );

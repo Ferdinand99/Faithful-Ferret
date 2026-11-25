@@ -185,6 +185,11 @@
   min-width: 0;
 }
 
+/* A status line that says nothing yet stays in the page (it is a live region) but takes no room. */
+.ff-spage-body > .ff-status:empty {
+  margin-top: calc(-1 * var(--sp-3));
+}
+
 /* A card: one setting. The text is on the left, the control on the right. */
 .ff-scard {
   display: flex;
@@ -385,12 +390,42 @@ li.ff-scard {
 }
 
 .ff-disclosure-summary {
-  display: inline-block;
+  --ico: url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27black%27%20stroke-width=%273%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M6%209l6%206%206-6%27/%3E%3C/svg%3E);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: fit-content;
   padding: var(--sp-1) 0;
   color: var(--brand);
   font-size: 0.8125rem;
   font-weight: 600;
+  list-style: none;
   cursor: pointer;
+}
+
+.ff-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The cue: a chevron that points to the side while the text is closed and down when it is open. */
+.ff-disclosure-summary::after {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  -webkit-mask: var(--ico) center / contain no-repeat;
+  mask: var(--ico) center / contain no-repeat;
+  transform: rotate(-90deg);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.ff-disclosure-summary:dir(rtl)::after {
+  transform: rotate(90deg);
+}
+
+.ff-disclosure[open] > .ff-disclosure-summary::after {
+  transform: none;
 }
 
 .ff-disclosure[open] > .ff-disclosure-summary {
@@ -420,6 +455,7 @@ li.ff-scard {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ff-disclosure-summary::after,
   .ff-switch-track,
   .ff-switch-knob {
     transition: none;
