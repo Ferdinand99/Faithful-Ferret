@@ -1,0 +1,58 @@
+{
+  "id": "background-unloaded-under-request",
+  "set": "fixtures",
+  "category": "background",
+  "title": "the MV3 event page is unloaded while a request waits: it fails closed or is kept alive",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "terminate-background"
+    }
+  ]
+}

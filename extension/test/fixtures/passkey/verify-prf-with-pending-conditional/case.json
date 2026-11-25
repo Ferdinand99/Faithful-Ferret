@@ -1,0 +1,58 @@
+{
+  "id": "verify-prf-with-pending-conditional",
+  "set": "fixtures",
+  "category": "verification",
+  "title": "PRF while a conditional call to the original waits",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "conditional",
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "flags": {
+      "uv": true
+    }
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "age-unlock",
+      "minutes": 6
+    },
+    {
+      "do": "verify-prf"
+    }
+  ]
+}

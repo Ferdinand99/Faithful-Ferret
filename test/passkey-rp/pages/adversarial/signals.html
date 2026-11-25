@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial: signals</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<h1>Adversarial page: signals</h1>
+<form id="login" onsubmit="return false">
+  <label>User name <input id="username" name="username" type="text" autocomplete="username webauthn"></label>
+  <button id="go" type="button">Run the case</button>
+</form>
+<pre id="result" data-state="idle">idle</pre>
+<script type="module">
+import { adversarial } from "/adversarial/adv.mjs";
+import { report, runCeremony } from "/lib.mjs";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+void report; void sleep;
+
+adversarial({ name: "signals", run: async (spec, note) => {
+  const names = ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails", "isUserVerifyingPlatformAuthenticatorAvailable", "isConditionalMediationAvailable", "getClientCapabilities", "parseCreationOptionsFromJSON", "parseRequestOptionsFromJSON"];
+  const info = {};
+  for (const n of names) {
+    const f = PublicKeyCredential[n];
+    info[n] = f === undefined ? "absent" : /\[native code\]/.test(Function.prototype.toString.call(f)) ? "native" : "replaced";
+  }
+  note("methods", info);
+  for (const n of ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails"]) {
+    if (typeof PublicKeyCredential[n] !== "function") continue;
+    try { await PublicKeyCredential[n]({ rpId: spec.rpId ?? location.hostname, credentialId: "AAAA", allAcceptedCredentialIds: [], userId: "AAAA", name: "x", displayName: "x" }); note(n, "resolved"); } catch (e) { note(n, e?.name ?? "error"); }
+  }
+  await report(spec.run, { kind: "done", ok: true, steps: [] });
+  return { ok: true };
+} });
+</script>
+</body>
+</html>

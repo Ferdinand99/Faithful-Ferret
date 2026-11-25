@@ -1,0 +1,59 @@
+{
+  "id": "frame-sandbox",
+  "set": "fixtures",
+  "category": "frames",
+  "title": "a sandboxed frame (opaque origin) asking for the RP ID of its source: the browser refuses",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-a.test"
+    ],
+    "kinds": [
+      "sandbox"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "rpId": "rp-a.test",
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    },
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "an answer to a frame that has an ancestor of another origin than the top"
+    },
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    }
+  ],
+  "note": "A sandboxed frame is of another origin than its parent: the browser refuses with NotAllowedError (permissions policy) before it looks at the RP ID."
+}

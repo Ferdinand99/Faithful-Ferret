@@ -51,8 +51,10 @@ export function fixtureOrigin(text) {
     return undefined;
   }
   if (url.origin === "null" || url.port !== "") return undefined;
-  if (url.protocol === "https:" && (hosts.includes(url.hostname) || localhostNames.includes(url.hostname))) return url.origin;
-  if (url.protocol === "http:" && localhostNames.includes(url.hostname)) return url.origin;
+  // A trailing dot names the same host (https://rp-a.test./); the origin the relying party expects keeps it, as the browser sends it.
+  const name = url.hostname.endsWith(".") ? url.hostname.slice(0, -1) : url.hostname;
+  if (url.protocol === "https:" && (hosts.includes(name) || localhostNames.includes(name))) return url.origin;
+  if (url.protocol === "http:" && localhostNames.includes(name)) return url.origin;
   return undefined;
 }
 
@@ -136,8 +138,14 @@ const handler = (listener) => async (/** @type {import("node:http").IncomingMess
   const host = String(req.headers.host ?? "").split(":")[0].toLowerCase().replace(/\.$/, "");
   const url = new URL(req.url ?? "/", "https://placeholder.invalid");
   const common = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
+  // A sandboxed frame (opaque origin, Origin: null) may read the answers of the API, so that the browser's own refusal of it can be seen.
+  const opaqueCors = req.headers.origin === "null" ? { "access-control-allow-origin": "null", vary: "origin" } : {};
+  if (req.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+    res.writeHead(204, { ...common, ...opaqueCors, "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type" }).end();
+    return;
+  }
   /** @param {number} status @param {any} json */
-  const sendJson = (status, json) => res.writeHead(status, { ...common, "content-type": "application/json" }).end(JSON.stringify(json));
+  const sendJson = (status, json) => res.writeHead(status, { ...common, ...opaqueCors, "content-type": "application/json" }).end(JSON.stringify(json));
   try {
     if (url.pathname === "/healthz") {
       res.writeHead(200, { ...common, "content-type": "text/plain" }).end("ok\n");
@@ -175,9 +183,15 @@ const handler = (listener) => async (/** @type {import("node:http").IncomingMess
     const api = /^\/api\/(swa|rs)\/([a-z]+\/[a-z]+|reset)$/.exec(url.pathname);
     if (api) {
       if (req.method !== "POST") return sendJson(405, { ok: false, error: "POST only" });
-      const origin = fixtureOrigin(String(req.headers.origin ?? ""));
-      if (!origin) return sendJson(403, { ok: false, error: `the origin ${JSON.stringify(req.headers.origin ?? null)} is not one of the fixture's` });
       const body = await readBody(req);
+      let origin = fixtureOrigin(String(req.headers.origin ?? ""));
+      if (!origin && req.headers.origin === "null" && api[2].endsWith("/start")) {
+        // A sandboxed frame has an opaque origin. It may fetch the options (so the browser's own answer to it can be seen), for the
+        // RP ID it names, and never finish: the finish step takes no opaque origin.
+        const named = fixtureOrigin(`https://${String(JSON.parse(body.toString("utf8") || "{}").rpId ?? "")}`);
+        if (named) origin = named;
+      }
+      if (!origin) return sendJson(403, { ok: false, error: `the origin ${JSON.stringify(req.headers.origin ?? null)} is not one of the fixture's` });
       const result = api[1] === "swa" ? await handleSwa(api[2], JSON.parse(body.toString("utf8") || "{}"), origin) : await callRs(api[2], body, origin);
       const hold = Number(url.searchParams.get("hold") ?? 0);
       if (hold > 0 && api[2].endsWith("/finish")) await sleep(Math.min(hold, 120_000));
@@ -186,7 +200,7 @@ const handler = (listener) => async (/** @type {import("node:http").IncomingMess
     if (req.method !== "GET" && req.method !== "HEAD") return sendJson(405, { ok: false, error: "method not allowed" });
     if (url.pathname === "/vendor/simplewebauthn-browser.js") {
       // The browser library of SimpleWebAuthn (MIT), the UMD bundle that its package ships.
-      res.writeHead(200, { ...common, "content-type": TYPES[".js"] });
+      res.writeHead(200, { ...common, "access-control-allow-origin": "*", "content-type": TYPES[".js"] });
       res.end(readFileSync(resolve(here, "node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.umd.min.js")));
       return;
     }
@@ -200,7 +214,8 @@ const handler = (listener) => async (/** @type {import("node:http").IncomingMess
       return sendJson(404, { ok: false, error: "not found" });
     }
     if (!st.isFile()) return sendJson(404, { ok: false, error: "not found" });
-    res.writeHead(200, { ...common, "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
+    // The pages are public test pages: a sandboxed frame (opaque origin) has to be able to load their module scripts.
+    res.writeHead(200, { ...common, "access-control-allow-origin": "*", "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
     res.end(req.method === "HEAD" ? undefined : readFileSync(file));
   } catch (e) {
     if (!res.headersSent) sendJson(500, { ok: false, error: e instanceof Error ? e.message : String(e) });

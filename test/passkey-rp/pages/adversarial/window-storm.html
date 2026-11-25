@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial: window-storm</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<h1>Adversarial page: window-storm</h1>
+<form id="login" onsubmit="return false">
+  <label>User name <input id="username" name="username" type="text" autocomplete="username webauthn"></label>
+  <button id="go" type="button">Run the case</button>
+</form>
+<pre id="result" data-state="idle">idle</pre>
+<script type="module">
+import { adversarial } from "/adversarial/adv.mjs";
+import { report, runCeremony } from "/lib.mjs";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+void report; void sleep;
+
+adversarial({ name: "window-storm", run: async (spec, note) => {
+  const rows = [];
+  for (let i = 0; i < 8; i++) {
+    const c = new AbortController();
+    const t0 = performance.now();
+    const p = navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32).fill(i + 1), rpId: spec.rpId ?? location.hostname, timeout: 4000 }, signal: c.signal }).then(() => "fulfilled", (e) => e?.name ?? "error");
+    setTimeout(() => c.abort(), 100);
+    rows.push({ name: await p, ms: Math.round(performance.now() - t0) });
+  }
+  note("storm", rows);
+  return runCeremony(spec);
+} });
+</script>
+</body>
+</html>

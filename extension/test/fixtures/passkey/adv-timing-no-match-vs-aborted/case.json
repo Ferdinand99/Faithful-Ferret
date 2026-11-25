@@ -1,0 +1,48 @@
+{
+  "id": "adv-timing-no-match-vs-aborted",
+  "set": "adversarial",
+  "category": "adv-timing",
+  "title": "the page times \"no match\" against \"aborted\": the same error type, no tell in the time",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/timing.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ],
+  "needs": "provider",
+  "waitMs": 60000
+}

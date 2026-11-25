@@ -1,0 +1,61 @@
+{
+  "id": "frame-cross-origin-allow",
+  "set": "fixtures",
+  "category": "frames",
+  "title": "a frame of another origin with allow: the browser answers, Ferret does not",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-b.test"
+    ],
+    "allow": [
+      "publickey-credentials-create publickey-credentials-get"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "rpId": "rp-b.test",
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError",
+    "failStep": "create"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    },
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "an answer to a frame that has an ancestor of another origin than the top"
+    },
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    }
+  ],
+  "note": "Firefox does not let a frame of another origin create a passkey, whatever allow says; the case is that Ferret must not answer it."
+}

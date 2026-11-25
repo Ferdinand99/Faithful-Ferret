@@ -1,0 +1,53 @@
+{
+  "id": "ext-credprops-prf",
+  "set": "fixtures",
+  "category": "create-extensions",
+  "title": "credProps and prf together",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "extensions": {
+        "credProps": true,
+        "prf": {}
+      }
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    },
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ]
+}

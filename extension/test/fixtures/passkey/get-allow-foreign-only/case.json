@@ -1,0 +1,51 @@
+{
+  "id": "get-allow-foreign-only",
+  "set": "fixtures",
+  "category": "get-modal",
+  "title": "allowCredentials names only ids Ferret does not hold: the window still opens (UK113)",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "unknown",
+      "timeout": 3000
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "needs": "provider",
+  "waitMs": 8000
+}

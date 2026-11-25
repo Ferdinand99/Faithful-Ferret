@@ -1,0 +1,61 @@
+{
+  "id": "verify-master-password",
+  "set": "fixtures",
+  "category": "verification",
+  "title": "the master password verifies",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "flags": {
+      "uv": true
+    }
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "age-unlock",
+      "minutes": 6
+    },
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "verify-master-password"
+    }
+  ]
+}

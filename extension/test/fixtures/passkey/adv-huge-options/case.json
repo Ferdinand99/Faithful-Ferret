@@ -1,0 +1,55 @@
+{
+  "id": "adv-huge-options",
+  "set": "adversarial",
+  "category": "adv-input",
+  "title": "values of a megabyte and more, and a thousand requests at once",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/huge-options.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "any",
+    "error": "NotAllowedError",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ],
+  "needs": "provider",
+  "waitMs": 30000,
+  "note": "The error type for oversized values is not fixed by the design (UK129 sets the limits); to be settled against the bridge in U4-4a and U4-5 with the reviewer's yes."
+}

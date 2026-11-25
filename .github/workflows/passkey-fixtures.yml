@@ -1,0 +1,50 @@
+# The passkey fixture container of the U4 tests (test/passkey-rp): builds the image, starts it on an
+# internal Docker network and runs its own checks (the two relying parties accept an untampered response
+# and refuse a tampered signature, RP ID hash, origin, crossOrigin and flags; no .test name resolves outside
+# the test network). The Firefox matrix itself runs on the build host (scripts/lanbox-ext.sh passkey-matrix).
+# Nothing is published and nothing is signed. The workflow has read access only and never uses
+# `pull_request_target`; the third-party action is pinned by commit SHA.
+name: Passkey fixtures
+
+on:
+  pull_request:
+    paths:
+      - "test/passkey-rp/**"
+      - "scripts/lanbox-passkey-rp.sh"
+      - ".github/workflows/passkey-fixtures.yml"
+  push:
+    branches: [main]
+    paths:
+      - "test/passkey-rp/**"
+      - "scripts/lanbox-passkey-rp.sh"
+      - ".github/workflows/passkey-fixtures.yml"
+
+concurrency:
+  group: passkey-fixtures-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    name: Build the container and check the fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The script's default context is the build host's; here it is the runner's own Docker.
+      FERRET_DOCKER_ARGS: "--context default"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Start the fixture container
+        run: scripts/lanbox-passkey-rp.sh up
+      - name: Check the fixtures
+        run: scripts/lanbox-passkey-rp.sh test
+      - name: Show the container log
+        if: failure()
+        run: scripts/lanbox-passkey-rp.sh logs
+      - name: Remove the container and the network
+        if: always()
+        run: scripts/lanbox-passkey-rp.sh down

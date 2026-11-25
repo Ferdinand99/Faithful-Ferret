@@ -1,0 +1,49 @@
+{
+  "id": "get-abort-signal",
+  "set": "fixtures",
+  "category": "get-modal",
+  "title": "the page's AbortSignal ends the request: AbortError",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "none",
+      "mediation": "conditional",
+      "abortAfterMs": 500
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "any",
+    "error": "AbortError"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ],
+  "waitMs": 10000,
+  "note": "A conditional request waits until the page aborts it; a modal one with nothing to offer ends at once in the browser."
+}

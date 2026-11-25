@@ -20,6 +20,12 @@
 # it writes (FERRET_MATRIX_OUT, /work/test-results/out/u2-matrix) leave the container as a tar archive on stdout,
 # as the measure reports do.
 #
+# passkey-matrix: only 96-passkey-matrix.e2e.spec.mjs, in the Firefox of the fixture container's test network (the network
+# of scripts/lanbox-passkey-rp.sh; no e2e stack). The fixture host names are the network's, not /etc/hosts; the fixture's test CA
+# (FERRET_PASSKEY_CA_PEM) is trusted by the browser profile and by Node (NODE_EXTRA_CA_CERTS), and localhost (80 and 443) is piped
+# to the fixture by test/passkey-rp/forward.mjs. FERRET_PASSKEY_SET, FERRET_PASSKEY_PROVIDER and FERRET_PASSKEY_GREP choose what
+# it runs. The reports (FERRET_PASSKEY_OUT, /work/test-results/out/u4-matrix) leave the container as a tar archive on stdout.
+#
 # measure: only the *.measure.spec.mjs files (the lifetime matrix, hours long). The
 # reports they write (FERRET_MEASURE_OUT, /work/test-results/out/ext-measure) leave
 # the container as a tar archive on stdout; everything else of this script goes to
@@ -30,7 +36,18 @@ mode="${1:-firefox}"
 cd /work
 
 if [ "$(id -u)" = 0 ]; then
-  node extension/test/firefox/harness.mjs hosts >> /etc/hosts
+  if [ "$mode" = passkey-matrix ]; then
+    # The names come from the network's DNS: nothing is added to /etc/hosts. The demo set runs outside the test network.
+    if [ "${FERRET_PASSKEY_SET:-fixtures}" != demo ]; then
+      printf '%s\n' "${FERRET_PASSKEY_CA_PEM:?FERRET_PASSKEY_CA_PEM is not set}" > /tmp/passkey-rp-ca.pem
+      NODE_EXTRA_CA_CERTS=/tmp/passkey-rp-ca.pem
+      export NODE_EXTRA_CA_CERTS
+      node test/passkey-rp/forward.mjs rp-a.test >&2 &
+      sleep 1
+    fi
+  else
+    node extension/test/firefox/harness.mjs hosts >> /etc/hosts
+  fi
   chown -R ferret:ferret /work
   exec setpriv --reuid=10001 --regid=10001 --clear-groups env HOME=/home/ferret sh "$0" "$mode"
 fi
@@ -42,8 +59,9 @@ done
 
 case "$mode" in
   firefox) specs=$(ls test/firefox/*.spec.mjs | grep -v '\.e2e\.spec\.mjs$' | grep -v '\.measure\.spec\.mjs$') ;;
-  e2e) specs=$(ls test/firefox/*.e2e.spec.mjs | grep -v '/95-matrix\.e2e\.spec\.mjs$') ;;
+  e2e) specs=$(ls test/firefox/*.e2e.spec.mjs | grep -v '/95-matrix\.e2e\.spec\.mjs$' | grep -v '/96-passkey-matrix\.e2e\.spec\.mjs$') ;;
   matrix) specs=test/firefox/95-matrix.e2e.spec.mjs ;;
+  passkey-matrix) specs=test/firefox/96-passkey-matrix.e2e.spec.mjs ;;
   measure) specs=$(ls test/firefox/*.measure.spec.mjs) ;;
   *) echo "run.sh: unknown mode $mode" >&2; exit 2 ;;
 esac
@@ -77,6 +95,13 @@ if [ "$mode" = matrix ]; then
   FERRET_MATRIX_OUT="${FERRET_MATRIX_OUT:-$matrix_out_default}"
   export FERRET_MATRIX_OUT
   mkdir -p "$FERRET_MATRIX_OUT"
+fi
+if [ "$mode" = passkey-matrix ]; then
+  step_timeout="${FERRET_STEP_TIMEOUT:-5400}"
+  test_timeout=5400000
+  FERRET_PASSKEY_OUT="${FERRET_PASSKEY_OUT:-/work/test-results/out/u4-matrix}"
+  export FERRET_PASSKEY_OUT
+  mkdir -p "$FERRET_PASSKEY_OUT"
 fi
 if [ "$mode" = measure ]; then
   # Hours, not minutes: every cell waits for its window.
@@ -116,6 +141,12 @@ for channel in $channel_list; do
     echo "run.sh: no test passed on $channel" >&2
     failed=1
   fi
+  # The spec file itself counts as a passed test, so a run that registered no test would pass the check above: the self-test
+  # of the passkey matrix has to be there, and has to have passed.
+  if [ "$mode" = passkey-matrix ] && ! grep -q '^ *ok [0-9]* - virtual_authenticator_and_fixture_tls_work_in_both_channels' "$report"; then
+    echo "run.sh: the self-test of the passkey matrix did not run or did not pass on $channel" >&2
+    failed=1
+  fi
   if ! grep -q '^# skipped 0$' "$report"; then
     echo "run.sh: a test was skipped on $channel (the environment is incomplete)" >&2
     failed=1
@@ -128,6 +159,10 @@ fi
 if [ "$mode" = matrix ]; then
   # The reports, also of a run that failed.
   tar -c -C "$(dirname "$FERRET_MATRIX_OUT")" "$(basename "$FERRET_MATRIX_OUT")"
+fi
+if [ "$mode" = passkey-matrix ]; then
+  # The reports, also of a run that failed.
+  tar -c -C "$(dirname "$FERRET_PASSKEY_OUT")" "$(basename "$FERRET_PASSKEY_OUT")"
 fi
 if [ "$mode" = measure ]; then
   # The reports, also of a run that failed: what was measured is still worth having.

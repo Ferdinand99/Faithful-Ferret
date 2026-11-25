@@ -1,0 +1,50 @@
+{
+  "id": "users-id-0-bytes",
+  "set": "fixtures",
+  "category": "create-users",
+  "title": "user.id of 0 bytes: TypeError",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "userIdBytes": 0
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "any",
+    "error": "TypeError",
+    "stub": {
+      "ceremony": "ok"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ],
+  "note": "Firefox does not refuse an empty user.id; Ferret does (UK115)."
+}

@@ -94,6 +94,38 @@ function assertionToJson(cred) {
   };
 }
 
+/**
+ * Named changes to the options before the browser gets them (the adversarial pages' inputs: forged members, huge values,
+ * names made to mislead). They are applied to the options of the library, so the relying party stays honest.
+ * @type {Record<string, (options: any, step: string) => void>}
+ */
+export const TAMPER = {
+  // Members that no browser reads but a bridge might: an origin, a top origin, a frame id.
+  "forged-origin": (o) => {
+    Object.assign(o, { origin: "https://github.com", topOrigin: "https://github.com", crossOrigin: false, frameId: 0, tabId: 1, documentId: "00000000000000000000000000000000", userVerified: true, userPresent: true });
+    if (o.rp) o.rp.origin = "https://github.com";
+  },
+  // Names that pretend to be someone else, with a right-to-left override and control characters.
+  "strange-names": (o, step) => {
+    if (step !== "create") return;
+    o.rp = { ...o.rp, name: "GitHub \u202Esdrawkcab" };
+    o.user = { ...o.user, name: "admin@github.com\u0000\u0007\u001b[31m", displayName: "\u202E\u2066Sign in to GitHub\u2069\r\nSecurity team" };
+  },
+  // A page that claims to be another site by name only.
+  "lookalike-name": (o) => {
+    if (o.rp) o.rp.name = "rp-a.test";
+    if (o.user) o.user.displayName = "Log in to https://rp-a.test";
+  },
+  // Values far past every limit of the protocol.
+  huge: (o) => {
+    o.challenge = toB64u(new Uint8Array(2 * 1024 * 1024).fill(7));
+    if (o.user) o.user.displayName = "x".repeat(1024 * 1024);
+    if (o.rp) o.rp.name = "y".repeat(1024 * 1024);
+    o.excludeCredentials = Array.from({ length: 5000 }, (_, i) => ({ type: "public-key", id: toB64u(new Uint8Array(32).fill(i % 255)) }));
+    o.allowCredentials = o.allowCredentials === undefined ? undefined : Array.from({ length: 5000 }, (_, i) => ({ type: "public-key", id: toB64u(new Uint8Array(32).fill(i % 255)) }));
+  },
+};
+
 /** @param {any} e */
 const errorInfo = (e) => ({ name: e?.name ?? typeof e, message: String(e?.message ?? e).slice(0, 300) });
 
@@ -139,6 +171,17 @@ async function runStep(spec, step) {
     /** @type {any} */
     const options = started1.json.options;
     if (opt.timeout) options.timeout = opt.timeout;
+    // evalByCredential names the credential the earlier create made as "$created".
+    const byCred = options.extensions?.prf?.evalByCredential;
+    if (byCred && byCred.$created && spec.__createdId) {
+      byCred[spec.__createdId] = byCred.$created;
+      delete byCred.$created;
+    }
+    if (opt.hints) options.hints = opt.hints;
+    if (spec.tamper) TAMPER[spec.tamper]?.(options, step);
+    // A page that sends a user.id the options of a library would never make (0 or 65 bytes): the browser must throw TypeError.
+    if (opt.userIdBytes !== undefined && options.user) options.user.id = toB64u(new Uint8Array(opt.userIdBytes).fill(1));
+    if (opt.abortConditional && window.__cond) window.__cond.controller.abort();
     result.stage = "client";
     const controller = new AbortController();
     if (opt.abortAfterMs) setTimeout(() => controller.abort(), opt.abortAfterMs);
@@ -188,14 +231,43 @@ async function runStep(spec, step) {
 }
 
 /**
+ * Starts a conditional get (mediation "conditional") and does not wait for it: the next step (a modal get, which
+ * replaces it) is what the case is about. How the conditional one ends is reported as kind "conditional".
+ * @param {any} spec
+ */
+async function startConditional(spec) {
+  const rpId = spec.rpId ?? location.hostname;
+  const sid = spec.sid ?? spec.run;
+  const opt = spec.conditional ?? spec.get ?? {};
+  const started = await post(`/api/${spec.lib}/auth/start`, { sid, rpId, userVerification: opt.userVerification, allow: opt.allow ?? "none" });
+  const controller = new AbortController();
+  const t0 = performance.now();
+  const promise = Promise.resolve()
+    .then(() => navigator.credentials.get({ publicKey: requestFromJson(started.json.options), mediation: "conditional", signal: controller.signal }))
+    .then(
+      () => report(spec.run, { kind: "conditional", ok: true, ms: Math.round(performance.now() - t0) }),
+      (e) => report(spec.run, { kind: "conditional", ok: false, error: errorInfo(e), ms: Math.round(performance.now() - t0) }),
+    );
+  window.__cond = { controller, promise };
+  await report(spec.run, { kind: "conditional-started" });
+}
+
+/**
  * Runs the steps of the spec in order and stops at the first one that fails.
  * @param {any} spec
  */
 export async function runCeremony(spec) {
   /** @type {any[]} */
   const steps = [];
+  let creates = 0;
   for (const step of spec.steps ?? ["create", "get"]) {
-    const r = await runStep(spec, step);
+    if (step === "conditional") {
+      await startConditional(spec);
+      continue;
+    }
+    const stepSpec = step === "create" && creates++ > 0 && spec.user2 ? { ...spec, user: spec.user2 } : spec;
+    const r = await runStep(stepSpec, step);
+    if (step === "create" && r.ok) spec.__createdId = r.credential?.id;
     steps.push(r);
     await report(spec.run, { kind: "step", ...r });
     if (!r.ok) break;

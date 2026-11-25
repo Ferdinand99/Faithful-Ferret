@@ -1,0 +1,51 @@
+{
+  "id": "adv-lookalike-host",
+  "set": "adversarial",
+  "category": "adv-input",
+  "title": "a look-alike IDN host that names itself rp-a.test",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "xn--rp--8cd.test"
+    ],
+    "path": "/adversarial/lookalike-name.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "rpId": "xn--rp--8cd.test",
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    },
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    }
+  ]
+}

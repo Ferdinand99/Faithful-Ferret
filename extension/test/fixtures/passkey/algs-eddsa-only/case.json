@@ -1,0 +1,50 @@
+{
+  "id": "algs-eddsa-only",
+  "set": "fixtures",
+  "category": "create-algs",
+  "title": "pubKeyCredParams [-8] goes to the browser, which cannot either",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "algs": [
+        -8
+      ]
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "browser",
+    "error": "NotAllowedError"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    }
+  ],
+  "note": "Firefox answers NotAllowedError, not NotSupportedError, when no listed algorithm fits."
+}

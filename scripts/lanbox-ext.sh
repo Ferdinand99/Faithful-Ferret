@@ -57,6 +57,17 @@
 #                                 The reports (<channel>-<manifest>.json and matrix.md)
 #                                 are unpacked into test-results/out/u2-matrix/ (or $FERRET_EXT_OUT_DIR/u2-matrix/),
 #                                 also after a failure. Stack handling and limits are those of e2e.
+#   scripts/lanbox-ext.sh passkey-matrix [--channel release|esr] [--manifest mv3|mv2] [--set fixtures|adversarial|holdout|demo] [--provider stub|ferret] [--grep <case id>] [--headed] [--wasm lock|tree]
+#                                 the passkey matrix (U4, plan section 11): the cases of extension/test/fixtures/passkey
+#                                 (--set holdout: passkey-holdout/; --set demo: the public demo pages, outside the test network)
+#                                 in a real Firefox that trusts the test CA of the fixture container and sits on its
+#                                 internal network and no other (start it first: scripts/lanbox-passkey-rp.sh up; stop it
+#                                 with ... down). Every run starts with a self-test of the virtual authenticator and the
+#                                 fixture's TLS. --provider stub (the default) lets the browser's own path answer where Ferret
+#                                 would, so the route cannot be seen and the cases that need Ferret are counted as not run;
+#                                 --provider ferret is for when the extension answers (U4-8). A case that did not run counts as
+#                                 failed. The default manifest is mv2. The reports (<set>-<channel>-<manifest>.json and .md) are
+#                                 unpacked into test-results/out/u4-matrix/ (or $FERRET_EXT_OUT_DIR/u4-matrix/), also after a failure.
 #   scripts/lanbox-ext.sh measure [--channel release|esr] [--manifest mv3|mv2] [--scenario <list>] [--window-minutes N]
 #                                 the lifetime measurement of the background page: every
 #                                 scenario in both manifest versions, a window of 17
@@ -139,10 +150,11 @@ dev_args() {
 }
 
 usage() {
-  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | measure [options]" >&2
+  echo "usage: scripts/lanbox-ext.sh unit | lint | firefox [options] | e2e [options] | gate [options] | matrix [options] | passkey-matrix [options] | measure [options]" >&2
   echo "  options of firefox and e2e: --channel release|esr  --manifest mv3|mv2  --grep <name>  --headed  --wasm lock|tree  (e2e only: --no-up)" >&2
   echo "  options of gate: --channel release|esr  --manifest mv3|mv2  --wasm lock|tree" >&2
   echo "  options of matrix: --channel release|esr  --manifest mv3|mv2  --part fill|capture|all  --set corpus|holdout|parity  --grep <case id>  --headed  --no-up  --wasm lock|tree" >&2
+  echo "  options of passkey-matrix: --channel release|esr  --manifest mv3|mv2  --set fixtures|adversarial|holdout|demo  --provider stub|ferret  --grep <case id>  --headed  --wasm lock|tree" >&2
   echo "  options of measure: --channel release|esr  --manifest mv3|mv2  --scenario idle,sse,popup,argon,terminate  --window-minutes N  --wasm lock|tree" >&2
   echo "  option of unit: --wasm lock|tree (the test variant only; lint is a release check and takes none)" >&2
   exit 2
@@ -150,7 +162,7 @@ usage() {
 
 mode="${1:-}"
 case "$mode" in
-  unit | lint | firefox | e2e | gate | matrix | measure) shift ;;
+  unit | lint | firefox | e2e | gate | matrix | passkey-matrix | measure) shift ;;
   *) usage ;;
 esac
 
@@ -160,6 +172,8 @@ manifest_given=0
 grep_name=""
 matrix_part=all
 matrix_set=corpus
+passkey_set=fixtures
+passkey_provider=stub
 headed=0
 no_up=0
 scenario_list=""
@@ -168,13 +182,15 @@ window_minutes=""
 wasm_source="${FERRET_WASM_SOURCE:-lock}"
 while [ "$#" -gt 0 ]; do
   case "$mode:$1" in
-    unit:--wasm | firefox:--wasm | e2e:--wasm | gate:--wasm | matrix:--wasm | measure:--wasm) [ "$#" -ge 2 ] || usage; wasm_source="$2"; shift 2 ;;
-    firefox:--channel | e2e:--channel | gate:--channel | matrix:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
-    firefox:--manifest | e2e:--manifest | gate:--manifest | matrix:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
-    firefox:--grep | e2e:--grep | matrix:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
+    unit:--wasm | firefox:--wasm | e2e:--wasm | gate:--wasm | matrix:--wasm | passkey-matrix:--wasm | measure:--wasm) [ "$#" -ge 2 ] || usage; wasm_source="$2"; shift 2 ;;
+    firefox:--channel | e2e:--channel | gate:--channel | matrix:--channel | passkey-matrix:--channel | measure:--channel) [ "$#" -ge 2 ] || usage; channel="$2"; shift 2 ;;
+    firefox:--manifest | e2e:--manifest | gate:--manifest | matrix:--manifest | passkey-matrix:--manifest | measure:--manifest) [ "$#" -ge 2 ] || usage; manifest="$2"; manifest_given=1; shift 2 ;;
+    firefox:--grep | e2e:--grep | matrix:--grep | passkey-matrix:--grep) [ "$#" -ge 2 ] || usage; grep_name="$2"; shift 2 ;;
     matrix:--part) [ "$#" -ge 2 ] || usage; matrix_part="$2"; shift 2 ;;
     matrix:--set) [ "$#" -ge 2 ] || usage; matrix_set="$2"; shift 2 ;;
-    firefox:--headed | e2e:--headed | matrix:--headed) headed=1; shift ;;
+    passkey-matrix:--set) [ "$#" -ge 2 ] || usage; passkey_set="$2"; shift 2 ;;
+    passkey-matrix:--provider) [ "$#" -ge 2 ] || usage; passkey_provider="$2"; shift 2 ;;
+    firefox:--headed | e2e:--headed | matrix:--headed | passkey-matrix:--headed) headed=1; shift ;;
     e2e:--no-up | matrix:--no-up) no_up=1; shift ;;
     measure:--scenario) [ "$#" -ge 2 ] || usage; scenario_list="$2"; shift 2 ;;
     measure:--window-minutes) [ "$#" -ge 2 ] || usage; window_minutes="$2"; shift 2 ;;
@@ -188,11 +204,13 @@ if [ "$mode" = lint ]; then wasm_source=lock; fi
 case "$manifest" in mv3 | mv2) ;; *) usage ;; esac
 case "$matrix_part" in fill | capture | all) ;; *) usage ;; esac
 case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
+case "$passkey_set" in fixtures | adversarial | holdout | demo) ;; *) usage ;; esac
+case "$passkey_provider" in stub | ferret) ;; *) usage ;; esac
 # A case id is lower case letters, digits and dashes; the text goes into the container's environment.
 case_re='^[a-z0-9-]{0,80}$'
-if [ "$mode" = matrix ] && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
+if { [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
 # The gate and the matrix run the Firefox build: MV2 with a persistent background, unless --manifest names another.
-if { [ "$mode" = gate ] || [ "$mode" = matrix ]; } && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
+if { [ "$mode" = gate ] || [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
 # A measure run covers both manifest versions unless --manifest names one.
 measure_manifests="mv3,mv2"
 if [ "$mode" = measure ] && [ "$manifest_given" = 1 ]; then measure_manifests="$manifest"; fi
@@ -279,8 +297,11 @@ fi'
     tar -c \
       --exclude='extension/node_modules' \
       --exclude='extension/dist' \
+      --exclude='test/passkey-rp/server/node_modules' \
+      --exclude='test/passkey-rp/webauthn-rs-fixture/target' \
       extension web/wasm.lock.json web/src crates/ferret-server/static/favicon.svg scripts/check-ext-release.sh scripts/lanbox-ext.sh notices-extra.json \
       scripts/check-lanbox-labels.sh docker/ext-runner.Dockerfile \
+      scripts/lanbox-passkey-rp.sh Cargo.toml test/passkey-rp \
       .github/workflows \
       docs/design/phase-1-security-design.md \
       ${wasm_tar:+-C "$(dirname "$wasm_tar")" "$(basename "$wasm_tar")"}
@@ -370,6 +391,10 @@ e2e_evil_url=""
 e2e_suffix=""
 e2e_chromium_ws=""
 e2e_volume_args=()
+# The passkey matrix: the fixture container's test network (internal: no way out) and its test CA. The demo set runs on the
+# ordinary bridge and trusts no test CA.
+passkey_network=none
+passkey_ca=""
 
 # A /28 for this run's stack network, the first three octets: 172.30.<n> with n from 200 to 239,
 # starting at a random n, that overlaps no network the Docker host has. Prints nothing when every
@@ -469,7 +494,7 @@ e2e_setup() {
 tar ${tar_local[@]+"${tar_local[@]}"} -cf "$work/in.tar" \
   --exclude='extension/node_modules' \
   --exclude='extension/dist' \
-  extension web/wasm.lock.json web/src
+  extension web/wasm.lock.json web/src test/passkey-rp/forward.mjs test/passkey-rp/hosts.json
 tar ${tar_local[@]+"${tar_local[@]}"} -rf "$work/in.tar" -C "$work" wasm.tar.gz
 
 # The tests container for the channels in $1 (a comma list). $2 goes into the name
@@ -479,6 +504,9 @@ tar ${tar_local[@]+"${tar_local[@]}"} -rf "$work/in.tar" -C "$work" wasm.tar.gz
 make_run() {
   local step="${3:-$mode}" shots="${4:-0}" net=none
   if [ "$step" = e2e ] || [ "$step" = matrix ]; then net="$network"; fi
+  # The passkey matrix sits on the fixture container's internal network and on no other; the demo set is the one run that
+  # needs the internet, on the ordinary bridge, and trusts no test CA.
+  if [ "$step" = passkey-matrix ]; then net="$passkey_network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
@@ -487,7 +515,7 @@ make_run() {
   if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
   # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
   local test_grep="$grep_name"
-  if [ "$step" = matrix ]; then test_grep=""; fi
+  if [ "$step" = matrix ] || [ "$step" = passkey-matrix ]; then test_grep=""; fi
   run+=(
     --cpus "$cpus"
     --memory "$memory"
@@ -504,6 +532,10 @@ make_run() {
     -e FERRET_MATRIX_PART="$matrix_part"
     -e FERRET_MATRIX_SET="$matrix_set"
     -e FERRET_MATRIX_GREP="$grep_name"
+    -e FERRET_PASSKEY_SET="$passkey_set"
+    -e FERRET_PASSKEY_PROVIDER="$passkey_provider"
+    -e FERRET_PASSKEY_GREP="$grep_name"
+    -e FERRET_PASSKEY_CA_PEM="$passkey_ca"
     -e FERRET_HEADLESS="$((1 - headed))"
     -e FERRET_E2E_CA_PEM="$e2e_ca"
     -e FERRET_E2E_SETUP_TOKEN="$e2e_token"
@@ -555,6 +587,27 @@ if [ "$mode" = e2e ]; then
   rc=0
   "${run[@]}" < "$work/in.tar" || rc=$?
   scan_stack_logs_for_sentinels || { [ "$rc" -ne 0 ] || rc=1; }
+  exit "$rc"
+fi
+
+if [ "$mode" = passkey-matrix ]; then
+  # The fixture container must be up (scripts/lanbox-passkey-rp.sh up); the runner joins its internal network and trusts its CA.
+  out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
+  mkdir -p "$out_dir"
+  if [ "$passkey_set" = demo ]; then
+    passkey_network=bridge
+  else
+    passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
+    passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
+    [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+  fi
+  make_run "${channel:-release,esr}" "passkey-matrix" passkey-matrix 0
+  rc=0
+  "${run[@]}" < "$work/in.tar" > "$work/passkey-matrix.tar" || rc=$?
+  if [ -s "$work/passkey-matrix.tar" ]; then
+    tar -x --no-same-owner -C "$out_dir" < "$work/passkey-matrix.tar" || rc=$?
+  fi
+  echo "lanbox-ext.sh: passkey-matrix: the reports are in $out_dir/u4-matrix/ (exit status $rc)" >&2
   exit "$rc"
 fi
 

@@ -1,0 +1,61 @@
+{
+  "id": "vault-offline-create-says-why",
+  "set": "fixtures",
+  "category": "vault-network",
+  "title": "no network: create says why before any verification",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    },
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "go-offline"
+    },
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "expect-notice",
+      "text": "cannot save"
+    }
+  ]
+}

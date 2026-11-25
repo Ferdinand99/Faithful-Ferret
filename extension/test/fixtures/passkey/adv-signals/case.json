@@ -1,0 +1,56 @@
+{
+  "id": "adv-signals",
+  "set": "adversarial",
+  "category": "adv-signals",
+  "title": "the signal methods are the browser's own",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/signals.html"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any",
+    "adv": [
+      {
+        "key": "methods",
+        "noValue": "replaced"
+      }
+    ]
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "a window or an answer for any frame or origin other than the one that asked"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "id": "ext-prf-eval",
+  "set": "fixtures",
+  "category": "create-extensions",
+  "title": "prf with eval on create and on get",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+          }
+        }
+      }
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "prf": "results",
+    "stub": {
+      "ceremony": "server-refused",
+      "prf": "results"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    },
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "note": "The virtual authenticator's assertion with a PRF output has bytes that SimpleWebAuthn cannot parse (Leftover bytes detected while parsing authenticator data), so the stub path is refused by the relying party; the PRF results are the page's own and are checked on the client."
+}

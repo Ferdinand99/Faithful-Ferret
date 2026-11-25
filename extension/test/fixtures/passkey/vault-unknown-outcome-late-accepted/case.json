@@ -1,0 +1,61 @@
+{
+  "id": "vault-unknown-outcome-late-accepted",
+  "set": "fixtures",
+  "category": "vault-network",
+  "title": "the server's answer to the write is held back: Ferret keeps the same idem and ends clean",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "holdMs": 8000,
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey saved in the vault that the site never received, outside the trash"
+    },
+    {
+      "id": "uv-without-verification",
+      "definition": "the response has user verification set although nothing verified this request (no recent unlock, no PRF, PIN or master password)"
+    }
+  ],
+  "needs": "provider",
+  "actions": [
+    {
+      "do": "start-create"
+    },
+    {
+      "do": "choose-in-window"
+    },
+    {
+      "do": "wait-for-saving"
+    }
+  ]
+}

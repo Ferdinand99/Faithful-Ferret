@@ -1,0 +1,57 @@
+{
+  "id": "prf-on-passkey-without-prf",
+  "set": "fixtures",
+  "category": "get-prf",
+  "title": "prf asked for a passkey made without it: no results, no error",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY"
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "prf": "none",
+    "stub": {
+      "ceremony": "server-refused",
+      "prf": "none"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "a private key or a PRF seed anywhere but inside the WASM core"
+    }
+  ]
+}

@@ -140,6 +140,19 @@ case "$cmd" in
   test)
     running || { echo "lanbox-passkey-rp.sh: $container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
     ca="$(docker "${docker_args[@]}" exec "$container" cat /work/ca.pem)"
+    # The names stay inside the test network: a container on the ordinary bridge must not resolve any of the .test names (the
+    # github.io names are real public names that the network's aliases only take over, so they are not asked about).
+    for h in "${hosts[@]}"; do
+      case "$h" in *.test) ;; *) continue ;; esac
+      if ! docker "${docker_args[@]}" run --rm --init --label owner=ferret --label dev.run=ferret-u4-passkey-rp-selftest \
+        --name "ferret-u4-passkey-rp-dns-$$" --network bridge --cap-drop ALL --security-opt no-new-privileges:true --cpus 1 --memory 128m \
+        node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee \
+        node -e 'require("dns").lookup(process.argv[1], (e) => process.exit(e ? 0 : 1))' "$h"; then
+        echo "lanbox-passkey-rp.sh: $h resolves outside the test network" >&2
+        exit 1
+      fi
+    done
+    echo "lanbox-passkey-rp.sh: no .test name of the fixture resolves outside the test network" >&2
     # A node container on the test network, with the CA, and nothing else: it reaches the fixture by its host names.
     tar -c -C "$dir" test hosts.json \
       | docker "${docker_args[@]}" run --rm -i --init \

@@ -1,0 +1,53 @@
+{
+  "id": "create-without-gesture",
+  "set": "fixtures",
+  "category": "create-gesture",
+  "title": "create with no user activation: no window, a badge and a card; the page's promise waits",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "none",
+  "expected": {
+    "ceremony": "none",
+    "route": "none",
+    "stub": {
+      "ceremony": "ok"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "the response has user presence set without a trusted click in Ferret's own window or popup"
+    }
+  ],
+  "waitMs": 6000,
+  "note": "The stub provider is the browser's own path, and Firefox does not ask for user activation."
+}

@@ -1,0 +1,53 @@
+{
+  "id": "adv-no-gesture",
+  "set": "adversarial",
+  "category": "adv-window",
+  "title": "the page asks at once with no user activation: no window",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "path": "/adversarial/no-gesture.html"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "none",
+  "expected": {
+    "ceremony": "none",
+    "route": "none",
+    "stub": {
+      "ceremony": "ok"
+    }
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window although the page had no user activation"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "the response has user presence set without a trusted click in Ferret's own window or popup"
+    }
+  ],
+  "waitMs": 6000
+}

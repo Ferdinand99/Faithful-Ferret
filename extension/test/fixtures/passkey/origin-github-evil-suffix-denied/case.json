@@ -1,0 +1,50 @@
+{
+  "id": "origin-github-evil-suffix-denied",
+  "set": "fixtures",
+  "category": "origin-rpid",
+  "title": "evil.github.io with RP ID github.io: denied (a public suffix)",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "evil.github.io"
+    ]
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "name": "alice",
+      "displayName": "Alice"
+    },
+    "rpId": "github.io",
+    "create": {
+      "userVerification": "preferred",
+      "residentKey": "preferred",
+      "attestation": "none"
+    },
+    "get": {
+      "userVerification": "preferred",
+      "allow": "all"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "route": "any",
+    "error": "SecurityError"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a signature made for an RP ID other than the one the stored passkey holds, exactly"
+    },
+    {
+      "id": "error-differs",
+      "definition": "an error type or a time that tells the page whether Ferret has a passkey for it (no match against cancelled)"
+    }
+  ]
+}
