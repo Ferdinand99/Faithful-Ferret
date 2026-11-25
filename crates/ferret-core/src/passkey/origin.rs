@@ -251,6 +251,23 @@ pub fn validate_rp_id(origin: &CanonicalOrigin, rp_id: &str) -> Result<RpId, Err
     Ok(RpId(rp))
 }
 
+/// Reads `raw` as the RP ID of a passkey that comes from outside (an import
+/// file) and returns it in canonical form: lower case, IDNA A-labels, one
+/// trailing dot removed, LDH labels, and neither an address nor a public suffix.
+///
+/// There is no origin to relate it to here, so this is the part of
+/// [`validate_rp_id`] that does not need one. `localhost` is refused: the list
+/// treats it as a public suffix, and no site has a passkey for it.
+///
+/// Spec: Fase 1 § 9.2 (F-12).
+pub fn canonical_rp_id(raw: &str) -> Result<RpId, Error> {
+    let rp = canonical_host(raw).map_err(|()| bad_rp_id())?;
+    if psl::is_public_suffix(&rp) {
+        return Err(bad_rp_id());
+    }
+    Ok(RpId(rp))
+}
+
 /// The host of `origin` as the default RP ID, when a request names none.
 pub(crate) fn default_rp_id(origin: &CanonicalOrigin) -> Result<RpId, Error> {
     validate_rp_id(origin, origin.host())

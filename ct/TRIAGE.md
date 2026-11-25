@@ -2,7 +2,7 @@
 
 `ct/run.sh analyze` runs the Trail of Bits
 `ct_analyzer` (`--warnings`) on every file in `ct/harness/`, for `x86_64` and
-`arm64` at `O0`, `O2`, `O3` and `Os`: 5 files, 2 architectures, 4 levels, 40
+`arm64` at `O0`, `O2`, `O3` and `Os`: 6 files, 2 architectures, 4 levels, 48
 reports. The analyzer has no data flow analysis. It reports every variable-time
 instruction (division, and with `--warnings` every conditional branch) whether
 or not a secret reaches it, so the reports are a worklist. This file is the
@@ -10,7 +10,7 @@ result of working through it: for each finding, whether an operand can depend
 on a secret, and why.
 
 `ct/check-triage.mjs` (the test `ct_analyzer_clean_or_triaged`) fails if a
-finding in any of the 40 reports has no row in the `triage` block below, if a
+finding in any of the 48 reports has no row in the `triage` block below, if a
 row has no section here, or if the numbers in the `counts` block change. That
 block pins, for every file, architecture and level, how many functions the
 analyzer looked at and how many findings each row covers. A new branch in a
@@ -98,6 +98,7 @@ T8 @ .* @ (Iterator|DoubleEndedIterator)::(next|next_back|size_hint)|zip::.*::ne
 T9 @ .* @ precondition_check @ .* @ warning
 T10 @ .* @ ^core::(option::|cmp::Ord::min|ptr::const_ptr::is_aligned_to) @ .* @ warning
 T11 @ ct_select @ ^(ct_select::ct_select_u8|subtle::.*conditional_select.*)$ @ .* @ warning
+T12 @ base64url @ ^base64url::decode$ @ .* @ warning
 ```
 
 ```counts
@@ -110,6 +111,14 @@ base32 @ x86_64 @ O0 @ T3=3 T8=2 T9=2 functions=18
 base32 @ x86_64 @ O2 @ T3=4 functions=4
 base32 @ x86_64 @ O3 @ T3=4 functions=4
 base32 @ x86_64 @ Os @ T3=4 functions=4
+base64url @ arm64 @ O0 @ T12=2 T8=2 functions=18
+base64url @ arm64 @ O2 @ T12=4 functions=4
+base64url @ arm64 @ O3 @ T12=5 functions=4
+base64url @ arm64 @ Os @ T12=4 functions=4
+base64url @ x86_64 @ O0 @ T12=3 T8=2 T9=2 functions=18
+base64url @ x86_64 @ O2 @ T12=4 functions=4
+base64url @ x86_64 @ O3 @ T12=4 functions=4
+base64url @ x86_64 @ Os @ T12=4 functions=4
 crockford @ arm64 @ O0 @ T10=2 T1=2 T2=1 T8=2 functions=34
 crockford @ arm64 @ O2 @ T1=4 T2=4 functions=10
 crockford @ arm64 @ O3 @ T1=5 T2=4 functions=10
@@ -214,7 +223,7 @@ the barrier of `subtle` (F-1, and `ct/run.sh select-asm`).
 
 Operand: public: pointers and lengths of slices. At `O0` and sometimes at `Os`
 the iterator helpers of `core` are separate functions, with a branch on the
-end of the iteration. The three `error` findings in the 40 reports are a
+end of the iteration. The three `error` findings in the 48 reports are a
 `UDIV` in `size_hint`, which divides a pointer difference by the element size
 (1 for `u8`, but not folded at `O0`); both operands are lengths. They are
 `arm64` `O0` for `ct_eq` and `ct_select`.
@@ -241,13 +250,27 @@ every flag and every pair of values. It is in `subtle::...::conditional_select`
 at `O0` and inlined into `ct_select_u8` at `O2` and above; the `u32` and `u64`
 versions widen the byte first and have no such check.
 
+### T12. `base64url::decode`: conditional branches
+
+Operand: public, for the same reason as T1: the loop over the symbols (the
+length is public), `bits >= 8` (a counter that moves by 6 per symbol, so it is
+a function of the position) and `slots.next()` (is there still an output byte:
+a function of the position). The values of the symbols only meet
+`decode_symbol`, which has no conditional branch in any configuration (it is
+not in the reports): its comparisons are `wrapping_sub` and a shift of the sign
+bit, combined with `&` and `*`, and the five ranges of the alphabet are added
+up with `wrapping_mul` and `wrapping_add`. `all_valid` is accumulated with `&`
+and returned, and the caller tests it after the loop, the same for every input
+of the same length. The text it reads is the private scalar of a JWK
+(`d`), the one secret that reaches this file. The analyzer reports no division.
+
 ## Server library (`ferret-server-auth`)
 
 The OPAQUE server library compares and selects with the same code as the core
 and nothing else. `src/ct.rs` includes `ct/harness/ct_eq.rs` and
 `ct/harness/ct_select.rs` by path, the files the analyzer reads
 (`ct_include_is_the_analyzer_source` checks the include, in this crate and in
-the core), so the 40 reports above, T5 to T7, T11 and the assembly check of
+the core), so the 48 reports above, T5 to T7, T11 and the assembly check of
 `ct_select_bytes` (`ct/run.sh select-asm`) are the analysis of the server's
 `ct_eq` and `ct_select_*` too. There is no harness file of its own: the
 selection of bytes was added to `ct_select.rs` with the core. What this part

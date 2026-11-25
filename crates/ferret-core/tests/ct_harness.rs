@@ -106,6 +106,24 @@ fn base32_harness_is_one_file_with_core_only() {
 }
 
 #[test]
+fn base64url_harness_is_one_file_with_core_only() {
+    check_file(
+        "base64url.rs",
+        "base64url_single_file",
+        "src/passkey/import.rs",
+    );
+    // No table: the alphabet is not in the code, and nothing is indexed by a symbol.
+    let text = std::fs::read_to_string(harness("base64url.rs")).unwrap();
+    for line in text.lines() {
+        let code = line.split("//").next().unwrap();
+        assert!(!code.contains("ABCDEFGH"), "alphabet in code: {line}");
+        assert!(
+            !code.contains("const ") && !code.contains("static "),
+            "table in code: {line}"
+        );
+    }
+}
+#[test]
 fn select_harness_selects_through_subtle() {
     check_included("ct_select.rs", "src/prim/ct.rs");
     // The mask comes from `subtle::Choice`, whose barrier is a volatile read
