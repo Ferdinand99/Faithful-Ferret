@@ -43,7 +43,8 @@ export { DEFAULT_LOCK_SECONDS, LOCK_CHOICES };
  * never touch a key and never move the deadline (a page's activity is not the user's); `capture_settings` is the settings
  * page's "Offer to save passwords", which must work on a locked device like the other settings. `pin_unlock` opens the vault
  * (it is the way to unlock, so it needs no open vault) and `unlock_policy` reads what the device knows of the PIN rule and
- * the PIN, which the popup shows before it unlocks; neither is a use of the vault. `pin_off` only deletes the PIN (the safe
+ * the PIN, which the popup shows before it unlocks; neither is a use of the vault. `prf_unlock` opens the vault too (with a
+ * passkey) and `prf_options` reads what the unlock window needs for it; all three work while locked (`prf_window` only opens the page). `pin_off` only deletes the PIN (the safe
  * direction, and it needs no key: someone who forgot the PIN turns it off from the locked popup). `pin_set` makes a copy of
  * the vault key, so it is checked like every other message.
  */
@@ -64,6 +65,9 @@ export const LOCK_EXEMPT = Object.freeze([
   "pin_unlock",
   "unlock_policy",
   "pin_off",
+  "prf_options",
+  "prf_unlock",
+  "prf_window",
 ]);
 
 export const LOCK_AT_KEY = "lock_at";

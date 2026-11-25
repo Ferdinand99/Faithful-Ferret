@@ -34,13 +34,15 @@ const SENTINEL_PASSWORD = "sentinel-master-password-5528";
 /**
  * A background that keeps what it is told: the policy and the PIN, a vault that is open or locked, and the replies a test
  * sets. Every request is logged (a copy, so what the page sends later cannot change an entry).
- * @param {{ pin?: Record<string, unknown>, prf?: Record<string, unknown>, server?: string }} [init]
+ * @param {{ pin?: Record<string, unknown>, prf?: Record<string, unknown>, server?: string, passkeys?: number }} [init]
  */
 function backend(init = {}) {
   const state = {
     pin: { allowed: true, after_restart: true, min_length: 6, set: false, location: null, failures_left: 5, wait_ms: 0, offline_ok: true, ...init.pin },
     prf: { enabled: true, count: 2, ...init.prf },
     server: init.server ?? SERVER,
+    /** What the server's list says (prf_options): a count, or undefined for "cannot say". */
+    passkeys: init.passkeys,
     vault: "unlocked",
     /** @type {any} */
     reply: null,
@@ -70,6 +72,9 @@ function backend(init = {}) {
         return { ok: true };
       case "state":
         return { state: state.vault, server: state.server };
+      case "prf_options":
+        if (state.passkeys === undefined) throw new UiError("not_available");
+        return state.passkeys === 0 ? { ok: false, reason: "prf_unavailable" } : { ok: true, rp_id: "ferret.example.net", credentials: Array.from({ length: state.passkeys }, () => ({ id: "AQID", salt: "a".repeat(43) })) };
       default:
         throw new UiError("not_available");
     }
@@ -257,8 +262,14 @@ test("the_section_shows_what_is_true_of_the_pin_and_the_passkeys", async () => {
   // The passkeys: a count, none, and off.
   assert.equal(one(none.root, "unlock-passkey-count")?.textContent, "Passkeys set up: 2.");
   assert.ok(one(none.root, "unlock-manage"));
-  const zero = await sectionOf(on, { prf: { count: 0 } });
+  // The policy's count is 0 (the background does not read the list for it): the server's list decides, and when it cannot be
+  // read the text does not claim there is none.
+  const zero = await sectionOf(on, { prf: { count: 0 }, passkeys: 0 });
   assert.equal(one(zero.root, "unlock-passkey-count")?.textContent, "No passkey is set up for unlocking.");
+  const listed = await sectionOf(on, { prf: { count: 0 }, passkeys: 3 });
+  assert.equal(one(listed.root, "unlock-passkey-count")?.textContent, "Passkeys set up: 3.");
+  const unknown = await sectionOf(on, { prf: { count: 0 } });
+  assert.equal(one(unknown.root, "unlock-passkey-count")?.textContent, "Passkeys are listed in the web vault.");
   const noPrf = await sectionOf(on, { prf: { enabled: false, count: 0 } });
   assert.match(one(noPrf.root, "unlock-passkey-count")?.textContent ?? "", /not turned on/);
   assert.equal(one(noPrf.root, "unlock-manage"), null);

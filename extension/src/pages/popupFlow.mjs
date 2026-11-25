@@ -438,6 +438,36 @@ export function createPopupFlow(request) {
     },
 
     /**
+     * Whether the locked popup offers a passkey: the server's rule turns passkeys on and the account has at least one
+     * (the background reads the list now, so this needs the network and live tokens: any failure is "not offered"; the
+     * master password is always there). Nothing of the list is kept, and none of it is shown.
+     * @returns {Promise<boolean>}
+     */
+    async passkeyOffer() {
+      try {
+        const state = readUnlockState(await request("unlock_policy", {}));
+        if (state === null || !state.prf.enabled) return false;
+        const options = await request("prf_options", {});
+        return options?.ok === true && Array.isArray(options.credentials) && options.credentials.length > 0;
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * Asks the background to open the unlock window, where the passkey is used (a popup cannot make the call: it closes when
+     * the system's dialog takes the focus).
+     * @returns {Promise<boolean>} whether the window was opened
+     */
+    async openPasskeyWindow() {
+      try {
+        return (await request("prf_window", {}))?.ok === true;
+      } catch {
+        return false;
+      }
+    },
+
+    /**
      * Opens the vault with the PIN. The PIN goes into this one request and is kept nowhere; the answer is read as
      * `pinResultOf` does, and the view is the one the background reports after it.
      * @param {string} pin

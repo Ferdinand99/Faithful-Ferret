@@ -57,6 +57,7 @@
   "settings.unlock.locked_closed": "Ferret locked, so the PIN form was closed and emptied.",
   "settings.unlock.passkey.about": "A passkey (Windows Hello, Touch ID or a phone) can unlock the vault. Passkeys are added and removed in the web vault, not here. A passkey that is synced, for example through iCloud Keychain or a Google account, is only as safe as that cloud account; the web vault marks each one as “Synced passkey” or “This device only”.",
   "settings.unlock.passkey.count": "Passkeys set up: {count}.",
+  "settings.unlock.passkey.listed": "Passkeys are listed in the web vault.",
   "settings.unlock.passkey.manage": "Manage in the web vault",
   "settings.unlock.passkey.none": "No passkey is set up for unlocking.",
   "settings.unlock.passkey.off": "Passkey unlock is not turned on for this server.",

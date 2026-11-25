@@ -139,7 +139,10 @@ function buildSection(flow, texts, { pollMs } = {}) {
     manageSlot.replaceChildren();
     if (!prf.enabled) passkeyCount.textContent = t("settings.unlock.passkey.off");
     else {
-      passkeyCount.textContent = prf.count === 0 ? t("settings.unlock.passkey.none") : t("settings.unlock.passkey.count", { count: prf.count });
+      // The policy's count is not the truth (the background does not read the list for it): the number comes from the server's
+      // list, and while it is not known (or cannot be read) the text says only where the passkeys are.
+      const total = prf.count > 0 ? prf.count : passkeys;
+      passkeyCount.textContent = total === null ? t("settings.unlock.passkey.listed") : total === 0 ? t("settings.unlock.passkey.none") : t("settings.unlock.passkey.count", { count: total });
       const manage = el("button", { type: "button", class: "ff-button", "data-role": "unlock-manage", ...FEATURE }, t("settings.unlock.passkey.manage"));
       manage.addEventListener("click", async () => {
         showFailure(null);
@@ -150,6 +153,9 @@ function buildSection(flow, texts, { pollMs } = {}) {
     }
   };
 
+  /** How many passkeys the server lists, or null when that is not known. @type {number | null} */
+  let passkeys = null;
+
   async function refresh() {
     const loaded = await flow.load();
     if (!loaded.ok) {
@@ -158,7 +164,16 @@ function buildSection(flow, texts, { pollMs } = {}) {
     }
     showFailure(null);
     state = loaded.state;
+    passkeys = null;
     render();
+    if (state.prf.enabled && state.prf.count === 0) {
+      const mine = state;
+      const known = await flow.passkeyCount();
+      if (state === mine) {
+        passkeys = known;
+        render();
+      }
+    }
     // A dialog that is open for a PIN the administrator has meanwhile forbidden is closed.
     if (dialog.isOpen() && !state.pin.allowed) dialog.close("cancel");
   }

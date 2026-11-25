@@ -190,6 +190,21 @@ export function createUnlockFlow(request, { openTab = null } = {}) {
       }
     },
 
+    /**
+     * How many passkeys the account has, read from the server now (`prf_options`): a number, or null when that is not known (no
+     * network, tokens that ended, a build that cannot say). The policy's own count is not the truth: it is kept at 0.
+     * @returns {Promise<number | null>}
+     */
+    async passkeyCount() {
+      try {
+        const reply = await request("prf_options", {});
+        if (reply?.ok === true && Array.isArray(reply.credentials)) return reply.credentials.length;
+        return reply?.ok === false && reply.reason === "prf_unavailable" ? 0 : null;
+      } catch {
+        return null;
+      }
+    },
+
     /** Whether the vault is open (`unlocked`), the dialog must be emptied when it is not. @returns {Promise<"unlocked" | "locked" | "signed_out" | "unknown">} */
     async vaultState() {
       try {

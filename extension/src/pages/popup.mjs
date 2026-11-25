@@ -248,6 +248,11 @@ async function main() {
       // Another view was shown meanwhile (a sign-out, a sync that unlocked): the answer is for a view that is gone.
       if (offer !== null && mine === shown) mounted.addPin(offer);
     });
+    // The passkey button, when the server offers passkeys and the account has one: the answer needs the network, so it is
+    // added when it comes.
+    void flow.passkeyOffer().then((offered) => {
+      if (offered && mine === shown) mounted.addPasskey();
+    });
   }
 
   /**
@@ -289,6 +294,15 @@ async function main() {
     });
     // What must not outlive the view: a PIN that was typed and not sent (set when the PIN's part is added).
     teardown = null;
+    // The passkey button is outside the form (the PIN's part hides the form), and hidden until the background says a passkey can be used.
+    const passkeyButton = el("button", { type: "button", class: "ff-button", "data-role": "unlock-passkey", ...UNLOCK_MARK }, texts.t("passkey.button"));
+    const passkeyError = errorBox();
+    const passkeyRow = el("div", { class: "ff-actions", "data-role": "passkey-actions", hidden: true, ...UNLOCK_MARK }, passkeyButton, passkeyError);
+    passkeyButton.addEventListener("click", async () => {
+      showError(passkeyError, texts, null);
+      // The window opens in its own browser window; the popup closes by itself when that one takes the focus.
+      if (!(await flow.openPasskeyWindow())) showError(passkeyError, texts, "passkey.error.prf_unavailable");
+    });
     mount(
       root,
       el(
@@ -297,6 +311,7 @@ async function main() {
         el("h1", null, texts.t("session.popup.locked")),
         where(view),
         form,
+        passkeyRow,
         view.server !== "" ? forgetPart(view) : null,
       ),
     );
@@ -354,7 +369,12 @@ async function main() {
       pin.focus();
     }
 
-    return { addPin };
+    /** Shows the passkey button (a build with unlock on, when the background says a passkey can unlock this vault). */
+    function addPasskey() {
+      if (FEATURES.unlock) passkeyRow.hidden = false;
+    }
+
+    return { addPin, addPasskey };
   }
 
   /**

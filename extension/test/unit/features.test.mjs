@@ -62,9 +62,9 @@ const SAVE_PATHS = Object.freeze({
 /** What belongs to the `unlock` feature (PIN and passkey unlock). */
 const UNLOCK_PATHS = Object.freeze({
   /** Package files of the feature that no other file imports. */
-  files: Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "background/localUnlock.mjs"]),
+  files: Object.freeze(["pages/unlockWindow.html", "pages/unlockWindow.mjs", "pages/unlockWindowFlow.mjs", "background/localUnlock.mjs"]),
   /** Message types of the feature (sent by the extension's own pages only). */
-  types: Object.freeze(["pin_set", "pin_unlock", "pin_off", "unlock_policy", "prf_options", "prf_unlock"]),
+  types: Object.freeze(["pin_set", "pin_unlock", "pin_off", "unlock_policy", "prf_options", "prf_unlock", "prf_window"]),
   /** The attribute every control of the feature carries. */
   control: 'data-feature="unlock"',
   controlInCode: /["']data-feature["']\s*:\s*["']unlock["']|data-feature=\\?["']unlock/,
@@ -401,6 +401,7 @@ test("the_unlock_feature_is_off_in_release_and_on_in_test", async () => {
     // A window page of the feature: in the package with the feature on, and left out with it off.
     "src/pages/unlockWindow.html": "<!doctype html><title>x</title>\n",
     "src/pages/unlockWindow.mjs": "export {};\n",
+    "src/pages/unlockWindowFlow.mjs": "export {};\n",
     // The PIN store: the one module that opens the unlock database.
     "src/background/localUnlock.mjs": 'export const UNLOCK_DB_NAME = "ferret-unlock";\n',
   });
