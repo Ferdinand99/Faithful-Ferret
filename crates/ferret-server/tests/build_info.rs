@@ -7,6 +7,10 @@
 //! scripts and the image checks of scripts/lanbox-ferret-e2e-check.sh require the `features: quick-unlock` line.
 //! The same tests run against the real binary (`CARGO_BIN_EXE_ferret`).
 //!
+//! The cargo feature `passkey-import` (the import of passkeys in the web vault, the `passkeys.import` flag of the policy
+//! answer) is off in a release until the passkey provider is released: a release build reports no such feature and holds no
+//! trace of its name, and the release workflow requires exactly `features: quick-unlock`.
+//!
 //! The binary also says where its web vault's WebAssembly package came from (the `wasm:` line),
 //! and a release image refuses one that was built from the tree.
 
@@ -37,11 +41,19 @@ const UNLOCK_MARKERS: [&str; 4] = [
     "prf_routes",
 ];
 
+/// Bytes whose presence in a binary means that the passkey import is in it: the feature name. Each part of the feature that
+/// has a route or a page of its own adds its path here, in the change that adds it. A build with the feature off holds none.
+#[cfg(not(feature = "passkey-import"))]
+const PASSKEY_IMPORT_MARKERS: [&str; 2] = ["passkey-import", "passkey_import"];
+
 /// The features line that this build must print, in the order of `active_features`.
 fn expected_features() -> String {
     let mut on: Vec<&str> = Vec::new();
     if cfg!(feature = "e2e-clock") {
         on.push("e2e-clock");
+    }
+    if cfg!(feature = "passkey-import") {
+        on.push("passkey-import");
     }
     if cfg!(feature = "quick-unlock") {
         on.push("quick-unlock");
@@ -289,6 +301,48 @@ mod release_unlock {
     }
 }
 
+#[cfg(not(feature = "passkey-import"))]
+mod release_passkey_import {
+    use super::*;
+
+    /// A release server has no passkey import: it does not say so, and nothing of the feature is in the binary.
+    #[test]
+    fn a_release_server_has_no_passkey_import() {
+        let binary = std::fs::read(BIN).unwrap();
+        for marker in PASSKEY_IMPORT_MARKERS {
+            assert!(!contains(&binary, marker), "the binary contains {marker}");
+        }
+        assert!(!run_build_info(&[]).contains("passkey-import"));
+    }
+
+    #[test]
+    fn the_passkey_import_cannot_be_turned_on_by_environment_alone() {
+        // There is no variable that reads the feature: whatever is set, the build says what it was built with.
+        let text = run_build_info(&[
+            ("FERRET_PASSKEY_IMPORT", "1"),
+            ("PASSKEY_IMPORT", "1"),
+            ("FERRET_FEATURES", "passkey-import"),
+        ]);
+        assert!(!text.contains("passkey-import"), "{text}");
+    }
+}
+
+#[cfg(feature = "passkey-import")]
+mod passkey_import_build {
+    use super::*;
+
+    #[test]
+    fn a_build_with_the_passkey_import_says_so() {
+        let line = run_build_info(&[]).lines().nth(1).unwrap().to_string();
+        assert!(line.contains("passkey-import"), "{line}");
+        // The features come in alphabetical order, and this one is listed before the unlock feature.
+        if cfg!(feature = "quick-unlock") && !cfg!(feature = "e2e-clock") {
+            assert_eq!(line, "features: passkey-import, quick-unlock");
+        }
+        assert!(contains(&std::fs::read(BIN).unwrap(), "passkey-import"));
+    }
+}
+
 #[cfg(feature = "quick-unlock")]
 mod unlock_build {
     use super::*;
@@ -300,16 +354,16 @@ mod unlock_build {
     }
 
     /// The build of a release: the Unlock tab of the admin pages is in the binary, and the features line is exactly
-    /// the unlock feature unless the test clock is built in too (only the end-to-end image has it).
+    /// the unlock feature unless the test clock or the passkey import is built in too (the release has neither; the
+    /// end-to-end image has the clock, and CI has both).
     #[test]
     fn a_build_with_the_unlock_feature_has_the_unlock_tab() {
         assert!(contains(&std::fs::read(BIN).unwrap(), "/settings/unlock"));
-        let expected = if cfg!(feature = "e2e-clock") {
-            "features: e2e-clock, quick-unlock"
-        } else {
-            "features: quick-unlock"
-        };
-        assert_eq!(run_build_info(&[]).lines().nth(1), Some(expected));
+        let expected = format!("features: {}", expected_features());
+        assert_eq!(run_build_info(&[]).lines().nth(1), Some(expected.as_str()));
+        if !cfg!(feature = "e2e-clock") && !cfg!(feature = "passkey-import") {
+            assert_eq!(expected, "features: quick-unlock");
+        }
     }
 }
 

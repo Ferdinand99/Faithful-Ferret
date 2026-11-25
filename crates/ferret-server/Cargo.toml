@@ -102,6 +102,11 @@ e2e-clock = []
 # `GET /api/vault/policy` is mounted in every build (with the feature off it says that no PIN and no passkey unlock is
 # allowed). Without the feature the binary has no trace of its name (tests/build_info.rs).
 quick-unlock = []
+# The import of passkeys from another password manager's file in the web vault of this server. A release image is built
+# without it until the passkey provider is released; CI builds it in. The feature adds no route and no table: it is the
+# `passkeys.import` flag of `GET /api/vault/policy`, which tells a client that this server has the import. Without the
+# feature the binary has no trace of its name (tests/build_info.rs).
+passkey-import = []
 
 [target.'cfg(unix)'.dependencies]
 # RLIMIT_CORE = 0 at start-up: a safe setrlimit; free disk space (statvfs) before a backup.

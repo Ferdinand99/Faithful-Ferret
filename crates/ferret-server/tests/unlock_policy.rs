@@ -80,6 +80,7 @@ fn expected(rule: &UnlockPolicy) -> Value {
             "min_length": rule.pin_min_length,
         },
         "prf": { "enabled": built && policy::PRF_ROUTES_MOUNTED },
+        "passkeys": { "import": cfg!(feature = "passkey-import") },
     })
 }
 
@@ -266,18 +267,28 @@ async fn the_policy_route_has_no_store_and_no_account_in_the_path() {
         .map(String::as_str)
         .collect();
     top.sort_unstable();
-    assert_eq!(top, ["pin", "prf"]);
+    assert_eq!(top, ["passkeys", "pin", "prf"]);
+    let passkeys = body["passkeys"].as_object().expect("the passkey part");
+    assert_eq!(passkeys.keys().collect::<Vec<_>>(), ["import"]);
     // No identifier of the caller is in the answer or in its headers.
     let hex = |bytes: &[u8]| -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() };
     let seen = format!("{}\n{:?}", res_one.text(), res_one.headers);
     for secret in [
         hex(first.ids.account_id.as_bytes()),
         hex(first.ids.vault_id.as_bytes()),
-        first.ids.user_id.to_string(),
         email(1),
     ] {
         assert!(!seen.contains(&secret), "the answer holds {secret}");
     }
+    // The user id is a small number, so it is looked for as a whole number and not as digits inside another one (a
+    // length of 118 bytes does not hold the id 1).
+    let user_id = first.ids.user_id.to_string();
+    assert!(
+        !seen
+            .split(|c: char| !c.is_ascii_digit())
+            .any(|number| number == user_id),
+        "the answer holds the user id {user_id}"
+    );
 
     // The path has no place for an account, and no other path serves the rule.
     let account = hex(first.ids.account_id.as_bytes());
@@ -333,6 +344,47 @@ async fn the_policy_route_exists_in_both_server_builds() {
         assert_ne!(page.status, StatusCode::NOT_FOUND, "the page is mounted");
     } else {
         assert_eq!(page.status, StatusCode::NOT_FOUND, "no page without it");
+    }
+}
+
+/// The passkey import is a flag of its own: a build says whether it has it, whatever the unlock feature is, and a
+/// release server (built without it until the passkey provider is released) says that it does not.
+#[tokio::test]
+async fn the_policy_says_whether_this_build_has_the_passkey_import() {
+    let app = device_app().await;
+    let client = client_account(&app, 1).await;
+    let session = client_session(&app, &client, SessionScope::Full, 1).await;
+    let res = get_by_session(&app, &session).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(
+        res.json()["passkeys"],
+        json!({ "import": cfg!(feature = "passkey-import") })
+    );
+}
+
+/// A release server says that the import is off.
+#[cfg(not(feature = "passkey-import"))]
+#[tokio::test]
+async fn a_release_server_says_passkey_import_off() {
+    let app = device_app().await;
+    let client = client_account(&app, 1).await;
+    let session = client_session(&app, &client, SessionScope::Full, 1).await;
+    let res = get_by_session(&app, &session).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let body = res.json();
+    assert_eq!(body["passkeys"]["import"], json!(false));
+    // The answer holds no trace of the import beyond that one flag, and the stored rule changes nothing about it.
+    for rule in [
+        UnlockPolicy::default(),
+        UnlockPolicy {
+            pin_allowed: false,
+            pin_after_restart: false,
+            pin_min_length: 64,
+        },
+    ] {
+        store(&app, rule).await;
+        let again = get_by_session(&app, &session).await.json();
+        assert_eq!(again["passkeys"], json!({ "import": false }), "{rule:?}");
     }
 }
 

@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! 200 { "pin": { "allowed": true, "after_restart": true, "min_length": 6 },
-//!       "prf": { "enabled": true } }
+//!       "prf": { "enabled": true },
+//!       "passkeys": { "import": false } }
 //! ```
 //!
 //! A client keeps the answer and holds itself to it when a PIN is set, at every
@@ -17,7 +18,10 @@
 //! sets the rule on the admin pages (`admin::unlock`).
 //!
 //! Without the cargo feature `quick-unlock` the route is still there, and says
-//! that no PIN is allowed and that the passkey routes are off.
+//! that no PIN is allowed and that the passkey routes are off. Without the cargo
+//! feature `passkey-import` it says that this server does not have the import of
+//! passkeys from another password manager's file (`passkeys.import`); a client
+//! that does not know the field leaves it out.
 
 use axum::extract::{FromRef, State};
 use axum::routing::get;
@@ -165,6 +169,15 @@ pub struct PrfPolicyJson {
     pub enabled: bool,
 }
 
+/// The part of the answer about Ferret as a passkey provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeysPolicyJson {
+    /// The build of this server has the cargo feature `passkey-import`: its
+    /// web vault reads passkeys from an import file.
+    pub import: bool,
+}
+
 /// `GET /api/vault/policy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -173,12 +186,15 @@ pub struct PolicyRes {
     pub pin: PinPolicyJson,
     /// The passkey switch.
     pub prf: PrfPolicyJson,
+    /// What this build says about Ferret as a passkey provider.
+    pub passkeys: PasskeysPolicyJson,
 }
 
 impl PolicyRes {
     /// The answer for the stored rule: a build without quick unlock allows no
-    /// PIN and has no passkey routes, whatever the table says.
-    pub fn of(policy: &UnlockPolicy, built: bool) -> Self {
+    /// PIN and has no passkey routes, whatever the table says, and a build
+    /// without `passkey-import` says so.
+    pub fn of(policy: &UnlockPolicy, built: bool, with_import: bool) -> Self {
         Self {
             pin: PinPolicyJson {
                 allowed: built && policy.pin_allowed,
@@ -187,6 +203,9 @@ impl PolicyRes {
             },
             prf: PrfPolicyJson {
                 enabled: built && PRF_ROUTES_MOUNTED,
+            },
+            passkeys: PasskeysPolicyJson {
+                import: with_import,
             },
         }
     }
@@ -209,7 +228,11 @@ async fn get_policy(
     State(db): State<VaultDb>,
 ) -> Result<Json<PolicyRes>, ApiError> {
     let policy = db.with_conn(|conn| read(conn)).await?;
-    Ok(Json(PolicyRes::of(&policy, cfg!(feature = "quick-unlock"))))
+    Ok(Json(PolicyRes::of(
+        &policy,
+        cfg!(feature = "quick-unlock"),
+        cfg!(feature = "passkey-import"),
+    )))
 }
 
 #[cfg(test)]
@@ -251,10 +274,11 @@ mod tests {
     #[test]
     fn a_build_without_quick_unlock_answers_that_nothing_is_allowed() {
         let rule = UnlockPolicy::default();
-        let off = PolicyRes::of(&rule, false);
+        let off = PolicyRes::of(&rule, false, false);
         assert!(!off.pin.allowed);
         assert!(!off.prf.enabled);
-        let on = PolicyRes::of(&rule, true);
+        assert!(!off.passkeys.import);
+        let on = PolicyRes::of(&rule, true, false);
         assert!(on.pin.allowed);
         assert_eq!(on.prf.enabled, PRF_ROUTES_MOUNTED);
         assert_eq!(on.pin.min_length, 6);
@@ -263,6 +287,15 @@ mod tests {
             pin_allowed: false,
             ..rule
         };
-        assert!(!PolicyRes::of(&stopped, true).pin.allowed);
+        assert!(!PolicyRes::of(&stopped, true, false).pin.allowed);
+    }
+
+    #[test]
+    fn the_passkey_import_switch_is_the_build_and_nothing_else() {
+        let rule = UnlockPolicy::default();
+        for built in [false, true] {
+            assert!(PolicyRes::of(&rule, built, true).passkeys.import);
+            assert!(!PolicyRes::of(&rule, built, false).passkeys.import);
+        }
     }
 }
