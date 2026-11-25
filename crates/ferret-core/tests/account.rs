@@ -2894,3 +2894,98 @@ fn a_server_value_at_the_largest_generation_is_generation_exhausted() {
         Some(Error::GenerationExhausted)
     );
 }
+
+/// A vault at epoch 2 under a vault key of its own, with a recovery wrap and a
+/// manifest of that epoch (an honest server could not show one yet: this
+/// release has no rekey).
+fn epoch_two(
+    s: &Setup,
+) -> (
+    VaultContext,
+    ferret_core::WrapRecord,
+    ferret_core::SealedItem,
+) {
+    let ctx2 = VaultContext {
+        vk_epoch: 2,
+        ..ctx1()
+    };
+    let vault2 =
+        UnlockedVault::from_vault_key(ctx2, ferret_core::VaultKey::from_test_bytes([0x5c; 32]))
+            .unwrap();
+    let rk_wrap = ferret_core::wrap_vk(
+        &mut rng("epoch-two/wrap"),
+        &ctx2,
+        &ferret_core::VaultKey::from_test_bytes([0x5c; 32]),
+        &kek_rk(&s.account.recovery_key),
+        method_id(0x71),
+        1,
+        Method::Recovery,
+    )
+    .unwrap();
+    let manifest = ferret_core::encrypt_manifest(
+        &mut rng("epoch-two/manifest"),
+        &vault2,
+        1,
+        &Manifest::new(
+            2,
+            vec![
+                ManifestEntry::new(1, method_id(0x70), 1),
+                ManifestEntry::new(2, method_id(0x71), 1),
+            ],
+        ),
+    )
+    .unwrap();
+    (ctx2, rk_wrap, manifest)
+}
+
+#[test]
+fn recover_refuses_a_higher_epoch_than_the_pinned_one() {
+    // The wrap opens (the recovery key is the right one), but it shows an epoch
+    // above the one this device has pinned, and no rekey proof is checked: the
+    // device does not follow it. Nothing is drawn and nothing moves.
+    let s = create("r9", true);
+    let code = rk_code(&s);
+    let good = pinned_of(&s);
+    let key = sk(0x5a);
+    let (ctx2, rk_wrap, manifest) = epoch_two(&s);
+    let input = new_input(PASSWORD_2, MpPolicy::WithSecretKey, Some(&key));
+    let reg = register(&s.server, &input, "r9");
+    let data = RecoveryInput {
+        ctx: &ctx2,
+        rk_code: &code,
+        rk_wrap: &rk_wrap,
+        manifest: ManifestRow {
+            rev: manifest.rev,
+            envelope: &manifest.envelope,
+            tag: &manifest.tag,
+        },
+    };
+    let before = good.clone();
+    assert_eq!(
+        recover(
+            &mut no_draws(),
+            &data,
+            password(&input, reg, KsfProfile::P1),
+            PinState::Pinned(&good),
+        )
+        .err(),
+        Some(Error::Pinned(PinnedField::EpochAhead))
+    );
+    assert_eq!(good, before);
+
+    // A device with no record takes the epoch it is shown, as a first unlock
+    // does; the record it would then merge into is the one that refuses.
+    let reg = register(&s.server, &input, "r9/b");
+    let recovered = recover(
+        &mut rng("r9/c"),
+        &data,
+        password(&input, reg, KsfProfile::P1),
+        PinState::FirstUse,
+    )
+    .unwrap();
+    assert_eq!(
+        recovered.pinned(URL, Some(&good)).err(),
+        Some(Error::Pinned(PinnedField::EpochAhead))
+    );
+    assert_eq!(recovered.pinned(URL, None).unwrap().vk_epoch_max, 2);
+}
