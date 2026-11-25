@@ -660,6 +660,8 @@ export function createFillHost({
       const now = await source.candidates(tabId, frameId !== undefined ? { frameId } : {});
       // A lock (and a new unlock) while the frames were asked for dropped every reference: this one is gone too.
       if (refs.get(session, ref) !== entry) return { ok: false, reason: "not_offered" };
+      // A code alone is never filled into a page that is not encrypted (Copy is still there); this holds whatever the popup asks.
+      if (only === "totp" && now?.insecure === true) return { ok: false, reason: "insecure_page" };
       const fresh = (Array.isArray(now?.items) ? now.items : []).find((i) => i.itemId === entry.itemId);
       /** @type {Array<RefFrame & { ancestors: FrameRef[], unchecked: boolean }>} */
       const frames = [];
@@ -703,7 +705,8 @@ export function createFillHost({
       for (const i of order) {
         if (chosen >= 0) break;
         const r = /** @type {PromiseFulfilledResult<{ kinds: Set<string> }>} */ (reports[i]);
-        const first = /** @type {string} */ (FILL_ORDER.find((kind) => r.value.kinds.has(kind)));
+        // A code-only fill looks at the code field: a frame whose code field is hidden is passed over for the next one.
+        const first = /** @type {string} */ (only ?? FILL_ORDER.find((kind) => r.value.kinds.has(kind)));
         const problem = requests[i].unchecked === true ? FRAME_UNCHECKED : await shownOnPage(requests[i], first);
         if (problem === null) chosen = i;
         else if (passed === null || problem === "frame_hidden" || (problem === FRAME_UNCHECKED && passed !== "frame_hidden")) passed = problem;

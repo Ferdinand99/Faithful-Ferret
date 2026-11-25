@@ -22,6 +22,7 @@ export const REASONS = Object.freeze([
   "wrong_kind",
   "covered",
   "frame_hidden",
+  "insecure_page",
   "vault_locked",
   "sync_not_running",
   "not_filled",

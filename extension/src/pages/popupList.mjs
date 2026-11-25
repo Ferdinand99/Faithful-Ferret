@@ -10,10 +10,10 @@
 //
 // The popup builds everything with `el()` from what the background answered:
 // names, user names, marks and references. A password never reaches this page,
-// and a one-time code only in the live code of an item's view (it changes every
-// 30 seconds and is made in the core). A copy is written to the clipboard by the background, and a fill
-// is done by the background in the page's frame; the popup only learns
-// whether it worked.
+// and a one-time code only in the live code card (the item's view and the
+// suggestion after a sign-in; it changes every 30 seconds and is made in the core).
+// A copy is written to the clipboard by the background, and a fill is done by the
+// background in the page's frame; the popup only learns whether it worked.
 
 import { el, mount } from "../shared/dom.mjs";
 import { createCodeCard } from "./codeCard.mjs";

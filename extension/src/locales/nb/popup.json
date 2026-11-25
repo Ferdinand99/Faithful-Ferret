@@ -61,6 +61,7 @@
   "popup.error.wrong_kind": "Feltet på siden er ikke den typen felt Ferret fyller med denne verdien.",
   "popup.error.covered": "Feltet er skjult eller dekket, så Ferret fylte det ikke.",
   "popup.error.frame_hidden": "Innloggingsskjemaet ligger i en ramme som er skjult eller dekket på denne siden, så Ferret fylte det ikke.",
+  "popup.error.insecure_page": "Siden er ikke kryptert, så Ferret fyller ikke inn en engangskode der. Kopier koden i stedet.",
   "popup.error.vault_locked": "Hvelvet er låst. Lås det opp og prøv igjen.",
   "popup.error.not_filled": "Ingenting ble fylt inn.",
   "popup.error.no_site": "Dette elementet har ingen nettadresse å åpne.",

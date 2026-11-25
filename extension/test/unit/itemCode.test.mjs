@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ALARM_PREFIX, CLEAR_AFTER_MS, MARK_KEY } from "../../src/background/clipboard.mjs";
 import { FILL_CONTEXT_TTL_MS } from "../../src/background/fillContext.mjs";
+import { actionErrorKey } from "../../src/pages/popupFlow.mjs";
 import { PASSWORD, TAB, LOGIN_ORIGIN, LOGIN_URL, TOTP_CODE, idOf, itemWorld } from "./itemHelpers.mjs";
 import { pkg } from "./sessionHelpers.mjs";
 
@@ -253,4 +254,34 @@ test("the_offer_of_the_code_does_not_depend_on_saving_passwords", async () => {
   assert.deepEqual(await popup.list.itemCode(row.ref), { ok: true, code: REFERENCE, seconds_left: LEFT });
   assert.deepEqual(await popup.list.fill(row, TAB, { only: "totp" }), { ok: true });
   assert.deepEqual(world.page.filled, { totp: REFERENCE });
+});
+
+test("a_code_alone_is_never_filled_into_an_unencrypted_page_whatever_the_popup_asks", async () => {
+  const world = await codeWorld({ frames: [{ frameId: 0, documentId: "doc-1", url: LOGIN_URL, origin: LOGIN_ORIGIN, insecure: true, itemIds: [idOf(1)] }] });
+  world.page.fields = ["username", "password", "totp"];
+  const popup = world.popup();
+  const row = await suggestion(popup);
+  assert.equal(row.insecure, true);
+  // The background refuses before it asks the page anything, with its own text in both languages.
+  assert.deepEqual(await popup.list.fill(row, TAB, { only: "totp" }), { ok: false, reason: "insecure_page" });
+  assert.deepEqual(world.injections, []);
+  assert.deepEqual(world.pushed, []);
+  assert.equal(world.client.calls.some((/** @type {any} */ c) => c.method === "totp_code"), false, "no code was made for it");
+  assert.equal(actionErrorKey("insecure_page"), "popup.error.insecure_page");
+  // "Fill anyway" is the sign-in's own confirmation: it fills the sign-in as it always did, and the code is no part of the refusal above.
+  assert.deepEqual(await popup.list.fill(row, TAB), { ok: true });
+  assert.deepEqual(world.page.filled, { username: "ola@example.net", password: PASSWORD, totp: REFERENCE });
+  // Copy is still there.
+  assert.deepEqual(await popup.list.copy(row.ref, "totp"), { ok: true });
+});
+
+test("a_code_fill_checks_that_the_code_field_is_shown_not_the_sign_in_field_of_the_frame", async () => {
+  const world = await codeWorld({ frames: sameSite() });
+  world.page.fields = [];
+  const sub = world.addFrame({ url: SUB_URL, frameId: 5, documentId: "doc-5", selfOrigin: LOGIN_ORIGIN }, ["username", "totp"]);
+  const popup = world.popup();
+  assert.deepEqual(await popup.list.fill(await suggestion(popup), TAB, { only: "totp" }), { ok: true });
+  assert.deepEqual(sub.filled, { totp: REFERENCE });
+  assert.ok(world.frameShown.kinds.length > 0);
+  assert.deepEqual([...new Set(world.frameShown.kinds)], ["totp"], "only the code field was asked about");
 });

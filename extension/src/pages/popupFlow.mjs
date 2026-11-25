@@ -512,6 +512,7 @@ export const ACTION_ERRORS = Object.freeze([
   "wrong_kind",
   "covered",
   "frame_hidden",
+  "insecure_page",
   "vault_locked",
   "not_filled",
   "no_site",

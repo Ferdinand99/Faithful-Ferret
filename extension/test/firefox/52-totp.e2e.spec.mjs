@@ -113,7 +113,8 @@ test("the_popup_shows_copies_and_fills_the_one_time_code_and_offers_it_after_the
       await page.click('[data-role="totp-copy"]');
       await page.waitVisible('[data-role="toast"]', 20_000);
       assert.match(await page.text('[data-role="toast"]'), /^One-time code copied\. Ferret clears the clipboard after 30 seconds/);
-      // Fill puts the code into the page's field.
+      // Fill puts the code into the page's field. The note of the copy covers the foot of the list until it ends.
+      await session.waitFor(async () => !(await page.visible('[data-role="toast"]')), 20_000, "the copy note to end");
       await page.click('[data-role="totp-fill"]');
       await session.waitFor(async () => (await page.text('[data-role="toast"]')) === "Code filled in.", 20_000, "the fill note");
       // The popup never had the secret.
