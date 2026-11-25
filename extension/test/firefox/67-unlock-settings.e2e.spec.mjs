@@ -132,7 +132,7 @@ test("set_change_and_turn_off_a_pin_from_settings", async () => {
       assert.deepEqual(seen.buttons, ["unlock-pin-change", "unlock-pin-off"], channel);
       assert.equal(seen.focus, "unlock-pin-change", `${channel}: the focus is on a button that is there`);
       assert.deepEqual(await pinPlaces(session), { disk: true, sessionKeys: [], localKeys: [] }, `${channel}: on disk, and nowhere else`);
-      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin.set, r.pin.location]), [true, "disk"], channel);
+      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin_state.set, r.pin_state.location]), [true, "disk"], channel);
 
       // Change it, this time in memory only: the record moves to the session storage.
       await press(session, "unlock-pin-change");
@@ -189,7 +189,7 @@ test("the_default_pin_survives_a_browser_restart_and_the_memory_choice_does_not"
       assert.match((await look(session)).status ?? "", /PIN is on\./, channel);
       await session.restart();
       await afterStart(session);
-      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin.set, r.pin.location]), [true, "disk"], `${channel}: the PIN on disk is still there`);
+      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin_state.set, r.pin_state.location]), [true, "disk"], `${channel}: the PIN on disk is still there`);
       await openSettings(session);
       const seen = await look(session);
       assert.match(seen.status ?? "", /works after a restart/, `${channel}: the view reads the PIN that survived`);
@@ -203,10 +203,10 @@ test("the_default_pin_survives_a_browser_restart_and_the_memory_choice_does_not"
       await press(session, "unlock-pin-change");
       await pace();
       await submitDialog(session, { password: account.password, pin: "memory-pin-2", memory: true });
-      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin.set, r.pin.location]), [true, "session"], `${channel}: the choice is memory`);
+      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => [r.pin_state.set, r.pin_state.location]), [true, "session"], `${channel}: the choice is memory`);
       await session.restart();
       await afterStart(session);
-      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => r.pin.set), false, `${channel}: the PIN in memory is gone`);
+      assert.deepEqual(await ask(session, "unlock_policy", {}).then((r) => r.pin_state.set), false, `${channel}: the PIN in memory is gone`);
       assert.deepEqual(await pinPlaces(session), { disk: false, sessionKeys: [], localKeys: [] }, channel);
       await openSettings(session);
       assert.equal((await look(session)).status, "No PIN is set.", channel);

@@ -62,16 +62,16 @@ test("a_killed_worker_during_pin_unlock_counts_one_attempt", async () => {
       const set = await ask(session, "pin_set", { mp: account.password, pin: PIN, location: "disk", acknowledged: true });
       assert.deepEqual([set.first.type, set.first.body], ["pin_set", { ok: true }], `${channel}: ${JSON.stringify(set.first.body)}`);
       const policy = await ask(session, "unlock_policy", {});
-      assert.equal(policy.first.body.pin.set, true, channel);
-      assert.equal(policy.first.body.pin.location, "disk", channel);
-      assert.equal(policy.first.body.pin.failures_left, 5, channel);
+      assert.equal(policy.first.body.pin_state.set, true, channel);
+      assert.equal(policy.first.body.pin_state.location, "disk", channel);
+      assert.equal(policy.first.body.pin_state.failures_left, 5, channel);
       await ask(session, "lock", {});
 
       // A PIN unlock, cut short by a lock while its Argon2id runs: the call is rejected as the worker goes.
       const killed = await ask(session, "pin_unlock", { pin: PIN }, { after: { delay: 500, type: "lock", body: {} } });
       assert.deepEqual([killed.first.type, killed.first.body], ["pin_unlock", { ok: false, reason: "wrong_pin", left: 4, wait_ms: 0 }], `${channel}: ${JSON.stringify(killed.first.body)}`);
       const counted = await ask(session, "unlock_policy", {});
-      assert.equal(counted.first.body.pin.failures_left, 4, `${channel}: one attempt, no more and no fewer`);
+      assert.equal(counted.first.body.pin_state.failures_left, 4, `${channel}: one attempt, no more and no fewer`);
       const state = await ask(session, "state", {});
       assert.equal(state.first.body.state, "locked", channel);
 
@@ -80,7 +80,7 @@ test("a_killed_worker_during_pin_unlock_counts_one_attempt", async () => {
       assert.equal(opened.first.body.ok, true, `${channel}: ${JSON.stringify(opened.first.body)}`);
       assert.equal(opened.first.body.account_email, account.email, channel);
       const after = await ask(session, "unlock_policy", {});
-      assert.equal(after.first.body.pin.failures_left, 5, channel);
+      assert.equal(after.first.body.pin_state.failures_left, 5, channel);
       assert.equal((await ask(session, "state", {})).first.body.state, "unlocked", channel);
     } finally {
       await session.quit();
