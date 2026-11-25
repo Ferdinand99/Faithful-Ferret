@@ -72,6 +72,8 @@ export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/pages/settingsView.mjs": "export {};\n",
   "src/pages/unlockDialog.mjs": "export {};\n",
   "src/pages/unlockSettings.mjs": "export {};\n",
+  "src/pages/unlockWindow.mjs": "export {};\n",
+  "src/pages/unlockWindowFlow.mjs": "export {};\n",
   "src/pages/signin.mjs": "export {};\n",
   "src/background/session.mjs": "export {};\n",
   "src/background/pinSession.mjs": "export {};\n",

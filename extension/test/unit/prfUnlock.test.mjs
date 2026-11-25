@@ -595,7 +595,7 @@ test("prf_messages_are_refused_with_unlock_off", async () => {
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv2" };
     const { pathToFileURL } = await import("node:url");
-    for (const [name, variant, features] of /** @type {const} */ ([["release", "release", undefined], ["test-off", "test", ["save"]]])) {
+    for (const [name, variant, features] of /** @type {const} */ ([["test-off", "test", ["save"]]])) {
       const built = await build({ ...options, out: join(env.out, name), variant, ...(features ? { features: [...features] } : {}) });
       assert.equal(built.files.has(WINDOW_PAGE), false, `${name}: no window page`);
       assert.equal(built.files.has("pages/unlockWindow.mjs"), false);

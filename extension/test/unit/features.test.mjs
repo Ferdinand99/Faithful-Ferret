@@ -1,7 +1,6 @@
 // The build flags. `save` (saving and updating passwords from the extension, and the
-// generator): on in a release and in the test variant. `unlock` (PIN and passkey unlock): on in the test variant and
-// off in a release until it is released. A test build can turn either off (`--features none`), and "off" means that no
-// path of the feature is there. A package built with `save` off holds no capture script,
+// generator) and `unlock` (PIN and passkey unlock): both on in a release and in the test variant. A test build can turn
+// either off (`--features none`), and "off" means that no path of the feature is there. A package built with `save` off holds no capture script,
 // serves none of the feature's messages (a handler for one only refuses), and
 // shows none of its controls.
 //
@@ -202,9 +201,9 @@ const featuresOf = async (dir) => (await import(pathToFileURL(join(dir, ...FEATU
 
 test("the_save_feature_is_on_in_release_and_in_test", async () => {
   assert.deepEqual([...FEATURES], ["save", "unlock"]);
-  assert.deepEqual([...DEFAULT_FEATURES.release], ["save"]);
+  assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"]);
   assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock"]);
-  assert.deepEqual([...RELEASE_FEATURES], ["save"], "a release has save on");
+  assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"], "a release has save on");
   assert.deepEqual([...SAVE_FILES], [...SAVE_PATHS.files]);
 
   const env = makeRoot();
@@ -213,15 +212,15 @@ test("the_save_feature_is_on_in_release_and_in_test", async () => {
     for (const manifest of ["mv2", "mv3"]) {
       const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
       const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
-      assert.deepEqual(release.features, ["save"]);
+      assert.deepEqual(release.features, ["save", "unlock"]);
       assert.deepEqual(testBuild.features, ["save", "unlock"]);
       // The generated module says so, in each package, and cannot be changed at run time.
       const releaseOn = await featuresOf(release.dir);
       const testOn = await featuresOf(testBuild.dir);
-      assert.deepEqual({ ...releaseOn }, { save: true, unlock: false }, manifest);
+      assert.deepEqual({ ...releaseOn }, { save: true, unlock: true }, manifest);
       assert.deepEqual({ ...testOn }, { save: true, unlock: true }, manifest);
       assert.equal(Object.isFrozen(releaseOn), true);
-      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save"], new Map()));
+      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock"], new Map()));
       // The capture script and its sources are in the release, and no test-only code is.
       for (const path of SAVE_FILES) assert.ok(release.files.has(path), `${manifest}: ${path} is in a release`);
       assert.deepEqual([...release.files.keys()].filter((path) => isTestOnlyPath(path) || path.startsWith("test/")), [], manifest);
@@ -389,11 +388,11 @@ async function unlockPathsIn(dir, files) {
   return found;
 }
 
-test("the_unlock_feature_is_off_in_release_and_on_in_test", async () => {
+test("the_unlock_feature_is_on_in_release_and_in_test", async () => {
   assert.deepEqual([...FEATURES], ["save", "unlock"]);
-  assert.deepEqual([...DEFAULT_FEATURES.release], ["save"], "a release has unlock off until it is released");
+  assert.deepEqual([...DEFAULT_FEATURES.release], ["save", "unlock"], "a release has unlock on");
   assert.deepEqual([...DEFAULT_FEATURES.test], ["save", "unlock"], "the test variant has it on");
-  assert.deepEqual([...RELEASE_FEATURES], ["save"]);
+  assert.deepEqual([...RELEASE_FEATURES], ["save", "unlock"]);
   assert.deepEqual([...UNLOCK_FILES], [...UNLOCK_PATHS.files]);
   assert.deepEqual(Object.keys(FEATURE_FILES).sort(), ["save", "unlock"]);
 
@@ -410,14 +409,15 @@ test("the_unlock_feature_is_off_in_release_and_on_in_test", async () => {
     for (const manifest of ["mv2", "mv3"]) {
       const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
       const testBuild = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test" });
-      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: true, unlock: false }, manifest);
+      assert.deepEqual(release.features, ["save", "unlock"], manifest);
+      assert.deepEqual({ ...(await featuresOf(release.dir)) }, { save: true, unlock: true }, manifest);
       assert.deepEqual({ ...(await featuresOf(testBuild.dir)) }, { save: true, unlock: true }, manifest);
-      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save"], new Map()));
+      assert.equal(release.files.get(FEATURES_FILE)?.toString("utf8"), featuresModule(["save", "unlock"], new Map()));
       for (const path of UNLOCK_PATHS.files) {
-        assert.equal(release.files.has(path), false, `${manifest}: ${path} is not in a release`);
+        assert.equal(release.files.has(path), true, `${manifest}: ${path} is in a release`);
         assert.equal(testBuild.files.has(path), true, `${manifest}: ${path} is in the test variant`);
       }
-      assert.deepEqual(await unlockPathsIn(release.dir, release.files), [], manifest);
+      assert.deepEqual([...release.files.keys()].filter((path) => isTestOnlyPath(path) || path.startsWith("test/")), [], manifest);
     }
     // Each flag on its own: unlock alone leaves out the files of save, and save alone those of unlock.
     const unlockOnly = await build({ ...options, out: join(env.out, "u-only"), manifest: "mv2", variant: "test", features: ["unlock"] });
@@ -433,36 +433,38 @@ test("the_unlock_feature_is_off_in_release_and_on_in_test", async () => {
   }
 });
 
-test("the_release_check_refuses_a_release_build_with_unlock_on", async () => {
+test("the_release_check_requires_a_release_build_with_unlock_on", async () => {
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv2" };
-    // The build's own release check refuses it.
+    // The build's own release check refuses a release with the feature off.
     await assert.rejects(
-      build({ ...options, out: join(env.out, "r-on"), variant: "release", features: ["save", "unlock"] }),
-      /the feature unlock is on, which a release may not have/,
+      build({ ...options, out: join(env.out, "r-off"), variant: "release", features: ["save"] }),
+      /the feature unlock is off, which a release must have on/,
     );
     const release = await build({ ...options, out: join(env.out, "r"), variant: "release" });
     const hosts = readInternalHosts(env.root);
     assert.deepEqual(releaseProblems(release.files, hosts), []);
 
-    // The check on a finished package: the features module with unlock on, in every way it can be written.
+    // The check on a finished package: the features module with unlock off, in every way it can be written.
     for (const text of [
-      featuresModule(["save", "unlock"], new Map()),
-      'export const FEATURES = Object.freeze({"save":true,"unlock":true});\n',
-      "export const FEATURES = Object.freeze({ save: true, unlock: true });\n",
-      "export const FEATURES = Object.freeze({ save: true, 'unlock': 1 });\n",
+      featuresModule(["save"], new Map()),
+      'export const FEATURES = Object.freeze({"save":true,"unlock":false});\n',
+      "export const FEATURES = Object.freeze({ save: true, unlock: false });\n",
+      "export const FEATURES = Object.freeze({ save: true, 'unlock': 0 });\n",
+      "export const FEATURES = Object.freeze({ save: true, unlock: !1 });\n",
+      "export const FEATURES = Object.freeze({ save: true });\n",
     ]) {
       const files = new Map(release.files);
       files.set(FEATURES_FILE, Buffer.from(text));
       const problems = featureProblems(files);
-      assert.ok(problems.some((p) => /the feature unlock is on, which a release may not have/.test(p)), text);
+      assert.ok(problems.some((p) => /the feature unlock is off, which a release must have on/.test(p)), text);
     }
-    // A file of the feature in a release package is refused, and so is a package without the features module.
+    // A file of the feature missing from a release package is refused, and so is a package without the features module.
     for (const path of UNLOCK_PATHS.files) {
       const files = new Map(release.files);
-      files.set(path, Buffer.from("x\n"));
-      assert.ok(featureProblems(files).includes(`${path}: belongs to the unlock feature, which a release may not have`), path);
+      files.delete(path);
+      assert.ok(featureProblems(files).includes(`${path}: belongs to the unlock feature, which a release has on, and is missing`), path);
     }
     const noModule = new Map(release.files);
     noModule.delete(FEATURES_FILE);
@@ -473,11 +475,11 @@ test("the_release_check_refuses_a_release_build_with_unlock_on", async () => {
     for (const [path, bytes] of release.files) {
       const target = join(bad, ...path.split("/"));
       mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, path === FEATURES_FILE ? featuresModule(["save", "unlock"], new Map()) : bytes);
+      writeFileSync(target, path === FEATURES_FILE ? featuresModule(["save"], new Map()) : bytes);
     }
     const ran = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", bad], { encoding: "utf8" });
     assert.equal(ran.status, 1, ran.stdout + ran.stderr);
-    assert.match(ran.stderr, /the feature unlock is on, which a release may not have/);
+    assert.match(ran.stderr, /the feature unlock is off, which a release must have on/);
     const good = spawnSync(process.execPath, [join(extensionRoot, "scripts", "build.mjs"), "--check-release", "--web-root", env.webRoot, release.dir], { encoding: "utf8" });
     assert.equal(good.status, 0, good.stdout + good.stderr);
   } finally {
@@ -487,21 +489,19 @@ test("the_release_check_refuses_a_release_build_with_unlock_on", async () => {
   assert.match(readFileSync(join(extensionRoot, "..", "scripts", "check-ext-release.sh"), "utf8"), /unlock/);
 });
 
-test("a_release_package_with_unlock_off_has_no_pin_or_prf_path", async () => {
-  // The repository's own sources: nothing of the feature in a package built with it off, in either manifest version
-  // and in either variant. The only trace is the deletion of the database at start.
+test("a_package_with_unlock_off_has_no_pin_or_prf_path", async () => {
+  // The repository's own sources: nothing of the feature in a package built with it off, in either manifest version.
+  // The only trace is the deletion of the database at start. A release has the feature on, so it is not built with it off.
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath };
     for (const manifest of ["mv2", "mv3"]) {
-      const release = await build({ ...options, out: join(env.out, `r-${manifest}`), manifest, variant: "release" });
-      assert.deepEqual(await unlockPathsIn(release.dir, release.files), [], `release ${manifest}`);
       const off = await build({ ...options, out: join(env.out, `t-${manifest}`), manifest, variant: "test", features: ["save"] });
       assert.deepEqual(await unlockPathsIn(off.dir, off.files), [], `test ${manifest}`);
       // The permitted trace is there, and it is the only one: the one module that holds the name, in the one form.
-      const holders = [...release.files].filter(([path, bytes]) => !WASM_FILES.includes(path) && bytes.toString("utf8").includes(UNLOCK_PATHS.database)).map(([path]) => path);
+      const holders = [...off.files].filter(([path, bytes]) => !WASM_FILES.includes(path) && bytes.toString("utf8").includes(UNLOCK_PATHS.database)).map(([path]) => path);
       assert.deepEqual(holders, [UNLOCK_PATHS.cleanup], manifest);
-      assert.equal(release.files.get(UNLOCK_PATHS.cleanup)?.toString("utf8").includes(`deleteDatabase("${UNLOCK_PATHS.database}")`), true);
+      assert.equal(off.files.get(UNLOCK_PATHS.cleanup)?.toString("utf8").includes(`deleteDatabase("${UNLOCK_PATHS.database}")`), true);
     }
   } finally {
     env.cleanup();
@@ -572,8 +572,8 @@ test("a_build_with_unlock_off_deletes_the_unlock_database_at_start", async () =>
   };
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv3" };
-    // Off (a release; a test build with the flag off): the deletion of the one database, once, and nothing else.
-    for (const [name, variant, features] of /** @type {const} */ ([["release", "release", undefined], ["test, off", "test", ["save"]]])) {
+    // Off (a test build with the flag off): the deletion of the one database, once, and nothing else.
+    for (const [name, variant, features] of /** @type {const} */ ([["test, off", "test", ["save"]]])) {
       const result = await build({ ...options, out: join(env.out, name.replace(/\W/g, "")), variant, ...(features ? { features: [...features] } : {}) });
       deleted.length = 0;
       try {
@@ -583,15 +583,17 @@ test("a_build_with_unlock_off_deletes_the_unlock_database_at_start", async () =>
       }
       assert.deepEqual(deleted, ["ferret-unlock"], name);
     }
-    // On (the test variant): the feature owns the database, and the cleanup does not run.
-    const on = await build({ ...options, out: join(env.out, "on"), variant: "test" });
-    deleted.length = 0;
-    try {
-      await boot(on.dir);
-    } finally {
-      delete (/** @type {any} */ (globalThis)).browser;
+    // On (a release and the test variant): the feature owns the database, and the cleanup does not run.
+    for (const variant of /** @type {const} */ (["release", "test"])) {
+      const on = await build({ ...options, out: join(env.out, `on-${variant}`), variant });
+      deleted.length = 0;
+      try {
+        await boot(on.dir);
+      } finally {
+        delete (/** @type {any} */ (globalThis)).browser;
+      }
+      assert.deepEqual(deleted, [], `with unlock on the cleanup does not run (${variant})`);
     }
-    assert.deepEqual(deleted, [], "with unlock on the cleanup does not run");
   } finally {
     delete (/** @type {any} */ (globalThis)).indexedDB;
     env.cleanup();
@@ -625,9 +627,11 @@ test("only_the_pin_store_names_the_unlock_database_in_a_package", async () => {
         .map(([path]) => path)
         .sort();
     for (const manifest of ["mv2", "mv3"]) {
-      const on = await build({ ...options, out: join(env.out, `on-${manifest}`), manifest, variant: "test" });
-      assert.deepEqual(holders(on.files), ["background/localUnlock.mjs"], `${manifest}: unlock on`);
-      for (const [name, variant, features] of /** @type {const} */ ([["release", "release", undefined], ["test-off", "test", ["save"]]])) {
+      for (const variant of /** @type {const} */ (["release", "test"])) {
+        const on = await build({ ...options, out: join(env.out, `on-${variant}-${manifest}`), manifest, variant });
+        assert.deepEqual(holders(on.files), ["background/localUnlock.mjs"], `${manifest} ${variant}: unlock on`);
+      }
+      for (const [name, variant, features] of /** @type {const} */ ([["test-off", "test", ["save"]]])) {
         const off = await build({ ...options, out: join(env.out, `${name}-${manifest}`), manifest, variant, ...(features ? { features: [...features] } : {}) });
         assert.equal(off.files.has("background/localUnlock.mjs"), false, `${manifest} ${name}: no PIN store`);
         assert.deepEqual(holders(off.files), [], `${manifest} ${name}: unlock off`);
@@ -646,13 +650,13 @@ test("the_pin_store_is_reached_only_through_the_generated_module", async () => {
   const env = makeRoot();
   try {
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv2" };
-    const on = await build({ ...options, out: join(env.out, "on"), variant: "test" });
-    const off = await build({ ...options, out: join(env.out, "off"), variant: "release" });
+    const on = await build({ ...options, out: join(env.out, "on"), variant: "release" });
+    const off = await build({ ...options, out: join(env.out, "off"), variant: "test", features: ["save"] });
     const gen = UNLOCK_STORE_FILE;
     assert.equal(on.files.get(gen)?.toString("utf8"), unlockStoreModule(["save", "unlock"], new Map()));
     assert.equal(off.files.get(gen)?.toString("utf8"), unlockStoreModule(["save"], new Map()));
     // With the feature on it re-exports the store and names the window page; with it off it holds null and imports nothing,
-    // so the release has no import edge to the files the build leaves out.
+    // so a package without the feature has no import edge to the files the build leaves out.
     assert.match(/** @type {Buffer} */ (on.files.get(gen)).toString("utf8"), /export \{ createLocalUnlock \} from "\.\/localUnlock\.mjs";/);
     const offText = /** @type {Buffer} */ (off.files.get(gen)).toString("utf8");
     assert.equal(/\bimport\b|\bfrom\b/.test(offText.replace(/^\/\/.*$/gm, "")), false, offText);

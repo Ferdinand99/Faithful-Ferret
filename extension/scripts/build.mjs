@@ -9,8 +9,8 @@
 // --features names the features that are on, separated by commas ("none" for
 // none); without it a variant has its own default (DEFAULT_FEATURES). The
 // features are `save` (saving and updating passwords from the extension and the
-// password generator), on in a release and in the test variant, and `unlock`
-// (PIN and passkey unlock), on in the test variant only until it is released. The
+// password generator) and `unlock` (PIN and passkey unlock), both on in a release
+// and in the test variant. The
 // build writes shared/features.mjs with the result, and the release check
 // refuses a release package with a feature on that a release does not have
 // (RELEASE_FEATURES), with a feature off that it must have, without that file, or
@@ -91,18 +91,19 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
  * the extension (the capture script, the offer in Ferret's UI, the generator).
  * A release has it on, and so has the test variant; a test build can turn it off (`--features none`) to prove that
  * "off" leaves no path of the feature in the package.
- * `unlock`: unlocking with a PIN or a passkey (the handlers, the unlock window, the controls, the PIN store). It is on
- * in the test variant only, until it is released; a release has it off, and a package with it off holds no path of it
- * (the only trace is the deletion of the unlock database at start, so that a blob left by an older build is removed).
+ * `unlock`: unlocking with a PIN or a passkey (the handlers, the unlock window, the controls, the PIN store). A release
+ * has it on, and so has the test variant; a test build can turn it off (`--features save`) to prove that "off" leaves no
+ * path of the feature in the package (the only trace is the deletion of the unlock database at start, so that a blob left
+ * by an older build is removed).
  */
 export const FEATURES = Object.freeze(["save", "unlock"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
-  release: Object.freeze(["save"]),
+  release: Object.freeze(["save", "unlock"]),
   test: Object.freeze(["save", "unlock"]),
 });
 /** The features a release package has on, no more and no fewer: the release check refuses any other set. */
-export const RELEASE_FEATURES = Object.freeze(["save"]);
+export const RELEASE_FEATURES = Object.freeze(["save", "unlock"]);
 /** The generated module that tells the code of a package which features are on. */
 export const FEATURES_FILE = "shared/features.mjs";
 /**
@@ -930,14 +931,14 @@ export function featureProblems(files) {
       if (problems.length === 0) problems.push(`${FEATURES_FILE}: not the module the build writes for a release`);
     }
   }
-  // A release without `unlock` names its database only to delete it (the one trace the feature leaves).
-  if (!RELEASE_FEATURES.includes("unlock")) {
-    for (const [path, bytes] of files) {
-      if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path)) continue;
-      const text = bytes.toString("utf8");
-      if (text.split("ferret-unlock").length !== text.split('deleteDatabase("ferret-unlock")').length) {
-        problems.push(`${path}: names the unlock database other than to delete it, which a release without the unlock feature may not do`);
-      }
+  // The unlock database is named only to delete it (the one trace of the feature in a package with it off), except by
+  // the one module that owns the PIN store, which a release has when it has the feature on.
+  const owner = RELEASE_FEATURES.includes("unlock") ? "background/localUnlock.mjs" : undefined;
+  for (const [path, bytes] of files) {
+    if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path) || path === owner) continue;
+    const text = bytes.toString("utf8");
+    if (text.split("ferret-unlock").length !== text.split('deleteDatabase("ferret-unlock")').length) {
+      problems.push(`${path}: names the unlock database other than to delete it, which only the PIN store may do`);
     }
   }
   for (const [name, paths] of Object.entries(FEATURE_FILES)) {

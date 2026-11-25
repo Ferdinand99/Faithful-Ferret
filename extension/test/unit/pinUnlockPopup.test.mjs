@@ -24,7 +24,7 @@ before(async () => {
   env = makeRoot();
   const options = { root: env.root, webRoot: env.webRoot, wasmTar: env.tarPath, manifest: "mv2" };
   on = await build({ ...options, out: join(env.out, "on"), variant: "test" });
-  off = await build({ ...options, out: join(env.out, "off"), variant: "release" });
+  off = await build({ ...options, out: join(env.out, "off"), variant: "test", features: ["save"] });
 });
 after(() => env?.cleanup());
 
