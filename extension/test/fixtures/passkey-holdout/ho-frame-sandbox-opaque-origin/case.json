@@ -1,0 +1,46 @@
+{
+  "id": "ho-frame-sandbox-opaque-origin",
+  "set": "holdout",
+  "category": "frames",
+  "title": "sandboxed same-host iframe (allow-scripts only, opaque origin) calls get",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-a.test"
+    ],
+    "kinds": [
+      "sandbox"
+    ],
+    "allow": [
+      "publickey-credentials-get"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "an assertion to the opaque-origin frame, e.g. by treating it as https://rp-a.test"
+    }
+  ],
+  "note": "HTML sandbox without allow-same-origin gives an opaque origin; L3 §5.1.4.1: opaque callerOrigin -> NotAllowedError (an RP ID cannot be derived). UNCERTAIN: an engine may report SecurityError (no valid effective domain) instead."
+}

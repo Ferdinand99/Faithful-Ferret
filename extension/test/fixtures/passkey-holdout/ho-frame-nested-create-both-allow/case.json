@@ -1,0 +1,49 @@
+{
+  "id": "ho-frame-nested-create-both-allow",
+  "set": "holdout",
+  "category": "frames",
+  "title": "rp-a -> rp-b -> rp-a, both levels delegate create and get; inner frame registers",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-b.test",
+      "rp-a.test"
+    ],
+    "kinds": [
+      "iframe",
+      "iframe"
+    ],
+    "allow": [
+      "publickey-credentials-create; publickey-credentials-get",
+      "publickey-credentials-create; publickey-credentials-get"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "rpId": "rp-a.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "Ferret answering either call in a frame whose ancestor chain contains rp-b.test"
+    }
+  ],
+  "note": "L3 §5.1.3/§5.1.4.1 allow cross-origin create/get with delegation and activation, and clientData.crossOrigin=true (topOrigin rp-a); the matrix plan sends a foreign-ancestor chain to the browser. UNCERTAIN: Firefox support for delegated cross-origin create."
+}

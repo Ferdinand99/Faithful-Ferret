@@ -1,0 +1,42 @@
+{
+  "id": "ho-get-signal-preaborted",
+  "set": "holdout",
+  "category": "get-modal",
+  "title": "get with an AbortSignal that is already aborted",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    },
+    "abort": {
+      "when": "before"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "AbortError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "up-without-click",
+      "definition": "any assertion for a request that was aborted before it started"
+    }
+  ],
+  "note": "L3 §5.1.4.1 step 1: if options.signal is aborted, reject with its abort reason (default AbortError DOMException) before any UI."
+}

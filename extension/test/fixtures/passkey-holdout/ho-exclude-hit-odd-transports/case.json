@@ -1,0 +1,56 @@
+{
+  "id": "ho-exclude-hit-odd-transports",
+  "set": "holdout",
+  "category": "create-exclude",
+  "title": "excludeCredentials hits the existing passkey; descriptor carries an unknown transport",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "create"
+    ],
+    "create": [
+      {},
+      {
+        "excludeCredentials": [
+          {
+            "type": "public-key",
+            "id": "$cred",
+            "transports": [
+              "internal",
+              "hybrid",
+              "x-future"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "InvalidStateError",
+    "failStep": "create",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a second passkey for the same account stored although the second create rejected"
+    },
+    {
+      "id": "error-differs",
+      "definition": "InvalidStateError returned before any user consent in the Ferret window (leaks that the credential exists)"
+    }
+  ],
+  "note": "L3 §6.3.2 step 3: an excluded credential yields InvalidStateError after user consent; §5.8.4: unknown transports MUST be ignored so the hit still counts. Second step is the failing create."
+}

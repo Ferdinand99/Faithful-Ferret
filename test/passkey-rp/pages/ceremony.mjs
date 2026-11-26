@@ -28,7 +28,11 @@ async function go() {
 
 document.getElementById("go").addEventListener("click", go);
 window.__ceremony = go;
-if (new URLSearchParams(location.search).get("auto") === "1") go();
+if (new URLSearchParams(location.search).get("auto") === "1") {
+  // A hold-out case whose page clicks its own button (an untrusted click: no user activation), instead of running at once.
+  if (s0?.ho?.__page === "synthetic-click") setTimeout(() => /** @type {HTMLElement} */ (document.getElementById("go")).click(), 200);
+  else go();
+}
 document.documentElement.dataset.ready = "1";
 // The runner tells a page that did nothing from a page that never loaded by this report.
 if (s0) report(s0.run, { kind: "started", href: location.href });

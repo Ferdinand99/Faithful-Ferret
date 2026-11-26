@@ -1,0 +1,59 @@
+{
+  "id": "ho-algs-unknown-type-and-alg-mixed",
+  "set": "holdout",
+  "category": "create-algs",
+  "title": "pubKeyCredParams with an unknown type, an unknown alg, then ES256 twice",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "pubKeyCredParams": [
+        {
+          "type": "x-unknown",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -999
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        }
+      ]
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored although the call rejected (e.g. TypeError on the unknown type after storing)"
+    }
+  ],
+  "note": "L3 §5.1.3 step 10 skips entries whose type is not supported (type is a DOMString since L2/L3, no TypeError); CTAP2 authenticators skip unknown algs; duplicates are allowed."
+}

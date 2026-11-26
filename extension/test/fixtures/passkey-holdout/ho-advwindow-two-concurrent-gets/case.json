@@ -1,0 +1,47 @@
+{
+  "id": "ho-advwindow-two-concurrent-gets",
+  "set": "holdout",
+  "category": "adv-window",
+  "title": "one click starts two modal get() calls in the same task",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "concurrent",
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    },
+    "concurrent": 2,
+    "report": "last-settled-ok"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "too-many-windows",
+      "definition": "two Ferret windows at once"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "both calls resolving from one click in the Ferret window"
+    }
+  ],
+  "note": "UNCERTAIN: the spec does not define concurrency; Firefox cancels the earlier transaction, Chrome rejects the later one. Expected: at most one window and exactly one call resolves (page reports ok if one resolved and the other rejected)."
+}

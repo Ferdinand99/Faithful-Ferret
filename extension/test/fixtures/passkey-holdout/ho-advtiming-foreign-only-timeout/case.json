@@ -1,0 +1,51 @@
+{
+  "id": "ho-advtiming-foreign-only-timeout",
+  "set": "holdout",
+  "category": "adv-timing",
+  "title": "get with only foreign allowCredentials ids and a 4 s timeout",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": [
+        {
+          "$foreign": 16
+        },
+        {
+          "$foreign": 32
+        },
+        {
+          "$foreign": 64
+        }
+      ],
+      "timeout": 4000
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an error type or timing for \"no matching credential\" that differs from timeout/user-cancel (e.g. an immediate InvalidStateError or NotFound-like error)"
+    }
+  ],
+  "waitMs": 40000,
+  "note": "L3 §5.1.4.1 + §14.5.2 (privacy): with no eligible credential the client must not reveal it and fails like a timeout/cancel with NotAllowedError."
+}

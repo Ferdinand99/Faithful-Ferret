@@ -1,0 +1,47 @@
+{
+  "id": "ho-advinput-challenge-mutated-after-call",
+  "set": "holdout",
+  "category": "adv-input",
+  "title": "page zeroes and transfers the challenge buffer right after calling create/get",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "mutate-after-call",
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    },
+    "tamper": {
+      "afterCall": [
+        "challenge.fill(0)",
+        "challenge.buffer.transfer()",
+        "user.id.fill(0)"
+      ]
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored with the zeroed user.id the RP never registered"
+    }
+  ],
+  "note": "WebIDL BufferSource arguments are copied (\"get a copy of the bytes held by the buffer source\") at call time; later mutation or detaching must not change clientDataJSON.challenge or user.id."
+}
