@@ -156,7 +156,8 @@ run=(docker "${docker_args[@]}" run --rm -i --init
 pack() {
   local fixtures=crates/ferret-server/tests/fixtures/wire
   local dpop=crates/ferret-server/tests/fixtures/dpop
-  local extra=(THIRD-PARTY-NOTICES notices-extra.json)
+  # web/test/unit/offerWriteEngine.test.mjs runs the extension's write path over the web sync engine.
+  local extra=(THIRD-PARTY-NOTICES notices-extra.json extension/src)
   [ -d "$fixtures" ] && extra+=("$fixtures")
   [ -d "$dpop" ] && extra+=("$dpop")
   tar -c \
