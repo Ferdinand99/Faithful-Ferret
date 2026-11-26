@@ -4,7 +4,9 @@
 //   - in a file of the browser's profile (storage, IndexedDB, caches, the session store);
 //   - in the browser's console: every console line of the pages, the extension's pages and its background, which the browser writes
 //     to its output (CONSOLE_PREFS) and the driver keeps, and the messages of the console service;
-//   - in a message an extension page receives (`runtime.onMessage`: what the content scripts and pages send each other);
+//   - in a message the background page receives or sends on a port (the passkey bridge's, the chooser window's and the popup's), or a
+//     runtime message it receives (the test build's leak_watch); the page's own MessagePort to the bridge is not seen, what the bridge
+//     sends on is;
 //   - in the network: the body and address of every request the browser sends (chrome context, `http-on-modify-request`);
 //   - in what the page saw (its reports at the relying party);
 //   - in a log of the stack's containers (scripts/lanbox-ext.sh greps the needles after the run).
@@ -12,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { coreOp } from "./passkeyDrive.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -103,30 +106,38 @@ export async function consoleFindings(session, needles) {
   return { messages: all.length, hits, control: all.some((text) => text.includes("ferret-leak-control")) };
 }
 
+/** The control needle of the message watch: sent once as a runtime message and once on a port, it must be found both times. */
+export const MESSAGE_CONTROL = "ferret-leak-control-message";
+
 /**
- * Listens in the current extension page (the test bridge) to every runtime message the extension's pages and content scripts send
- * from now on, and keeps how many there were and which held a needle.
+ * Starts the background's message watch (the test build's `leak_watch`, background/test-only/leakTap.mjs): every message the
+ * background receives or sends on a port (the passkey bridge's, the chooser window's and the popup's UI ports) and every runtime
+ * message it receives is read for the needles. Called in an extension page.
  * @param {import("./driver.mjs").Session} session @param {string[]} needles
  */
 export async function watchMessages(session, needles) {
-  await session.content((/** @type {string[]} */ texts) => {
-    const w = /** @type {any} */ (window);
-    w.__leak = { messages: 0, hits: [] };
-    browser.runtime.onMessage.addListener((/** @type {unknown} */ message) => {
-      w.__leak.messages += 1;
-      let text = "";
-      try {
-        text = typeof message === "string" ? message : JSON.stringify(message);
-      } catch {
-        text = String(message);
-      }
-      if (texts.some((n) => text.includes(n))) w.__leak.hits.push(text.slice(0, 80));
-      return undefined;
-    });
-  }, needles);
+  const reply = await coreOp(session, "leak_watch", { cmd: "start", needles: [...needles, MESSAGE_CONTROL] });
+  if (reply?.ok !== true) throw new Error(`leak_watch start: ${JSON.stringify(reply)}`);
 }
 
-/** What the message watch saw. @param {import("./driver.mjs").Session} session */
+/**
+ * Sends the control needle once as a runtime message and once on a port of its own, then reads the watch: how many messages it read,
+ * whether it found both controls, and where it found anything else (a leak). Called in an extension page.
+ * @param {import("./driver.mjs").Session} session
+ */
 export async function messageFindings(session) {
-  return /** @type {{ messages: number, hits: string[] }} */ (await session.content(() => ({ .../** @type {any} */ (window).__leak })));
+  await session.content((/** @type {string} */ control) => {
+    browser.runtime.sendMessage({ leakControl: control }).catch(() => {});
+    const port = browser.runtime.connect({ name: "ferret-leak-control" });
+    port.postMessage({ leakControl: control });
+    setTimeout(() => port.disconnect(), 500);
+  }, MESSAGE_CONTROL);
+  await new Promise((r) => setTimeout(r, 1000));
+  const reply = /** @type {any} */ (await coreOp(session, "leak_watch", { cmd: "read" }));
+  const value = reply?.value ?? {};
+  const hits = /** @type {string[]} */ (value.hits ?? []);
+  const controls = { runtime: hits.includes("runtime message"), port: hits.includes("received on ferret-leak-control") };
+  // The controls hold only the control needle; anything else that matched holds the sentinel.
+  const leaks = hits.filter((h) => h !== "runtime message" && h !== "received on ferret-leak-control");
+  return { portMessages: Number(value.port_messages ?? 0), runtimeMessages: Number(value.runtime_messages ?? 0), controls, hits: leaks };
 }

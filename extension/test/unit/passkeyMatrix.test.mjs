@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { generated } from "../fixtures/passkey/generate.mjs";
 import { CATEGORIES, TEST_HOSTS, UNSAFE, caseAddress, caseProblems, categoryShortfalls, computeMatrix, judge, loadCases, matrixMarkdown, observe, specOf } from "../firefox/passkeyCases.mjs";
 import { MATRIX_PREFS, SET_DIRS, detectUnsafe, runCase, selectCases } from "../firefox/passkeyMatrix.mjs";
+import { DRIVER_VERBS } from "../firefox/passkeyDrive.mjs";
 import { caExtensions } from "../../../test/passkey-rp/server/tls.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -306,7 +307,10 @@ test("the set selection finds the cases of each set and tells a missing hold-out
 });
 
 test("a driver step of every fixture case is one the runner has", () => {
-  const known = new Set(["start-create", "start-get", "start-waiting-create", "start-waiting-get", "choose-in-window", "choose-browser", "choose-never", "lock", "unlock-in-window", "unlock", "age-unlock", "go-offline", "age-offline", "create-online", "verify-pin", "verify-master-password", "verify-prf", "navigate", "pushState", "close-tab", "terminate-background", "wait-for-saving", "expect-notice", "expect-no-candidate", "profile", "sync", "delete-passkey"]);
+  const known = new Set(DRIVER_VERBS);
+  // Every verb of the list has its case in the runner's switch.
+  const drive = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "firefox", "passkeyDrive.mjs"), "utf8");
+  for (const verb of DRIVER_VERBS) assert.ok(drive.includes(`case "${verb}":`), `passkeyDrive.mjs handles ${verb}`);
   const { cases } = loadCases([SET_DIRS.fixtures]);
   for (const c of cases) for (const a of c.actions ?? []) assert.ok(known.has(a.do), `${c.id}: ${a.do}`);
 });

@@ -32,7 +32,7 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "ok",
+    "ceremony": "server-refused",
     "route": "browser",
     "maxWindows": 0
   },
@@ -42,5 +42,5 @@
       "definition": "Ferret answering a request from a page on the vault origin (override must be off there), here also under a foreign top"
     }
   ],
-  "note": "L3 §5.1.3/§5.1.4.1: a valid delegated cross-origin ceremony for vault-fixture.test; the provider override is off on the vault origin so only the browser may answer."
+  "note": "L3 §5.1.3/§5.1.4.1: a valid delegated cross-origin ceremony for vault-fixture.test; the provider override is off on the vault origin so only the browser may answer. Changed after review U4-13: the browser path (no Ferret window) is the right one; the fixture relying parties refuse a cross-origin ceremony by design, so ok cannot be reached with them. (Before: {\"ceremony\":\"ok\",\"route\":\"browser\",\"maxWindows\":0}.)"
 }

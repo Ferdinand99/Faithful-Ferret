@@ -15,7 +15,8 @@
 // no_sentinel_key_leaves_the_core, in each channel: a passkey with a sentinel private key (a test key of the relying party,
 // extension/test/fixtures/passkey-sentinel.json) goes into the vault through the core's import (the test build's
 // `item_import_probe`), then the page signs in with it through Ferret's window. None of the key's forms is then in a file of the
-// profile, in the browser's console, in a runtime message, in a request the browser sent, or in what the page saw (passkeyLeak.mjs);
+// profile, in the browser's console output, in a message the background receives or sends on a port or as a runtime message, in the
+// address or body of a request the browser sent, or in what the page saw (passkeyLeak.mjs; each scan has a control it must find);
 // the run also greps the stack's logs for it.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -244,10 +245,11 @@ test("no_sentinel_key_leaves_the_core", async () => {
       await session.switchTo(pageTab);
       const pageSaw = JSON.stringify(signed.result);
       const files = scanFolder(session.profileDir, key.bytes);
-      assert.ok(messages.messages > 0, `${channel}: the message watch saw no message at all`);
+      assert.ok(messages.portMessages > 0, `${channel}: the message watch saw no port message at all`);
+      assert.deepEqual(messages.controls, { runtime: true, port: true }, `${channel}: the message watch did not find its own controls`);
       assert.ok(network.requests > 0 && network.bodies > 0, `${channel}: the network watch saw no request body (${JSON.stringify(network)})`);
       assert.ok(consoleSeen.control, `${channel}: the console scan did not find its own control line (${consoleSeen.messages} messages)`);
-      assert.deepEqual(messages.hits, [], `${channel}: a runtime message holds the sentinel key`);
+      assert.deepEqual(messages.hits, [], `${channel}: a message of the background holds the sentinel key`);
       assert.deepEqual(network.hits, [], `${channel}: a request holds the sentinel key`);
       assert.deepEqual(consoleSeen.hits, [], `${channel}: the console holds the sentinel key`);
       assert.equal(key.needles.some((n) => pageSaw.includes(n)), false, `${channel}: the page saw the sentinel key`);

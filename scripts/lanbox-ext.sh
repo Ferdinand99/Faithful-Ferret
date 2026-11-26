@@ -685,6 +685,8 @@ if [ "$mode" = passkey-matrix ]; then
   if [ -s "$work/passkey-matrix.tar" ]; then
     tar -x --no-same-owner -C "$out_dir" < "$work/passkey-matrix.tar" || rc=$?
   fi
+  # With the Ferret provider the run had an end-to-end stack: its logs hold no sentinel (the matrix PIN starts with the prefix).
+  if [ "$passkey_provider" = ferret ]; then scan_stack_logs_for_sentinels || { [ "$rc" -ne 0 ] || rc=1; }; fi
   echo "lanbox-ext.sh: passkey-matrix: the reports are in $out_dir/u4-matrix/ (exit status $rc)" >&2
   exit "$rc"
 fi

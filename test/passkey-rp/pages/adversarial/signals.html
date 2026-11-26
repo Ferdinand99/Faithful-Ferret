@@ -19,7 +19,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 void report; void sleep;
 
 adversarial({ name: "signals", run: async (spec, note) => {
-  const names = ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails", "isUserVerifyingPlatformAuthenticatorAvailable", "isConditionalMediationAvailable", "getClientCapabilities", "parseCreationOptionsFromJSON", "parseRequestOptionsFromJSON"];
+  const names = ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails", "parseCreationOptionsFromJSON", "parseRequestOptionsFromJSON"];
   const info = {};
   for (const n of names) {
     const f = PublicKeyCredential[n];

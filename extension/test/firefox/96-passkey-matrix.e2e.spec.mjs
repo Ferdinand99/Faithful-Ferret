@@ -250,7 +250,16 @@ test(`passkey_matrix_meets_the_gate: ${GATE_NAME}`, async (t) => {
   }
   for (const [channel, run] of runs) {
     const m = run.matrix;
-    if (PROVIDER === "ferret") {
+    if (PROVIDER === "ferret" && SET === "demo") {
+      // The demo sites are a smoke test (plan section 11.3): no unsafe answer, webauthn.io passes, and every other site either passes
+      // or has a stated reason (a hand check, or a failure that is understood and has its issue); they are listed in the report.
+      assert.equal(m.unsafe, 0, `${channel}: unsafe answers at a demo site`);
+      assert.equal(m.rows.find((r) => r.id === "demo-webauthn-io")?.status, "passed", `${channel}: webauthn.io: ${JSON.stringify(m.rows.find((r) => r.id === "demo-webauthn-io")?.problems)}`);
+      for (const r of m.rows.filter((x) => x.status !== "passed")) {
+        assert.ok(r.problems.length > 0 && r.problems.every((x) => x.trim() !== ""), `${channel}: ${r.id} did not pass and says no reason`);
+        console.error(`${channel}: demo ${r.id}: ${r.status}: ${r.problems.join("; ")}`);
+      }
+    } else if (PROVIDER === "ferret") {
       assert.equal(GREP, "", `${channel}: the gate is for the whole set: a run with --grep never meets it`);
       assert.equal(m.gate, true, `${channel}: the gate (100 % passed, nothing not run, no unsafe answer) is not met: ${JSON.stringify(m.rows.filter((r) => r.status !== "passed").map((r) => ({ id: r.id, problems: r.problems })))}`);
     } else {

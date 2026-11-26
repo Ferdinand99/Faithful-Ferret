@@ -53,6 +53,14 @@ import { CHOOSER_PAGE, MATRIX_PIN, chooserSnapshot, ferretWindows, browserPrompt
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** The verbs a case's `actions` may use (the switch of runActionCase; the unit tests check every fixture against this list). */
+export const DRIVER_VERBS = Object.freeze([
+  "start-create", "start-get", "start-waiting-create", "start-waiting-get", "choose-in-window", "choose-browser", "choose-never",
+  "lock", "unlock-in-window", "unlock", "age-unlock", "go-offline", "age-offline", "create-online", "verify-pin", "verify-master-password",
+  "verify-prf", "navigate", "pushState", "close-tab", "terminate-background", "wait-for-saving", "expect-notice", "expect-no-candidate",
+  "profile", "sync", "delete-passkey",
+]);
+
 
 /** The test hosts of the fixture: they stay reachable while the server is "gone" (go-offline). */
 const FIXTURE_HOSTS = [...Object.values(TEST_HOSTS), "127.0.0.1"];
@@ -369,11 +377,6 @@ const stepsOf = (ph) => ph.reports.filter((r) => r.kind === "step");
  * @returns {Promise<import("./passkeyCases.mjs").CaseResult>}
  */
 export async function runActionCase(ctx, c) {
-  // The Manifest V2 build has a persistent background page: the browser never ends it, and ending it by force leaves the add-on
-  // without one for the rest of the run. The case is about the MV3 event page.
-  if ((c.actions ?? []).some((/** @type {any} */ a) => a.do === "terminate-background") && ctx.manifest === "mv2") {
-    return { status: "not-run", reason: "the MV2 build has a persistent background page, which the browser never unloads; the case is about the MV3 event page (needs a ruling: skip on MV2)" };
-  }
   const sid = `${Math.random().toString(16).slice(2, 10)}-${c.id}`.slice(0, 60);
   const actions = /** @type {Array<Record<string, any>>} */ (c.actions ?? []);
   const verbs = actions.map((a) => String(a.do));
@@ -489,12 +492,6 @@ export async function runActionCase(ctx, c) {
               await start(["create"]);
               await finish("auto");
             }
-            if (step === "get" && c.id === "get-uv-preferred-no-verification") {
-              // No way to verify at all: no recent unlock (age-unlock), no PIN, no passkey of the vault, and no server for the
-              // master password. The relying party is not the server and stays reachable.
-              undo.online = true;
-              await setServer(profile, false);
-            }
             await start([step]);
             if (a.do.startsWith("start-waiting")) await waitWindow(now());
             break;
@@ -521,9 +518,14 @@ export async function runActionCase(ctx, c) {
             undo.never = true;
             break;
           case "lock":
+            // A lock ends a request that waits (plan section 6, UK112 b): its window closes and the page's call ends. A request that
+            // starts while the vault is locked is unlocked in the window instead (unlock-in-window).
             if (running()) await waitWindow(now());
             await lockNow(profile);
-            if (running()) await waitWindow(now(), { state: "locked" });
+            if (running()) {
+              await windowsGone(now(), problems, "the vault locked");
+              await finish("none", 5000);
+            }
             break;
           case "unlock-in-window":
             if (!running()) await start(rest());
@@ -646,7 +648,7 @@ export async function runActionCase(ctx, c) {
             break;
           }
           default:
-            throw new Error(`the runner has no driver step for "${a.do}"`);
+            throw new Error(`the runner has no driver step for "${a.do}" (DRIVER_VERBS: ${DRIVER_VERBS.includes(String(a.do)) ? "listed" : "not listed"})`);
         }
       }
       // What the verbs left running ends; then the case's steps that are left run as a person would go on, unless the last judged
@@ -700,7 +702,7 @@ async function windowsGone(ph, problems, why) {
 }
 
 /** The items of the open vault (ids and revisions), from the test hooks' measure port. @param {Profile} p @returns {Promise<string[]>} */
-async function vaultRows(p) {
+export async function vaultRows(p) {
   return inExt(p, async () => {
     const reply = /** @type {any} */ (await p.session.content(() => new Promise((resolve) => {
       const port = browser.runtime.connect({ name: "ferret-test-measure" });
@@ -726,7 +728,7 @@ async function syncUntil(p, name, present) {
   while (Date.now() < until) {
     await inExt(p, () => ask(p.session, "sync_retry", {})).catch(() => null);
     last = await inExt(p, () => coreOp(p.session, "item_find_probe", { name }));
-    if (last?.ok === true && (last.value?.item !== null) === present) return;
+    if (last?.ok === true && last.value && "item" in last.value && (last.value.item !== null) === present) return;
     await sleep(1500);
   }
   throw new Error(`profile ${p.name}: the item ${name} is ${present ? "not there" : "still there"} after the sync (${JSON.stringify(last)})`);

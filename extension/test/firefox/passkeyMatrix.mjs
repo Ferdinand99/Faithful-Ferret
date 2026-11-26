@@ -33,11 +33,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFirefox } from "./driver.mjs";
-import { caseAddress, computeMatrix, loadCases, observe, specOf, writeReport } from "./passkeyCases.mjs";
+import { appliesTo, caseAddress, computeMatrix, loadCases, observe, specOf, writeReport } from "./passkeyCases.mjs";
 import { BRIDGE_URL, defaultManifest, e2eCertificateFile, EXTENSION_ORIGIN, openBridge, TEST_ADDON_ID, xpiPath } from "./harness.mjs";
 import { KEEP_BACKGROUND, extensionSignIn, pace, webVaultAccount } from "./e2e.mjs";
 import { addPasskey, ask } from "./unlock.mjs";
-import { runActionCase, secondProfile } from "./passkeyDrive.mjs";
+import { runActionCase, secondProfile, vaultRows } from "./passkeyDrive.mjs";
 import { runDemoCase } from "./passkeyDemo.mjs";
 import { revokeLeftDevices } from "./adversary.mjs";
 
@@ -467,7 +467,8 @@ async function verifyInChooser(session, handle, method, password) {
 }
 
 /** The PIN the matrix sets when a case verifies with one (passkeyDrive.mjs sets it). */
-export const MATRIX_PIN = "ferret-matrix-pin-4826";
+// It starts with the sentinel prefix, so the run's scan of the stack's logs looks for it too (scripts/lanbox-ext.sh).
+export const MATRIX_PIN = "ferret-sentinel-pin-matrix-4826";
 /**
  * Opens Ferret's window for a request that waits without one, from the popup's card, as a person would (the popup in a window of its
  * own about the case's tab). Returns whether the card was there and pressed. The session comes back to `main`.
@@ -616,14 +617,20 @@ async function enterFrames(session, frames) {
  * @param {{ channel: string, provider: "stub" | "ferret", drive?: import("./passkeyDrive.mjs").DriveContext | null }} o
  * @returns {Promise<import("./passkeyCases.mjs").CaseResult>}
  */
-export async function runCase(session, c, { channel, provider, drive = null }) {
+export async function runCase(session, c, { channel, provider, drive = null, manifest = drive?.manifest ?? defaultManifest() }) {
+  // A case ruled not applicable to this manifest is listed as such, outside the total (not as not run, which counts as failed).
+  if (!appliesTo(c, manifest)) return { status: "not-applicable", reason: `the case applies to ${c.manifests.join(", ")} only` };
   if (c.set === "demo") {
+    if (c.hand) return { status: "not-run", reason: `hand check: ${c.hand}` };
     if (provider === "ferret" && drive) return runDemoCase(drive, c);
     return { status: "not-run", reason: "the demo pages are run with the Ferret provider only (a person's sign-up and sign-in at a public site)" };
   }
   // No browser: the provider's setup did not run (nothing that ran can be judged).
   if (!session && c.needs !== "provider") return { status: "not-run", reason: "no browser session: the provider was not set up" };
-  if (c.needs === "provider") {
+  // A case that needs Ferret but has no driver steps of its own is one click and the page's own steps, as a person would do it
+  // (with the popup's card when the request waits without a window).
+  const plain = !Array.isArray(c.actions) || c.actions.length === 0;
+  if (c.needs === "provider" && !(plain && provider === "ferret" && drive)) {
     if (provider === "ferret" && drive) return runActionCase(drive, c);
     return provider === "ferret"
       ? { status: "not-run", reason: "the Ferret provider was not set up" }
@@ -631,17 +638,21 @@ export async function runCase(session, c, { channel, provider, drive = null }) {
   }
   // A page on the fixture's vault host is a page on the signed-in Ferret server's origin for the case (the Ferret provider).
   if (provider === "ferret" && drive && (c.page?.chain ?? []).includes("vault-fixture.test")) {
-    return withServer(drive.a, "https://vault-fixture.test", () => runPlainCase(session, c, { channel, provider }));
+    return withServer(drive.a, "https://vault-fixture.test", () => runPlainCase(session, c, { channel, provider, drive }));
   }
-  return runPlainCase(session, c, { channel, provider });
+  return runPlainCase(session, c, { channel, provider, drive });
 }
+
+/** The categories whose cases are about a request that waits without a window: there the popup's card is the way on. */
+const CARD_CATEGORIES = Object.freeze(["adv-window", "create-gesture", "get-conditional"]);
 
 /**
  * A case with one click (or none) and the page's own steps.
- * @param {import("./driver.mjs").Session} session @param {any} c @param {{ channel: string, provider: "stub" | "ferret" }} o
+ * @param {import("./driver.mjs").Session} session @param {any} c
+ * @param {{ channel: string, provider: "stub" | "ferret", drive?: import("./passkeyDrive.mjs").DriveContext | null }} o
  * @returns {Promise<import("./passkeyCases.mjs").CaseResult>}
  */
-async function runPlainCase(session, c, { provider }) {
+async function runPlainCase(session, c, { provider, drive = null }) {
   const run = `${Math.random().toString(16).slice(2, 10)}-${c.id}`.slice(0, 80);
   const spec = specOf(c, run);
   const address = caseAddress(c, { spec, auto: c.gesture === "none" });
@@ -666,6 +677,14 @@ async function runPlainCase(session, c, { provider }) {
     // Ferret's window until that has happened (the case is about what the page does while the call waits).
     const lifecycle = c.set === "holdout" ? [c.spec?.abort, c.spec?.removeFrame, c.spec?.navigate].map((x) => Number(x?.afterMs) || 0) : [0];
     const holdMs = Math.max(...lifecycle) > 0 ? Math.max(...lifecycle) + 700 : 0;
+    // Nothing should be answered: nothing is pressed in Ferret's window (the case is about what happens without an answer).
+    const pressNothing = c.expected.ceremony === "none";
+    // A create that must end without an answer: the vault before, to see that nothing reached it (the hold-out cases whose page takes
+    // its frame away or aborts while the call waits).
+    const watchVault = provider === "ferret" && drive !== null && holdMs > 0 && pressNothing && (spec.steps ?? []).includes("create");
+    const rowsBefore = watchVault ? await vaultRows(/** @type {any} */ (drive).a) : [];
+    /** The window of a request was opened from the popup's card. */
+    let viaCard = false;
     /** When each new window was first seen. @type {Map<string, number>} */
     const firstSeen = new Map();
     let deadline = started + (c.waitMs ?? 20_000);
@@ -682,7 +701,7 @@ async function runPlainCase(session, c, { provider }) {
       for (const h of handles) if (!baseline.has(h) && !firstSeen.has(h)) firstSeen.set(h, Date.now());
       if (provider === "ferret" && holdMs > 0 && handles.some((h) => !baseline.has(h) && !pressed.has(h) && Date.now() - (firstSeen.get(h) ?? 0) < holdMs)) {
         // The page does something to its own call first (an abort, a frame taken out): a person has not clicked yet.
-      } else if (provider === "ferret" && handles.some((h) => !baseline.has(h) && !pressed.has(h))) {
+      } else if (provider === "ferret" && !pressNothing && handles.some((h) => !baseline.has(h) && !pressed.has(h))) {
         const did = await pressInChooser(session, baseline, pressed, main, { browserWhenEmpty: c.expected.error !== "AbortError" });
         if (did.length > 0) {
           deadline = Math.max(deadline, Date.now() + (c.waitMs ?? 20_000));
@@ -695,7 +714,10 @@ async function runPlainCase(session, c, { provider }) {
         quietSince = Date.now();
         const opened = await openWaitingFromPopup(session, main, new URL(address.url).origin);
         console.error(`${c.id}: no window for ${Math.round((Date.now() - started) / 1000)} s; the popup's card ${opened ? "opened Ferret's window" : "was not there"}`);
-        if (opened) deadline = Math.max(deadline, Date.now() + (c.waitMs ?? 20_000));
+        if (opened) {
+          viaCard = true;
+          deadline = Math.max(deadline, Date.now() + (c.waitMs ?? 20_000));
+        }
       }
       reports = await fetchReports(run);
       if (reports.some((r) => r.kind === "done") || Date.now() > deadline) break;
@@ -726,8 +748,34 @@ async function runPlainCase(session, c, { provider }) {
     // A page that never started (a 404, a TLS error, a script error) is not a page that did nothing: it proves nothing, and the cases
     // that expect "nothing happened" must not pass on it.
     if (!reports.some((r) => r.kind === "started")) return { status: "not-run", reason: "the page never started (no report from it at all)" };
+    /** What the runner found wrong itself. @type {string[]} */
+    const problems = [];
+    /** @type {string[]} */
+    const unsafeSeen = [];
+    // The page took its call away (a frame removed, an abort, a new address): Ferret's window must close, and nothing may reach the vault.
+    if (provider === "ferret" && holdMs > 0) {
+      const until = started + holdMs + 10_000;
+      let open = 0;
+      for (;;) {
+        const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
+        open = await ferretWindows(session, handles.filter((h) => !baseline.has(h)), isFerret, main);
+        if (open === 0 || Date.now() > until) break;
+        await sleep(250);
+      }
+      if (open > 0 && pressNothing) problems.push("Ferret's window stayed open after the page took its call away");
+      if (watchVault) {
+        await sleep(3000);
+        const added = (await vaultRows(/** @type {any} */ (drive).a)).filter((r) => !rowsBefore.includes(r));
+        if (added.length > 0) unsafeSeen.push("passkey-not-delivered");
+      }
+    }
+    // A window opened only from the popup's card is right where the case is about a waiting request; elsewhere a clicked request should
+    // have opened it itself.
+    if (viaCard && !(CARD_CATEGORIES.includes(c.category) || c.gesture === "none")) problems.push("Ferret's window opened only from the popup's card, not for the click");
     // A page that left (nav-before-click) or never answered has no "done": that is an outcome (ceremony none), not an error.
     const observed = observe(reports, { windowShown: windowsOpened > 0, windowsOpened });
+    if (problems.length > 0) observed.problems = problems;
+    if (viaCard) /** @type {any} */ (observed).viaCard = true;
     if (!reports.some((r) => r.kind === "done") && windowsOpened > 0) /** @type {any} */ (observed).windowsAtEnd = await chooserSnapshot(session, baseline, main);
     // A call the browser took and holds (its own prompt waits for the person) has no step report: the prompt shows the route.
     if (observed.route === "none" && windowsOpened === 0 && (await browserPrompts(session)).length > promptsBefore) observed.route = "browser";
@@ -740,7 +788,7 @@ async function runPlainCase(session, c, { provider }) {
         observed.failStep = "conditional";
       }
     }
-    return { status: "ran", observed, unsafe: detectUnsafe(c, observed, provider), provider };
+    return { status: "ran", observed, unsafe: [...detectUnsafe(c, observed, provider), ...unsafeSeen], provider };
   } catch (e) {
     return { status: "not-run", reason: `the run threw: ${e instanceof Error ? e.message : String(e)}` };
   } finally {
@@ -783,7 +831,8 @@ export function detectUnsafe(c, o, provider) {
   const chain = Array.isArray(c.page?.chain) ? c.page.chain : [];
   const kinds = Array.isArray(c.page?.kinds) ? c.page.kinds : [];
   const foreignInChain = chain.some((/** @type {string} */ host) => host !== chain[0]) || kinds.some((/** @type {string} */ k) => String(k).startsWith("sandbox"));
-  if (provider === "ferret" && c.expected.route === "browser" && o.windowShown && foreignInChain && (ids.has("response-to-foreign-ancestor") || ids.has("response-to-other-frame"))) out.push("response-to-foreign-ancestor");
+  // Whatever route the case expects (browser, none or any): a Ferret window for such a chain is never allowed (UK105 d).
+  if (provider === "ferret" && c.expected.route !== "ferret" && o.windowShown && foreignInChain && (ids.has("response-to-foreign-ancestor") || ids.has("response-to-other-frame"))) out.push("response-to-foreign-ancestor");
   return out;
 }
 
@@ -821,7 +870,7 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
   /** The second profile of the sync cases, once one needed it. @type {import("./passkeyDrive.mjs").Profile | null} */
   let second = null;
   try {
-    const runnable = provider === "ferret" || cases.some((c) => c.set !== "demo" && c.needs !== "provider");
+    const runnable = provider === "ferret" || cases.some((c) => c.set !== "demo" && c.needs !== "provider" && appliesTo(c, manifest));
     if (runnable) session = await launchMatrixBrowser({ channel, manifest });
     /** @type {import("./passkeyDrive.mjs").DriveContext | null} */
     let drive = null;
@@ -855,7 +904,7 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
         await session.switchTo(fresh);
         if (drive) drive.a.pageTab = fresh;
       }
-      const r = session ? await runCase(session, c, { channel, provider, drive }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider });
+      const r = session ? await runCase(session, c, { channel, provider, drive, manifest }) : await runCase(/** @type {any} */ (undefined), c, { channel, provider, manifest });
       if (session && drive) {
         // What the extension says of itself after the case (a change is logged: a case that left it locked, offline or signed out
         // would change what every later case sees).
