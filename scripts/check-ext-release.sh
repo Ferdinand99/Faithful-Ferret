@@ -5,9 +5,8 @@
 # capture script and the sources it is joined from; the `unlock` feature is
 # required too, with its window page and its PIN store, and no file other than
 # the PIN store may name its database except to delete it; the `passkeys` feature
-# is refused while a release does not have it: none of its files, no script
-# registered in the page's own world, no use of the browser's credentials
-# container, and the ids of its scripts only in the module that removes them), and a manifest.json
+# is required too, with every file of it except the test-only chooser page, which a release
+# leaves out like any test-only file), and a manifest.json
 # with only the release keys and the
 # permissions of manifest/permissions.allow.json (no content script, no
 # web-accessible resource, no externally_connectable). Takes .xpi files or

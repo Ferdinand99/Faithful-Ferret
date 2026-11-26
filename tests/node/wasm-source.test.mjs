@@ -38,16 +38,41 @@ test("ci_takes_the_locked_wasm_package", () => {
   assert.equal(lock.url, `https://github.com/Ferdinand99/Faithful-Ferret/releases/download/v${lock.version}/ferret-core-wasm-web-${lock.version}.tar.gz`);
   assert.match(job(workflow("web.yml"), "unit"), /run: node scripts\/build\.mjs\n/);
   assert.match(job(workflow("web.yml"), "e2e"), /run: node scripts\/build\.mjs\n/);
-  assert.match(job(workflow("extension.yml"), "unit"), /--variant "\$variant" --wasm lock/);
   assert.match(job(workflow("extension-firefox.yml"), "firefox"), /jq -r \.url web\/wasm\.lock\.json/);
-  // The release variant of the extension is built and linted in full, with no way to skip it.
+  // The release variant of the extension is refused, on purpose, while the lock names a package from before the release that has
+  // the passkey functions (GATE_LOCK_VERSION in extension/scripts/release-build.sh): the CI jobs and scripts/lanbox-ext.sh say
+  // so with a warning and skip what needs a release package, and the signing workflow builds the release itself and so fails.
+  // Once the lock is at that release or a later one, the pin change has removed the rule, and the release variant is built and
+  // linted in full, with no way to skip it.
+  const unit = job(workflow("extension.yml"), "unit");
   const lint = job(workflow("extension.yml"), "lint");
-  assert.match(lint, /--variant release\n\s+npm exec --no -- web-ext lint[^\n]*--warnings-as-errors/);
-  assert.match(lint, /run: bash scripts\/check-ext-release\.sh/);
-  assert.doesNotMatch(lint, /release-skipped|\|\| \[ \$\? -eq 10 \]/);
-  assert.ok(!existsSync(join(root, "extension", "scripts", "release-build.sh")));
-  assert.ok(!existsSync(join(root, "extension", "scripts", "lint-release.sh")));
-  for (const file of ["scripts/lanbox-ext.sh", "extension/scripts/build.mjs"]) assert.doesNotMatch(read(file), /GATE_LOCK_VERSION|release-skipped|-eq 10/, file);
+  const gateFile = join(root, "extension", "scripts", "release-build.sh");
+  const gate = existsSync(gateFile) ? /^GATE_LOCK_VERSION=(\d+)\.(\d+)\.(\d+)$/m.exec(read("extension/scripts/release-build.sh")) : null;
+  assert.equal(existsSync(gateFile), gate !== null, "release-build.sh names its GATE_LOCK_VERSION");
+  const locked = lock.version.split(".").map(Number);
+  const behind = gate !== null && (() => {
+    const wanted = gate.slice(1).map(Number);
+    for (let i = 0; i < 3; i += 1) if (locked[i] !== wanted[i]) return locked[i] < wanted[i];
+    return false;
+  })();
+  if (behind) {
+    assert.match(unit, /--variant test --wasm lock/);
+    assert.match(unit, /bash scripts\/release-build\.sh "\$mv" \|\| \[ \$\? -eq 10 \]/);
+    assert.match(lint, /run: bash scripts\/lint-release\.sh/);
+    assert.match(read("extension/scripts/release-build.sh"), /--variant release --wasm lock/);
+    assert.ok(existsSync(join(root, "extension", "scripts", "lint-release.sh")));
+    assert.match(read("scripts/lanbox-ext.sh"), /release-build\.sh/);
+    // Signing never takes the old lock: its build job runs the build itself, which refuses.
+    assert.match(read(".github/workflows/extension-sign-release.yml"), /node scripts\/build\.mjs --browser firefox --manifest mv2 --variant release/);
+  } else {
+    assert.equal(gate, null, "the lock is at the release with the passkey functions: the pin change removes release-build.sh and lint-release.sh");
+    assert.match(unit, /--variant "\$variant" --wasm lock/);
+    assert.match(lint, /--variant release\n\s+npm exec --no -- web-ext lint[^\n]*--warnings-as-errors/);
+    assert.match(lint, /run: bash scripts\/check-ext-release\.sh/);
+    assert.doesNotMatch(lint, /release-skipped|\|\| \[ \$\? -eq 10 \]/);
+    assert.ok(!existsSync(join(root, "extension", "scripts", "lint-release.sh")));
+    for (const file of ["scripts/lanbox-ext.sh", "extension/scripts/build.mjs"]) assert.doesNotMatch(read(file), /GATE_LOCK_VERSION|release-skipped|-eq 10/, file);
+  }
 });
 
 test("the_release_image_web_vault_uses_this_releases_wasm", () => {

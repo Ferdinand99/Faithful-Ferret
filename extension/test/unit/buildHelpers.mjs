@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { sha256, UNLOCK_WASM_EXPORTS, WASM_FILES } from "../../scripts/build.mjs";
+import { PASSKEY_WASM_EXPORTS, sha256, UNLOCK_WASM_EXPORTS, WASM_FILES } from "../../scripts/build.mjs";
 
 /** The real extension folder. */
 export const extensionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -80,24 +80,31 @@ export const WITHOUT_SHARED_IMPORTS = Object.freeze({
   "src/background/session.mjs": "export {};\n",
   "src/background/pinSession.mjs": "export {};\n",
   "src/background/sync.mjs": "export {};\n",
+  "src/background/passkeyWrite.mjs": "export {};\n",
+  "src/pages/passkey.mjs": "export {};\n",
+  "src/pages/passkeyChooser.mjs": "export {};\n",
+  "src/pages/passkeyVerify.mjs": "export {};\n",
+  "src/pages/popupPasskeys.mjs": "export {};\n",
 });
 
 /**
  * The files of a fake WASM package. With `unlock` (the default) the stand-ins hold what the build looks for in a package
- * that has the functions the unlock feature calls; without it they are a package from before the feature.
- * @param {{ unlock?: boolean }} [options]
+ * that has the functions the unlock feature calls, and with `passkeys` (the default) what the passkey provider calls; without
+ * either they are a package from before that feature (`unlock` without `passkeys` is the package of 0.11.0).
+ * @param {{ unlock?: boolean, passkeys?: boolean }} [options]
  * @returns {Record<string, string>}
  */
-export function wasmFiles({ unlock = true } = {}) {
-  return Object.fromEntries(WASM_FILES.map((p) => [p, `// fake ${p}\n${unlock ? standInFor(p) : ""}`]));
+export function wasmFiles({ unlock = true, passkeys = true } = {}) {
+  return Object.fromEntries(WASM_FILES.map((p) => [p, `// fake ${p}\n${unlock ? standInFor(p, UNLOCK_WASM_EXPORTS) : ""}${passkeys ? standInFor(p, PASSKEY_WASM_EXPORTS) : ""}`]));
 }
 
 /**
  * A function or a method of each name that the build looks for in a file of the package (a constant in the client).
  * @param {string} path
+ * @param {Readonly<Record<string, readonly string[]>>} table
  */
-function standInFor(path) {
-  const names = /** @type {Record<string, readonly string[]>} */ (UNLOCK_WASM_EXPORTS)[path] ?? [];
+function standInFor(path, table) {
+  const names = table[path] ?? [];
   return names.map((name) => (path.endsWith("client.mjs") ? `const ${name} = async () => {};\n` : `export function ${name}() {}\n`)).join("");
 }
 

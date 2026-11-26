@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { get } from "node:https";
 import { test } from "node:test";
-import { build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, readInternalHosts, releaseProblems, SAVE_FILES, TEST_ID, UNLOCK_FILES, UPDATE_URL } from "../../scripts/build.mjs";
+import { build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, readInternalHosts, isTestOnlyPath, PASSKEY_FILES, releaseProblems, SAVE_FILES, TEST_ID, UNLOCK_FILES, UPDATE_URL } from "../../scripts/build.mjs";
 import { startFixtures } from "../firefox/fixtures-server.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -137,8 +137,8 @@ test("test_only_ids_are_the_ones_the_variant_and_the_release_check_use", async (
   // A release package that names any of them is refused, a test build is not a release.
   for (const id of [FIXED_UUID, TEST_COMMAND_ID, TEST_MENU_ITEM_ID]) {
     const files = new Map([
-      [FEATURES_FILE, Buffer.from(featuresModule(["save", "unlock"], new Map()))],
-      ...[...SAVE_FILES, ...UNLOCK_FILES].map((path) => /** @type {[string, Buffer]} */ ([path, Buffer.from("void 0;")])),
+      [FEATURES_FILE, Buffer.from(featuresModule(["save", "unlock", "passkeys"], new Map()))],
+      ...[...SAVE_FILES, ...UNLOCK_FILES, ...PASSKEY_FILES.filter((path) => !isTestOnlyPath(path))].map((path) => /** @type {[string, Buffer]} */ ([path, Buffer.from("void 0;")])),
       ["manifest.json", Buffer.from(JSON.stringify({ name: "Faithful Ferret", manifest_version: 3, content_security_policy: { extension_pages: EXTENSION_CSP }, browser_specific_settings: { gecko: { id: "ferret@hedgerow.tools", update_url: UPDATE_URL } } }))],
       ["pages/leak.mjs", Buffer.from(`export const id = "${id}";
 `)],

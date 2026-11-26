@@ -9,9 +9,8 @@
 // --features names the features that are on, separated by commas ("none" for
 // none); without it a variant has its own default (DEFAULT_FEATURES). The
 // features are `save` (saving and updating passwords from the extension and the
-// password generator) and `unlock` (PIN and passkey unlock), both on in a release
-// and in the test variant, and `passkeys` (Ferret as a passkey provider on web pages), on in the test variant only
-// until it is released. The
+// password generator), `unlock` (PIN and passkey unlock) and `passkeys` (Ferret as a
+// passkey provider on web pages), all on in a release and in the test variant. The
 // build writes shared/features.mjs with the result, and the release check
 // refuses a release package with a feature on that a release does not have
 // (RELEASE_FEATURES), with a feature off that it must have, without that file, or
@@ -101,18 +100,19 @@ export const TEST_ID = "ferret-test@hedgerow.tools";
  * path of the feature in the package (the only trace is the deletion of the unlock database at start, so that a blob left
  * by an older build is removed).
  * `passkeys`: Ferret as a passkey provider on web pages (the MAIN-world script and its bridge, the chooser window, the
- * handlers, the popup's passkey section). It is on in the test variant only, until it is released; a release has it off,
- * and a package with it off holds no path of the feature. The only traces are the removal of a script registration that
- * an older build may have left (background/passkeyCleanup.mjs, which names the script ids for that and nothing else).
+ * handlers, the popup's passkey section). A release has it on, and so has the test variant; a test build can turn it off
+ * (`--features save,unlock`) to prove that a package with it off holds no path of the feature. The only traces are the
+ * removal of a script registration that a build with it on may have left (background/passkeyCleanup.mjs, which names the
+ * script ids for that and nothing else).
  */
 export const FEATURES = Object.freeze(["save", "unlock", "passkeys"]);
 /** The features each variant has on when --features does not say. */
 export const DEFAULT_FEATURES = Object.freeze({
-  release: Object.freeze(["save", "unlock"]),
+  release: Object.freeze(["save", "unlock", "passkeys"]),
   test: Object.freeze(["save", "unlock", "passkeys"]),
 });
 /** The features a release package has on, no more and no fewer: the release check refuses any other set. */
-export const RELEASE_FEATURES = Object.freeze(["save", "unlock"]);
+export const RELEASE_FEATURES = Object.freeze(["save", "unlock", "passkeys"]);
 /** The generated module that tells the code of a package which features are on. */
 export const FEATURES_FILE = "shared/features.mjs";
 /**
@@ -135,8 +135,8 @@ export const UNLOCK_FILES = Object.freeze(["pages/unlockWindow.html", "pages/unl
  * The package files of the `passkeys` feature: the MAIN-world script and the bridge of the isolated world (each as a
  * joined classic script and as the module it is joined from), the answer objects, the chooser window, and the modules of
  * the background and the pages that only the feature uses. A package with `passkeys` off never holds one (the build leaves
- * them out), and a release never has them until the feature is released (the release check refuses any of them while
- * RELEASE_FEATURES lacks `passkeys`). No file that stays in a package may import one of them by name: the build refuses a
+ * them out), and a release has them all, except the page below a folder named test-only (the test stand-in of the chooser
+ * window, which a release leaves out like any test-only file). No file that stays in a package may import one of them by name: the build refuses a
  * package with a dangling import. The handlers of the feature stay in the package and refuse when it is off. A change that
  * adds a file of the feature adds it here (test/unit/features.test.mjs reads this list, and its guard finds a file of the
  * feature that is missing from it). Code that stays in every package reaches the feature's modules only through the
@@ -207,6 +207,18 @@ export const UNLOCK_WASM_EXPORTS = Object.freeze({
   "js/client.mjs": Object.freeze(["pinWrap"]),
 });
 
+/**
+ * What the code of the `passkeys` feature calls in the WASM package, by file: a release that has the feature on is built only
+ * from a package that has all of it (a package from before the feature lacks the candidate lookup, the site check and the
+ * import, and every passkey request in a build made with it would fail at run time). `pkg-web/ferret_core_wasm.js` has the
+ * vault's methods; the worker protocol of `js/protocol.mjs` names `passkey_site` and `passkey_import` as methods it lets
+ * through (as keys of its tables).
+ */
+export const PASSKEY_WASM_EXPORTS = Object.freeze({
+  "pkg-web/ferret_core_wasm.js": Object.freeze(["passkey_candidates", "passkey_create", "passkey_create_abort", "passkey_create_confirm", "passkey_get", "passkey_import", "passkey_site"]),
+  "js/protocol.mjs": Object.freeze(["passkey_import", "passkey_site"]),
+});
+
 /** The build refused the WASM package: it lacks what the feature needs. Exit status 3, so that a caller can tell it from any other failure. */
 export class WasmLacksUnlockError extends Error {
   /** @param {string} message */
@@ -217,22 +229,53 @@ export class WasmLacksUnlockError extends Error {
   }
 }
 
+/** The same refusal for the `passkeys` feature (status 3 as well, so that release-build.sh treats both alike). */
+export class WasmLacksPasskeysError extends WasmLacksUnlockError {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = "WasmLacksPasskeysError";
+  }
+}
+
+/**
+ * The names in a table (by file) that a WASM package does not have.
+ * @param {Map<string, Uint8Array>} tar the files of the package
+ * @param {Readonly<Record<string, readonly string[]>>} table the names each file must have
+ * @param {boolean} [keys] also accept a name used as an object key (`name:`), as the worker protocol tables do
+ * @returns {string[]} `<file>: <name>` for each missing one
+ */
+function wasmMissing(tar, table, keys = false) {
+  /** @type {string[]} */
+  const missing = [];
+  for (const [file, names] of Object.entries(table)) {
+    const text = tar.has(file) ? Buffer.from(/** @type {Uint8Array} */ (tar.get(file))).toString("utf8") : "";
+    for (const name of names) {
+      // A function declaration, a method (a name at the start of a line, then its parameters) or a constant; for the
+      // passkeys table also a key of an object literal at the start of a line.
+      const key = keys ? String.raw`|^[ \t]*["']?${name}["']?\s*:` : "";
+      if (!new RegExp(String.raw`function\s+${name}\s*\(|^[ \t]*(?:async\s+)?${name}\s*\(|\b${name}\s*=${key}`, "m").test(text)) missing.push(`${file}: ${name}`);
+    }
+  }
+  return missing;
+}
+
 /**
  * The names of UNLOCK_WASM_EXPORTS that a WASM package does not have.
  * @param {Map<string, Uint8Array>} tar the files of the package
  * @returns {string[]} `<file>: <name>` for each missing one
  */
 export function wasmUnlockProblems(tar) {
-  /** @type {string[]} */
-  const missing = [];
-  for (const [file, names] of Object.entries(UNLOCK_WASM_EXPORTS)) {
-    const text = tar.has(file) ? Buffer.from(/** @type {Uint8Array} */ (tar.get(file))).toString("utf8") : "";
-    for (const name of names) {
-      // A function declaration, a method (a name at the start of a line, then its parameters) or a constant.
-      if (!new RegExp(String.raw`function\s+${name}\s*\(|^[ \t]*(?:async\s+)?${name}\s*\(|\b${name}\s*=`, "m").test(text)) missing.push(`${file}: ${name}`);
-    }
-  }
-  return missing;
+  return wasmMissing(tar, UNLOCK_WASM_EXPORTS);
+}
+
+/**
+ * The names of PASSKEY_WASM_EXPORTS that a WASM package does not have.
+ * @param {Map<string, Uint8Array>} tar the files of the package
+ * @returns {string[]} `<file>: <name>` for each missing one
+ */
+export function wasmPasskeyProblems(tar) {
+  return wasmMissing(tar, PASSKEY_WASM_EXPORTS, true);
 }
 
 /** Where the WASM package can come from (see the top of this file). */
@@ -1107,7 +1150,8 @@ export function featureProblems(files) {
   }
   // A release without `passkeys` holds no way to act as a passkey provider: no script registered in the page's own world, no
   // override of the browser's credential functions, and the ids of the feature's scripts only in the module that removes
-  // a registration an older build left.
+  // a registration an older build left. This holds only while RELEASE_FEATURES lacks `passkeys`; with the feature in a release
+  // (since the U4 gate) the rule does not apply, and the flag-off variants are test builds that the release check never reads.
   if (!RELEASE_FEATURES.includes("passkeys")) {
     for (const [path, bytes] of files) {
       if (!/\.(?:mjs|js|html)$/.test(path) || WASM_FILES.includes(path)) continue;
@@ -1126,12 +1170,27 @@ export function featureProblems(files) {
   for (const [name, paths] of Object.entries(FEATURE_FILES)) {
     if (RELEASE_FEATURES.includes(name)) {
       for (const path of paths) {
+        // A page below a test-only folder is the test variant's stand-in: a release leaves it out and may not hold it.
+        if (isTestOnlyPath(path)) continue;
         if (!files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release has on, and is missing`);
       }
     } else {
       for (const path of paths) {
         if (files.has(path)) problems.push(`${path}: belongs to the ${name} feature, which a release may not have`);
       }
+    }
+  }
+  // The WASM files the package ships must have what the features it has on call: the build refuses an older package, and the
+  // release check says the same of a finished package that was made some other way (the lock is moved before a release is signed).
+  if (files.has("pkg-web/ferret_core_wasm.js")) {
+    const wasm = new Map([...files].filter(([path]) => WASM_FILES.includes(path)));
+    if (RELEASE_FEATURES.includes("unlock")) {
+      const lacking = wasmUnlockProblems(wasm);
+      if (lacking.length > 0) problems.push(`wasm package: the package lacks what the unlock feature calls (${lacking.join(", ")})`);
+    }
+    if (RELEASE_FEATURES.includes("passkeys")) {
+      const lacking = wasmPasskeyProblems(wasm);
+      if (lacking.length > 0) problems.push(`wasm package: the package lacks what the passkeys feature calls (${lacking.join(", ")})`);
     }
   }
   return problems;
@@ -1252,6 +1311,13 @@ export async function build({
     const lacking = wasmUnlockProblems(tar);
     if (lacking.length > 0) {
       throw new WasmLacksUnlockError(`wasm package: a release with the unlock feature on needs a package that has what it calls, and this one (${record.source} ${record.version ?? record.commit}) lacks ${lacking.join(", ")}; move web/wasm.lock.json to a release that has them`);
+    }
+  }
+  // The same for `passkeys`: a package from before the passkey provider has no candidate lookup, no site check and no import.
+  if (variant === "release" && on.includes("passkeys")) {
+    const lacking = wasmPasskeyProblems(tar);
+    if (lacking.length > 0) {
+      throw new WasmLacksPasskeysError(`wasm package: a release with the passkeys feature on needs a package that has what it calls, and this one (${record.source} ${record.version ?? record.commit}) lacks ${lacking.join(", ")}; move web/wasm.lock.json to a release that has them`);
     }
   }
 
