@@ -34,11 +34,13 @@
   --placeholder: light-dark(#737378, #8a8a8f);
   --on-inverse: light-dark(#ffffff, #0b0b0d);
 
-  /* Brand: links, focus, selection */
-  --brand: light-dark(#6656e8, #8b7dff);
-  --brand-fill: light-dark(rgba(102, 86, 232, 0.1), rgba(139, 125, 255, 0.16));
-  --brand-ring: light-dark(rgba(102, 86, 232, 0.22), rgba(139, 125, 255, 0.32));
-  --brand-text: light-dark(#6656e8, #a99fff); /* brand-coloured text on a brand tint (a chosen chip, the current entry) */
+  /* Brand: links, focus, selection. The turquoise of the logo (#59d9c7): in the dark theme as it is, with dark text on
+     it; in the light theme a deep teal, because the logo's colour is 1.5:1 on white. Text on a fill of the brand colour
+     is --on-inverse. */
+  --brand: light-dark(#0b7467, #59d9c7);
+  --brand-fill: light-dark(rgba(11, 116, 103, 0.1), rgba(89, 217, 199, 0.16));
+  --brand-ring: light-dark(rgba(11, 116, 103, 0.22), rgba(89, 217, 199, 0.32));
+  --brand-text: light-dark(#0a6b5e, #7ae3d3); /* brand-coloured text on a brand tint (a chosen chip, the current entry) */
 
   /* Status: base for dots, -text for readable text, -fill for tints */
   --ok: light-dark(#34c759, #30d158);
@@ -121,6 +123,18 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+}
+
+/* The tick on a box that is filled with the brand colour: white on the deep teal of the light theme, dark on the
+   turquoise of the dark one (white on #59d9c7 is 1.6:1). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --i-tick: url(data:image/svg+xml,%3Csvg%20xmlns=%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27%230b0b0d%27%20stroke-width=%273%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M5%2012.5l4.5%204.5L19%207.5%27/%3E%3C/svg%3E);
+  }
+}
+
+:root[data-theme="dark"] {
+  --i-tick: url(data:image/svg+xml,%3Csvg%20xmlns=%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27%230b0b0d%27%20stroke-width=%273%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M5%2012.5l4.5%204.5L19%207.5%27/%3E%3C/svg%3E);
 }
 
 /* 2. Base */
@@ -585,7 +599,7 @@ input[type="checkbox"]:checked {
 
 input[type="radio"]:checked {
   border-color: var(--brand);
-  background: radial-gradient(circle, #fff 0 3.5px, var(--brand) 4px);
+  background: radial-gradient(circle, var(--on-inverse) 0 3.5px, var(--brand) 4px);
 }
 
 input[type="checkbox"]:focus-visible,

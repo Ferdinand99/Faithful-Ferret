@@ -1,0 +1,27 @@
+/* Faithful Ferret's brand colour on the admin pages, added after vole-kit's own
+   design-system sheets (see src/admin/brand.rs). The values are those of the web
+   vault (web/src/styles/base.css): the turquoise of the logo (#59d9c7) in the dark
+   theme, a deep teal in the light one, where the logo's colour is 1.5:1 on white.
+   Text on a fill of the brand colour is --on-inverse. */
+:root {
+  --brand: light-dark(#0b7467, #59d9c7);
+  --brand-fill: light-dark(rgba(11, 116, 103, 0.1), rgba(89, 217, 199, 0.16));
+  --brand-ring: light-dark(rgba(11, 116, 103, 0.22), rgba(89, 217, 199, 0.32));
+  --brand-text: light-dark(#0a6b5e, #7ae3d3);
+}
+
+/* The kit's ticked box and selected radio carry a white mark: right on the deep
+   teal, 1.6:1 on the turquoise of the dark theme. */
+input[type="radio"]:checked {
+  background: radial-gradient(circle, var(--on-inverse) 0 3.5px, var(--brand) 4px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) input[type="checkbox"]:not(.switch-input):checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b0b0d' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+  }
+}
+
+:root[data-theme="dark"] input[type="checkbox"]:not(.switch-input):checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b0b0d' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
