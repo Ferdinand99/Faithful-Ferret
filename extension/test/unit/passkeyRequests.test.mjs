@@ -791,6 +791,34 @@ test("a_check_of_the_pings_that_comes_late_after_a_sleep_waits_for_the_next_ping
   assert.equal(v.requests.size(), 0);
 });
 
+test("a_window_still_being_made_for_an_ended_request_keeps_the_one_window_place", async () => {
+  // The first request's window is asked for; the page aborts before the browser has made it.
+  /** @type {Array<(id: number) => void>} */
+  const making = [];
+  const closed = /** @type {number[]} */ ([]);
+  const w = world({
+    windows: {
+      open: () => new Promise((resolve) => making.push(resolve)),
+      close: async (/** @type {number} */ id) => void closed.push(id),
+    },
+  });
+  const first = w.requests.open(senderOf(), createBody("m1"));
+  await flush();
+  assert.equal(making.length, 1);
+  await w.requests.onEvent({ type: "passkey_abort", sender: senderOf(), body: { request_id: "m1" } });
+  // Another tab's request meanwhile gets the mark and the card, not a second window beside the one about to appear.
+  const second = /** @type {any} */ (await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), createBody("m2")));
+  assert.ok("request_id" in second);
+  assert.equal(making.length, 1, "no second window while the first is being made");
+  // The first window appears and is closed at once; then the waiting request can have the window (from its card).
+  making[0](201);
+  await first;
+  assert.deepEqual(closed, [201]);
+  void w.requests.show(7);
+  await flush();
+  assert.equal(making.length, 2);
+});
+
 test("an_empty_alg_list_is_answered_by_ferret", async () => {
   // WebAuthn reads an empty pubKeyCredParams as ES256 and RS256: Ferret answers.
   assert.equal(automaticHandover("create", createOptions({ pub_key_cred_params: [] }), "optional"), null);

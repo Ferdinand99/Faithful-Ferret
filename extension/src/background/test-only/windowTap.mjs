@@ -5,7 +5,7 @@
 //
 //   window_watch  { cmd: "reset" } starts the count again; { cmd: "read" } answers how many chooser windows were asked for since
 //                 (`opened`) and the most that were open at once (`most`, a window counts from the moment it is asked for until
-//                 the background removes it, which it does whenever its request ends). A reset forgets the windows open before it.
+//                 the background asks to remove it, which it does whenever its request ends). A reset forgets the windows open before it.
 //
 // It adds no listener (a listener of the browser's would wake a Manifest V3 event page and change what the lifetime
 // measurement sees).
@@ -44,12 +44,10 @@ export function createWindowTap() {
           count();
         }
       },
-      remove: async (id) => {
-        try {
-          await windows.remove(id);
-        } finally {
-          open.delete(id);
-        }
+      // A window counts as gone when the background asks to remove it.
+      remove: (id) => {
+        open.delete(id);
+        return windows.remove(id);
       },
     };
   };

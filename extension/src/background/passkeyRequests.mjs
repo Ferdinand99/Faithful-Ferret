@@ -524,8 +524,14 @@ export function createPasskeyRequests({
       }
     }
     if (windowHolder === req.id) {
-      windowHolder = null;
-      if (req.windowId !== null && windows !== null) windows.close(req.windowId).catch(() => {});
+      if (req.windowId !== null) {
+        windowHolder = null;
+        if (windows !== null) windows.close(req.windowId).catch(() => {});
+      } else if (req.state !== "window") {
+        windowHolder = null;
+      }
+      // Otherwise its window is still being made: it keeps the place until `showWindow` has closed it again, so a second window
+      // never opens beside one that is about to close.
     }
     if (unanswered && req.mediation !== "conditional") countEnded(req.sender.tabId);
     mark(req.sender.tabId);
