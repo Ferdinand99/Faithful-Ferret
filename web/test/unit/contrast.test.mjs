@@ -185,9 +185,22 @@ test("the_brand_is_the_logos_turquoise_in_the_dark_theme_and_a_darker_teal_in_th
   }
 });
 
-test("no_style_sheet_of_the_web_vault_still_paints_the_old_purple", () => {
-  const purple = /6656e8|8b7dff|a99fff|102,\s*86,\s*232|139,\s*125,\s*255/i;
-  for (const file of readdirSync(styles).filter((name) => name.endsWith(".css"))) {
-    assert.ok(!purple.test(readFileSync(join(styles, file), "utf8")), `${file} has no purple brand colour`);
+/** Every file of the web vault's source that can hold a colour. @param {string} dir @returns {string[]} */
+function sources(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === "locales" ? [] : sources(path);
+    return /\.(css|mjs|js|html|svg)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+test("nothing_in_the_web_vault_paints_the_old_purple_or_any_purple", () => {
+  const purple = /6656e8|8b7dff|a99fff|c7c0ff|7c3aed|8b5cf6|a78bfa|6d28d9|5b21b6|102,\s*86,\s*232|139,\s*125,\s*255|\b(purple|violet|indigo|lavender)\b/i;
+  const all = sources(join(styles, ".."));
+  assert.ok(all.some((file) => file.endsWith("passkey.css")), "the passkey styles are among the files that are read");
+  for (const file of all) {
+    // The word lists of the generator hold the words "purple" and "violet"; they are not colours.
+    if (/word/i.test(file)) continue;
+    assert.ok(!purple.test(readFileSync(file, "utf8")), `${file} has no purple`);
   }
 });

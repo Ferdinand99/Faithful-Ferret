@@ -73,11 +73,19 @@ for (const theme of /** @type {const} */ (["light", "dark"])) {
   });
 }
 
-test("no_style_sheet_of_the_extension_paints_the_old_purple", () => {
-  const purple = /6656e8|8b7dff|a99fff|102,\s*86,\s*232|139,\s*125,\s*255/i;
-  for (const file of readdirSync(styles).filter((name) => name.endsWith(".css"))) {
-    assert.ok(!purple.test(readFileSync(join(styles, file), "utf8")), `${file} has no purple`);
-  }
-  const badge = readFileSync(join(styles, "..", "background", "badge.mjs"), "utf8");
-  assert.ok(!purple.test(badge), "the toolbar badge has no purple");
+/** Every style sheet, page, script and image of the extension's source, but not the texts. @param {string} dir @returns {string[]} */
+function sources(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === "locales" ? [] : sources(path);
+    return /\.(css|mjs|js|html|svg)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+test("nothing_in_the_extension_paints_the_old_purple_or_any_purple", () => {
+  // The old brand colours, and the purples a new screen would reach for (the passkey chooser, the popup's passkey part).
+  const purple = /6656e8|8b7dff|a99fff|c7c0ff|7c3aed|8b5cf6|a78bfa|6d28d9|5b21b6|102,\s*86,\s*232|139,\s*125,\s*255|\b(purple|violet|indigo|lavender)\b/i;
+  const all = sources(join(styles, ".."));
+  assert.ok(all.some((file) => file.endsWith("passkeys.css")), "the passkey styles are among the files that are read");
+  for (const file of all) assert.ok(!purple.test(readFileSync(file, "utf8")), `${file} has no purple`);
 });
