@@ -230,6 +230,20 @@
       "type": "array",
       "description": "what the runner does besides the click, for cases with needs provider: [{ do: ... }]"
     },
+    "manifests": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "mv2",
+          "mv3"
+        ]
+      },
+      "description": "the manifests the case applies to (all when absent); in another one it is listed as not applicable"
+    },
+    "hand": {
+      "type": "string",
+      "description": "demo cases only: the site is checked by hand, and why"
+    },
     "note": {
       "type": "string"
     }

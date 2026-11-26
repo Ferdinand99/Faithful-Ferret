@@ -32,7 +32,7 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "ok",
+    "ceremony": "server-refused",
     "route": "browser",
     "maxWindows": 0
   },
@@ -42,5 +42,5 @@
       "definition": "Ferret answering for user.github.io while its top is evil.github.io (separate sites under the public suffix)"
     }
   ],
-  "note": "L3 §5.1.3/§5.1.4.1: delegated cross-origin ceremonies are valid (crossOrigin=true, topOrigin evil.github.io); a provider must not treat same-\"github.io\" as same-site (PSL) and should leave it to the browser."
+  "note": "L3 §5.1.3/§5.1.4.1: delegated cross-origin ceremonies are valid (crossOrigin=true, topOrigin evil.github.io); a provider must not treat same-\"github.io\" as same-site (PSL) and should leave it to the browser. Changed after review U4-13: the browser path (no Ferret window) is the right one; the fixture relying parties refuse a cross-origin ceremony by design (webauthn-rs refuses crossOrigin true, SimpleWebAuthn needs an expected top origin), so ok cannot be reached with them. (Before: {\"ceremony\":\"ok\",\"route\":\"browser\",\"maxWindows\":0}.)"
 }

@@ -26,6 +26,7 @@ import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.
 import { createScenarios } from "./measureScenario.mjs";
 import { createItemImportProbe } from "./itemImportProbe.mjs";
 import { createWriteProbe } from "./writeProbe.mjs";
+import { createLeakTap } from "./leakTap.mjs";
 
 // The offers of the test build, for the sync (main.mjs passes them as its `captures`).
 export { captures };
@@ -188,6 +189,9 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args), items: () => engine()?.list() ?? [] }).ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);
   coreHost.addOps(createItemImportProbe({ engine, api: () => (engine() !== null ? madeApi : null), now }).ops);
+  // The message side of the passkey leak scan (every port message and runtime message of the background, once started).
+  const leakTap = createLeakTap();
+  coreHost.addOps(leakTap.ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());
   const storageLocal = browser.storage.local;
@@ -256,6 +260,7 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   };
 
   browser.runtime.onConnect.addListener((/** @type {any} */ port) => {
+    leakTap.tapPort(port);
     if (port?.name === TEST_CORE_PORT || port?.name === fillProbe.FILL_PROBE_PORT) {
       onConnect(port, { runtime, coreHost });
       return;
@@ -295,6 +300,7 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   // What a content script's message looks like to the background (the browser's
   // facts about the sender). Anything but this one probe is left to the router.
   browser.runtime.onMessage.addListener((/** @type {any} */ message, /** @type {any} */ sender) => {
+    leakTap.tapMessage(message);
     if (message?.ferretProbe !== "sender") return undefined;
     return Promise.resolve({ sender: describeSender(sender), contentSender: contentSender(sender, runtime) });
   });

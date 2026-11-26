@@ -2,7 +2,7 @@
   "id": "background-unloaded-under-request",
   "set": "fixtures",
   "category": "background",
-  "title": "the MV3 event page is unloaded while a request waits: it fails closed or is kept alive",
+  "title": "the MV3 event page is unloaded while a request waits: it fails closed",
   "rp": {
     "lib": "rs",
     "client": "manual"
@@ -33,8 +33,9 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "none",
-    "route": "ferret"
+    "ceremony": "client-error",
+    "route": "ferret",
+    "error": "NotAllowedError"
   },
   "unsafe": [
     {
@@ -47,6 +48,7 @@
     }
   ],
   "needs": "provider",
+  "waitMs": 40000,
   "actions": [
     {
       "do": "start-create"
@@ -54,5 +56,9 @@
     {
       "do": "terminate-background"
     }
-  ]
+  ],
+  "manifests": [
+    "mv3"
+  ],
+  "note": "Changed after review U4-13: an unloaded event page loses its requests and the bridge's next ping ends them with NotAllowedError (fails closed); not applicable on MV2, whose background page is persistent (the MV2 dead-bridge path is covered by 77-passkey-bridge)."
 }

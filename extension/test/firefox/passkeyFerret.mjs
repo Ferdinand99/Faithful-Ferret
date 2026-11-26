@@ -53,12 +53,14 @@ export async function core(session, op, args = {}) {
 }
 
 /**
- * In the relying party's page: a new P-256 key, registered at the relying party `lib` with an attestation of the kind "none"
- * (BE and BS set, as Ferret's passkeys have them). Gives what the vault's import needs.
+ * In the relying party's page: a new P-256 key (or the one given as PKCS #8, base64url: the leak scan's sentinel), registered at the
+ * relying party `lib` with an attestation of the kind "none" (BE and BS set, as Ferret's passkeys have them). Gives what the vault's
+ * import needs.
  * @param {import("./driver.mjs").Session} session @param {string} lib @param {string} rpIdOf the RP ID @param {string} name
+ * @param {string} [givenPkcs8]
  */
-export async function registerTestKey(session, lib, rpIdOf, name) {
-  return session.content(async (/** @type {string} */ libName, /** @type {string} */ rpId, /** @type {string} */ userName) => {
+export async function registerTestKey(session, lib, rpIdOf, name, givenPkcs8 = "") {
+  return session.content(async (/** @type {string} */ libName, /** @type {string} */ rpId, /** @type {string} */ userName, /** @type {string} */ given) => {
     const b64u = (/** @type {ArrayBuffer | Uint8Array} */ buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const fromB64u = (/** @type {string} */ s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
     const post = async (/** @type {string} */ path, /** @type {unknown} */ body) =>
@@ -82,9 +84,12 @@ export async function registerTestKey(session, lib, rpIdOf, name) {
     const start = await post(`/api/${libName}/register/start`, { sid, rpId, user: { name: userName, displayName: userName }, userVerification: "preferred", residentKey: "required", attestation: "none" });
     if (!start.ok) return { ok: false, stage: "start", error: String(start.error) };
     const options = start.options;
-    const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-    const jwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
-    const pkcs8 = await crypto.subtle.exportKey("pkcs8", keys.privateKey);
+    const privateKey = given !== ""
+      ? await crypto.subtle.importKey("pkcs8", fromB64u(given), { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"])
+      : (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])).privateKey;
+    // The private key's JWK carries the public point too.
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const pkcs8 = given !== "" ? fromB64u(given) : await crypto.subtle.exportKey("pkcs8", privateKey);
     const credId = crypto.getRandomValues(new Uint8Array(32));
     const cose = new Map([[1, 2], [3, -7], [-1, 1], [-2, fromB64u(/** @type {string} */ (jwk.x))], [-3, fromB64u(/** @type {string} */ (jwk.y))]]);
     const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
@@ -104,7 +109,7 @@ export async function registerTestKey(session, lib, rpIdOf, name) {
     const finish = await post(`/api/${libName}/register/finish`, { sid, credential });
     if (!finish.ok) return { ok: false, stage: "finish", error: String(finish.error) };
     return { ok: true, sid, cred_id: b64u(credId), user_handle: options.user.id, key_pkcs8: b64u(pkcs8) };
-  }, lib, rpIdOf, name);
+  }, lib, rpIdOf, name, givenPkcs8);
 }
 
 /** The window of the broker: its handle once it is there. @param {import("./driver.mjs").Session} session @param {Set<string>} known */

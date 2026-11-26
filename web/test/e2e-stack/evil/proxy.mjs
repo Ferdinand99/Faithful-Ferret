@@ -179,6 +179,17 @@ export function createProxy({ upstreamVault, upstreamAdmin, now = Date.now, rand
       if (!res.headersSent) sendJson(res, 413, { error: "too_large" });
       return;
     }
+    if (kind === "put_item" && active.mode === "drop_put_answer" && active.params.count > 0) {
+      // The write reaches the real server and is kept there; its answer is read to the end and dropped on the way back, so the
+      // client sees a broken connection and cannot know whether the write was taken.
+      active.params.count -= 1;
+      log("mode drop_put_answer: dropped the answer to an item write");
+      return forward(upstreamVault, req, res, body, (answer) => {
+        answer.resume();
+        answer.on("end", () => res.destroy());
+        answer.on("error", () => res.destroy());
+      });
+    }
     if (kind === "put_checkpoint") {
       // A forked session's checkpoint stays in its own branch and is not sent on.
       const kept = interceptCheckpointPut(active, { sid }, parseJson(body));

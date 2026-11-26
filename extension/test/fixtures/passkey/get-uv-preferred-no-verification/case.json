@@ -4,7 +4,7 @@
   "category": "get-modal",
   "title": "userVerification preferred, no unlock in five minutes and no PIN or PRF: the answer has UV = 0 and a click is all it takes",
   "rp": {
-    "lib": "rs",
+    "lib": "swa",
     "client": "manual"
   },
   "page": {
@@ -52,8 +52,14 @@
   "needs": "provider",
   "actions": [
     {
-      "do": "age-unlock",
-      "minutes": 6
+      "do": "create-online"
+    },
+    {
+      "do": "go-offline"
+    },
+    {
+      "do": "age-offline",
+      "days": 8
     },
     {
       "do": "start-get"
@@ -62,5 +68,5 @@
       "do": "choose-in-window"
     }
   ],
-  "note": "The only case that sees UV = 1 without a verification from outside."
+  "note": "The only case that sees UV = 1 without a verification from outside. Changed after review U4-13: SimpleWebAuthn instead of webauthn-rs, which refuses UV = 0 for a passkey registered with UV (the strict-RP note of UK107); the steps say what \"no possible verification\" is: no server, the PIN's last contact more than seven days ago, no recent unlock."
 }

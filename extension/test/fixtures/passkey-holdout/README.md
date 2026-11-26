@@ -95,3 +95,14 @@ These conventions need to be mapped onto `test/passkey-rp/pages/lib.mjs`. The au
 - `{"$omit": true}`: removes that member from the page's defaults.
 - `abort`: `{when: "before"}` aborts the signal before the call. `{step, afterMs, reason}` aborts later. `reason: {"$error": "TypeError"}` means `new TypeError(...)`.
 - `navigate`, `removeFrame`, `switch`, `concurrent` and `report` are lifecycle actions. Each case's title and note describe them. `__page` names an adversarial page, which may still have to be written.
+
+## Changed after review
+
+A reviewer may change an expected outcome of this set; each change is recorded here and in the case's `note`. Changed after review U4-13:
+
+- `ho-rpid-uppercase-rpid`: expected {"ceremony":"client-error","error":"SecurityError","failStep":"create","route":"any","maxWindows":0} (was {"ceremony":"server-refused","failStep":"create","route":"any"}). Firefox's own answer is SecurityError, before any window (the note already allowed it as safe); Ferret refuses the same way.
+- `ho-frame-nested-create-both-allow`: expected {"ceremony":"none","route":"any","maxWindows":0} (was {"ceremony":"ok","route":"browser","maxWindows":0}). Firefox itself never answers a delegated cross-origin create in a nested chain; the safety check is no Ferret window (maxWindows 0 and the foreign-ancestor check, which runs for route any).
+- `ho-nav-frame-removed-mid-create`: expected {"ceremony":"none","route":"any","maxWindows":1} (was {"ceremony":"none","route":"none","maxWindows":1}). the one allowed window counts as a Ferret route in the runner; what matters is that nothing is delivered and the window closes, which the runner checks (a window still open, or a new item in the vault, fails the case).
+- `ho-advframe-github-sibling-frames`: expected {"ceremony":"server-refused","route":"browser","maxWindows":0} (was {"ceremony":"ok","route":"browser","maxWindows":0}). the browser path (no Ferret window) is the right one; the fixture relying parties refuse a cross-origin ceremony by design (webauthn-rs refuses crossOrigin true, SimpleWebAuthn needs an expected top origin), so ok cannot be reached with them.
+- `ho-advvault-framed-by-rp`: expected {"ceremony":"server-refused","route":"browser","maxWindows":0} (was {"ceremony":"ok","route":"browser","maxWindows":0}). the browser path (no Ferret window) is the right one; the fixture relying parties refuse a cross-origin ceremony by design, so ok cannot be reached with them.
+- `ho-frame-attacker-top-frames-rp`: expected {"ceremony":"server-refused","route":"browser","maxWindows":0} (was {"ceremony":"ok","route":"browser","maxWindows":0}). the browser path (no Ferret window) is the right one; the fixture relying parties refuse a cross-origin ceremony by design, so ok cannot be reached with them.

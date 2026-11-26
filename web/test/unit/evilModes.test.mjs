@@ -537,6 +537,23 @@ describe("evil modes", () => {
     assert.equal((await r.get("/api/sync/checkpoint")).seq, 1, "the checkpoint itself is still served");
   });
 
+  it("drop_put_answer_lets_the_write_reach_the_server_and_drops_its_answer_once", async () => {
+    const r = await rig();
+    after(() => r.close());
+    await r.mode("drop_put_answer");
+    const sent = live(0, 1);
+    // The answer never comes: the connection is broken after the real server kept the write.
+    await assert.rejects(call(r.ports.vault, "PUT", `/api/sync/items/${A}`, { headers: { "content-type": "application/json", ...cookie(SID_A) }, body: JSON.stringify(sent) }));
+    assert.equal(r.vault.state.rows.get(A)?.rev, 1, "the real server has the write");
+    assert.deepEqual(r.proxy.mode(), { mode: "drop_put_answer", params: { count: 0 } });
+    // The next write is answered as the real server answers it (here the same write again: a conflict that shows it).
+    const again = await call(r.ports.vault, "PUT", `/api/sync/items/${A}`, { headers: { "content-type": "application/json", ...cookie(SID_A) }, body: JSON.stringify(sent) });
+    assert.equal(again.status, 409);
+    assert.equal(JSON.parse(again.body.toString("utf8")).blob, sent.blob);
+    // Reads are not touched.
+    assert.equal((await r.get("/api/sync/changes?since=0")).changes.length, 1);
+  });
+
   it("every_mode_passes_restore_seq_through_on_changes_and_items", async () => {
     const r = await rig();
     after(() => r.close());
@@ -556,6 +573,7 @@ describe("evil modes", () => {
       ["fork", { sid: SID_A }],
       ["forge_checkpoint", {}],
       ["drop_checkpoint_head", {}],
+      ["drop_put_answer", {}],
     ];
     for (const [mode, params] of modes) {
       await r.mode(/** @type {string} */ (mode), /** @type {object} */ (params));
@@ -772,6 +790,8 @@ describe("evil modes", () => {
       { mode: "gone", other: 1 },
       { mode: "fork", sid: "short" },
       { mode: "forge_checkpoint", field: "digest" },
+      { mode: "drop_put_answer", count: 0 },
+      { mode: "drop_put_answer", other: 1 },
     ]) {
       assert.throws(() => parseMode(bad), ModeError, JSON.stringify(bad));
     }

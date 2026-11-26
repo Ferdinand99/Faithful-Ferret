@@ -42,7 +42,7 @@ const cases = [];
  * @param {{
  *   set?: string, lib?: string, client?: string, chain?: string[], kinds?: string[], allow?: string[], scheme?: string, path?: string,
  *   spec?: any, create?: any, get?: any, gesture?: string, expected?: any, stub?: any, unsafe?: any[], needs?: string,
- *   waitMs?: number, actions?: any[], note?: string,
+ *   waitMs?: number, actions?: any[], note?: string, manifests?: string[],
  * }} o
  */
 function add(id, category, title, o) {
@@ -62,6 +62,7 @@ function add(id, category, title, o) {
     ...(o.needs ? { needs: o.needs } : {}),
     ...(o.waitMs ? { waitMs: o.waitMs } : {}),
     ...(o.actions ? { actions: o.actions } : {}),
+    ...(o.manifests ? { manifests: o.manifests } : {}),
     ...(o.note ? { note: o.note } : {}),
   };
   cases.push(c);
@@ -122,7 +123,7 @@ add("get-allow-empty", "get-modal", "allowCredentials empty: a discoverable requ
 add("get-allow-foreign-only", "get-modal", "allowCredentials names only ids Ferret does not hold: the window still opens (UK113)", { spec: { steps: ["get"] }, get: { allow: "unknown", timeout: 3000 }, expected: { ceremony: "none", route: "ferret" }, needs: "provider", unsafe: [U.err, U.frame], waitMs: 8000 });
 for (const uv of ["required", "preferred", "discouraged"]) add(`get-uv-${uv}`, "get-modal", `get with userVerification ${uv}`, { lib: uv === "discouraged" ? "swa" : "rs", create: { userVerification: "preferred" }, get: { userVerification: uv }, expected: uv === "required" ? { flags: { uv: true } } : {} });
 add("get-uv-discouraged-strict", "get-modal", "a strict relying party refuses a sign-in without UV for a passkey made with UV; with a recent unlock Ferret's answer has UV and is accepted", { create: { userVerification: "preferred" }, get: { userVerification: "discouraged" }, stub: { ceremony: "server-refused" }, unsafe: [U.uv], note: "webauthn-rs checks the UV flag against the UV of the registration (UserNotVerified). The virtual authenticator does not verify when the request does not ask; Ferret's UV after a recent unlock (UK107) is what makes this pass." });
-add("get-uv-preferred-no-verification", "get-modal", "userVerification preferred, no unlock in five minutes and no PIN or PRF: the answer has UV = 0 and a click is all it takes", { create: { userVerification: "preferred" }, get: { userVerification: "preferred" }, needs: "provider", actions: [{ do: "age-unlock", minutes: 6 }, { do: "start-get" }, { do: "choose-in-window" }], expected: { flags: { uv: false } }, unsafe: [U.uv, U.up], note: "The only case that sees UV = 1 without a verification from outside." });
+add("get-uv-preferred-no-verification", "get-modal", "userVerification preferred, no unlock in five minutes and no PIN or PRF: the answer has UV = 0 and a click is all it takes", { lib: "swa", create: { userVerification: "preferred" }, get: { userVerification: "preferred" }, needs: "provider", actions: [{ do: "create-online" }, { do: "go-offline" }, { do: "age-offline", days: 8 }, { do: "start-get" }, { do: "choose-in-window" }], expected: { flags: { uv: false } }, unsafe: [U.uv, U.up], note: "The only case that sees UV = 1 without a verification from outside. Changed after review U4-13: SimpleWebAuthn instead of webauthn-rs, which refuses UV = 0 for a passkey registered with UV (the strict-RP note of UK107); the steps say what \"no possible verification\" is: no server, the PIN's last contact more than seven days ago, no recent unlock." });
 add("get-timeout-long", "get-modal", "a long timeout (ten minutes): Ferret's window waits and the page's own abort still ends it with AbortError", { spec: { steps: ["get"] }, get: { allow: "unknown", timeout: 600000, abortAfterMs: 5000 }, expected: { ceremony: "client-error", error: "AbortError", route: "any" }, stub: { ceremony: "client-error", error: "NotAllowedError" }, unsafe: [U.err], waitMs: 20000, note: "The browser path ends a request with nothing to offer at once (NotAllowedError); in Ferret's window it waits and the page's abort ends it." });
 add("get-timeout-short", "get-modal", "a short timeout that nobody answers: NotAllowedError, no earlier than a person could have answered", { spec: { steps: ["get"] }, get: { allow: "unknown", timeout: 3000 }, expected: { ceremony: "client-error", error: "NotAllowedError", route: "any" }, unsafe: [U.err], waitMs: 60000 });
 add("get-abort-signal", "get-modal", "the page's AbortSignal ends the request: AbortError", { spec: { steps: ["get"] }, get: { allow: "none", mediation: "conditional", abortAfterMs: 500 }, expected: { ceremony: "client-error", error: "AbortError", route: "any" }, unsafe: [U.err], waitMs: 10000, note: "A conditional request waits until the page aborts it; a modal one with nothing to offer ends at once in the browser." });
@@ -169,7 +170,7 @@ add("frame-blank", "frames", "an about:blank frame the page writes with document
 add("nav-new-document", "navigation", "the page loads a new document while the request waits: the request ends", { spec: { steps: ["get"] }, needs: "provider", actions: [{ do: "start-waiting-get" }, { do: "navigate", url: "https://rp-a.test/" }], expected: { ceremony: "none", route: "ferret" }, unsafe: [U.frame, U.uv] });
 add("nav-pushstate", "navigation", "pushState while the request waits: the request stays and answers the same document", { spec: { steps: ["create"] }, needs: "provider", actions: [{ do: "start-waiting-create" }, { do: "pushState", path: "/after" }, { do: "choose-in-window" }], unsafe: [U.frame, U.uv, U.up] });
 add("nav-tab-closed", "navigation", "the tab is closed while the window is open: the window closes, nothing is saved", { spec: { steps: ["create"] }, needs: "provider", actions: [{ do: "start-waiting-create" }, { do: "close-tab" }], expected: { ceremony: "none", route: "ferret" }, unsafe: [U.lost, U.frame] });
-add("nav-lock-mid-request", "navigation", "the vault locks while the window is open: unlock in the window, then go on", { spec: { steps: ["create"] }, needs: "provider", actions: [{ do: "start-waiting-create" }, { do: "lock" }, { do: "unlock-in-window" }, { do: "choose-in-window" }], unsafe: [U.uv, U.up, U.lost] });
+add("nav-lock-mid-request", "navigation", "the vault locks while the window is open: the request ends", { spec: { steps: ["create"] }, needs: "provider", actions: [{ do: "start-waiting-create" }, { do: "lock" }], expected: { ceremony: "client-error", error: "NotAllowedError", failStep: "create", route: "ferret", maxWindows: 1 }, unsafe: [U.uv, U.up, U.lost], note: "Changed after review U4-13: a lock ends a waiting request (plan section 6, UK112 b, the broker); the unlock in the window is for a request that starts while the vault is locked (vault-locked-unlock-in-window)." });
 
 // ------------------------------------------------------------------------------------------- vault-network
 add("vault-open", "vault-network", "the vault is open and online", { lib: "swa", client: "swa", unsafe: [U.uv, U.up, U.lost] });
@@ -193,7 +194,7 @@ add("handover-automatic-appid", "handover", "the appid extension goes to the bro
 add("handover-automatic-security-key-hints", "handover", "cross-platform attachment with only security-key hints goes to the browser", { spec: { steps: ["create"] }, create: { authenticatorAttachment: "cross-platform", hints: ["security-key"] }, expected: { route: "browser" }, unsafe: [U.err, U.gesture], waitMs: 15000, note: "The runner puts create.hints on the options (the fixture server does not model hints)." });
 
 // ---------------------------------------------------------------------------------------------- background
-add("background-unloaded-under-request", "background", "the MV3 event page is unloaded while a request waits: it fails closed or is kept alive", { needs: "provider", actions: [{ do: "start-create" }, { do: "terminate-background" }], expected: { ceremony: "none", route: "ferret" }, unsafe: [U.lost, U.frame] });
+add("background-unloaded-under-request", "background", "the MV3 event page is unloaded while a request waits: it fails closed", { needs: "provider", actions: [{ do: "start-create" }, { do: "terminate-background" }], expected: { ceremony: "client-error", error: "NotAllowedError", route: "ferret" }, unsafe: [U.lost, U.frame], waitMs: 40000, manifests: ["mv3"], note: "Changed after review U4-13: an unloaded event page loses its requests and the bridge's next ping ends them with NotAllowedError (fails closed); not applicable on MV2, whose background page is persistent (the MV2 dead-bridge path is covered by 77-passkey-bridge)." });
 
 // ---------------------------------------------------------------------------------------------------- sync
 add("sync-create-in-a-use-in-b", "sync", "a passkey made in profile A signs in from profile B", { needs: "provider", actions: [{ do: "profile", name: "a" }, { do: "start-create" }, { do: "choose-in-window" }, { do: "sync" }, { do: "profile", name: "b" }, { do: "sync" }, { do: "start-get" }, { do: "choose-in-window" }], unsafe: [U.lost, U.key] });
@@ -221,7 +222,7 @@ adv("adv-no-gesture", "adv-window", "the page asks at once with no user activati
 adv("adv-window-storm", "adv-window", "eight cancelled requests in a row, then a real one: never more than one window, a calm period", "window-storm", { needs: "provider", expected: { maxWindows: 1 }, unsafe: [U.gesture, U.err], waitMs: 40000 });
 adv("adv-opener-reach", "adv-window", "while it waits, the page reaches for window.opener, window.open by name and every frame", "opener-reach", { needs: "provider", expected: { ceremony: "none", route: "ferret", adv: [{ key: "hasOpener", equals: false }] }, unsafe: [U.frame, U.up], waitMs: 12000 });
 adv("adv-vault-origin", "adv-vault", "a page on the vault's origin: the override is off there and the browser answers", "ceremony.html", { chain: [V], spec: { rpId: V }, needs: "provider", expected: { route: "browser" }, unsafe: [U.frame, U.lost] });
-adv("adv-signals", "adv-signals", "the signal methods are the browser's own", "signals", { expected: { route: "any", adv: [{ key: "methods", noValue: "replaced" }] }, unsafe: [U.lost, U.frame] });
+adv("adv-signals", "adv-signals", "the signal methods are the browser's own", "signals", { expected: { route: "any", adv: [{ key: "methods", noValue: "replaced" }] }, unsafe: [U.lost, U.frame], note: "Changed after review U4-13: the page checks only the five methods that stay the browser's own (the three signal methods and the two parse methods); isUserVerifyingPlatformAuthenticatorAvailable, isConditionalMediationAvailable and getClientCapabilities are answered by Ferret by design (UK119)." });
 
 // ======================================================================================= demo pages (smoke)
 for (const [id, url, title] of /** @type {const} */ ([
@@ -229,6 +230,7 @@ for (const [id, url, title] of /** @type {const} */ ([
   ["demo-passkeys-io", "https://www.passkeys.io/", "passkeys.io: register and sign in"],
   ["demo-webauthn-me", "https://webauthn.me/debugger", "webauthn.me: register and sign in"],
 ])) {
+  const hand = id === "demo-passkeys-io" ? "the sign-up sends a code to an e-mail address, which no run can read: checked by hand at the gate (docs/TESTING-U4.md)" : null;
   cases.push({
     id, set: "demo", category: "create-basic", title,
     page: { url },
@@ -236,7 +238,8 @@ for (const [id, url, title] of /** @type {const} */ ([
     expected: { ceremony: "ok", route: "ferret" },
     unsafe: [U.uv, U.up],
     needs: "provider",
-    note: "A smoke test against a public demo site: registration and sign-in work in both channels. The driver for these pages comes with the end-to-end spec (U4-13); until then a run of this set counts every case as not run. Needs a network that reaches the site, so this set runs outside the test network.",
+    ...(hand ? { hand } : {}),
+    note: `A smoke test against a public demo site: registration and sign-in work in both channels (extension/test/firefox/passkeyDemo.mjs). Needs a network that reaches the site, so this set runs outside the test network.${hand ? " Changed after review U4-13: a hand check, not an automated case." : ""}`,
   });
 }
 
@@ -301,6 +304,8 @@ const schemaJson = {
     needs: { enum: ["provider"], description: "the case can only be judged with Ferret answering: the stub provider cannot run it, and it counts as not run" },
     waitMs: { type: "integer", minimum: 1000, maximum: 120000, description: "how long the runner waits for the page's report (default 20000)" },
     actions: { type: "array", description: "what the runner does besides the click, for cases with needs provider: [{ do: ... }]" },
+    manifests: { type: "array", items: { enum: ["mv2", "mv3"] }, description: "the manifests the case applies to (all when absent); in another one it is listed as not applicable" },
+    hand: { type: "string", description: "demo cases only: the site is checked by hand, and why" },
     note: { type: "string" },
   },
 };

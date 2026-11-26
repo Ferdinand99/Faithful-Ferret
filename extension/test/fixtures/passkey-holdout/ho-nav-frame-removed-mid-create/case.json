@@ -31,7 +31,7 @@
   "gesture": "click",
   "expected": {
     "ceremony": "none",
-    "route": "none",
+    "route": "any",
     "maxWindows": 1
   },
   "unsafe": [
@@ -41,5 +41,5 @@
     }
   ],
   "waitMs": 20000,
-  "note": "HTML: removing the iframe discards its document (no longer fully active); L3 §5.1.3 lifecycle: the operation is aborted, nothing can be delivered, and the provider window must close. UNCERTAIN: the top page has to report."
+  "note": "HTML: removing the iframe discards its document (no longer fully active); L3 §5.1.3 lifecycle: the operation is aborted, nothing can be delivered, and the provider window must close. UNCERTAIN: the top page has to report. Changed after review U4-13: the one allowed window counts as a Ferret route in the runner; what matters is that nothing is delivered and the window closes, which the runner checks (a window still open, or a new item in the vault, fails the case). (Before: {\"ceremony\":\"none\",\"route\":\"none\",\"maxWindows\":1}.)"
 }

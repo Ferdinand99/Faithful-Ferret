@@ -24,6 +24,11 @@
 //   fork {sid}            one session gets a frozen state          no warning
 //   forge_checkpoint      one byte of mac (or entries) flipped     checkpoint_forged, uploads go on
 //   drop_checkpoint_head  `checkpoint` left out of /changes        no warning
+//   drop_put_answer {count}
+//                         the next `count` (default 1) item writes   an unknown outcome: the same write again
+//                         (PUT /api/sync/items/<id>) reach the     under the same key, and the server's
+//                         real server, which keeps them; the       earlier yes stands (a late-accepted
+//                         answer is dropped on the way back        write, UK130 of the passkey plan)
 //
 // The floor of `gone` is fixed when the mode is switched on: `min_valid_since` when it is
 // given, else the highest sequence number the proxy has seen (the real server answers
@@ -59,6 +64,7 @@ export const MODE_NAMES = Object.freeze([
   "fork",
   "forge_checkpoint",
   "drop_checkpoint_head",
+  "drop_put_answer",
 ]);
 
 /** A mode or a parameter that is not allowed. */
@@ -126,6 +132,9 @@ export function parseMode(input) {
       only(rest, ["sid"]);
       if (typeof rest.sid !== "string" || !SID.test(rest.sid)) throw new ModeError("sid must be the session cookie (8 characters or more)");
       return { mode, params: { sid: rest.sid } };
+    case "drop_put_answer":
+      only(rest, ["count"]);
+      return { mode, params: { count: rest.count === undefined ? 1 : u53("count", rest.count, 1) } };
     case "forge_checkpoint": {
       only(rest, ["field"]);
       const field = rest.field ?? "mac";

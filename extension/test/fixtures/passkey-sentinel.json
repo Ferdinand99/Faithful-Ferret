@@ -1,0 +1,12 @@
+{
+ "comment": "The sentinel private key of the passkey leak scan (extension/test/firefox/75-passkey.e2e.spec.mjs): a P-256 test key made for the fixture relying party only, never a real one. It is put into the vault through the core's import, and none of its forms may be found outside the core: not in the browser profile, the console, the messages, the network, the page or a log of the stack (scripts/lanbox-ext.sh greps the needles).",
+ "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTUtykZ5PLulkMryAKZNDvpicCPYgVlv9FAz6g90u-1mhRANCAAQeECSx3lRzXa-z2KSJ-1VwZTp1DUo1l7RglcIDgxsPp2hbHgvxusoRPT4kJN39Pupg9KnlLYMg_lgZIn_kACio",
+ "needles": [
+  "4d4b72919e4f2ee96432bc80299343be989c08f620565bfd140cfa83dd2efb59",
+  "TUtykZ5PLulkMryAKZNDvpicCPYgVlv9FAz6g90u+1k=",
+  "TUtykZ5PLulkMryAKZNDvpicCPYgVlv9FAz6g90u-1k",
+  "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104204d4b72919e4f2ee96432bc80299343be989c08f620565bfd140cfa83dd2efb59a144034200041e1024b1de54735dafb3d8a489fb5570653a750d4a3597b46095c203831b0fa7685b1e0bf1baca113d3e2424ddfd3eea60f4a9e52d8320fe5819227fe40028a8",
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTUtykZ5PLulkMryAKZNDvpicCPYgVlv9FAz6g90u+1mhRANCAAQeECSx3lRzXa+z2KSJ+1VwZTp1DUo1l7RglcIDgxsPp2hbHgvxusoRPT4kJN39Pupg9KnlLYMg/lgZIn/kACio",
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTUtykZ5PLulkMryAKZNDvpicCPYgVlv9FAz6g90u-1mhRANCAAQeECSx3lRzXa-z2KSJ-1VwZTp1DUo1l7RglcIDgxsPp2hbHgvxusoRPT4kJN39Pupg9KnlLYMg_lgZIn_kACio"
+ ]
+}
