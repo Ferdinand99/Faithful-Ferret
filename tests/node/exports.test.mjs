@@ -59,6 +59,7 @@ test("exports_list_is_exactly_the_documented_one", () => {
     "Vault.make_tombstone", "Vault.manifest_add_method", "Vault.manifest_remove_method", "Vault.match_page",
     "Vault.open_item",
     "Vault.passkey_candidates", "Vault.passkey_create", "Vault.passkey_create_abort", "Vault.passkey_create_confirm", "Vault.passkey_get",
+    "Vault.passkey_import",
     "Vault.passkey_site", "Vault.prf_methods",
     "Vault.rekey_abort", "Vault.rekey_commit", "Vault.renew_recovery", "Vault.renew_recovery_after_restore", "Vault.reveal_emergency_sheet", "Vault.reveal_item_field",
     "Vault.reveal_item_notes", "Vault.reveal_password_history", "Vault.reveal_plain_export", "Vault.reveal_recovery_code",
@@ -174,6 +175,8 @@ test("the_export_list_has_the_new_signatures", () => {
   assert.ok(dts.includes("passkey_candidates(caller: any, request: any): any;"), "passkey_candidates(caller: any, request: any): any;");
   assert.ok(dts.includes("passkey_site(caller: any, rp_id?: string | null): any;"), "passkey_site(caller: any, rp_id?: string | null): any;");
   assert.ok(dts.includes("passkey_get(handle: number, request: any, caller: any, uv: any): any;"), "passkey_get is unchanged");
+  // The import takes the draft of a new item and the passkey of another program; it returns the sealed item and the notes.
+  assert.ok(dts.includes("passkey_import(item_id: Uint8Array, rev: number, draft: any, passkey: any, now_ms: number): any;"), "passkey_import(item_id: Uint8Array, rev: number, draft: any, passkey: any, now_ms: number): any;");
 });
 
 // `argon2_pin_key` returns an object that holds `KEK_pin`, so the check for a
@@ -483,15 +486,15 @@ test("reveal_allowlist_has_reveal_password_history_and_nothing_else_new", () => 
 // in the pull request that crosses it.
 const WASM_BYTES_BEFORE_GENERATOR = 1_330_115;
 
-// The size of the release module before the passkey candidates and the site
-// of the binding (`passkey_candidates`, `passkey_site`, the new fields of the
-// answers and of the item view): the module of main at that point.
-const WASM_BYTES_BEFORE_PASSKEY_BINDING = 1_429_440;
+// The size of the release module before the import of a passkey
+// (`Vault.passkey_import` and the core's `passkey_import` with its JWK reader):
+// the module of main at that point.
+const WASM_BYTES_BEFORE_PASSKEY_IMPORT = 1_436_892;
 
 test("wasm_size_grows_by_less_than_20_kib", () => {
   const raw = statSync(pkg("pkg-web", "ferret_core_wasm_bg.wasm")).size;
-  const growth = raw - WASM_BYTES_BEFORE_PASSKEY_BINDING;
-  console.log(`# wasm growth over the module before the passkey candidates: ${growth} bytes (${(growth / 1024).toFixed(1)} KiB)`);
+  const growth = raw - WASM_BYTES_BEFORE_PASSKEY_IMPORT;
+  console.log(`# wasm growth over the module before the passkey import: ${growth} bytes (${(growth / 1024).toFixed(1)} KiB)`);
   assert.ok(growth < 20 * 1024, `${growth} bytes`);
 });
 

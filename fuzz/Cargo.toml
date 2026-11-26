@@ -169,3 +169,10 @@ path = "fuzz_targets/fuzz_dpop_proof.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_passkey_import"
+path = "fuzz_targets/fuzz_passkey_import.rs"
+test = false
+doc = false
+bench = false

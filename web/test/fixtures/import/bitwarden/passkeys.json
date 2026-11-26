@@ -1,0 +1,134 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "passwordHistory": null,
+      "revisionDate": "2026-11-25T09:34:34.485Z",
+      "creationDate": "2026-11-25T09:34:34.485Z",
+      "deletedDate": null,
+      "id": "5740773d-cf8d-4178-ae64-d41de9324a95",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Import test Bitwarden 1",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "fido2Credentials": [
+          {
+            "credentialId": "a1bc3321-a9e5-434a-8c23-6600066cc911",
+            "keyType": "public-key",
+            "keyAlgorithm": "ECDSA",
+            "keyCurve": "P-256",
+            "keyValue": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgvCnjj--A3VtbRW7u9_jjkWdwVQuu7OHEXX-SCIjbUAOhRANCAAQnQAjZXn8kDNJWeYdoVp0Tazp1-e2dwCIjhusTNvyyI0AK4i91ObQOPviTVBOlURUzBZu8kggVQfIZHmFuaO5v",
+            "rpId": "rp-a.test",
+            "userHandle": "7LigzOQDSkOT_yr-3e3N9w",
+            "userName": "import-test-1@rp-a.test",
+            "counter": "0",
+            "rpName": "RP A (test)",
+            "userDisplayName": "Import Test 1",
+            "discoverable": "true",
+            "creationDate": "2026-11-25T09:34:34.485Z"
+          }
+        ],
+        "uris": [
+          {
+            "match": null,
+            "uri": "https://rp-a.test/"
+          }
+        ],
+        "username": "import-test-1@rp-a.test",
+        "password": null,
+        "totp": null
+      },
+      "collectionIds": null
+    },
+    {
+      "passwordHistory": null,
+      "revisionDate": "2026-11-25T09:34:34.485Z",
+      "creationDate": "2026-11-25T09:34:34.485Z",
+      "deletedDate": null,
+      "id": "92d19c9f-d327-4a7e-97b3-717f3b55822d",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Import test Bitwarden 2",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "fido2Credentials": [
+          {
+            "credentialId": "b64.rG7-pY6CMa0iNyxgdA9ixAV-17h-xnnPsSU8Jcg6PEs",
+            "keyType": "public-key",
+            "keyAlgorithm": "ECDSA",
+            "keyCurve": "P-256",
+            "keyValue": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQghF30IcpZSBCTGicK6GqtOXPDZ5OWvk1sqyVBIjPmclehRANCAASxJspA05kq1CUN8BEdxWF5OMyrvjZ4KvBOwuXi5kOTeENMsPpogqm61oPBidWkT4tbwfe34NRl7uhY6XlCh2ig",
+            "rpId": "rp-a.test",
+            "userHandle": "7Fp0sAOBnwBLY2tWK3tjIQ",
+            "userName": "import-test-2@rp-a.test",
+            "counter": "7",
+            "rpName": "RP A (test)",
+            "userDisplayName": "Import Test 2",
+            "discoverable": "true",
+            "creationDate": "2026-11-25T09:34:34.485Z"
+          }
+        ],
+        "uris": [
+          {
+            "match": null,
+            "uri": "https://rp-a.test/"
+          }
+        ],
+        "username": "import-test-2@rp-a.test",
+        "password": null,
+        "totp": null
+      },
+      "collectionIds": null
+    },
+    {
+      "passwordHistory": null,
+      "revisionDate": "2026-11-25T09:34:34.485Z",
+      "creationDate": "2026-11-25T09:34:34.485Z",
+      "deletedDate": null,
+      "id": "fba4bc24-1d70-4714-8e3d-5d29f34289cf",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "reprompt": 0,
+      "name": "Import test Bitwarden 3",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "fido2Credentials": [
+          {
+            "credentialId": "aa099c97-5135-4107-b864-d2ce86988002",
+            "keyType": "public-key",
+            "keyAlgorithm": "ECDSA",
+            "keyCurve": "P-256",
+            "keyValue": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkuEF7kcGVNqXEFHlFdTos7CQwWjv4iQX8rEmdKcRn76hRANCAAT33kIMfq2XBtMecSOa2mFVfgUICQedQza1sliT4Wf6Zr8EwIIHbmoDOGHZe-Jk1D16B0yMLFrAhdJafIPfX5YO",
+            "rpId": "rp-a.test",
+            "userName": "import-test-3@rp-a.test",
+            "counter": "0",
+            "rpName": "RP A (test)",
+            "userDisplayName": "Import Test 3",
+            "discoverable": "false",
+            "creationDate": "2026-11-25T09:34:34.485Z"
+          }
+        ],
+        "uris": [
+          {
+            "match": null,
+            "uri": "https://rp-a.test/"
+          }
+        ],
+        "username": "import-test-3@rp-a.test",
+        "password": null,
+        "totp": null
+      },
+      "collectionIds": null
+    }
+  ]
+}

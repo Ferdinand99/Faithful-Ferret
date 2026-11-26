@@ -13,6 +13,7 @@
 // shows "Continue import" when the server has closed the import window (`import_window_closed`), or when the page was loaded
 // again after that: a fresh confirmation of the master password, a new window for the items that are left, and only those are sent.
 import { codeOf } from "../crypto/errors.mjs";
+import { PASSKEY_SKIP_REASONS } from "../import/passkeys.mjs";
 import { el, mount } from "../dom.mjs";
 import { formatMoment, listenWhileShown } from "./common.mjs";
 import { busyState, field, setText } from "./form.mjs";
@@ -41,7 +42,7 @@ export const SKIPPED_KEYS = Object.freeze([
 /** The warnings the page explains (`import.warning.<code>`); the ones that only repeat a count of what is left out are not here. */
 export const WARNING_CODES = Object.freeze([
   "alias_needs_aliasvault", "card_and_login", "field_type_unknown", "field_unreadable", "item_archived", "match_never", "match_regex",
-  "match_starts_with", "match_unknown", "totp_extra", "totp_invalid", "totp_steam", "uri_https_added",
+  "match_starts_with", "match_unknown", "passkey_extra_item", "passkey_prf_dropped", "totp_extra", "totp_invalid", "totp_steam", "uri_https_added",
 ]);
 
 /** The notes the page writes from the counts of an import (`import.note.<key>`). */
@@ -71,6 +72,7 @@ export function importErrorText(t, error, { continuing = false } = {}) {
 /**
  * @typedef {{
  *   kind: string, counts: Record<string, number> | null, skipped: Record<string, number> | null,
+ *   passkeys?: { skipped: Record<string, number>, registerAgain: number, prfDropped: number, extra: number, sites: ReadonlyArray<string>, siteCount: number } | null,
  *   warnings: ReadonlyArray<{ code: string, count: number }>, warningsDropped: number,
  *   free: number, used: number, vaultEmpty: boolean, fits: boolean, createdAt: number | null,
  * }} Preview
@@ -104,6 +106,8 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
   let tracking = false;
   /** The kind of the file this page imported (null when the page was loaded in the middle of an import). @type {string | null} */
   let importedKind = null;
+  /** The passkeys of the file this page imported (what to register again), or null. @type {NonNullable<Preview["passkeys"]> | null} */
+  let importedPasskeys = null;
   /** How many items this page queued. */
   let queuedHere = 0;
   /** The import itself is running (the preview is spent when it ends, not before). */
@@ -205,6 +209,18 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
     setText(importStatusLine, t(`import.progress.${progress.phase}`, { items: progress.items ?? 0 }));
   }
 
+  /**
+   * What to tell about the passkeys that must be registered at their site again (null when there are none). The sites are the vault's own
+   * spelling of them; a list that is cut says so.
+   * @param {NonNullable<Preview["passkeys"]>} passkeys
+   */
+  function registerAgainNote(passkeys) {
+    if (passkeys.registerAgain <= 0) return null;
+    const all = passkeys.sites.length >= passkeys.siteCount;
+    return el("p", { class: "notice notice-warning", role: "note", "data-role": "passkey-register-again" },
+      t(all ? "import.passkey.register_again" : "import.passkey.register_again_more", { count: passkeys.registerAgain, sites: passkeys.sites.join(", ") }));
+  }
+
   /** @param {string} key @param {Record<string, string | number>} [vars] @param {string} [role] */
   const line = (key, vars, role) => el("li", role ? { "data-role": role } : null, t(key, vars));
 
@@ -227,6 +243,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
       if (counts.identity > 0) parts.push(line("import.preview.identity", { count: counts.identity }, "count-identity"));
       if (counts.urls > 0) parts.push(line("import.preview.urls", { count: counts.urls }, "count-urls"));
       if (counts.totp > 0) parts.push(line("import.preview.totp", { count: counts.totp }, "count-totp"));
+      if (counts.passkeys > 0) parts.push(line("import.preview.passkeys", { count: counts.passkeys }, "count-passkeys"));
       if (counts.customFields > 0) parts.push(line("import.preview.custom_fields", { count: counts.customFields }, "count-custom-fields"));
       if (parts.length > 0) blocks.push(el("ul", { class: "import-list", "data-role": "preview-counts" }, ...parts));
     }
@@ -243,8 +260,23 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
 
     // What the import does not take with it, and what it changed on the way.
     if (skipped !== null) {
-      const left = SKIPPED_KEYS.filter((key) => skipped[key] > 0).map((key) => line(`import.skipped.${key}`, { count: skipped[key] }, `skipped-${key}`));
+      /** @type {HTMLElement[]} */
+      const left = [];
+      for (const key of SKIPPED_KEYS) {
+        if (!(skipped[key] > 0)) continue;
+        if (key === "passkeys" && shown.passkeys) {
+          // The import of passkeys is on: each reason has its own line, and the generic "cannot be imported" is not true.
+          for (const reason of PASSKEY_SKIP_REASONS) {
+            const n = shown.passkeys.skipped[reason];
+            if (n > 0) left.push(line(`import.skipped.passkey_${reason}`, { count: n }, `skipped-passkey-${reason}`));
+          }
+        } else left.push(line(`import.skipped.${key}`, { count: skipped[key] }, `skipped-${key}`));
+      }
       if (left.length > 0) blocks.push(el("h3", null, t("import.preview.skipped_heading")), el("ul", { class: "import-list", "data-role": "preview-skipped" }, ...left));
+    }
+    if (shown.passkeys) {
+      const again = registerAgainNote(shown.passkeys);
+      if (again !== null) blocks.push(again);
     }
     const notes = counts === null ? [] : COUNT_NOTES.filter((key) => counts[key] > 0).map((key) => line(`import.note.${key}`, { count: counts[key] }, `note-${key}`));
     const warned = shown.warnings.filter((w) => WARNING_CODES.includes(w.code)).map((w) => line(`import.warning.${w.code}`, { count: w.count }, `warning-${w.code}`));
@@ -390,6 +422,7 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
       mount(previewBox);
       fileInput.value = "";
       importedKind = shown.kind;
+      importedPasskeys = shown.passkeys ?? null;
       queuedHere = done.queued;
       tracking = true;
       renderTracker();
@@ -517,12 +550,15 @@ export function importView({ t, previewFile, runImport, continueImport, discard,
       mount(tracker);
       fileForm.hidden = false;
       importedKind = null;
+      importedPasskeys = null;
     });
+    const againNote = importedPasskeys === null ? null : registerAgainNote(importedPasskeys);
     mount(tracker,
       el("h2", null, t("import.done.heading")),
       el("p", { "data-role": "done-items" }, t("import.done.items", { count })),
       ...(now.refused > 0 ? [el("p", { class: "notice notice-warning", role: "alert", "data-role": "done-failed" }, t("import.done.failed", { count: now.refused }))] : []),
       el("p", { "data-role": "done-next" }, t("import.done.next")),
+      ...(againNote === null ? [] : [againNote]),
       ...(plain ? [el("p", { class: "notice notice-warning", role: "note", "data-role": "plain-file-after" }, t("import.plain.after"))] : []),
       el("div", { class: "actions" }, again, el("a", { class: "btn btn-primary", href: "#/", "data-role": "done-list" }, t("import.done.list"))));
   }

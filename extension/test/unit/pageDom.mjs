@@ -118,6 +118,19 @@ export class FakeElement extends FakeNode {
     }
   }
 
+  /** Puts nodes just after this one, in its parent. @param {...FakeNode} nodes */
+  after(...nodes) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    let at = parent.childNodes.indexOf(this) + 1;
+    for (const node of nodes) {
+      node.parentNode?.removeChild(node);
+      node.parentNode = parent;
+      parent.childNodes.splice(at, 0, node);
+      at += 1;
+    }
+  }
+
   /** @param {FakeNode | null} node */
   contains(node) {
     for (let at = node; at; at = at.parentNode) if (at === this) return true;

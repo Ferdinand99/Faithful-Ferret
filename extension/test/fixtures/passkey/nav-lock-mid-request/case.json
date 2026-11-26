@@ -2,7 +2,7 @@
   "id": "nav-lock-mid-request",
   "set": "fixtures",
   "category": "navigation",
-  "title": "the vault locks while the window is open: unlock in the window, then go on",
+  "title": "the vault locks while the window is open: the request ends",
   "rp": {
     "lib": "rs",
     "client": "manual"
@@ -32,8 +32,11 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "ok",
-    "route": "ferret"
+    "ceremony": "client-error",
+    "route": "ferret",
+    "error": "NotAllowedError",
+    "failStep": "create",
+    "maxWindows": 1
   },
   "unsafe": [
     {
@@ -56,12 +59,7 @@
     },
     {
       "do": "lock"
-    },
-    {
-      "do": "unlock-in-window"
-    },
-    {
-      "do": "choose-in-window"
     }
-  ]
+  ],
+  "note": "Changed after review U4-13: a lock ends a waiting request (plan section 6, UK112 b, the broker); the unlock in the window is for a request that starts while the vault is locked (vault-locked-unlock-in-window)."
 }

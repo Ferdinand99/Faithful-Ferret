@@ -10,9 +10,11 @@
 // granted and the setting is on. `reconcile` makes it so, and runs on every start
 // of the background page; the browser tells when the permission is taken back
 // (`permissions.onRemoved`), and then the script is unregistered and the setting
-// goes off. The other way round, when the permission is given (`permissions.onAdded`) the setting goes on, so a grant
-// whose popup was closed by the browser's prompt is finished here. Turning the setting off takes the permission back too
-// (`disable` removes it; the browser then tells this module, which finds nothing left to switch off). Tabs that are open when the script is registered get it only after
+// goes off. The other way round, when the permission is given (`permissions.onAdded`) the setting goes on only if the switch of
+// this feature marked that it was asking (background/httpsAccess.mjs: the permission is shared with the passkeys, and a grant
+// never switches a feature on by itself); a grant whose popup was closed by the browser's prompt is finished here. Turning the setting
+// off takes the permission back too, unless the passkeys are on and need it (`disable` asks httpsAccess; the browser then tells this
+// module, which finds nothing left to switch off). Tabs that are open when the script is registered get it only after
 // they are loaded again; the settings page says so.
 //
 // The "never" list is the hosts the user does not want offers for: A-labels in
@@ -23,6 +25,7 @@
 // Nothing here is a vault value, a key or a captured form.
 
 import { CAPTURE_ORIGINS, CAPTURE_SCRIPT_FILE, CAPTURE_SCRIPT_ID, MAX_NEVER } from "../shared/captureConfig.mjs";
+import { createHttpsAccess } from "./httpsAccess.mjs";
 
 /** The setting, in `storage.local`: a boolean, false when it is not there or not a boolean. */
 export const SETTING_KEY = "offer_to_save";
@@ -55,16 +58,17 @@ export function listedHost(host) {
 
 /**
  * The never list.
- * @param {{ storageLocal: StorageLocal }} deps
+ * @param {{ storageLocal: StorageLocal, key?: string }} deps `key`: where the list is kept in `storage.local` (the offers' own
+ *   list by default; the passkeys feature keeps one of its own)
  */
-export function createNeverList({ storageLocal }) {
+export function createNeverList({ storageLocal, key = NEVER_KEY }) {
   /** What is on disk, in the order it was added. @type {string[]} */
   let kept = [];
   /** What private windows chose: memory only. @type {Set<string>} */
   const memory = new Set();
   const loaded = (async () => {
     try {
-      const stored = (await storageLocal.get(NEVER_KEY))?.[NEVER_KEY];
+      const stored = (await storageLocal.get(key))?.[key];
       if (Array.isArray(stored)) kept = [...new Set(stored.map(listedHost).filter((h) => h !== null))].slice(-MAX_NEVER);
     } catch {
       // No list is read: nothing is on it (the offers it would have stopped come back).
@@ -74,7 +78,7 @@ export function createNeverList({ storageLocal }) {
   let writes = Promise.resolve();
   const save = () => {
     const snapshot = [...kept];
-    writes = writes.then(() => storageLocal.set({ [NEVER_KEY]: snapshot })).catch(() => {});
+    writes = writes.then(() => storageLocal.set({ [key]: snapshot })).catch(() => {});
     return writes;
   };
 
@@ -129,9 +133,11 @@ export function createNeverList({ storageLocal }) {
  *   permissions: Permissions,
  *   storageLocal: StorageLocal,
  *   onOff?: (reason: "capture_off" | "permission_removed") => void,
- * }} deps `onOff` is called when capture goes off after it was on (the held offers go with it)
+ *   access?: ReturnType<typeof createHttpsAccess>,
+ * }} deps `onOff` is called when capture goes off after it was on (the held offers go with it); `access`: the shared permission
+ *   for https pages (the one the passkeys use too; one is made when none is given)
  */
-export function createCaptureRegistry({ scripting, permissions, storageLocal, onOff = () => {} }) {
+export function createCaptureRegistry({ scripting, permissions, storageLocal, onOff = () => {}, access = createHttpsAccess({ permissions, storageLocal }) }) {
   /** The registration is changed one step at a time. @type {Promise<unknown>} */
   let chain = Promise.resolve();
   /** @template T @param {() => Promise<T>} job @returns {Promise<T>} */
@@ -270,6 +276,8 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
     enable() {
       return exclusive(async () => {
         if (!(await permitted())) return { ok: false, reason: "permission_missing" };
+        // This switch is turning capture on: its own grant, if one is still to come, needs no mark any more.
+        await access.clearPending("save");
         try {
           // A start that finds the current definition registered leaves it alone, so a second `enable` (the settings view's own,
           // after the permission's `onAdded` already made one) does not register the script twice.
@@ -285,32 +293,37 @@ export function createCaptureRegistry({ scripting, permissions, storageLocal, on
 
     /**
      * Turns capture off: the script goes, and so does everything held for it, and so does the access to https pages that was
-     * asked for with it. The permission is taken back here, not by the page that asked, so that "off" does not depend on the
-     * popup staying open. (`reconcile` never removes it: a grant that is there with the setting off is finished by
-     * `onAdded`, or by the next press of the switch.)
+     * asked for with it, unless the passkeys are on and need it (the permission is shared, see httpsAccess.mjs). The permission
+     * is taken back here, not by the page that asked, so that "off" does not depend on the popup staying open. (`reconcile`
+     * never removes it: a grant that is there with the setting off is finished by `onAdded` when this switch marked it, or by the
+     * next press of the switch.)
      */
     disable() {
       return exclusive(async () => {
         await turnOff("capture_off");
-        try {
-          await permissions.remove?.({ origins: [...CAPTURE_ORIGINS] });
-        } catch {
-          // The access stays and the state read next says so.
-        }
+        await access.clearPending("save");
+        await access.release("save");
         return { ok: true };
       });
     },
 
+    /** The switch is about to ask the browser for the permission: a grant that follows is this feature's to finish. */
+    markPending: () => access.markPending("save"),
+    /** The person said no, or the request failed: the mark is not needed. */
+    clearPending: () => access.clearPending("save"),
+
     /**
-     * The browser's `permissions.onAdded`: when the access to `https` pages is given, capture goes on. The request is made in
-     * the click on the switch, and Firefox closes a toolbar popup when its prompt opens, so the page that asked may be gone by the
-     * time the grant lands; the grant and the setting are one, so it is finished here.
+     * The browser's `permissions.onAdded`: when the access to `https` pages is given and this feature's switch marked that it was
+     * asking, capture goes on. The request is made in the click on the switch, and Firefox closes a toolbar popup when its prompt
+     * opens, so the page that asked may be gone by the time the grant lands; the grant and the setting are one, so it is finished
+     * here. A grant nobody here asked for (the passkeys' switch, the browser's add-on page) switches nothing on.
      * @param {{ origins?: string[] } | undefined} added
      * @returns {Promise<boolean>} whether capture was switched on by it
      */
     async onAdded(added) {
       const given = Array.isArray(added?.origins) && CAPTURE_ORIGINS.every((origin) => added.origins?.includes(origin));
       if (!given) return false;
+      if (!(await access.takePending("save"))) return false;
       return (await this.enable()).ok;
     },
 

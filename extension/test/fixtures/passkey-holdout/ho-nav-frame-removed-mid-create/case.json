@@ -1,0 +1,45 @@
+{
+  "id": "ho-nav-frame-removed-mid-create",
+  "set": "holdout",
+  "category": "navigation",
+  "title": "same-origin iframe running create is removed by its parent mid-request",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-a.test"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      ""
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "removeFrame": {
+      "afterMs": 1500
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "none",
+    "route": "any",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey for rp-a.test in the vault (outside the trash) after the frame that asked was removed"
+    }
+  ],
+  "waitMs": 20000,
+  "note": "HTML: removing the iframe discards its document (no longer fully active); L3 §5.1.3 lifecycle: the operation is aborted, nothing can be delivered, and the provider window must close. UNCERTAIN: the top page has to report. Changed after review U4-13: the one allowed window counts as a Ferret route in the runner; what matters is that nothing is delivered and the window closes, which the runner checks (a window still open, or a new item in the vault, fails the case). (Before: {\"ceremony\":\"none\",\"route\":\"none\",\"maxWindows\":1}.)"
+}

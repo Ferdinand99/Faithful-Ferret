@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { generated } from "../fixtures/passkey/generate.mjs";
 import { CATEGORIES, TEST_HOSTS, UNSAFE, caseAddress, caseProblems, categoryShortfalls, computeMatrix, judge, loadCases, matrixMarkdown, observe, specOf } from "../firefox/passkeyCases.mjs";
 import { MATRIX_PREFS, SET_DIRS, detectUnsafe, runCase, selectCases } from "../firefox/passkeyMatrix.mjs";
+import { DRIVER_VERBS } from "../firefox/passkeyDrive.mjs";
 import { caExtensions } from "../../../test/passkey-rp/server/tls.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -167,7 +168,7 @@ test("the_matrix_counts_a_case_that_did_not_run_as_failed", async () => {
   assert.equal(r2.status, "not-run");
   const r3 = await runCase(/** @type {any} */ (undefined), plain, { channel: "release", provider: "ferret" });
   assert.equal(r3.status, "not-run");
-  assert.match(r3.reason ?? "", /not wired/);
+  assert.match(r3.reason ?? "", /no browser session/);
   // ... and the numbers of such a run say so: nothing passed, the stub's needs-provider cases are counted.
   const stubResults = new Map(cases.filter((c) => c.set === "fixtures").map((c) => [c.id, c.needs === "provider" ? r1 : { status: /** @type {const} */ ("not-run"), reason: "x" }]));
   const stubMatrix = computeMatrix(cases.filter((c) => c.set === "fixtures"), stubResults, "stub");
@@ -291,9 +292,27 @@ test("the set selection finds the cases of each set and tells a missing hold-out
   assert.ok(selectCases("adversarial").cases.length >= 15);
   assert.equal(selectCases("fixtures", "frame-").cases.every((c) => c.id.includes("frame-")), true);
   assert.equal(selectCases("demo").cases.length, 3);
-  // The hold-out set is copied in later (U4-13); until then it has no case, and the spec fails on that rather than passing.
-  assert.equal(existsSync(SET_DIRS.holdout), false);
-  assert.equal(selectCases("holdout").cases.length, 0);
+  // The hold-out set (written without the implementation, U4-13): 50 well-formed cases, all of the set "holdout", each of a category of
+  // the matrix, and none of them changed by the runner: the page gets the case's spec as it was written.
+  const holdout = selectCases("holdout");
+  assert.deepEqual(holdout.problems, []);
+  assert.equal(holdout.cases.length, 50);
+  for (const c of holdout.cases) {
+    assert.equal(c.set, "holdout", c.id);
+    assert.ok(c.category in CATEGORIES, c.id);
+    const spec = specOf(c, "run-ho");
+    assert.deepEqual(spec.ho, c.spec, `${c.id}: the spec goes to the page as written`);
+    assert.deepEqual(spec.steps, c.spec.steps ?? ["create", "get"], c.id);
+  }
+});
+
+test("a driver step of every fixture case is one the runner has", () => {
+  const known = new Set(DRIVER_VERBS);
+  // Every verb of the list has its case in the runner's switch.
+  const drive = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "firefox", "passkeyDrive.mjs"), "utf8");
+  for (const verb of DRIVER_VERBS) assert.ok(drive.includes(`case "${verb}":`), `passkeyDrive.mjs handles ${verb}`);
+  const { cases } = loadCases([SET_DIRS.fixtures]);
+  for (const c of cases) for (const a of c.actions ?? []) assert.ok(known.has(a.do), `${c.id}: ${a.do}`);
 });
 
 test("the licences of the fixtures' libraries are recorded (UK128)", () => {

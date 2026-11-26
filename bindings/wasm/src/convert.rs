@@ -161,6 +161,32 @@ pub(crate) mod bytes {
     }
 }
 
+/// A secret `Option<Vec<u8>>` as a `Uint8Array` or `null`/`undefined`, wrapped
+/// at once so that it is wiped when it is dropped, also when a later field of
+/// the same object is refused and the half-built value is thrown away.
+pub(crate) mod secret_bytes {
+    use super::*;
+    use zeroize::Zeroizing;
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, D::Error> {
+        opt_bytes::deserialize(d).map(|v| v.map(Zeroizing::new))
+    }
+}
+
+/// A secret `Option<String>`, wrapped at once as `secret_bytes` does.
+pub(crate) mod secret_text {
+    use super::*;
+    use zeroize::Zeroizing;
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Zeroizing<String>>, D::Error> {
+        Option::<String>::deserialize(d).map(|v| v.map(Zeroizing::new))
+    }
+}
+
 /// `Option<Vec<u8>>` as a `Uint8Array` or `null`/`undefined`.
 pub(crate) mod opt_bytes {
     use super::*;

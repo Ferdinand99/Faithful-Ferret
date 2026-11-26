@@ -1,0 +1,46 @@
+{
+  "id": "ho-create-rk-unknown-falls-back",
+  "set": "holdout",
+  "category": "create-options",
+  "title": "unknown residentKey value with requireResidentKey true makes a discoverable passkey",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "authenticatorSelection": {
+        "residentKey": "x-sometimes",
+        "requireResidentKey": true
+      },
+      "extensions": {
+        "credProps": true
+      }
+    },
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored for rp-a.test that the page never received (e.g. the create resolved with an error after storing)"
+    }
+  ],
+  "note": "L3 §5.4.4/§5.4.6: an unknown residentKey value is ignored, so requireResidentKey=true applies (required); the passkey must then be found by a get with empty allowCredentials."
+}

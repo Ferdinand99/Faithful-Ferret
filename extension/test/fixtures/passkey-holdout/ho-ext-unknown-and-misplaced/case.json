@@ -1,0 +1,51 @@
+{
+  "id": "ho-ext-unknown-and-misplaced",
+  "set": "holdout",
+  "category": "create-extensions",
+  "title": "an unknown extension on create and get, credProps on get",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "extensions": {
+        "xUnknownExt": {
+          "a": 1
+        },
+        "credProps": true
+      }
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ],
+      "extensions": {
+        "xUnknownExt": true,
+        "credProps": true
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored although the create rejected on the unknown extension"
+    }
+  ],
+  "note": "L3 §9 (client extension processing): clients ignore extensions they do not recognise; credProps is registration-only so the get must just ignore it. getClientExtensionResults() must not echo xUnknownExt."
+}

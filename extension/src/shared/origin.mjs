@@ -10,7 +10,7 @@ const WEB_URL = /^https?:\/\//i;
 const MAX_URL = 8192;
 
 /**
- * @typedef {{ id?: string, url?: string, origin?: string, frameId?: number, documentId?: string, tab?: { id?: number } }} Sender
+ * @typedef {{ id?: string, url?: string, origin?: string, frameId?: number, documentId?: string, tab?: { id?: number, incognito?: boolean } }} Sender
  * @typedef {{ id?: string, getURL: (path: string) => string }} Runtime
  */
 
@@ -86,6 +86,35 @@ export function isTopLevelExtensionPage(sender, runtime) {
   return frameId === undefined || frameId === 0;
 }
 
+/** The popup's page in the package (the toolbar panel, a popped-out window `?tab=<id>`, or a tab of its own). */
+const POPUP_PAGE = "pages/popup.html";
+
+/**
+ * The tab a popped-out popup is about (`?tab=N` in its address), or null (the toolbar panel, or an address without it).
+ * @param {{ sender?: Sender | null }} ctx
+ * @returns {number | null}
+ */
+export function popupTabOf(ctx) {
+  try {
+    const named = new URL(String(ctx?.sender?.url)).searchParams.get("tab");
+    return named !== null && /^[0-9]{1,10}$/.test(named) ? Number(named) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the sender is Ferret's popup: a top-level page of this extension at the popup's address (with or without its query).
+ * @param {Sender | null | undefined} sender
+ * @param {Runtime} runtime
+ */
+export function isPopupPage(sender, runtime) {
+  if (!isTopLevelExtensionPage(sender, runtime) || typeof runtime.getURL !== "function") return false;
+  const page = runtime.getURL(POPUP_PAGE);
+  const url = /** @type {Sender} */ (sender).url;
+  return typeof url === "string" && (url === page || url.startsWith(`${page}?`));
+}
+
 /**
  * The sender of a message from a content script, or null. A content script has
  * this extension's id, a tab and a frame, and a web page URL. An extension page
@@ -113,6 +142,25 @@ export function contentSender(sender, runtime) {
   if (typeof sender.documentId === "string" && sender.documentId !== "") {
     out.documentId = sender.documentId;
   }
+  return out;
+}
+
+/**
+ * A content sender (`contentSender`) with what else the browser says about the frame: its `origin` (when the browser
+ * gives one other than "null") and `incognito` (the tab is in a private window). For the passkey bridge, whose broker
+ * takes the frame's origin from the browser and checks it against the frame's address. Nothing in it comes from a
+ * message.
+ *
+ * @param {{ tabId: number, frameId: number, documentId?: string, url: string }} from what `contentSender` returned
+ * @param {Sender | null | undefined} sender the browser's sender
+ * @returns {{ tabId: number, frameId: number, documentId?: string, url: string, origin?: string, incognito?: true }}
+ */
+export function withBrowserOrigin(from, sender) {
+  /** @type {{ tabId: number, frameId: number, documentId?: string, url: string, origin?: string, incognito?: true }} */
+  const out = { ...from };
+  const origin = sender?.origin;
+  if (typeof origin === "string" && origin !== "" && origin !== "null" && origin.length <= 300) out.origin = origin;
+  if (/** @type {{ incognito?: unknown } | undefined} */ (sender?.tab)?.incognito === true) out.incognito = true;
   return out;
 }
 

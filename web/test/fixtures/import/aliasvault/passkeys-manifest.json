@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "exportedAt": "2026-11-25T09:34:34.485Z",
+  "items": [
+    {
+      "id": "4f91fa1c-5441-4445-b618-fc7133012415",
+      "name": "Import test AliasVault 1",
+      "itemType": "Login",
+      "createdAt": "2026-11-25T09:34:34.485Z",
+      "updatedAt": "2026-11-25T09:34:34.485Z",
+      "folderId": null,
+      "logoId": null,
+      "archivedAt": null,
+      "fieldValues": [
+        {
+          "id": "93ca887f-de34-4c9c-b56c-1308c596302c",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "import-test-av1@rp-a.test",
+          "weight": 0
+        },
+        {
+          "id": "b320ab06-552f-48a0-8f05-d40337d84ccb",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "https://rp-a.test/",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": [
+        {
+          "id": "4191c49b-05d4-4b2c-9bd9-4fecaf23c834",
+          "credentialId": null,
+          "rpId": "rp-a.test",
+          "userHandle": "Aay5G3GbWPnAtQjRVBjHIw==",
+          "publicKey": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"o1ZO_uWIYpHOZUTIGGmUxaBuGinN03mhCfTYFevyJAM\",\"y\":\"7-O7yU26PtMbZKpR9em2_iBxVi9uig8BFuUmCsVTKW4\"}",
+          "privateKey": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"o1ZO_uWIYpHOZUTIGGmUxaBuGinN03mhCfTYFevyJAM\",\"y\":\"7-O7yU26PtMbZKpR9em2_iBxVi9uig8BFuUmCsVTKW4\",\"d\":\"_TJYBPqMLIHOm_jND70ADCzB6ud_HXAB-bz53gOnVOo\"}",
+          "prfKey": null,
+          "displayName": "Import Test AV 1",
+          "additionalData": null
+        }
+      ]
+    },
+    {
+      "id": "62f72f83-5378-4411-8ab5-1ff96c24dfba",
+      "name": "Import test AliasVault 2",
+      "itemType": "Login",
+      "createdAt": "2026-11-25T09:34:34.485Z",
+      "updatedAt": "2026-11-25T09:34:34.485Z",
+      "folderId": null,
+      "logoId": null,
+      "archivedAt": null,
+      "fieldValues": [
+        {
+          "id": "9b66b18c-47e0-45cd-afad-0581d1b5fcb4",
+          "fieldKey": "login.username",
+          "fieldDefinitionId": null,
+          "value": "import-test-av2@rp-a.test",
+          "weight": 0
+        },
+        {
+          "id": "6d989d5d-003d-43b3-8c0c-0717e9ba677d",
+          "fieldKey": "login.url",
+          "fieldDefinitionId": null,
+          "value": "https://rp-a.test/",
+          "weight": 0
+        }
+      ],
+      "fieldHistories": [],
+      "attachments": [],
+      "totpCodes": [],
+      "passkeys": [
+        {
+          "id": "4f6dc951-7b1f-4c77-991f-a70d99bb30e6",
+          "credentialId": "4QsZu5WiUu5iBM0T90fN7XyY8Sac6QBvAE5iVry+vRE=",
+          "rpId": "rp-a.test",
+          "userHandle": "+Uy2x7oRSNrLSq3KE+ayeQ==",
+          "publicKey": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"vKxOHg_kENeuW_l-KEv42CLA7_2Nz6JOV6DE059z17Q\",\"y\":\"4dXAjWMD40RxZzDB9aJfAZRNbACZluKuD-GHMqLxoYM\"}",
+          "privateKey": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"vKxOHg_kENeuW_l-KEv42CLA7_2Nz6JOV6DE059z17Q\",\"y\":\"4dXAjWMD40RxZzDB9aJfAZRNbACZluKuD-GHMqLxoYM\",\"d\":\"zjML5vP4_TAnqlLVL0MfFgPEVRiWUhkQJ5InIyfxljI\"}",
+          "prfKey": "O6TQuM7OZTXrItJEbxV4Ru94sC6ORiH92gBtODOousc=",
+          "displayName": "Import Test AV 2",
+          "additionalData": null
+        }
+      ]
+    }
+  ],
+  "folders": [],
+  "tags": [],
+  "itemTags": [],
+  "fieldDefinitions": [],
+  "logos": []
+}

@@ -1,0 +1,37 @@
+{
+  "id": "ho-rpid-sibling-subdomain",
+  "set": "holdout",
+  "category": "origin-rpid",
+  "title": "login.rp-a.test asks for the sibling RP ID www.rp-a.test",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "login.rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "rpId": "www.rp-a.test"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "SecurityError",
+    "failStep": "create",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a credential scoped to www.rp-a.test made from login.rp-a.test"
+    }
+  ],
+  "note": "L3 §5.1.3 step 7 + HTML \"is a registrable domain suffix of or is equal to\": www.rp-a.test is not a suffix of login.rp-a.test -> SecurityError."
+}

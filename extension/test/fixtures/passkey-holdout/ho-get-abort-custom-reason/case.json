@@ -1,0 +1,50 @@
+{
+  "id": "ho-get-abort-custom-reason",
+  "set": "holdout",
+  "category": "get-modal",
+  "title": "page aborts a pending get with a TypeError as the reason",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    },
+    "abort": {
+      "step": "get",
+      "afterMs": 1500,
+      "reason": {
+        "$error": "TypeError",
+        "message": "page reason"
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "TypeError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "up-without-click",
+      "definition": "an assertion delivered after the page aborted, without a click in the Ferret window before the abort"
+    }
+  ],
+  "note": "L3 §5.1.4.1 abort steps: reject with options.signal's abort reason. UNCERTAIN: older Firefox returned AbortError regardless of reason; spec says TypeError here. The runner must not approve within the 1.5 s."
+}

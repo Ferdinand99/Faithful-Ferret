@@ -24,20 +24,28 @@ import { createMatchProbe } from "./matchProbe.mjs";
 import { captures, createOfferProbe } from "./offerProbe.mjs";
 import { LOG_KEY, SCENARIO_KEY, startMeasureLog, summarize } from "./measureLog.mjs";
 import { createScenarios } from "./measureScenario.mjs";
+import { createItemImportProbe } from "./itemImportProbe.mjs";
 import { createWriteProbe } from "./writeProbe.mjs";
+import { createLeakTap } from "./leakTap.mjs";
 
 // The offers of the test build, for the sync (main.mjs passes them as its `captures`).
 export { captures };
 
 /** The engine the sync made last (the test build's probes make test items with it). @type {any} */
 let made = null;
+/** The API client that engine was made with (the device's tokens), for the probe that stores an imported item. @type {any} */
+let madeApi = null;
 
 /**
  * The sync's engine factory in the test build: the sync's own engine (`make`), kept here as well, so the probes can
  * make test items with it. main.mjs gives it to the sync only when the hooks exist (never in a release).
  * @param {Record<string, any>} options @param {(options: Record<string, any>) => any} make
  */
-export const createEngine = (options, make) => (made = make(options));
+export const createEngine = (options, make) => {
+  madeApi = options?.api ?? null;
+  made = make(options);
+  return made;
+};
 
 /** The engine the sync made last, or null (main.mjs asks only while the sync runs). */
 export const engine = () => made;
@@ -180,6 +188,10 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   coreHost.addOps(createMatchProbe({ engine, webNavigation: browser.webNavigation }).ops);
   coreHost.addOps(createOfferProbe({ offers, call: (op, args) => coreHost.call(op, args), items: () => engine()?.list() ?? [] }).ops);
   coreHost.addOps(createWriteProbe({ engine }).ops);
+  coreHost.addOps(createItemImportProbe({ engine, api: () => (engine() !== null ? madeApi : null), now }).ops);
+  // The message side of the passkey leak scan (every port message and runtime message of the background, once started).
+  const leakTap = createLeakTap();
+  coreHost.addOps(leakTap.ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());
   const storageLocal = browser.storage.local;
@@ -248,6 +260,7 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   };
 
   browser.runtime.onConnect.addListener((/** @type {any} */ port) => {
+    leakTap.tapPort(port);
     if (port?.name === TEST_CORE_PORT || port?.name === fillProbe.FILL_PROBE_PORT) {
       onConnect(port, { runtime, coreHost });
       return;
@@ -287,6 +300,7 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   // What a content script's message looks like to the background (the browser's
   // facts about the sender). Anything but this one probe is left to the router.
   browser.runtime.onMessage.addListener((/** @type {any} */ message, /** @type {any} */ sender) => {
+    leakTap.tapMessage(message);
     if (message?.ferretProbe !== "sender") return undefined;
     return Promise.resolve({ sender: describeSender(sender), contentSender: contentSender(sender, runtime) });
   });

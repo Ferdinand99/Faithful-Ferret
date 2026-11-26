@@ -1,0 +1,42 @@
+{
+  "id": "ho-users-id-64-bytes",
+  "set": "holdout",
+  "category": "create-users",
+  "title": "user.id of exactly 64 bytes is accepted and round-trips as userHandle",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "id": {
+        "$bytes": 64
+      }
+    },
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored with a truncated or re-encoded user.id that the RP cannot match"
+    }
+  ],
+  "note": "L3 §5.4.3: user.id max 64 bytes, so 64 is the valid boundary (65 -> TypeError); the discoverable get must return the same 64-byte userHandle."
+}

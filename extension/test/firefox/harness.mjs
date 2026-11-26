@@ -155,6 +155,22 @@ export function e2eCertificateFile() {
   return e2eCaFile;
 }
 
+/** @type {string | undefined} */
+let passkeyCaFile;
+/**
+ * The file of the passkey fixture container's CA, written once from FERRET_PASSKEY_CA_PEM; undefined outside a run that joins
+ * that container's network (`scripts/lanbox-ext.sh e2e --passkey-rp`).
+ */
+export function passkeyCertificateFile() {
+  const pem = process.env.FERRET_PASSKEY_CA_PEM;
+  if (!pem) return undefined;
+  if (!passkeyCaFile) {
+    passkeyCaFile = join(mkdtempSync(join(tmpdir(), "ferret-passkey-ca-")), "passkey-rp-ca.pem");
+    writeFileSync(passkeyCaFile, `${pem.trim()}\n`);
+  }
+  return passkeyCaFile;
+}
+
 /**
  * Starts Firefox with the test build installed and the CAs of the fixture server
  * (and, in the end-to-end run, of that stack) trusted.
@@ -166,6 +182,8 @@ export async function launch({ channel, manifest = defaultManifest(), prefs, hea
   const certificateFiles = [server.caFile];
   const e2e = e2eCertificateFile();
   if (e2e) certificateFiles.push(e2e);
+  const passkeyRp = passkeyCertificateFile();
+  if (passkeyRp) certificateFiles.push(passkeyRp);
   return startFirefox({
     channel,
     prefs,

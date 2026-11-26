@@ -1,6 +1,7 @@
 // passkey.*
 import { unhex, hex, segmentsToBytes } from '../util.mjs';
 import { create, get, candidates, site, prfSalt, prfOutput } from '../passkey.mjs';
+import { importPasskey } from '../passkey_import.mjs';
 
 export const ops = {};
 
@@ -8,6 +9,7 @@ ops['passkey.create'] = ({ input, rng }) => create(input, rng);
 ops['passkey.get'] = ({ input, expected }) => get(input, expected);
 ops['passkey.candidates'] = ({ input }) => candidates(input);
 ops['passkey.site'] = ({ input }) => site(input);
+ops['passkey.import'] = ({ input }) => importPasskey(input);
 
 ops['passkey.prf'] = ({ input }) => {
   const data = segmentsToBytes(input.input);

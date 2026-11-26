@@ -17,6 +17,10 @@ Bitwarden:
       the Bitwarden clients, libs/importer/src/importers/spec-data/bitwarden-json/
       account-encrypted.json.ts and password-protected.json.ts (the values are replaced
       with text that is not an encrypted string)
+  passkeys.json (and ../passkeys-expected.json)
+      the Bitwarden clients, libs/common/src/models/export/fido2-credential.export.ts, and the
+      Bitwarden SDK, crates/bitwarden-fido (the keys are throwaway P-256 keys made for these
+      tests, for the site rp-a.test, and registered nowhere)
   small.csv
       the Bitwarden SDK, crates/bitwarden-exporters/src/csv.rs, and the Bitwarden clients,
       libs/importer/src/importers/bitwarden/bitwarden-csv-importer.spec.ts

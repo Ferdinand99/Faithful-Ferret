@@ -12,7 +12,7 @@ function labelsOf(t) {
     "username", "password", "totp", "address", "field", "untitled", "cardholder_name", "brand", "number", "exp_month", "exp_year", "code",
     "title", "first_name", "middle_name", "last_name", "address1", "address2", "address3", "city", "state", "postal_code", "country",
     "company", "email", "phone", "ssn", "identity_username", "passport_number", "license_number",
-    "gender", "birthdate", "nickname", "pin",
+    "gender", "birthdate", "nickname", "pin", "passkey_register_again", "passkey_extra",
   ]) labels[key] = t(`import.label.${key}`);
   return labels;
 }

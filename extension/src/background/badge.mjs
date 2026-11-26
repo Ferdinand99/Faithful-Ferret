@@ -1,13 +1,16 @@
 // The toolbar button's badge (design document, section 10.9), in a build with saving from the extension on.
 //
-// Two things show on the badge of one tab and on no other:
+// Three things show on the badge of one tab and on no other:
 //
 //   - the number of offers to save or update a password that are ready for the tab (the store of offers calls
 //     `set(tabId, count)` whenever a tab's count may have changed);
 //   - "!" for thirty seconds after a shortcut or a context menu click was refused (the fill did not go through and
-//     there was no popup to say why); the popup then shows the reason.
+//     there was no popup to say why); the popup then shows the reason;
+//   - with Ferret as a passkey provider (the `passkeys` feature), PASSKEY_MARK while a passkey request of the tab waits
+//     for the user outside Ferret's window (a conditional request, or a modal one without a window: the popup shows it);
+//     the request broker calls `passkey(tabId, on)`. A refusal shows over it, and it shows over a count.
 //
-// Both are per tab (the text is set with the tab's id, never for the whole button), both are plain numbers and a
+// All are per tab (the text is set with the tab's id, never for the whole button), both are plain numbers and a
 // reason code from a fixed list: the badge never holds a host, a user name or a password. A refusal ends by the
 // clock, checked on every access (a timer is only a convenience: it does not run while a machine sleeps). The browser
 // resets a tab's badge when the tab goes to a new page, so the module can paint a tab again (`reapply`).
@@ -35,6 +38,9 @@ export const REFUSAL_REASONS = Object.freeze([
   "frame_unchecked",
   "not_filled",
 ]);
+
+/** The text of the passkey mark. */
+export const PASSKEY_MARK = "•";
 
 /** The longest count that is written out; more shows as this and a plus. */
 const MAX_SHOWN = 9;
@@ -70,6 +76,8 @@ export function createBadge({
   const refusals = new Map();
   /** The timer that ends a tab's refusal. @type {Map<number, unknown>} */
   const timersByTab = new Map();
+  /** The tabs with a passkey request that waits for the user outside Ferret's window. @type {Set<number>} */
+  const passkeys = new Set();
   /** What was painted last, so an unchanged tab is not painted again. @type {Map<number, string>} */
   const painted = new Map();
 
@@ -89,6 +97,7 @@ export function createBadge({
   /** The text of a tab's badge. @param {number} tabId */
   function textOf(tabId) {
     if (activeRefusal(tabId) !== null) return "!";
+    if (passkeys.has(tabId)) return PASSKEY_MARK;
     const count = counts.get(tabId) ?? 0;
     if (count <= 0) return "";
     return count > MAX_SHOWN ? `${MAX_SHOWN}+` : String(count);
@@ -147,6 +156,17 @@ export function createBadge({
     },
 
     /**
+     * Whether a passkey request of a tab waits for the user outside Ferret's window (the request broker says so).
+     * @param {number} tabId @param {boolean} on
+     */
+    passkey(tabId, on) {
+      if (!isIndex(tabId)) return;
+      if (on === true) passkeys.add(tabId);
+      else passkeys.delete(tabId);
+      paint(tabId);
+    },
+
+    /**
      * A shortcut or a menu click was refused: "!" for thirty seconds, and the reason for the popup to show.
      * @param {number} tabId @param {unknown} reason
      */
@@ -201,6 +221,7 @@ export function createBadge({
       forgetTimer(tabId);
       counts.delete(tabId);
       refusals.delete(tabId);
+      passkeys.delete(tabId);
       painted.delete(tabId);
     },
 

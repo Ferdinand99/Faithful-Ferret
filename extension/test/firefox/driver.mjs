@@ -229,6 +229,11 @@ ${this.log.slice(-4000)}`);
     await wire("POST", `${this.#s()}/url`, { url });
   }
 
+  /** Sizes the window of the selected tab (the outer size, in pixels). @param {number} width @param {number} height */
+  async setWindowSize(width, height) {
+    await wire("POST", `${this.#s()}/window/rect`, { width, height });
+  }
+
   /** @returns {Promise<string>} the handle of the selected tab */
   async windowHandle() {
     return wire("GET", `${this.#s()}/window`);
@@ -318,6 +323,18 @@ ${this.log.slice(-4000)}`);
     if (before !== "content") await this.setContext("content");
     try {
       const png = await wire("GET", `${this.#s()}/screenshot`);
+      writeFileSync(file, Buffer.from(png, "base64"));
+    } finally {
+      if (before !== "content") await this.setContext(before);
+    }
+  }
+
+  /** The whole page, not only what the window shows (Firefox's own endpoint). @param {string} file path of a PNG */
+  async fullScreenshot(file) {
+    const before = this.context;
+    if (before !== "content") await this.setContext("content");
+    try {
+      const png = await wire("GET", `${this.#s()}/moz/screenshot/full`);
       writeFileSync(file, Buffer.from(png, "base64"));
     } finally {
       if (before !== "content") await this.setContext(before);

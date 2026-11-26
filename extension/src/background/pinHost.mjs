@@ -17,6 +17,12 @@
 //                  and the checks that follow every unlock, all online. It touches no PIN record (a refusal after the core
 //                  opened locks the vault again), and the 32 bytes are wiped here as soon as the core has had them
 //
+// For a page's passkey request (the `passkeys` feature, passkeyVerify.mjs) it also verifies the person while the vault is open,
+// without opening or touching that vault (`verifier`): the PIN (`pin.verify`, an attempt counted like an unlock), a passkey of
+// the vault (`prf.verify`, online, the same checks of the core as `prf_unlock`). (The master password is checked by the session
+// itself, passkeyVerify.mjs, so a build without the PIN has it too.) The core's unlock of the PIN and of a passkey runs in a client of its own (`scratch`, made for the one check and ended at once),
+// so the open vault is never replaced and a check that runs out of memory ends only that worker.
+//
 // What the store's caller must do (the header of the PIN store, "What the caller must do"), and where it is done:
 //
 //   * the window always applies: `pin_unlock` renews the device's tokens first when the store says the window has run out
@@ -96,7 +102,9 @@ const refused = (reply) => reply;
  *   windows?: { create: (info: any) => Promise<{ id?: number } | undefined>, update: (id: number, info: any) => Promise<unknown> } | null,
  *   getURL?: ((path: string) => string) | null,
  *   windowPage?: string | null,
- * }} options `windows`, `getURL` and `windowPage` (the generated module's name of the unlock window's page) open that window
+ *   scratch?: (() => Promise<any>) | null,
+ * }} options `windows`, `getURL` and `windowPage` (the generated module's name of the unlock window's page) open that window;
+ *   `scratch` makes a WASM client of its own for one check of the verifier (null: the verifier has no PIN and no passkey)
  */
 export function createPinHost({
   store,
@@ -110,6 +118,7 @@ export function createPinHost({
   windows = null,
   getURL = null,
   windowPage = null,
+  scratch = null,
 }) {
   /** The core host's lock, set by `attach`. @type {((reason: "manual" | "sign_out") => Promise<void>) | null} */
   let hostLock = null;
@@ -739,6 +748,197 @@ export function createPinHost({
 
   const ops = Object.freeze({ unlock_policy: unlockPolicy, pin_set: pinSet, pin_unlock: pinUnlock, pin_off: pinOff, prf_options: prfOptions, prf_unlock: prfUnlock, prf_window: prfWindow });
 
+  // ------------------------------------------------------------------ verifying the person for a passkey request
+
+  /**
+   * The server, its session and this device's account when the vault that is open is that account's, else null.
+   * @returns {Promise<{ server: string, session: any, account: string } | null>}
+   */
+  async function openAccount() {
+    const server = await sessionHost.storedServer();
+    if (server === null) return null;
+    const session = await sessionOf(server);
+    const account = await session.deviceAccount?.();
+    if (typeof account !== "string" || session.current?.()?.accountId !== account) return null;
+    return { server, session, account };
+  }
+
+  /** A client of its own for one check. The caller ends it (`endScratch`). */
+  async function scratchClient() {
+    if (scratch === null) throw Object.assign(new Error("not_available"), { code: "not_available" });
+    return scratch();
+  }
+
+  /** @param {any} client */
+  async function endScratch(client) {
+    await Promise.resolve(client?.lock?.()).catch(() => {});
+  }
+
+  /**
+   * What this device has of a PIN for the open account: whether one is set and whether it works without the server now.
+   * @returns {Promise<{ set: boolean, offlineOk: boolean } | null>}
+   */
+  async function verifierPinStatus() {
+    if (scratch === null) return null;
+    const open = await openAccount();
+    if (open === null) return null;
+    const status = await store.status(open.server, open.account).catch(() => null);
+    return status === null ? null : { set: status.set === true, offlineOk: status.offlineOk === true };
+  }
+
+  /**
+   * Checks the PIN for the open vault: the same rule, window and attempt as `pin_unlock` (the attempt is counted before the
+   * Argon2id runs, a timeout counts as a wrong PIN, five wrong ones delete it), but the core's unlock runs in a client of its
+   * own and nothing is opened. Without the server the PIN works only within seven days of the last contact.
+   * @param {string} pin
+   * @returns {Promise<{ ok: true } | { ok: false, reason: string, left?: number, wait_ms?: number }>}
+   */
+  async function verifyPin(pin) {
+    if (scratch === null) return refused({ ok: false, reason: "pin_unavailable" });
+    const open = await openAccount();
+    if (open === null) return refused({ ok: false, reason: "vault_locked" });
+    const { server, session, account } = open;
+    const deviceState = await session.deviceState().catch(() => null);
+    if (deviceState === "revoked" || deviceState === "signed_out") {
+      await wipeServer(server, deviceState === "revoked" ? "device_revoked" : "signed_out");
+      return refused({ ok: false, reason: "pin_wiped" });
+    }
+    if (deviceState !== "ok") return refused({ ok: false, reason: "pin_unavailable" });
+    await store.tick().catch(() => {});
+    if (!(await store.status(server, account)).set) return refused({ ok: false, reason: "pin_unavailable" });
+    await within(fetchPolicy(server), policyTimeoutMs, null).catch(() => null);
+    let status = await store.status(server, account);
+    if (!status.set) return refused({ ok: false, reason: "pin_wiped" });
+    // The window: without the server a PIN works for seven days after the last contact.
+    if (!status.offlineOk) {
+      const renewed = await renew(server, account);
+      if (renewed === "ended") return refused({ ok: false, reason: "pin_wiped" });
+      if (renewed === "offline") return refused({ ok: false, reason: "pin_offline_expired" });
+      status = await store.status(server, account);
+      if (!status.set) return refused({ ok: false, reason: "pin_wiped" });
+      if (!status.offlineOk) return refused({ ok: false, reason: "pin_offline_expired" });
+    }
+    const cached = await store.cachedPolicy(server);
+    if (typeof pin !== "string" || !checkPin(pin, cached?.pin.min_length ?? 0).ok) {
+      return refused({ ok: false, reason: "pin_rule", left: status.failuresLeft, wait_ms: status.waitMs });
+    }
+    const pinBytes = new TextEncoder().encode(pin);
+    /** @type {WipeReason | null} */
+    let wipeAfter = null;
+    let checked = false;
+    /** @type {{ result: string, failuresLeft: number, waitMs: number }} */
+    let outcome;
+    try {
+      outcome = await store.attempt(server, account, { online: true }, async (/** @type {PinBlob} */ blob) => {
+        const rule = { allowed: cached?.pin.allowed ?? false, after_restart: cached?.pin.after_restart ?? false, min_length: cached?.pin.min_length ?? blob.rule.minLength };
+        /** @type {any} */
+        let client = null;
+        try {
+          client = await scratchClient();
+          const timedOut = Symbol("timeout");
+          const done = await within(session.checkPin({ pin: pinBytes, blob, rule, client }), unlockTimeoutMs, timedOut);
+          if (done === timedOut) return { ok: false, reason: "wrong" };
+          checked = true;
+          return { ok: true };
+        } catch (error) {
+          const refusal = pinRefusal(error);
+          if (refusal.wipe !== null) wipeAfter = refusal.wipe;
+          return refusal.answer;
+        } finally {
+          // The check's worker goes, whatever happened (its Argon2id and the vault it opened with the PIN).
+          await endScratch(client);
+        }
+      });
+    } finally {
+      pinBytes.fill(0);
+    }
+    if (wipeAfter !== null) {
+      await store.wipe(server, account, wipeAfter).catch(() => {});
+      if (outcome.result !== "ok") return refused({ ok: false, reason: "pin_wiped" });
+    }
+    switch (outcome.result) {
+      case "ok":
+        return checked ? { ok: true } : refused({ ok: false, reason: "pin_unavailable" });
+      case "wrong":
+        return refused({ ok: false, reason: "wrong_pin", left: outcome.failuresLeft, wait_ms: outcome.waitMs });
+      case "out_of_memory":
+        return refused({ ok: false, reason: "out_of_memory", left: outcome.failuresLeft, wait_ms: outcome.waitMs });
+      case "wait":
+        return refused({ ok: false, reason: "pin_wait", left: outcome.failuresLeft, wait_ms: outcome.waitMs });
+      case "wiped":
+        return refused({ ok: false, reason: "pin_wiped" });
+      case "stale":
+        return refused({ ok: false, reason: "pin_stale" });
+      case "offline_expired":
+        return refused({ ok: false, reason: "pin_offline_expired" });
+      default:
+        return refused({ ok: false, reason: "pin_unavailable" });
+    }
+  }
+
+  /**
+   * Checks the 32 bytes a passkey of the vault gave Ferret's chooser window, for the open vault: online only (the rule and the
+   * server's list of passkeys are read now), the core's `unlock_prf` with every pin of an unlock (the account key `pk_a`
+   * included) in a client of its own, and nothing opened. The bytes are wiped here as soon as the core has had them.
+   * @param {{ credential_id: string, prf_output: string }} input
+   * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+   */
+  async function verifyPrf(input) {
+    const output = typeof input?.prf_output === "string" ? outputOf(input.prf_output) : null;
+    try {
+      if (scratch === null) return refused({ ok: false, reason: "prf_unavailable" });
+      if (output === null || typeof input?.credential_id !== "string") return refused({ ok: false, reason: "prf_failed" });
+      const open = await openAccount();
+      if (open === null) return refused({ ok: false, reason: "vault_locked" });
+      const ground = await prfGround(open.server);
+      if (!ground.ok) return refused({ ok: false, reason: ground.reason });
+      /** @type {any} */
+      let client = null;
+      try {
+        client = await scratchClient();
+        await ground.session.checkPrf({ credentialId: input.credential_id, output, client });
+      } catch (error) {
+        if (statusOf(error) === 401) {
+          await endedAfter(open.server, codeOf(error));
+          return refused({ ok: false, reason: "signed_out" });
+        }
+        // The rule of `prf_unlock`: any refusal that is not an answer of the server and says something about what the server
+        // shows (not only about the passkey, and not a worker or a lock) deletes the PIN, whatever its code: no list of codes
+        // decides it. An offline PIN would otherwise open the vault without the checks that just failed.
+        const code = codeOf(error);
+        if (statusOf(error) === null && !NOT_A_REFUSAL.has(code) && !PASSKEY_ONLY.has(code)) {
+          await store.wipe(open.server, open.account, "pinned_rejected").catch(() => {});
+          return refused({ ok: false, reason: prfReasonOf(error) ?? "attack_warning" });
+        }
+        return refused({ ok: false, reason: prfReasonOf(error) ?? "prf_failed" });
+      } finally {
+        await endScratch(client);
+      }
+      return { ok: true };
+    } finally {
+      output?.fill(0);
+    }
+  }
+
+  /**
+   * Whether a passkey of the vault may verify now, as far as this device knows without asking the server: the rule it last saw
+   * allows passkeys. (The server's list is read when the window asks for it.)
+   * @returns {Promise<boolean>}
+   */
+  async function prfAvailable() {
+    if (scratch === null) return false;
+    const server = await sessionHost.storedServer();
+    if (server === null) return false;
+    const policy = await store.cachedPolicy(server).catch(() => null);
+    return policy?.prf.enabled === true;
+  }
+
+  /** The checks of the verification step for a page's passkey request (passkeyVerify.mjs). */
+  const verifier = Object.freeze({
+    pin: Object.freeze({ status: verifierPinStatus, verify: verifyPin }),
+    prf: Object.freeze({ available: prfAvailable, verify: verifyPrf }),
+  });
+
   // The alarm's listener is added now, so the alarm that wakes an unloaded page reaches it.
   alarms?.onAlarm.addListener((alarm) => {
     if (alarm?.name !== CONTACT_ALARM) return undefined;
@@ -747,6 +947,8 @@ export function createPinHost({
 
   return {
     ops,
+
+    verifier,
 
     /**
      * Joins the core host and the session: a lock for "sign out" deletes the PIN, the session's events reach this host,

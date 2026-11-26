@@ -33,7 +33,7 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
 /**
  * The operations the router may call. A name outside this list is refused,
  * whatever else is passed to `createCoreHost`. A later task adds its own names.
- * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe`, `item_rename_probe`,
+ * `argon2_bench`, `measure_open`, `frames_probe`, `item_probe`, `item_rename_probe`, `item_find_probe`, `item_delete_probe`, `leak_watch`,
  * `match_bench`, `offer_plant`, `offer_bench` and `offers_peek` are only available in the test
  * build, which passes their implementations in (`ops`); in a release they are
  * refused like any other name. The offer ops (`offer_classify`, `offer_save`,
@@ -44,7 +44,11 @@ export const LOCK_REASONS = Object.freeze(["timeout", "idle", "manual", "sign_ou
  * host's (captureHost.mjs); a build without the feature does not have them. The PIN ops (`unlock_policy`, `pin_set`,
  * `pin_unlock`, `pin_off`) and the passkey's (`prf_options`, `prf_unlock`) are the PIN host's (pinHost.mjs); a build without the `unlock` feature does not have them.
  * `passkey_event` (the reports of the passkey bridge) belongs to the `passkeys` feature (passkeyRequests.mjs); a build
- * without the feature does not have it. `passkey_reconcile` is the test build's only (its hooks).
+ * without the feature does not have it, nor the chooser window's (`passkey_pending`, `passkey_site`, `passkey_cancel`,
+ * `passkey_browser`, `passkey_never`), its choices (`passkey_create_options`, passkeyFlow.mjs), and a get and verification
+ * (`passkey_candidates`, `passkey_choose`, `passkey_verify`, passkeyGet.mjs), and the popup's for a tab (`passkey_tab`,
+ * `passkey_tab_open`: passkeyRequests.mjs; `passkey_tab_list`, `passkey_tab_choose`, `passkey_tab_verify`: passkeyGet.mjs).
+ * `passkey_reconcile` is the test build's only (its hooks).
  */
 export const CORE_OPS = Object.freeze([
   "ping",
@@ -72,6 +76,10 @@ export const CORE_OPS = Object.freeze([
   "frames_probe",
   "item_probe",
   "item_rename_probe",
+  "item_find_probe",
+  "item_delete_probe",
+  "item_import_probe",
+  "leak_watch",
   "match_bench",
   "fill_offer",
   "fill",
@@ -105,6 +113,21 @@ export const CORE_OPS = Object.freeze([
   "prf_window",
   "passkey_event",
   "passkey_reconcile",
+  "passkey_pending",
+  "passkey_site",
+  "passkey_cancel",
+  "passkey_browser",
+  "passkey_never",
+  "passkey_settings",
+  "passkey_create_options",
+  "passkey_candidates",
+  "passkey_choose",
+  "passkey_verify",
+  "passkey_tab",
+  "passkey_tab_list",
+  "passkey_tab_open",
+  "passkey_tab_choose",
+  "passkey_tab_verify",
 ]);
 
 /**

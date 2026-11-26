@@ -9,7 +9,7 @@ const badRp = () => fail('malformed_rp_id');
 const LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 // Host as IDNA A-labels, lower case, without a trailing dot. Returns null when it is no usable name.
-function canonicalHost(raw) {
+export function canonicalHost(raw) {
   let h = raw;
   if (h.endsWith('.')) h = h.slice(0, -1); // one trailing dot only
   if (h === '' || h.includes('..') || h.startsWith('.')) return null;

@@ -1,0 +1,2582 @@
+{
+  "format": "ferret-vectors/1",
+  "group": "passkey_import",
+  "suite": 1,
+  "spec": "Fase 1 § 9.1, § 9.6",
+  "generator": {
+    "tool": "ferret-vectorgen",
+    "core": "see-vectors-version",
+    "commit": "see-vectors-version",
+    "unicode": "16.0.0",
+    "rng": "hmac-sha256-ctr(seed)"
+  },
+  "cases": [
+    {
+      "id": "passkey_import/valid/001",
+      "title": "Bitwarden PKCS#8, credential id from a GUID",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a1bc3321a9e5434a8c236600066cc911",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420bc29e38fef80dd5b5b456eeef7f8e3916770550baeece1c45d7f920888db5003a14403420004274008d95e7f240cd256798768569d136b3a75f9ed9dc0222386eb1336fcb223400ae22f7539b40e3ef8935413a5511533059bbc92081541f2191e616e68ee6f"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "RP A (test)",
+        "user_display_name": "Import Test 1",
+        "user_handle": "ecb8a0cce4034a4393ff2afeddedcdf7",
+        "user_name": "import-test-1@rp-a.test"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a1bc3321a9e5434a8c236600066cc911",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420bc29e38fef80dd5b5b456eeef7f8e3916770550baeece1c45d7f920888db5003a14403420004274008d95e7f240cd256798768569d136b3a75f9ed9dc0222386eb1336fcb223400ae22f7539b40e3ef8935413a5511533059bbc92081541f2191e616e68ee6f",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004274008d95e7f240cd256798768569d136b3a75f9ed9dc0222386eb1336fcb223400ae22f7539b40e3ef8935413a5511533059bbc92081541f2191e616e68ee6f",
+          "rp_id": "rp-a.test",
+          "rp_name": "RP A (test)",
+          "user_display_name": "Import Test 1",
+          "user_handle": "ecb8a0cce4034a4393ff2afeddedcdf7",
+          "user_name": "import-test-1@rp-a.test"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/002",
+      "title": "Bitwarden PKCS#8, credential id of another length (b64.), counter 7: register again",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 7,
+        "created": "1700000000000",
+        "cred_id": "ac6efea58e8231ad22372c60740f62c4057ed7b87ec679cfb1253c25c83a3c4b",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420845df421ca594810931a270ae86aad3973c3679396be4d6cab25412233e67257a14403420004b126ca40d3992ad4250df0111dc5617938ccabbe36782af04ec2e5e2e6439378434cb0fa6882a9bad683c189d5a44f8b5bc1f7b7e0d465eee858e979428768a0"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "ec5a74b003819f004b636b562b7b6321",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 7,
+          "prf": false,
+          "register_again": true
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "ac6efea58e8231ad22372c60740f62c4057ed7b87ec679cfb1253c25c83a3c4b",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420845df421ca594810931a270ae86aad3973c3679396be4d6cab25412233e67257a14403420004b126ca40d3992ad4250df0111dc5617938ccabbe36782af04ec2e5e2e6439378434cb0fa6882a9bad683c189d5a44f8b5bc1f7b7e0d465eee858e979428768a0",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004b126ca40d3992ad4250df0111dc5617938ccabbe36782af04ec2e5e2e6439378434cb0fa6882a9bad683c189d5a44f8b5bc1f7b7e0d465eee858e979428768a0",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "ec5a74b003819f004b636b562b7b6321",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/003",
+      "title": "PKCS#8 that a browser's WebCrypto exported (the Bitwarden browser path)",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b020101042090f17f913e911470d7dc4219a12191fc3864cfffce9aa06d756ebb8df465ef4ea14403420004b501ea53ec438e49d1c732b8ab4262d4337beba8814aeb83132006bbe434d3624e708c3bc791026917aebf37d844c055e0182eda58e026b9b846c90c00744882"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b020101042090f17f913e911470d7dc4219a12191fc3864cfffce9aa06d756ebb8df465ef4ea14403420004b501ea53ec438e49d1c732b8ab4262d4337beba8814aeb83132006bbe434d3624e708c3bc791026917aebf37d844c055e0182eda58e026b9b846c90c00744882",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004b501ea53ec438e49d1c732b8ab4262d4337beba8814aeb83132006bbe434d3624e708c3bc791026917aebf37d844c055e0182eda58e026b9b846c90c00744882",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/004",
+      "title": "PKCS#8 that a browser's WebCrypto exported (the Bitwarden browser path)",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ae2bbff0d26f967877004e7b3036e598e43863ee26c08101faf633d07a21386ba1440342000485ec23f41abf2e0ea079252ed3ec999ba879fce9868d510431fd2ce39fd80c71f158b6c471f7bb67a421a11652fea3aa8621c5dc98013a20da5a224a0c8ec081"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ae2bbff0d26f967877004e7b3036e598e43863ee26c08101faf633d07a21386ba1440342000485ec23f41abf2e0ea079252ed3ec999ba879fce9868d510431fd2ce39fd80c71f158b6c471f7bb67a421a11652fea3aa8621c5dc98013a20da5a224a0c8ec081",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d0301070342000485ec23f41abf2e0ea079252ed3ec999ba879fce9868d510431fd2ce39fd80c71f158b6c471f7bb67a421a11652fea3aa8621c5dc98013a20da5a224a0c8ec081",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/005",
+      "title": "AliasVault JWK, no PRF, credential id from the GUID",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "4191c49b05d44b2c9bd94fecaf23c834",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"o1ZO_uWIYpHOZUTIGGmUxaBuGinN03mhCfTYFevyJAM\",\"y\":\"7-O7yU26PtMbZKpR9em2_iBxVi9uig8BFuUmCsVTKW4\",\"d\":\"_TJYBPqMLIHOm_jND70ADCzB6ud_HXAB-bz53gOnVOo\"}"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "01acb91b719b58f9c0b508d15418c723",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "4191c49b05d44b2c9bd94fecaf23c834",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420fd325804fa8c2c81ce9bf8cd0fbd000c2cc1eae77f1d7001f9bcf9de03a754eaa14403420004a3564efee5886291ce6544c8186994c5a06e1a29cdd379a109f4d815ebf22403efe3bbc94dba3ed31b64aa51f5e9b6fe2071562f6e8a0f0116e5260ac553296e",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004a3564efee5886291ce6544c8186994c5a06e1a29cdd379a109f4d815ebf22403efe3bbc94dba3ed31b64aa51f5e9b6fe2071562f6e8a0f0116e5260ac553296e",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "01acb91b719b58f9c0b508d15418c723",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/006",
+      "title": "AliasVault JWK with a PRF key: both seeds are the key (the same formula)",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "e10b19bb95a252ee6204cd13f747cded7c98f1269ce9006f004e6256bcbebd11",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"vKxOHg_kENeuW_l-KEv42CLA7_2Nz6JOV6DE059z17Q\",\"y\":\"4dXAjWMD40RxZzDB9aJfAZRNbACZluKuD-GHMqLxoYM\",\"d\":\"zjML5vP4_TAnqlLVL0MfFgPEVRiWUhkQJ5InIyfxljI\"}"
+        },
+        "prf": {
+          "nouv": "3ba4d0b8cece6535eb22d2446f157846ef78b02e8e4621fdda006d3833a8bac7",
+          "uv": "3ba4d0b8cece6535eb22d2446f157846ef78b02e8e4621fdda006d3833a8bac7"
+        },
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "f94cb6c7ba1148dacb4aadca13e6b279",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": true,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "e10b19bb95a252ee6204cd13f747cded7c98f1269ce9006f004e6256bcbebd11",
+          "prf_seed_nouv": "3ba4d0b8cece6535eb22d2446f157846ef78b02e8e4621fdda006d3833a8bac7",
+          "prf_seed_uv": "3ba4d0b8cece6535eb22d2446f157846ef78b02e8e4621fdda006d3833a8bac7",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ce330be6f3f8fd3027aa52d52f431f1603c45518965219102792272327f19632a14403420004bcac4e1e0fe410d7ae5bf97e284bf8d822c0effd8dcfa24e57a0c4d39f73d7b4e1d5c08d6303e344716730c1f5a25f01944d6c009996e2ae0fe18732a2f1a183",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004bcac4e1e0fe410d7ae5bf97e284bf8d822c0effd8dcfa24e57a0c4d39f73d7b4e1d5c08d6303e344716730c1f5a25f01944d6c009996e2ae0fe18732a2f1a183",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "f94cb6c7ba1148dacb4aadca13e6b279",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/007",
+      "title": "PKCS#8 without the public key is written with it",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "3041020100301306072a8648ce3d020106082a8648ce3d0301070427302502010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/008",
+      "title": "PKCS#8 with the curve repeated inside the key is written in the one form",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308193020100301306072a8648ce3d020106082a8648ce3d0301070479307702010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a00a06082a8648ce3d030107a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/009",
+      "title": "JWK without the public coordinates",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/010",
+      "title": "JWK with the public coordinates",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"TGM247iz3ncbYTocehc0g0zWnBpPX_7LJAxjvA3bFXQ\",\"y\":\"9olsXRTKROADd5HCMAMzJZpxuQHlJYV10QfluKxItCQ\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/011",
+      "title": "JWK without kty (read as EC)",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/012",
+      "title": "JWK with other members of every kind, whitespace and an escape in a value that is skipped",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\n  \"kid\": \"a\\\"b\\u00e5\", \"ext\": true, \"key_ops\": [\"sign\", {\"n\": [1, -2.5e3, null, false]}],\n  \"alg\": \"ES256\", \"use\": \"sig\",\n  \"crv\": \"P-256\", \"kty\": \"EC\", \"d\": \"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"\n}\n"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/013",
+      "title": "JWK whose d has padding",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA=\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/014",
+      "title": "a scalar with a leading zero byte",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"K8_STkEzVbU-56WwJ9xhdfS9KS-9ltd1vCNYuO-_3l8\",\"y\":\"L1WQXh3Bu6yUZuDvMLzHRb24G7onm8ctjDgx6Wgw4Ac\",\"d\":\"ACIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104200022232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40a144034200042bcfd24e413355b53ee7a5b027dc6175f4bd292fbd96d775bc2358b8efbfde5f2f55905e1dc1bbac9466e0ef30bcc745bdb81bba279bc72d8c3831e96830e007",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200042bcfd24e413355b53ee7a5b027dc6175f4bd292fbd96d775bc2358b8efbfde5f2f55905e1dc1bbac9466e0ef30bcc745bdb81bba279bc72d8c3831e96830e007",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/015",
+      "title": "the largest valid scalar (n - 1)",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/016",
+      "title": "two seeds of Ferret's formula are kept as they are",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": {
+          "nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50"
+        },
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": true,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "prf_seed_uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/017",
+      "title": "RP ID with upper case and a trailing dot",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "Example.COM.",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/018",
+      "title": "RP ID as Unicode becomes A-labels",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "bücher.example",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "xn--bcher-kva.example",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/019",
+      "title": "RP ID as upper-case Unicode becomes A-labels",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "BÜCHER.Example",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "xn--bcher-kva.example",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/020",
+      "title": "RP ID that is a host of a private suffix, not the suffix",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "a.github.io",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "a.github.io",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/021",
+      "title": "RP ID below a registry suffix",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "Login.Example.CO.UK",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "login.example.co.uk",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/022",
+      "title": "RP ID that is a registrable domain of an unknown suffix",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "rp-a.test",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "rp-a.test",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/023",
+      "title": "the texts of the site lose the control and bidirectional characters",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Exam⁦ple\t",
+        "user_display_name": "Åse﻿",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "al‮ice\u0000@example.com​\n"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Åse",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/024",
+      "title": "no site name, and a display name that is nothing but control characters",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": null,
+        "user_display_name": "\u0000‎",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": null,
+          "user_display_name": null,
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/025",
+      "title": "an empty user name",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": ""
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": ""
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/026",
+      "title": "credential id of 1 byte and user handle of 1 byte",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "5a",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "01",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "5a",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "01",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/027",
+      "title": "credential id of 1 023 bytes and user handle of 64 bytes",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/028",
+      "title": "the largest counter and creation time",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 4294967295,
+        "created": "9007199254740991",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect": {
+        "notes": {
+          "counter": 4294967295,
+          "prf": false,
+          "register_again": true
+        },
+        "record": {
+          "created": "9007199254740991",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "Example",
+          "user_display_name": "Alice",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "alice@example.com"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/valid/029",
+      "title": "names of exactly 1 KiB",
+      "op": "passkey.import",
+      "status": "valid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "user_display_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+      },
+      "expect": {
+        "notes": {
+          "counter": 0,
+          "prf": false,
+          "register_again": false
+        },
+        "record": {
+          "created": "1700000000000",
+          "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+          "prf_seed_nouv": null,
+          "prf_seed_uv": null,
+          "priv_pkcs8": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "public_key_spki": "3059301306072a8648ce3d020106082a8648ce3d030107034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424",
+          "rp_id": "example.com",
+          "rp_name": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "user_display_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "user_handle": "707172737475767778797a7b7c7d7e7f",
+          "user_name": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+        }
+      },
+      "expect_error": null
+    },
+    {
+      "id": "passkey_import/invalid/001",
+      "title": "PKCS#8 of an Ed25519 key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "302e020100300506032b6570042204201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/002",
+      "title": "PKCS#8 of an RSA key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "3016020100300d06092a864886f70d010101050004023030"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/003",
+      "title": "PKCS#8 of a P-384 key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "303e020100301006072a8648ce3d020106052b810400220427302502010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/004",
+      "title": "JWK of an RSA key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"RSA\",\"n\":\"AQAB\",\"e\":\"AQAB\",\"d\":\"AQAB\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/005",
+      "title": "JWK of an Ed25519 key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/006",
+      "title": "JWK of a P-384 key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-384\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/007",
+      "title": "JWK that names another algorithm",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"alg\":\"ES384\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "unsupported"
+    },
+    {
+      "id": "passkey_import/invalid/008",
+      "title": "PKCS#8 of a P-256 key whose scalar is 0",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104200000000000000000000000000000000000000000000000000000000000000000a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/009",
+      "title": "PKCS#8 that is not PKCS#8",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80818283848586878889"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/010",
+      "title": "PKCS#8 of no bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": ""
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/011",
+      "title": "JWK whose d is 0",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/012",
+      "title": "JWK whose d is the order of the curve",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"_____wAAAAD__________7zm-q2nF56E87nKwvxjJVE\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/013",
+      "title": "JWK with x and y of another key",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"x\":\"7oQfo1vSoDrEIZDESQVlSAlFNUbH1nXDaBiE7NK50Vo\",\"y\":\"4k8v-q0YqmbBMFPiEWa4_0zLyPvzF08qtgrfOBHRqUc\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/014",
+      "title": "JWK with x and no y",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"x\":\"TGM247iz3ncbYTocehc0g0zWnBpPX_7LJAxjvA3bFXQ\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/015",
+      "title": "JWK without a curve",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/016",
+      "title": "JWK without d",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"kty\":\"EC\",\"crv\":\"P-256\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/017",
+      "title": "JWK with d twice",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/018",
+      "title": "JWK whose d is one symbol short",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"RITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/019",
+      "title": "JWK whose d has a symbol that is not base64url",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLz+\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/020",
+      "title": "JWK whose d has an escape",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLz\\u0041\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/021",
+      "title": "JWK whose d is not text",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":7}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/022",
+      "title": "a JWK that is an array",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "[\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"]"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/023",
+      "title": "a JWK with text after the object",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"} x"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/024",
+      "title": "a JWK that is not finished",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\""
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/025",
+      "title": "a JWK of no text",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": ""
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/026",
+      "title": "a JWK of more than 4 KiB",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"n\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/027",
+      "title": "a PKCS#8 document of more than 1 KiB",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "3030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/028",
+      "title": "RP ID that is a registry suffix",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "co.uk",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/029",
+      "title": "RP ID that is a private suffix",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "github.io",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/030",
+      "title": "RP ID that is a top-level domain",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/031",
+      "title": "RP ID that is an IPv4 address",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "10.0.0.1",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/032",
+      "title": "RP ID with a port",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com:8443",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/033",
+      "title": "RP ID that is an address",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "https://example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/034",
+      "title": "RP ID with a path",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com/login",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/035",
+      "title": "RP ID that is empty",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/036",
+      "title": "RP ID with a label that starts with a hyphen",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "-a.example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/037",
+      "title": "RP ID with an empty label",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "a..example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/038",
+      "title": "RP ID that is localhost",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "localhost",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_rp_id"
+    },
+    {
+      "id": "passkey_import/invalid/039",
+      "title": "credential id of no bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey_import/invalid/040",
+      "title": "credential id of 1 024 bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f10111213",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/041",
+      "title": "user handle of no bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey_import/invalid/042",
+      "title": "user handle of 65 bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_webauthn_options"
+    },
+    {
+      "id": "passkey_import/invalid/043",
+      "title": "a PRF seed of 31 bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": {
+          "nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70",
+          "uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f"
+        },
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/044",
+      "title": "a PRF seed of 64 bytes",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": {
+          "nouv": "5152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f90",
+          "uv": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50"
+        },
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/045",
+      "title": "a user name of more than 1 KiB",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/046",
+      "title": "a site name of more than 1 KiB",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/047",
+      "title": "a display name of more than 1 KiB",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/048",
+      "title": "a creation time above 2^53 - 1",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "9007199254740992",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "pkcs8",
+          "hex": "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104201112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30a144034200044c6336e3b8b3de771b613a1c7a1734834cd69c1a4f5ffecb240c63bc0ddb1574f6896c5d14ca44e0037791c2300333259a71b901e5258575d107e5b8ac48b424"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "too_large"
+    },
+    {
+      "id": "passkey_import/invalid/049",
+      "title": "JWK with a member name that has an escape (a second d)",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"\\u0064\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    },
+    {
+      "id": "passkey_import/invalid/050",
+      "title": "JWK with a second token after a skipped value that hides a member",
+      "op": "passkey.import",
+      "status": "invalid",
+      "tags": [],
+      "synthetic": true,
+      "rng": [],
+      "input": {
+        "counter": 0,
+        "created": "1700000000000",
+        "cred_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "key": {
+          "format": "jwk",
+          "text": "{\"crv\":\"P-256\",\"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\",\"n\":0 \"d\":\"ERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzA\"}"
+        },
+        "prf": null,
+        "rp_id": "example.com",
+        "rp_name": "Example",
+        "user_display_name": "Alice",
+        "user_handle": "707172737475767778797a7b7c7d7e7f",
+        "user_name": "alice@example.com"
+      },
+      "expect_error": "malformed_item_body"
+    }
+  ]
+}

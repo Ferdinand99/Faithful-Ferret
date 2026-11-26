@@ -169,7 +169,17 @@ export function caseProblems(c) {
   if (c.actions !== undefined && (!Array.isArray(c.actions) || c.actions.some((/** @type {any} */ a) => !isObject(a) || typeof a.do !== "string"))) p.push("actions is a list of { do: ... }");
   if (c.actions !== undefined && c.needs !== "provider") p.push("a case with actions needs the provider");
   if (c.needs !== undefined && c.needs !== "provider") p.push('needs is "provider" or absent');
+  if (c.manifests !== undefined && (!Array.isArray(c.manifests) || c.manifests.length === 0 || c.manifests.some((/** @type {unknown} */ m) => m !== "mv2" && m !== "mv3"))) p.push("manifests is a list of mv2 and mv3");
+  if (c.hand !== undefined && (c.set !== "demo" || typeof c.hand !== "string" || c.hand.trim().length < 10)) p.push("hand is a reason of ten characters or more, for a demo case only");
   return p;
+}
+
+/**
+ * Whether a case applies to a manifest (`manifests` absent: to every one).
+ * @param {any} c @param {string} manifest
+ */
+export function appliesTo(c, manifest) {
+  return !Array.isArray(c.manifests) || c.manifests.includes(manifest);
 }
 
 /**
@@ -257,8 +267,14 @@ export function caseAddress(c, { spec, auto }) {
   return { url: next, frames };
 }
 
-/** The spec the ceremony page gets: the case's, with the run, the relying party and the client code. @param {any} c @param {string} run */
+/**
+ * The spec the ceremony page gets: the case's, with the run, the relying party and the client code. A case of the hold-out set
+ * keeps its spec as it was written, under `ho`: the page maps its conventions (test/passkey-rp/pages/lib.mjs, "the hold-out set's
+ * words"), and nothing of what it expects is changed.
+ * @param {any} c @param {string} run
+ */
 export function specOf(c, run) {
+  if (c.set === "holdout") return { steps: c.spec.steps ?? ["create", "get"], run, lib: c.rp.lib, client: c.rp.client, ho: c.spec };
   return { steps: ["create", "get"], ...c.spec, run, lib: c.rp.lib, client: c.rp.client };
 }
 
@@ -266,9 +282,9 @@ export function specOf(c, run) {
 
 /**
  * @typedef {{
- *   status: "ran" | "not-run",
+ *   status: "ran" | "not-run" | "not-applicable",
  *   reason?: string,
- *   observed?: { ceremony: string, error?: string, failStep?: string, route: string, windowShown: boolean, windowsOpened?: number, prf?: string, adv?: Record<string, any>, flags?: { uv?: boolean, be?: boolean, bs?: boolean }, reports?: any[] },
+ *   observed?: { ceremony: string, error?: string, failStep?: string, route: string, windowShown: boolean, windowsOpened?: number, prf?: string, adv?: Record<string, any>, flags?: { uv?: boolean, be?: boolean, bs?: boolean }, reports?: any[], problems?: string[] },
  *   unsafe?: string[],
  *   provider?: "stub" | "ferret",
  * }} CaseResult
@@ -293,7 +309,9 @@ export function observe(reports, { windowShown, windowsOpened = windowShown ? 1 
   } else if (done?.ok) {
     o.ceremony = "ok";
   }
-  if (!windowShown && steps.some((s) => s.ok)) o.route = "browser";
+  // No window of Ferret's and the page's call ended: the browser answered it (a call Ferret took ends only from its window, or
+  // waits with a mark when no window may open).
+  if (!windowShown && steps.length > 0) o.route = "browser";
   const last = [...steps].reverse().find((s) => s.ok && s.server?.flags);
   if (last) o.flags = last.server.flags;
   // The extension results are what the page's browser (or Ferret) returned, whether or not the relying party then accepted the response.
@@ -329,6 +347,8 @@ export function judge(c, o, provider) {
     if ("noValue" in check && value && typeof value === "object" && Object.values(value).includes(check.noValue)) problems.push(`the page saw ${check.key} with a value ${JSON.stringify(check.noValue)}`);
     if (value === undefined) problems.push(`the page did not report ${check.key}`);
   }
+  // What the runner's driver steps found wrong themselves (a window that did not say what it must, or stayed open).
+  for (const p of o.problems ?? []) problems.push(p);
   let routeUnchecked = false;
   if (want.route !== "any") {
     if (provider === "stub") routeUnchecked = want.route === "ferret";
@@ -350,8 +370,14 @@ export function judge(c, o, provider) {
 export function computeMatrix(cases, results, provider, complete = true) {
   /** @type {{ id: string, set: string, category: string, status: "passed" | "failed" | "not-run", problems: string[], routeUnchecked: boolean, unsafe: string[] }[]} */
   const rows = [];
+  /** The cases ruled not applicable to this run's manifest: listed on their own, outside the total. @type {{ id: string, reason: string }[]} */
+  const notApplicable = [];
   for (const c of cases) {
     const r = results.get(c.id);
+    if (r?.status === "not-applicable") {
+      notApplicable.push({ id: c.id, reason: r.reason ?? "" });
+      continue;
+    }
     if (!r || r.status !== "ran" || !r.observed) {
       rows.push({ id: c.id, set: c.set, category: c.category, status: "not-run", problems: [r?.reason ?? "no result: the run ended before this case"], routeUnchecked: false, unsafe: [] });
       continue;
@@ -379,6 +405,7 @@ export function computeMatrix(cases, results, provider, complete = true) {
     complete,
     // 100 % of the cases of the whole set, none not run, no unsafe answer, answered by Ferret (§ 11.3).
     gate: provider === "ferret" && complete && total > 0 && passed === total && unsafe === 0,
+    notApplicable,
     rows,
   };
 }
@@ -391,6 +418,7 @@ export function matrixMarkdown(m, { channel, manifest, set }) {
     `cases ${m.total}, passed ${m.passed}, failed ${m.failed} (of which not run ${m.notRun}, of which need the Ferret provider ${m.needsProvider}), unsafe answers ${m.unsafe}, route not checked ${m.routeUnchecked}`,
     `unsafe answers seen from outside (gesture, window count, an RP ID the browser refused, a frame route; what only Ferret's internals know is measured by the specs of U4-6 to U4-8): ${m.unsafe}`,
     `gate (the Ferret provider, the whole set, 100 % passed, nothing not run, no unsafe answer): ${m.gate ? "met" : "NOT met"}${m.provider === "stub" ? " (the stub provider never meets it)" : m.complete ? "" : " (a filtered run never meets it)"}`,
+    ...(m.notApplicable.length ? [`not applicable to ${manifest} (outside the total): ${m.notApplicable.map((x) => `${x.id} (${x.reason})`).join("; ")}`] : []),
     "",
   ];
   const bad = m.rows.filter((r) => r.status !== "passed");

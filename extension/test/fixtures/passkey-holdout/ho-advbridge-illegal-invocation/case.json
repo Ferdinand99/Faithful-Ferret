@@ -1,0 +1,41 @@
+{
+  "id": "ho-advbridge-illegal-invocation",
+  "set": "holdout",
+  "category": "adv-bridge",
+  "title": "navigator.credentials.get called with a foreign this value",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "illegal-invocation",
+    "steps": [
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    },
+    "tamper": "navigator.credentials.get.call({}, options)"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "TypeError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "any window or assertion for a call whose receiver is not a CredentialsContainer"
+    }
+  ],
+  "note": "WebIDL §3.7.x (operations): if this is not a platform object implementing CredentialsContainer, throw TypeError (\"Illegal invocation\") before the operation runs."
+}

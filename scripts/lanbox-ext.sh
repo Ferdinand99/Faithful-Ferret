@@ -12,8 +12,10 @@
 #                                 (unbranded Release and ESR; both unless --channel
 #                                 names one) through geckodriver, in the runner image
 #                                 docker/ext-runner.Dockerfile. The step has no
-#                                 network at all (--network none).
-#   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up]
+#                                 network at all (--network none). With FERRET_SHOTS_OUT=<dir> the
+#                                 screenshots the specs take (FERRET_SHOTS_DIR) are unpacked into
+#                                 <dir>/gate-shots/<channel>/.
+#   scripts/lanbox-ext.sh e2e [--channel ...] [--manifest ...] [--grep <name>] [--headed] [--no-up] [--passkey-rp]
 #                                 the same runner against the end-to-end stack: starts a
 #                                 stack of its own with `lanbox-ferret-test.sh e2e-up`
 #                                 (a compose project, network, host names and volumes
@@ -27,6 +29,11 @@
 #                                 set, it uses that stack (started with `e2e-up` unless
 #                                 --no-up) and leaves it up: run
 #                                 `scripts/lanbox-ferret-test.sh e2e-down` afterwards.
+#                                 With FERRET_SHOTS_OUT=<dir> the screenshots the specs take are unpacked
+#                                 into <dir>/gate-shots/<channel>/, as for the firefox step.
+#                                 --passkey-rp: the runner also joins the passkey fixture container's
+#                                 network and trusts its CA (start it first: scripts/lanbox-passkey-rp.sh up),
+#                                 for the specs in which Ferret answers its relying parties.
 #                                 --no-up without FERRET_E2E_SUFFIX uses the stack with
 #                                 the default names (one user at a time). At most two
 #                                 e2e runs at once, counted inside the limit of two
@@ -65,7 +72,8 @@
 #                                 with ... down). Every run starts with a self-test of the virtual authenticator and the
 #                                 fixture's TLS. --provider stub (the default) lets the browser's own path answer where Ferret
 #                                 would, so the route cannot be seen and the cases that need Ferret are counted as not run;
-#                                 --provider ferret is for when the extension answers (U4-8). --bridge turns the test build's
+#                                 --provider ferret: the extension answers, signed in to an end-to-end stack of this run's own
+#                                 (started as for e2e; the runner joins both internal networks). --bridge turns the test build's
 #                                 passkey scripts on first (permission, setting, a signed-in server); while the background hands
 #                                 every request back to the browser, the stub judgement then also shows that the bridge leaves
 #                                 each ceremony as the browser alone would end it. A case that did not run counts as
@@ -178,6 +186,7 @@ matrix_set=corpus
 passkey_set=fixtures
 passkey_provider=stub
 passkey_bridge=0
+passkey_rp=0
 headed=0
 no_up=0
 scenario_list=""
@@ -195,6 +204,7 @@ while [ "$#" -gt 0 ]; do
     passkey-matrix:--set) [ "$#" -ge 2 ] || usage; passkey_set="$2"; shift 2 ;;
     passkey-matrix:--provider) [ "$#" -ge 2 ] || usage; passkey_provider="$2"; shift 2 ;;
     passkey-matrix:--bridge) passkey_bridge=1; shift ;;
+    e2e:--passkey-rp) passkey_rp=1; shift ;;
     firefox:--headed | e2e:--headed | matrix:--headed | passkey-matrix:--headed) headed=1; shift ;;
     e2e:--no-up | matrix:--no-up) no_up=1; shift ;;
     measure:--scenario) [ "$#" -ge 2 ] || usage; scenario_list="$2"; shift 2 ;;
@@ -212,7 +222,7 @@ case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
 case "$passkey_set" in fixtures | adversarial | holdout | demo) ;; *) usage ;; esac
 case "$passkey_provider" in stub | ferret) ;; *) usage ;; esac
 # A case id is lower case letters, digits and dashes; the text goes into the container's environment.
-case_re='^[a-z0-9-]{0,80}$'
+case_re='^[a-z0-9,-]{0,200}$'
 if { [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
 # The gate and the matrix run the Firefox build: MV2 with a persistent background, unless --manifest names another.
 if { [ "$mode" = gate ] || [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
@@ -346,6 +356,9 @@ own_stack=""
 stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
 # shellcheck disable=SC2317  # called by the trap
 cleanup() {
+  if [ -n "$demo_network" ]; then
+    docker "${docker_args[@]}" network rm "$demo_network" > /dev/null 2>&1 || echo "lanbox-ext.sh: the network $demo_network was not removed" >&2
+  fi
   if [ -n "$own_stack" ]; then
     FERRET_E2E_SUFFIX="$own_stack" bash "$stack" e2e-down >&2 || echo "lanbox-ext.sh: e2e-down of the stack $own_stack failed; run FERRET_E2E_SUFFIX=$own_stack $stack e2e-down" >&2
   fi
@@ -400,6 +413,8 @@ e2e_volume_args=()
 # ordinary bridge and trusts no test CA.
 passkey_network=none
 passkey_ca=""
+# The demo set with the Ferret provider: a network of this run's own that reaches the public demo sites, beside the stack's.
+demo_network=""
 
 # A /28 for this run's stack network, the first three octets: 172.30.<n> with n from 200 to 239,
 # starting at a random n, that overlaps no network the Docker host has. Prints nothing when every
@@ -512,12 +527,20 @@ make_run() {
   # The passkey matrix sits on the fixture container's internal network and on no other; the demo set is the one run that
   # needs the internet, on the ordinary bridge, and trusts no test CA.
   if [ "$step" = passkey-matrix ]; then net="$passkey_network"; fi
+  # An end-to-end run in which Ferret answers the fixture container's relying parties (--passkey-rp) also joins that container's
+  # internal network.
+  local extra_net=""
+  if [ "$step" = e2e ] && [ "$passkey_rp" = 1 ]; then extra_net="$passkey_network"; fi
   dev_args "${2:-}"
   run=(docker "${docker_args[@]}" run --rm -i --init
     --label owner=ferret-core
     "${dev_args_out[@]}"
     --network "$net")
+  if [ -n "$extra_net" ]; then run+=(--network "$extra_net"); fi
   if [ "$step" = e2e ] || [ "$step" = matrix ]; then run+=("${e2e_volume_args[@]}"); fi
+  # The passkey matrix with the Ferret provider also joins this run's end-to-end stack (the server the extension signs in to); both
+  # networks are internal.
+  if [ "$step" = passkey-matrix ] && [ "$network" != none ]; then run+=(--network "$network" "${e2e_volume_args[@]}"); fi
   # The matrix filters by case id (FERRET_MATRIX_GREP), not by test name.
   local test_grep="$grep_name"
   if [ "$step" = matrix ] || [ "$step" = passkey-matrix ]; then test_grep=""; fi
@@ -562,23 +585,44 @@ make_run() {
 }
 
 if [ "$mode" = firefox ]; then
+  if [ -n "${FERRET_SHOTS_OUT:-}" ]; then
+    # The screenshots the specs take (FERRET_SHOTS_DIR) come back as a tar archive on stdout and are unpacked into
+    # $FERRET_SHOTS_OUT/gate-shots/, also after a failure.
+    mkdir -p "$FERRET_SHOTS_OUT"
+    make_run "${channel:-release,esr}" "" firefox 1
+    rc=0
+    "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
+    if [ -s "$work/shots.tar" ]; then
+      tar -x --no-same-owner -C "$FERRET_SHOTS_OUT" < "$work/shots.tar" || rc=$?
+    fi
+    exit "$rc"
+  fi
   make_run "${channel:-release,esr}" ""
   "${run[@]}" < "$work/in.tar"
   exit 0
 fi
 
 # The unlock specs (extension/test/firefox/unlock.mjs) use PINs that start with this text. None of them may be in a log of the
-# stack's containers: a PIN is not sent to the server, and the server logs nothing a person typed. Returns 1 when one is.
+# stack's containers: a PIN is not sent to the server, and the server logs nothing a person typed. Neither may any form of the
+# passkey leak scan's sentinel private key (the "needles" of extension/test/fixtures/passkey-sentinel.json): a key never leaves
+# the core. Returns 1 when one is.
 SENTINEL_PIN_PREFIX="ferret-sentinel-pin-"
+sentinel_needles() {
+  echo "$SENTINEL_PIN_PREFIX"
+  sed -n '/"needles": *\[/,/\]/p' extension/test/fixtures/passkey-sentinel.json | grep -o '"[^"]*"' | tr -d '"' | grep -v '^needles$'
+}
 scan_stack_logs_for_sentinels() {
-  local id found=0 count=0
+  local id found=0 count=0 needles
+  needles="$(mktemp)"
+  sentinel_needles > "$needles"
   for id in $(docker "${docker_args[@]}" ps -a -q --filter "label=owner=ferret-${FERRET_E2E_SUFFIX:-e2e}"); do
     count=$((count + 1))
-    if docker "${docker_args[@]}" logs "$id" 2>&1 | grep -q -F "$SENTINEL_PIN_PREFIX"; then
-      echo "lanbox-ext.sh: the log of the container $id of the stack holds a sentinel PIN" >&2
+    if docker "${docker_args[@]}" logs "$id" 2>&1 | grep -q -F -f "$needles"; then
+      echo "lanbox-ext.sh: the log of the container $id of the stack holds a sentinel (a PIN or the passkey key)" >&2
       found=1
     fi
   done
+  rm -f "$needles"
   # A scan that read no container (a label that does not match, a stack that is already gone) proves nothing.
   if [ "$count" -eq 0 ]; then
     echo "lanbox-ext.sh: no container of the stack ferret-${FERRET_E2E_SUFFIX:-e2e} was found, so no log was scanned for a sentinel PIN" >&2
@@ -587,11 +631,30 @@ scan_stack_logs_for_sentinels() {
   return "$found"
 }
 
+# The passkey fixture container's network and CA, for a run in which Ferret answers its relying parties.
+passkey_rp_setup() {
+  passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
+  passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
+  [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+}
+
 if [ "$mode" = e2e ]; then
+  if [ "$passkey_rp" = 1 ]; then passkey_rp_setup; fi
   e2e_setup
-  make_run "${channel:-release,esr}" ""
   rc=0
-  "${run[@]}" < "$work/in.tar" || rc=$?
+  if [ -n "${FERRET_SHOTS_OUT:-}" ]; then
+    # As for the firefox step: the screenshots the specs take come back as a tar archive and are unpacked into
+    # $FERRET_SHOTS_OUT/gate-shots/, also after a failure.
+    mkdir -p "$FERRET_SHOTS_OUT"
+    make_run "${channel:-release,esr}" "" e2e 1
+    "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
+    if [ -s "$work/shots.tar" ]; then
+      tar -x --no-same-owner -C "$FERRET_SHOTS_OUT" < "$work/shots.tar" || rc=$?
+    fi
+  else
+    make_run "${channel:-release,esr}" ""
+    "${run[@]}" < "$work/in.tar" || rc=$?
+  fi
   scan_stack_logs_for_sentinels || { [ "$rc" -ne 0 ] || rc=1; }
   exit "$rc"
 fi
@@ -600,12 +663,21 @@ if [ "$mode" = passkey-matrix ]; then
   # The fixture container must be up (scripts/lanbox-passkey-rp.sh up); the runner joins its internal network and trusts its CA.
   out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
   mkdir -p "$out_dir"
-  if [ "$passkey_set" = demo ]; then
+  if [ "$passkey_set" = demo ] && [ "$passkey_provider" = ferret ]; then
+    # The public demo sites and the end-to-end stack the extension signs in to: the default bridge cannot be joined together with
+    # another network, so the run gets a network of its own with a way out (and nothing else on it), beside the stack's.
+    e2e_setup
+    demo_network="ferret-$e2e_suffix-demo"
+    docker "${docker_args[@]}" network create --label owner=ferret-core --label "owner-run=$e2e_suffix" "$demo_network" > /dev/null
+    passkey_network="$demo_network"
+  elif [ "$passkey_set" = demo ]; then
     passkey_network=bridge
   else
     passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"
     passkey_ca="$(bash scripts/lanbox-passkey-rp.sh ca)" || { echo "lanbox-ext.sh: the fixture container is not running (scripts/lanbox-passkey-rp.sh up)" >&2; exit 1; }
     [ -n "$passkey_ca" ] || { echo "lanbox-ext.sh: the fixture container gave no CA" >&2; exit 1; }
+    # The Ferret provider: the extension answers, signed in to an end-to-end stack of this run's own.
+    if [ "$passkey_provider" = ferret ]; then e2e_setup; fi
   fi
   make_run "${channel:-release,esr}" "passkey-matrix" passkey-matrix 0
   rc=0
@@ -613,6 +685,8 @@ if [ "$mode" = passkey-matrix ]; then
   if [ -s "$work/passkey-matrix.tar" ]; then
     tar -x --no-same-owner -C "$out_dir" < "$work/passkey-matrix.tar" || rc=$?
   fi
+  # With the Ferret provider the run had an end-to-end stack: its logs hold no sentinel (the matrix PIN starts with the prefix).
+  if [ "$passkey_provider" = ferret ]; then scan_stack_logs_for_sentinels || { [ "$rc" -ne 0 ] || rc=1; }; fi
   echo "lanbox-ext.sh: passkey-matrix: the reports are in $out_dir/u4-matrix/ (exit status $rc)" >&2
   exit "$rc"
 fi

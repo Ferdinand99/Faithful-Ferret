@@ -245,3 +245,66 @@ test("import_worker_reads_an_avux_file_with_the_browsers_own_unzip_and_never_unp
   expect(await violations(page)).toEqual([]);
   expect(seen.errors).toEqual([]);
 });
+
+test("import_worker_sends_passkeys_to_the_vault_port_and_keeps_the_key_out_of_the_answer_in_the_browser", async ({ page }) => {
+  const seen = await watch(page);
+  const fileText = readFileSync(new URL("../fixtures/import/bitwarden/passkeys.json", import.meta.url), "utf8");
+  await page.goto("/");
+  await expect(page.locator("#app h1")).toBeVisible();
+  const result = await page.evaluate(async (text) => {
+    const { ready } = await import("/app/boot.mjs");
+    const { tt } = await ready;
+    const worker = new Worker(/** @type {string} */ (tt.workerUrl("import")), { type: "module" });
+    const { port1, port2 } = new MessageChannel();
+    /** @type {any[]} */
+    const got = [];
+    // The page plays the vault worker: a passkey is answered as the binding answers it.
+    port2.onmessage = (e) => {
+      const m = e.data;
+      got.push({
+        method: m.method, name: m.args[2].name, hasPasskey: m.method === "passkey_import",
+        cred: m.method === "passkey_import" ? [...m.args[3].cred_id].length : 0,
+        keyLength: m.method === "passkey_import" ? m.args[3].key_pkcs8.length : 0,
+        counter: m.method === "passkey_import" ? m.args[3].counter : 0,
+      });
+      const sealed = { rev: 1, envelope: new Uint8Array([0xe0, 1, 2, 3]), tag: new Uint8Array(32) };
+      port2.postMessage({
+        id: m.id, ok: true,
+        value: m.method === "passkey_import" ? { item: sealed, rp_id: m.args[3].rp_id, notes: { register_again: m.args[3].counter > 0, counter: m.args[3].counter, prf: false } } : sealed,
+      });
+    };
+    try {
+      const reply = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no reply from the import worker")), 15_000);
+        worker.onmessage = (e) => {
+          clearTimeout(timer);
+          resolve(e.data);
+        };
+        worker.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("the import worker failed"));
+        };
+        worker.postMessage({ id: 1, kind: "bitwarden_json", file: new File([text], "export.json"), port: port1, passkeys: { known: [] } }, [port1]);
+      });
+      return { reply: JSON.parse(JSON.stringify(reply, (_, v) => (v instanceof Uint8Array ? `<${v.length} bytes>` : v))), got };
+    } finally {
+      worker.terminate();
+      port1.close();
+      port2.close();
+    }
+  }, fileText);
+  expect(result.reply.ok).toBe(true);
+  expect(result.reply.sealed).toHaveLength(3);
+  expect(result.reply.report.counts).toMatchObject({ items: 3, login: 3, passkeys: 2, sealed: 3 });
+  expect(result.reply.report.passkeys.skipped.not_discoverable).toBe(1);
+  expect(result.reply.report.passkeys.registerAgain).toBe(1);
+  expect(result.reply.report.passkeys.sites).toEqual(["rp-a.test"]);
+  expect(result.got.map((m) => m.method)).toEqual(["passkey_import", "passkey_import", "encrypt_item"]);
+  expect(result.got.slice(0, 2).map((m) => [m.cred, m.keyLength, m.counter])).toEqual([[16, 138, 0], [32, 138, 7]]);
+  // Neither the keys nor the ids are in what the page got.
+  const text = JSON.stringify(result.reply);
+  const first = JSON.parse(fileText).items[0].login.fido2Credentials[0];
+  for (const word of [first.keyValue, first.credentialId, first.userHandle, "rp-a.test\n"]) expect(text, word).not.toContain(word);
+  expect(await violations(page)).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});

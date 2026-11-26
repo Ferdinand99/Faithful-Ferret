@@ -69,6 +69,19 @@
 //   `item_view`'s `passkey` has `rp_name` and `user_display_name` (`null` when
 //   the site gave none): text a site chose, never the identity of the site.
 //
+// Importing a passkey from another program (`passkey_import`): the vault method
+// `passkey_import(item_id, rev, draft, passkey, now_ms)` seals the passkey into a
+// new login item and returns `{ item: { rev, envelope, tag }, rp_id, notes }`;
+// nothing is stored and the item is not open. `draft` is the draft of
+// `encrypt_item` for a new item without a passkey; `passkey` is `{ cred_id,
+// rp_id, user_handle, user_name, rp_name?, user_display_name?, created,
+// key_pkcs8 | key_jwk, prf_seed_uv?, prf_seed_nouv?, counter? }`. The key goes in
+// as a `Uint8Array` (PKCS#8) or as the text of a JWK and is wiped inside WASM when
+// the call ends; the caller wipes its own copy. The two seeds come only from a
+// source whose PRF is Ferret's formula (AliasVault gives its one secret twice).
+// `notes.register_again` says that the source had a counter above 0: a site that
+// compares counters refuses the passkey, so it is to be registered again there.
+//
 // Encrypted export: `export_begin(rows, now_ms, kdf, token)` needs the same
 // one-time token as the plaintext export (the file holds every secret of the
 // vault, passkey keys and PRF seeds included); `now_ms` is the caller's clock
@@ -208,8 +221,11 @@
 // import worker (transfer it there). It answers only
 // `{ id, method: "encrypt_item", args: [itemId, 1, draft, NO_EXISTING, nowMs] }`
 // with `{ id, ok: true, value: { rev, envelope, tag } }` or `{ id, ok: false,
-// code }`: it seals new items and does nothing else, so the drafts of an import
-// never pass through the page. It is closed (a last message `{ closed: true }`
+// code }`, and the import of a passkey into a new login
+// (`{ id, method: "passkey_import", args: [itemId, 1, draft, passkey, nowMs] }`,
+// answered as `vault.passkey_import` answers; the key and seeds are wiped in the
+// vault worker): it seals new items and does nothing else, so the drafts and
+// keys of an import never pass through the page. It is closed (a last message `{ closed: true }`
 // where the worker is still there to send it) when the vault is locked or
 // another vault is opened, and with `lock()`. A port asked for while no vault
 // is open is closed at once.

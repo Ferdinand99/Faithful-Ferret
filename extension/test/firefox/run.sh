@@ -112,9 +112,9 @@ if [ "$mode" = measure ]; then
   export FERRET_MEASURE_OUT
   mkdir -p "$FERRET_MEASURE_OUT"
 fi
-# The gate's e2e step: the screenshots the specs take (FERRET_SHOTS_DIR) leave the container as a
-# tar archive on stdout, as the measure reports do.
-if [ "$mode" = e2e ] && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
+# The gate's e2e step, and a firefox step that was asked for them (FERRET_SHOTS_OUT of lanbox-ext.sh): the screenshots the specs
+# take (FERRET_SHOTS_DIR) leave the container as a tar archive on stdout, as the measure reports do.
+if { [ "$mode" = e2e ] || [ "$mode" = firefox ]; } && [ "${FERRET_EXT_SHOTS:-0}" = 1 ]; then
   FERRET_SHOTS_DIR=/work/test-results/out/gate-shots
   export FERRET_SHOTS_DIR
   mkdir -p "$FERRET_SHOTS_DIR"
@@ -143,8 +143,8 @@ for channel in $channel_list; do
     failed=1
   fi
   # The spec file itself counts as a passed test, so a run that registered no test would pass the check above: the self-test
-  # of the passkey matrix has to be there, and has to have passed.
-  if [ "$mode" = passkey-matrix ] && ! grep -q '^ *ok [0-9]* - virtual_authenticator_and_fixture_tls_work_in_both_channels' "$report"; then
+  # of the passkey matrix has to be there, and has to have passed (the demo set has no fixture container and no self-test).
+  if [ "$mode" = passkey-matrix ] && [ "${FERRET_PASSKEY_SET:-fixtures}" != demo ] && ! grep -q '^ *ok [0-9]* - virtual_authenticator_and_fixture_tls_work_in_both_channels' "$report"; then
     echo "run.sh: the self-test of the passkey matrix did not run or did not pass on $channel" >&2
     failed=1
   fi
