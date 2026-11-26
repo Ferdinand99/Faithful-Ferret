@@ -41,14 +41,13 @@ jobs:
       - name: Install the locked packages
         run: npm ci --no-audit --no-fund --ignore-scripts
       # Both variants take the published package (fetched and checked against its SHA-256). A release
-      # with the unlock feature on is refused when that package lacks the unlock functions, and then
-      # this step fails.
+      # with the unlock or the passkeys feature on is refused when that package lacks their functions
+      # (status 10 of release-build.sh: the lock is older than the release that has them, said as a warning).
       - name: Build both manifest versions in both variants
         run: |
           for mv in mv3 mv2; do
-            for variant in release test; do
-              node scripts/build.mjs --browser firefox --manifest "$mv" --variant "$variant" --wasm lock
-            done
+            bash scripts/release-build.sh "$mv" || [ $? -eq 10 ]
+            node scripts/build.mjs --browser firefox --manifest "$mv" --variant test --wasm lock
           done
       - name: Type check
         run: npm exec --no -- tsc -p jsconfig.json --noEmit
@@ -71,19 +70,27 @@ jobs:
       - name: Install the locked packages
         working-directory: extension
         run: npm ci --no-audit --no-fund --ignore-scripts
+      # While the locked WASM package lacks the unlock or the passkey functions, the release build is refused on
+      # purpose and there is no release package: the script lints the test variant instead and leaves
+      # extension/dist/.release-skipped, and the steps below that need a release package are skipped and say so
+      # (extension/scripts/lint-release.sh). The pin change that moves the lock to 0.12.0 removes the rule.
       - name: Build the release packages and lint them
         working-directory: extension
-        run: |
-          for mv in mv3 mv2; do
-            node scripts/build.mjs --browser firefox --manifest "$mv" --variant release
-            npm exec --no -- web-ext lint --source-dir "dist/ferret-firefox-$mv-release" --warnings-as-errors --self-hosted
-          done
+        run: bash scripts/lint-release.sh
       - name: Check the release packages
-        run: bash scripts/check-ext-release.sh
+        run: |
+          if [ -f extension/dist/.release-skipped ]; then
+            cat extension/dist/.release-skipped
+            echo "::warning title=Release check skipped::there is no release package to check while the locked WASM package is behind"
+          else
+            bash scripts/check-ext-release.sh
+          fi
       - name: Checksums of the unsigned packages
+        if: hashFiles('extension/dist/.release-skipped') == ''
         working-directory: extension/dist
         run: sha256sum ferret-firefox-*-release.xpi | tee SHA256SUMS
       - name: Keep the unsigned packages
+        if: hashFiles('extension/dist/.release-skipped') == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ferret-extension-unsigned

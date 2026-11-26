@@ -120,11 +120,21 @@ function same(held, want) {
 
 /**
  * The registration of the passkey scripts.
- * @param {{ scripting: Scripting, permissions: Permissions, storageLocal: StorageLocal, release: boolean, access?: ReturnType<typeof createHttpsAccess> }} deps
+ * @param {{ scripting: Scripting, permissions: Permissions, storageLocal: StorageLocal, release: boolean, access?: ReturnType<typeof createHttpsAccess>, onOff?: () => void }} deps
  *   `release`: the build is a release (localhost is left to the browser); `access`: the permission for https pages that saving
- *   passwords shares (one is made when none is given)
+ *   passwords shares (one is made when none is given); `onOff`: called when the feature goes off (the setting turned off, or the
+ *   permission taken back), so that the requests that wait end
  */
-export function createPasskeyRegistry({ scripting, permissions, storageLocal, release, access = createHttpsAccess({ permissions, storageLocal }) }) {
+export function createPasskeyRegistry({ scripting, permissions, storageLocal, release, access = createHttpsAccess({ permissions, storageLocal }), onOff = () => {} }) {
+  /** The feature went off: what waits for Ferret's answer ends. A failing hook must not undo the switch. */
+  const wentOff = () => {
+    try {
+      onOff();
+    } catch {
+      // The broker also checks the setting before it answers.
+    }
+  };
+
   /** The registration is changed one step at a time. @type {Promise<unknown>} */
   let chain = Promise.resolve();
   /** @template T @param {() => Promise<T>} job @returns {Promise<T>} */
@@ -241,6 +251,7 @@ export function createPasskeyRegistry({ scripting, permissions, storageLocal, re
         await unregister();
         await access.clearPending("passkeys");
         await access.release("passkeys");
+        wentOff();
         return { ok: true };
       });
     },
@@ -278,7 +289,9 @@ export function createPasskeyRegistry({ scripting, permissions, storageLocal, re
     onPermissionRemoved(removed) {
       if (!Array.isArray(removed?.origins) || removed.origins.length === 0) return Promise.resolve(false);
       return exclusive(async () => {
-        await reconcileNow();
+        const now = await reconcileNow();
+        // The permission for https pages is gone (the setting went with it): no request goes on.
+        if (!now.on) wentOff();
         return true;
       });
     },

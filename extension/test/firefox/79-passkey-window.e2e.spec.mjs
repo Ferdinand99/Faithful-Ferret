@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { KEEP_BACKGROUND, SLOW, extensionSignIn, webVaultAccount } from "./e2e.mjs";
 import { revokeLeftDevices } from "./adversary.mjs";
+import { ask } from "./unlock.mjs";
 import { EXTENSION_ORIGIN, TEST_ADDON_ID, channels, fixtures, launch, openBridge, stopFixtures } from "./harness.mjs";
 
 after(() => stopFixtures());
@@ -238,6 +239,64 @@ test("the_chooser_window_opens_for_a_page_request_in_release_and_esr", async () 
       await callFromPage(session, "do-create", "created");
       assert.deepEqual(await result(session, "created"), BROWSER_MADE, `${channel}: the next call goes to the browser`);
       assert.deepEqual((await session.windowHandles()).filter((h) => !fourth.has(h)), [], `${channel}: no window for a site on the never list`);
+    } finally {
+      await session.quit();
+    }
+  }
+}, { timeout: 5 * SLOW });
+
+test("turning_the_setting_off_or_taking_the_permission_back_ends_the_request_that_waits_in_release_and_esr", async () => {
+  for (const channel of channels()) {
+    const server = await fixtures();
+    const session = await launch({ channel, prefs: PREFS });
+    try {
+      await session.waitFor(() => session.addonInfo(TEST_ADDON_ID), 30_000, "the add-on");
+      await session.addVirtualAuthenticator();
+      const account = await webVaultAccount(session, channel);
+      await revokeLeftDevices(session);
+      const bridgeTab = await session.newTab();
+      await session.switchTo(bridgeTab);
+      const signed = await extensionSignIn(session, account);
+      assert.equal(signed.ok, true, `${channel}: ${signed.text}`);
+      const bridge = await openBridge(session);
+      const pageTab = await session.newTab();
+
+      /** Passkeys on (the permission, the setting, the registration), a page that asks, and the window its request opens. */
+      const waitInWindow = async (/** @type {string} */ what) => {
+        await session.switchTo(bridgeTab);
+        await grantHttps(session);
+        await bridge.invoke("storage.local.set", { use_passkeys: true });
+        await reconcile(session);
+        await session.waitFor(async () => (await session.content(async (/** @type {string[]} */ ids) => (await browser.scripting.getRegisteredContentScripts({ ids })).length, ["ferret-passkey-main", "ferret-passkey-bridge"])) === 2, 15_000, "both passkey scripts registered");
+        await session.switchTo(pageTab);
+        await session.navigate(server.url(PAGE_HOST, "/pk-calls/"));
+        await addCalls(session);
+        const known = new Set(await session.windowHandles());
+        await callFromPage(session, "do-create", "created");
+        const handle = await chooserHandle(session, known);
+        assert.equal((await readWindow(session)).state, "ready", `${channel}: ${what}: the window is built`);
+        return handle;
+      };
+      /** The window closes by itself and the page's call ends with the same error as any refusal. */
+      const endsByItself = async (/** @type {string} */ handle, /** @type {string} */ what) => {
+        await session.waitFor(async () => !(await session.windowHandles()).includes(handle), 20_000, `${what}: the window closed`);
+        await session.switchTo(pageTab);
+        assert.deepEqual(await result(session, "created"), ENDED, `${channel}: ${what}: the call ended with NotAllowedError`);
+      };
+
+      // 1. The setting turned off (the settings page's own switch) while the window waits.
+      const first = await waitInWindow("setting off");
+      await session.switchTo(bridgeTab);
+      const off = await ask(session, "passkey_settings", { enable: false });
+      assert.equal(off.ok, true, `${channel}: the setting is off`);
+      await endsByItself(first, "setting off");
+
+      // 2. The permission for https pages taken back while the window waits.
+      const second = await waitInWindow("permission back");
+      await session.switchTo(bridgeTab);
+      const removed = await session.content(async () => browser.permissions.remove({ origins: ["https://*/*"] }));
+      assert.equal(removed, true, `${channel}: the permission is gone`);
+      await endsByItself(second, "permission back");
     } finally {
       await session.quit();
     }

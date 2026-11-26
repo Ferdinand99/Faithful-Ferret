@@ -1168,3 +1168,35 @@ test("passkey_never_keeps_the_cores_rp_id_on_the_list_and_hands_the_call_to_the_
   assert.deepEqual(await /** @type {any} */ (bare.requests.ops).passkey_never.run(client("rp-a.test"), { request_id: bareId, session: "w" }), { ok: false, reason: "not_available" });
   assert.equal(bare.requests.size(), 1);
 });
+
+test("a_request_that_waits_is_not_answered_once_the_setting_is_off_or_the_permission_is_gone", async () => {
+  for (const [what, off] of /** @type {Array<[string, (w: ReturnType<typeof world>) => void]>} */ ([
+    ["the setting turned off", (w) => void (w.state.on = false)],
+    ["the permission taken back", (w) => void (w.state.permission = false)],
+  ])) {
+    const w = world();
+    const id = /** @type {any} */ (await w.requests.open(senderOf(), createBody("o1"))).request_id;
+    assert.equal(await w.requests.recheck(id, "win"), true, `${what}: still allowed before`);
+    off(w);
+    // The check before anything is written ends the request and closes the window, with the same error as any refusal.
+    assert.equal(await w.requests.recheck(id, "win"), false, what);
+    assert.equal(w.requests.size(), 0, what);
+    assert.deepEqual(w.closed, [101], what);
+    w.clock.advance(1000);
+    await flush();
+    assert.deepEqual(pushesOf(w.pushed, "o1").map((p) => p.body.name), ["NotAllowedError"], what);
+  }
+  // The same for a request that waits without a window, and for the conditional one: `endAll` (what the registry calls when the
+  // feature goes off) ends them with the same error.
+  const w = world();
+  await w.requests.open(senderOf(), createBody("o2"));
+  await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), getBody("o3", { body: { mediation: "conditional" } }));
+  w.state.on = false;
+  w.requests.endAll();
+  assert.equal(w.requests.size(), 0);
+  assert.deepEqual(w.closed, [101]);
+  w.clock.advance(1000);
+  await flush();
+  assert.deepEqual(pushesOf(w.pushed, "o2").map((p) => p.body.name), ["NotAllowedError"]);
+  assert.deepEqual(pushesOf(w.pushed, "o3").map((p) => p.body.name), ["NotAllowedError"]);
+});

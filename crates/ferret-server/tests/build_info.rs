@@ -1,15 +1,13 @@
 //! `ferret --build-info` and the cargo features `e2e-clock` (the test clock, only in the end-to-end image) and
-//! `quick-unlock` (PIN and passkey unlock, on in a release). A release build reports `quick-unlock` and nothing
-//! else, contains neither the clock hook nor the name of its variable, has the Unlock tab and the passkey routes,
-//! and ignores `FERRET_E2E_CLOCK_FILE`. A build with the unlock feature off (the variant that proves the flag
-//! off) reports no features and has no trace of the feature. Whether a release image is built with the feature
-//! is not decided here: cargo cannot tell a release from a test build, so the release workflow, the deploy
-//! scripts and the image checks of scripts/lanbox-ferret-e2e-check.sh require the `features: quick-unlock` line.
+//! `quick-unlock` (PIN and passkey unlock, on in a release) and `passkey-import` (the import of passkeys in the web
+//! vault, the `passkeys.import` flag of the policy answer, on in a release since the passkey provider). A release build
+//! reports `passkey-import` and `quick-unlock` and nothing else, contains neither the clock hook nor the name of its
+//! variable, has the Unlock tab and the passkey routes, and ignores `FERRET_E2E_CLOCK_FILE`. A build with a feature
+//! off (the variants that prove the flags off) reports it not and has no trace of it. Whether a release image is built
+//! with the features is not decided here: cargo cannot tell a release from a test build, so the release workflow, the
+//! deploy scripts and the image checks of scripts/lanbox-ferret-e2e-check.sh require the
+//! `features: passkey-import, quick-unlock` line (and the deploy script still takes the lines of the releases before).
 //! The same tests run against the real binary (`CARGO_BIN_EXE_ferret`).
-//!
-//! The cargo feature `passkey-import` (the import of passkeys in the web vault, the `passkeys.import` flag of the policy
-//! answer) is off in a release until the passkey provider is released: a release build reports no such feature and holds no
-//! trace of its name, and the release workflow requires exactly `features: quick-unlock`.
 //!
 //! The binary also says where its web vault's WebAssembly package came from (the `wasm:` line),
 //! and a release image refuses one that was built from the tree.
@@ -331,6 +329,19 @@ mod release_passkey_import {
 #[cfg(feature = "passkey-import")]
 mod passkey_import_build {
     use super::*;
+
+    /// The features line of a build with the import is the build's own list, in alphabetical order, and for a release
+    /// (the unlock feature too, no test clock) exactly the two features the release workflow requires.
+    #[test]
+    fn a_release_build_says_exactly_the_two_features() {
+        assert_eq!(
+            run_build_info(&[]).lines().nth(1),
+            Some(format!("features: {}", expected_features()).as_str())
+        );
+        if cfg!(feature = "quick-unlock") && !cfg!(feature = "e2e-clock") {
+            assert_eq!(expected_features(), "passkey-import, quick-unlock");
+        }
+    }
 
     #[test]
     fn a_build_with_the_passkey_import_says_so() {

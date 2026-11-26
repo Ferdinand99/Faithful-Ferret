@@ -114,7 +114,7 @@ export function createBadge({
       done?.catch?.(() => {});
       if (text !== "") {
         // The refusal is a warning; an offer is the button's own colour.
-        const color = text === "!" ? "#c20012" : "#6656e8";
+        const color = text === "!" ? "#c20012" : "#59d9c7";
         const colored = /** @type {any} */ (action.setBadgeBackgroundColor({ color, tabId }));
         colored?.catch?.(() => {});
       }

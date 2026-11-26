@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import {
-  build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, packXpi, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems, SAVE_FILES, UNLOCK_FILES, UPDATE_URL,
+  build, buildManifest, EXTENSION_CSP, FEATURES_FILE, featuresModule, packXpi, isTestOnlyPath, PASSKEY_FILES, readInternalHosts, readPermissionAllow, RELEASE_MANIFEST_KEYS, releaseProblems, SAVE_FILES, UNLOCK_FILES, UPDATE_URL,
 } from "../../scripts/build.mjs";
 import { extensionRoot, makeRoot, repoRoot } from "./buildHelpers.mjs";
 
@@ -18,8 +18,8 @@ const HOSTS = readInternalHosts();
  * @type {[string, Buffer][]}
  */
 const RELEASE_BASE = [
-  [FEATURES_FILE, Buffer.from(featuresModule(["save", "unlock"], new Map()))],
-  ...[...SAVE_FILES, ...UNLOCK_FILES].map((path) => /** @type {[string, Buffer]} */ ([path, Buffer.from("void 0;\n")])),
+  [FEATURES_FILE, Buffer.from(featuresModule(["save", "unlock", "passkeys"], new Map()))],
+  ...[...SAVE_FILES, ...UNLOCK_FILES, ...PASSKEY_FILES.filter((path) => !isTestOnlyPath(path))].map((path) => /** @type {[string, Buffer]} */ ([path, Buffer.from("void 0;\n")])),
 ];
 
 const MEASURE_HTML = '<!doctype html><html><head><script type="module" src="measure.mjs"></script></head></html>\n';
@@ -454,27 +454,27 @@ test("the_release_check_requires_a_release_build_with_save_on", async () => {
     assert.notEqual(missing.status, 0);
     assert.match(missing.output, /shared\/features\.mjs is missing/);
     // The module put back as the build writes it: clean again.
-    writeFileSync(file, featuresModule(["save", "unlock"], new Map()));
+    writeFileSync(file, featuresModule(["save", "unlock", "passkeys"], new Map()));
     assert.equal(runCheck(release.dir).status, 0);
     // The module of a build with only one of the features on is refused as well.
-    for (const [on, off] of [[["unlock"], "save"], [["save"], "unlock"]]) {
+    for (const [on, off] of [[["unlock", "passkeys"], "save"], [["save", "passkeys"], "unlock"], [["save", "unlock"], "passkeys"]]) {
       writeFileSync(file, featuresModule(on, new Map()));
       const one = runCheck(release.dir);
       assert.notEqual(one.status, 0, off);
       assert.match(one.output, new RegExp(`shared/features\\.mjs: the feature ${off} is off, which a release must have on`), off);
     }
-    writeFileSync(file, featuresModule(["save", "unlock"], new Map()));
+    writeFileSync(file, featuresModule(["save", "unlock", "passkeys"], new Map()));
     assert.equal(runCheck(release.dir).status, 0);
 
     // A file of the features (the capture script or one of its sources, the unlock window or the PIN store) missing from a
     // release: refused, whatever the module says.
-    for (const path of [...SAVE_FILES, ...UNLOCK_FILES]) {
+    for (const path of [...SAVE_FILES, ...UNLOCK_FILES, ...PASSKEY_FILES.filter((path) => !isTestOnlyPath(path))]) {
       const target = join(release.dir, ...path.split("/"));
       const bytes = readFileSync(target);
       rmSync(target);
       const without = runCheck(release.dir);
       assert.notEqual(without.status, 0, path);
-      assert.match(without.output, new RegExp(`${path.replaceAll(".", "\\.")}: belongs to the (?:save|unlock) feature, which a release has on, and is missing`), path);
+      assert.match(without.output, new RegExp(`${path.replaceAll(".", "\\.")}: belongs to the (?:save|unlock|passkeys) feature, which a release has on, and is missing`), path);
       writeFileSync(target, bytes);
       assert.equal(runCheck(release.dir).status, 0, path);
     }

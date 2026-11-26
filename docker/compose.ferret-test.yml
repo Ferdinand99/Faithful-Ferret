@@ -28,8 +28,8 @@ services:
       context: ..
       dockerfile: docker/server.Dockerfile
       args:
-        # The release's feature (PIN and passkey unlock), no test features.
-        FEATURES: quick-unlock
+        # The release's features (PIN and passkey unlock; the passkey import), no test features.
+        FEATURES: passkey-import,quick-unlock
       labels:
         owner: ferret-test
     container_name: ferret-test-app

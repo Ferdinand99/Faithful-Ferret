@@ -22,8 +22,10 @@
   --placeholder: light-dark(#737378, #8a8a8f);
   --on-inverse: light-dark(#ffffff, #0b0b0d);
 
-  --brand: light-dark(#6656e8, #8b7dff);
-  --brand-fill: light-dark(rgba(102, 86, 232, 0.1), rgba(139, 125, 255, 0.16));
+  /* The turquoise of the logo (#59d9c7) in the dark theme, a deep teal in the light one (the logo's colour is 1.5:1 on
+     white). The same values as the web vault's base.css; text on a fill of it is --on-inverse. */
+  --brand: light-dark(#0b7467, #59d9c7);
+  --brand-fill: light-dark(rgba(11, 116, 103, 0.1), rgba(89, 217, 199, 0.16));
 
   --bad-text: light-dark(#c20012, #ff6961);
   --bad-fill: light-dark(rgba(255, 59, 48, 0.11), rgba(255, 69, 58, 0.16));

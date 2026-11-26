@@ -177,7 +177,16 @@ These are the parts of the hand-over and the verification that no automated run 
    *Expected:* the unlock works, and the popup's passkey section then signs you in. Then the same with the browser's own passkeys:
    the page's autofill list still offers the browser's passkeys after Ferret's unlock. If Windows Hello is aborted, or the page's
    autofill call stops working, note it: the background then needs to pause its call to the browser while Windows Hello runs.
-6. **Touch ID on a Mac** (if you have one): repeat steps 1 and 3 with Touch ID; then sign in on `https://webauthn.io` from the Mac
+6. **A YubiKey as a passkey unlock method** (a YubiKey 5C NFC, or any security key that supports the PRF extension; the web vault
+   and the extension, USB-C, and NFC on a phone if you can): in the web vault, add the YubiKey under Unlock methods, lock the
+   vault, and unlock it with the YubiKey; then do the same in the extension's unlock window (`docs/TESTING-U3.md`, check 3).
+   *Expected:* both unlock with the key and its PIN or touch, as with Windows Hello, and the method's list says that the key stays
+   on this device. A key without PRF is refused with a clear message.
+7. **A YubiKey as a security key after "Use the browser"**: on `https://webauthn.io` start a registration, choose "Use the browser
+   instead", click the page's button again, and choose "security key" in Firefox's dialog; then sign in with it the same way.
+   *Expected:* the key's PIN and touch work, the registration and the sign-in succeed, and Ferret's window does not open for the
+   second call (the one-time pass is spent by the first). Remove the test passkey from the key afterwards.
+8. **Touch ID on a Mac** (if you have one): repeat steps 1 and 3 with Touch ID; then sign in on `https://webauthn.io` from the Mac
    with the passkey Ferret made on Windows (check 8).
    *Expected:* both work.
 
@@ -248,6 +257,7 @@ Keep these lines with the release notes of the run:
 | Web vault suites |  |  |  |
 | Check 5, Windows Hello and the phone |  |  |  |
 | Check 5, Windows Hello from the popup and an unlock while autofill waits |  |  |  |
+| Check 5, a YubiKey as an unlock method and as a security key |  |  |  |
 | Check 5, Touch ID on a Mac |  |  |  |
 | Check 6, real websites |  |  |  |
 | Check 8, sync |  |  |  |
