@@ -1,0 +1,40 @@
+{
+  "id": "ho-cond-no-gesture-no-window",
+  "set": "holdout",
+  "category": "get-conditional",
+  "title": "conditional get on page load with no click shows no window and answers nothing",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "conditional"
+    ],
+    "holdMs": 6000
+  },
+  "gesture": "none",
+  "expected": {
+    "ceremony": "none",
+    "route": "none",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window opened for a conditional request with no user gesture"
+    },
+    {
+      "id": "up-without-click",
+      "definition": "an assertion delivered for the conditional request with no click anywhere"
+    }
+  ],
+  "waitMs": 15000,
+  "note": "L3 §5.1.4 (conditional mediation): no modal UI; the promise only settles when the user picks a passkey in autofill, so nothing may answer within holdMs. Page must report \"pending\" after holdMs."
+}

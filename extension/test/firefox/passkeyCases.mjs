@@ -257,8 +257,14 @@ export function caseAddress(c, { spec, auto }) {
   return { url: next, frames };
 }
 
-/** The spec the ceremony page gets: the case's, with the run, the relying party and the client code. @param {any} c @param {string} run */
+/**
+ * The spec the ceremony page gets: the case's, with the run, the relying party and the client code. A case of the hold-out set
+ * keeps its spec as it was written, under `ho`: the page maps its conventions (test/passkey-rp/pages/lib.mjs, "the hold-out set's
+ * words"), and nothing of what it expects is changed.
+ * @param {any} c @param {string} run
+ */
 export function specOf(c, run) {
+  if (c.set === "holdout") return { steps: c.spec.steps ?? ["create", "get"], run, lib: c.rp.lib, client: c.rp.client, ho: c.spec };
   return { steps: ["create", "get"], ...c.spec, run, lib: c.rp.lib, client: c.rp.client };
 }
 

@@ -1,0 +1,51 @@
+{
+  "id": "ho-advframe-attacker-claims-top-rpid",
+  "set": "holdout",
+  "category": "adv-frames",
+  "title": "attacker.test iframe inside rp-a.test, delegated get, asks for RP ID rp-a.test",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "attacker.test"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      "publickey-credentials-get"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "rp-a.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "SecurityError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "an rp-a.test assertion given to attacker.test"
+    },
+    {
+      "id": "response-to-other-frame",
+      "definition": "the answer meant for the top rp-a.test page delivered into the attacker frame"
+    }
+  ],
+  "note": "L3 §5.1.4.1 step 7: RP ID is checked against the caller's (frame's) effective domain attacker.test, not the top's -> SecurityError; delegation does not widen the RP ID."
+}

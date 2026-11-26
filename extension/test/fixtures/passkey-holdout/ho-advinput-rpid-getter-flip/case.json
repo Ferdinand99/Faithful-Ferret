@@ -1,0 +1,46 @@
+{
+  "id": "ho-advinput-rpid-getter-flip",
+  "set": "holdout",
+  "category": "adv-input",
+  "title": "rp.id / rpId getters return rp-a.test on the first read and rp-b.test afterwards",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "getter-flip",
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    },
+    "tamper": {
+      "flip": {
+        "create": "rp.id",
+        "get": "rpId",
+        "first": "rp-a.test",
+        "later": "rp-b.test"
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a credential or assertion for rp-b.test, or a SecurityError path that still stored a passkey"
+    }
+  ],
+  "note": "WebIDL dictionary conversion reads each member once when the method is called; L3 then works on the converted copy, so the RP ID is rp-a.test. A provider that re-reads the live object sees rp-b.test."
+}

@@ -1,0 +1,47 @@
+{
+  "id": "ho-frame-same-site-no-allow",
+  "set": "holdout",
+  "category": "frames",
+  "title": "same-site but cross-origin iframe (login.rp-a.test in rp-a.test) without allow",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "login.rp-a.test"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      ""
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "rp-a.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "any assertion delivered to the login.rp-a.test frame"
+    }
+  ],
+  "note": "Permissions Policy 'self' matches the same origin, not the same site; L3 §5.1.4.1 -> NotAllowedError although the RP ID itself would be valid."
+}

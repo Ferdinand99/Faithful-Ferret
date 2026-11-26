@@ -291,9 +291,18 @@ test("the set selection finds the cases of each set and tells a missing hold-out
   assert.ok(selectCases("adversarial").cases.length >= 15);
   assert.equal(selectCases("fixtures", "frame-").cases.every((c) => c.id.includes("frame-")), true);
   assert.equal(selectCases("demo").cases.length, 3);
-  // The hold-out set is copied in later (U4-13); until then it has no case, and the spec fails on that rather than passing.
-  assert.equal(existsSync(SET_DIRS.holdout), false);
-  assert.equal(selectCases("holdout").cases.length, 0);
+  // The hold-out set (written without the implementation, U4-13): 50 well-formed cases, all of the set "holdout", each of a category of
+  // the matrix, and none of them changed by the runner: the page gets the case's spec as it was written.
+  const holdout = selectCases("holdout");
+  assert.deepEqual(holdout.problems, []);
+  assert.equal(holdout.cases.length, 50);
+  for (const c of holdout.cases) {
+    assert.equal(c.set, "holdout", c.id);
+    assert.ok(c.category in CATEGORIES, c.id);
+    const spec = specOf(c, "run-ho");
+    assert.deepEqual(spec.ho, c.spec, `${c.id}: the spec goes to the page as written`);
+    assert.deepEqual(spec.steps, c.spec.steps ?? ["create", "get"], c.id);
+  }
 });
 
 test("a driver step of every fixture case is one the runner has", () => {

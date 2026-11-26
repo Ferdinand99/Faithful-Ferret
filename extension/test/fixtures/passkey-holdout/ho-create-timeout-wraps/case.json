@@ -1,0 +1,43 @@
+{
+  "id": "ho-create-timeout-wraps",
+  "set": "holdout",
+  "category": "create-options",
+  "title": "timeout 4294967297 (wraps to 1 ms) on create and timeout 0 on get still complete",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "timeout": 4294967297
+    },
+    "get": {
+      "timeout": 0,
+      "allowCredentials": [
+        "$cred"
+      ]
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "error-differs",
+      "definition": "an instant error for the tiny timeout that differs in type from the timeout/cancel error"
+    }
+  ],
+  "note": "WebIDL unsigned long wraps 2^32+1 to 1; L3 §5.1.3/§5.1.4.1: the client corrects an out-of-range timeout to the closest value in its own reasonable range, so it must not expire before the runner approves. Mildly uncertain: depends on the client minimum being >= a few seconds."
+}

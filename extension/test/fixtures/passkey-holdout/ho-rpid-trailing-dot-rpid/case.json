@@ -1,0 +1,37 @@
+{
+  "id": "ho-rpid-trailing-dot-rpid",
+  "set": "holdout",
+  "category": "origin-rpid",
+  "title": "rp-a.test asks for RP ID \"rp-a.test.\" with a trailing dot",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "rpId": "rp-a.test."
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "SecurityError",
+    "failStep": "create",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a credential stored under \"rp-a.test.\" or one whose rpIdHash is over a string other than the RP ID the page passed"
+    }
+  ],
+  "note": "HTML registrable-suffix algorithm: the host parser keeps the trailing dot, \"rp-a.test.\" != \"rp-a.test\" and \".rp-a.test.\" is not at its end -> false -> SecurityError (L3 §5.1.3 step 7). UNCERTAIN: engines that strip FQDN dots would accept."
+}
