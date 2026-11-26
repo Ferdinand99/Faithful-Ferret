@@ -40,6 +40,7 @@
 #                 warning, a bench over CT_GROSS (500) in the rerun too is a failure
 #   CT_PIN_CPU    CPU number for the dudect runs (taskset), "auto" for the least busy,
 #                 empty for no pinning
+#   CT_HEAVY_N    measurements of the passkey_import_* benches in a CT_SMOKE run (10000)
 #   CT_ONLY       only the dudect benches whose name contains this (the controls,
 #                 control_*, always run too)
 #   CT_OPT_LEVEL  opt-level of the dudect build (default: the profile of ct/dudect, "s";
@@ -487,6 +488,7 @@ dudect_native() {
   } | tee -a "$out"
   local names="control_null control_leaky control_unpad_leaky commit_check mac_verify key_eq crockford_decode base64url_decode passkey_import_jwk passkey_import_pkcs8 unpad_ct base32_decode kek_pw_commit_path info_unwrap_valid_vs_bad_commit kek_pin_commit_path info_unwrap_pin_valid_vs_bad_commit info_unpad_position_zeros info_unpad_content info_unpad_random_pair info_unpad_same info_base32_a_vs_z info_base32_upper_vs_lower info_base32_random_pair server_login_start_known_vs_unknown server_login_start_known_vs_disabled control_server_login_start_null control_server_prelogin_null control_server_finish_null info_server_login_start_lookup_only info_server_login_start_real_vs_made_up info_server_login_start_fixed_vs_pool server_prelogin_known_vs_unknown info_server_prelogin_resolve_credential server_state_binding server_finish_credential_vs_account info_server_finish_state_vs_missing"
   local failed=0 invalid=0 grossfail=0 name rep
+  local n_all="$n"
   # The lookup code of the timed binary, before any bench is run.
   local asm_ok=1
   timed_asm "$bin" 2>&1 | tee -a "$out" || asm_ok=0
@@ -496,6 +498,10 @@ dudect_native() {
     # does not show that the setup could see a leak, or stayed quiet on equal
     # classes, in that session.
     if [ -n "${CT_ONLY:-}" ] && [[ "$name" != *"$CT_ONLY"* ]] && [[ "$name" != control_* ]]; then continue; fi
+    # The smoke run keeps the heavy benches (a whole key import takes about a
+    # millisecond) at a small count; the decisive run measures all at n.
+    n="$n_all"
+    if [ "${CT_SMOKE:-}" = 1 ] && [[ "$name" == passkey_import_* ]]; then n="${CT_HEAVY_N:-10000}"; fi
     for rep in $(seq 1 "${CT_REPEAT:-1}"); do
       local line t line2 t2="" first_over=0 second_over=0
       line="$(bench_line "$bin" "$name" "$n")"

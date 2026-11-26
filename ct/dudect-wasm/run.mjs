@@ -36,6 +36,11 @@ const ONLY = process.env.CT_ONLY ?? "";
 const REPEAT = Number(process.env.CT_REPEAT ?? 1);
 const WARMUP = 200_000;
 const PERCENTILES = 100;
+// The smoke run (CT_SMOKE=1) keeps the heavy targets, a whole key import of about
+// a millisecond, at a small count; the decisive run measures all at N.
+const SMOKE = process.env.CT_SMOKE === "1";
+const HEAVY_N = Number(process.env.CT_HEAVY_N ?? 10_000);
+const isHeavy = (name) => SMOKE && name.startsWith("passkey_import_");
 
 const wasmPath = process.argv[2];
 if (!wasmPath) {
@@ -132,12 +137,12 @@ function plan(seed, count) {
   return { classes, inputs };
 }
 
-function measure(target, seed, count) {
+function measure(target, seed, count, warmup = WARMUP) {
   const { t, reps } = target;
   const { classes, inputs } = plan(seed, count);
   // Warm up, so that the engine has compiled the module's hot code with its
   // optimizing compiler before the first measurement.
-  for (let i = 0; i < WARMUP; i++) {
+  for (let i = 0; i < warmup; i++) {
     ex.ct_prepare(t, classes[i % count], inputs[i % count]);
     ex.ct_run(t, reps);
   }
@@ -180,9 +185,11 @@ const order = [
 let seed = 0x2545f491;
 const nextSeed = () => (seed = (seed * 1664525 + 1013904223) >>> 0);
 for (const target of order) {
+  const n = isHeavy(target.name) ? Math.min(N, HEAVY_N) : N;
+  const warm = isHeavy(target.name) ? Math.min(WARMUP, n) : WARMUP;
   for (let rep = 0; rep < REPEAT; rep++) {
-    const r = measure(target, nextSeed(), N);
-    console.log(fmt(target.name, r, `run n=${N}`));
+    const r = measure(target, nextSeed(), n, warm);
+    console.log(fmt(target.name, r, `run n=${n}`));
     if (/control_.*leaky/.test(target.name)) {
       if (over(r.t)) console.log(`[ok] ${target.name}: the setup sees an early-exit comparison`);
       else {
@@ -194,14 +201,14 @@ for (const target of order) {
     } else if (!over(r.t)) {
       console.log(`[ok] ${target.name}`);
     } else {
-      const again = measure(target, nextSeed(), N * 10);
-      console.log(fmt(target.name, again, `rerun n=${N * 10}`));
+      const again = measure(target, nextSeed(), n * 10, warm);
+      console.log(fmt(target.name, again, `rerun n=${n * 10}`));
       if (over(again.t)) {
-        console.log(`[FAIL] ${target.name}: |t| >= ${THRESHOLD} at n=${N} and again at n=${N * 10}`);
+        console.log(`[FAIL] ${target.name}: |t| >= ${THRESHOLD} at n=${n} and again at n=${n * 10}`);
         failed = true;
         if (over(again.t, GROSS)) gross = true;
       } else {
-        console.log(`[ok, rerun] ${target.name}: |t| >= ${THRESHOLD} at n=${N}, below at n=${N * 10}`);
+        console.log(`[ok, rerun] ${target.name}: |t| >= ${THRESHOLD} at n=${n}, below at n=${n * 10}`);
       }
     }
   }
