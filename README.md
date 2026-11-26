@@ -201,7 +201,7 @@ this one). [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes ho
   replacing a passkey, related origins, frames of another origin, `largeBlob`, and Ferret as the phone for another device. Another
   password manager that also takes passkeys may answer first. It was tested against our own test pages and two relying-party
   libraries in Firefox Release and ESR (both manifest versions), and on a few public demo sites; Windows Hello, a phone through a
-  QR code and Touch ID cannot be driven by an automated run and are checked by hand (see [`docs/TESTING-U4.md`](docs/TESTING-U4.md)).
+  QR code and Touch ID cannot be driven by an automated run, and they have not been checked by hand yet: the checks are listed in [`docs/TESTING-U4.md`](docs/TESTING-U4.md).
 - **Settings.** The settings page is grouped, with clear switches: the passkey group has the switch for Ferret as a passkey
   provider, "Count an unlock in the last 5 minutes" (on by default) and the list "Never on these sites", where you can take a site
   back.
