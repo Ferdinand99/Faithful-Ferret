@@ -229,7 +229,7 @@ export class WasmLacksUnlockError extends Error {
   }
 }
 
-/** The same refusal for the `passkeys` feature (status 3 as well, so that release-build.sh treats both alike). */
+/** The same refusal for the `passkeys` feature (status 3 as well). */
 export class WasmLacksPasskeysError extends WasmLacksUnlockError {
   /** @param {string} message */
   constructor(message) {
