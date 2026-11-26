@@ -52,5 +52,6 @@
       "id": "response-to-other-frame",
       "definition": "a window or an answer for any frame or origin other than the one that asked"
     }
-  ]
+  ],
+  "note": "Changed after review U4-13: the page checks only the five methods that stay the browser's own (the three signal methods and the two parse methods); isUserVerifyingPlatformAuthenticatorAvailable, isConditionalMediationAvailable and getClientCapabilities are answered by Ferret by design (UK119)."
 }

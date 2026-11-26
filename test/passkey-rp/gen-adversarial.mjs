@@ -220,11 +220,12 @@ adversarial({ name: "opener-reach", run: async (spec, note) => {
   return await Promise.race([p, sleep(4000).then(() => ({ ok: false, timeout: true }))]);
 } });`,
   },
-  // The signal methods are the browser's own and are left alone.
+  // The signal and parse methods are the browser's own and are left alone. (Changed after review U4-13: isUserVerifyingPlatformAuthenticatorAvailable,
+  // isConditionalMediationAvailable and getClientCapabilities are answered by the passkey provider by design, UK119, and are not checked.)
   signals: {
     body: `
 adversarial({ name: "signals", run: async (spec, note) => {
-  const names = ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails", "isUserVerifyingPlatformAuthenticatorAvailable", "isConditionalMediationAvailable", "getClientCapabilities", "parseCreationOptionsFromJSON", "parseRequestOptionsFromJSON"];
+  const names = ["signalUnknownCredential", "signalAllAcceptedCredentials", "signalCurrentUserDetails", "parseCreationOptionsFromJSON", "parseRequestOptionsFromJSON"];
   const info = {};
   for (const n of names) {
     const f = PublicKeyCredential[n];

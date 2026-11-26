@@ -22,5 +22,6 @@
     }
   ],
   "needs": "provider",
-  "note": "A smoke test against a public demo site: registration and sign-in work in both channels. The driver for these pages comes with the end-to-end spec (U4-13); until then a run of this set counts every case as not run. Needs a network that reaches the site, so this set runs outside the test network."
+  "hand": "the sign-up sends a code to an e-mail address, which no run can read: checked by hand at the gate (docs/TESTING-U4.md)",
+  "note": "A smoke test against a public demo site: registration and sign-in work in both channels (extension/test/firefox/passkeyDemo.mjs). Needs a network that reaches the site, so this set runs outside the test network. Changed after review U4-13: a hand check, not an automated case."
 }
