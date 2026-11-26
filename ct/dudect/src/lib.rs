@@ -565,7 +565,9 @@ fn base64url_32(bytes: &[u8; 32]) -> String {
             word |= u32::from(*b) << (16 - 8 * i);
         }
         for k in 0..chunk.len() + 1 {
-            out.push(char::from(BASE64URL[((word >> (18 - 6 * k)) & 63) as usize]));
+            out.push(char::from(
+                BASE64URL[((word >> (18 - 6 * k)) & 63) as usize],
+            ));
         }
     }
     out
@@ -917,8 +919,16 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
         Box::new(key_eq(&mut mix)),
         Box::new(crockford_decode(&mut mix)),
         Box::new(base64url_decode(&mut mix)),
-        Box::new(import_target(&mut mix, "passkey_import_jwk", ImportForm::Jwk)),
-        Box::new(import_target(&mut mix, "passkey_import_pkcs8", ImportForm::Pkcs8)),
+        Box::new(import_target(
+            &mut mix,
+            "passkey_import_jwk",
+            ImportForm::Jwk,
+        )),
+        Box::new(import_target(
+            &mut mix,
+            "passkey_import_pkcs8",
+            ImportForm::Pkcs8,
+        )),
         Box::new(unpad_target(
             &mut mix,
             "unpad_ct",
