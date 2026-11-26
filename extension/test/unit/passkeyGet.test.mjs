@@ -547,13 +547,14 @@ test("no_candidate_shows_the_window_with_the_browser_choice", async () => {
   // The request still waits: the page cannot tell "none" from "the person has not chosen yet".
   assert.ok(w.requests.forUi(id, SESSION));
   assert.equal(w.answerOf(bridgeId), undefined);
-  // A refusal of the core for the request itself ends it as the browser would (an RP ID the origin may not use).
+  // A refusal of the core for the request itself ends it as the browser would (an RP ID the origin may not use: a public suffix,
+  // which only the core checks; any other the background refuses before the window).
   w.client.vault.passkey_candidates = async () => {
     throw Object.assign(new Error("malformed_rp_id"), { code: "malformed_rp_id" });
   };
   // (One modal request per tab: the first one ends.)
   w.requests.cancel(id, SESSION);
-  const again = await w.ask({ rp_id: "rp-b.test" });
+  const again = await w.ask({ rp_id: "test" });
   assert.deepEqual(await w.candidates(again.id), { ok: false, reason: "security_error" });
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(w.answerOf(again.bridgeId)?.body.name, "SecurityError");
@@ -981,9 +982,9 @@ test("listing_never_ends_the_pages_conditional_request", async () => {
   await flush();
   assert.equal(w.pushed.length, 0, "the page learns nothing from the popup's look");
   assert.equal((await brokerOp(w, "passkey_tab")).conditional, true);
-  // The core refuses the request (an RP ID the origin may not use): the same.
+  // The core refuses the request (an RP ID the origin may not use, a public suffix): the same.
   const v = world();
-  await conditional(v, { rp_id: "evil.test" });
+  await conditional(v, { rp_id: "test" });
   v.client.vault.passkey_candidates = async () => {
     throw Object.assign(new Error("malformed_rp_id"), { code: "malformed_rp_id" });
   };

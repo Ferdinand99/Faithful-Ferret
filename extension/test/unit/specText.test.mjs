@@ -274,7 +274,8 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "The page's `timeout` is read first as the browser reads it, a WebIDL `unsigned long`, so a number of 2^32 or more wraps.",
     "A call of a document while 64 of its calls already wait ends at once with `AbortError`, like a second modal call of a tab, and never goes to the browser.",
     // The core still canonicalizes an RP ID with a trailing dot or upper case; the extension refuses those first.
-    "The extension therefore refuses such an RP ID itself, with a `SecurityError` and before any window, for `create` and for `get`, so a page call never reaches that path of the core.",
+    "The extension therefore refuses such an RP ID itself, with a `SecurityError` and before any window, for `create` and for `get`, so a page call never reaches that path of the core: the RP ID must be lower-case ASCII labels",
+    "and the page's host or a dot-delimited suffix of it. That the suffix is not a public suffix is still checked by the core only, in the window.",
     "**Calm period:** three cancelled requests within one minute from the same tab give five minutes in which new requests from that tab only get the badge and the card in the popup, with no window.",
     "the stored `rp_id` must be **exactly equal** to the requested `rpId`.",
   ]) {
