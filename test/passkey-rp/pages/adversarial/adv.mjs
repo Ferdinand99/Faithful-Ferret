@@ -12,9 +12,16 @@ export function adversarial({ name, run }) {
   const result = /** @type {HTMLElement} */ (document.getElementById("result"));
   /** @type {Record<string, unknown>} */
   const notes = { page: name, userActivationAtLoad: navigator.userActivation?.isActive ?? null };
-  /** @param {string} key @param {unknown} value */
+  /** The run the page reports to, once the click started it. @type {unknown} */
+  let running = null;
+  /**
+   * What the page saw goes to the runner at once as well, not only after the ceremony: a case whose ceremony is meant not to
+   * finish (it only waits with the badge and the card) still reports it. The last report counts.
+   * @param {string} key @param {unknown} value
+   */
   const note = (key, value) => {
     notes[key] = value;
+    if (running !== null) void report(running, { kind: "adv", ...notes });
   };
   async function go() {
     const spec = pageSpec();
@@ -22,6 +29,7 @@ export function adversarial({ name, run }) {
       result.textContent = "no spec";
       return;
     }
+    running = spec.run;
     result.dataset.state = "running";
     notes.userActivationAtStart = navigator.userActivation?.isActive ?? null;
     /** @type {any} */
