@@ -1015,8 +1015,9 @@ test("passkey_never_keeps_the_cores_rp_id_on_the_list_and_hands_the_call_to_the_
   const w = world({ never: { has: async () => false, add: async (/** @type {string} */ rpId, /** @type {any} */ options) => void added.push([rpId, options]) } });
   const ops = /** @type {any} */ (w.requests.ops);
   assert.equal(ops.passkey_never.vault, true, "it needs the open vault: only then is there an RP ID the core has checked");
-  // The page asks for "rp-a.test"; the core says its canonical form; the list gets the core's, never the page's text.
-  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("n1", { options: { rp_id: "RP-A.test" } }))).request_id;
+  // The list gets the RP ID the core checked, never the page's text. (A page's RP ID that the core would only take after
+  // canonicalizing, such as "RP-A.test", never gets this far: it is a SecurityError before any window.)
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("n1", { options: { rp_id: "rp-a.test" } }))).request_id;
   const client = (/** @type {any} */ rpId) => ({ vault: { passkey_site: async () => ({ origin: RP, host_unicode: "rp-a.test", rp_id: rpId, rp_id_unicode: rpId }) } });
   // The first window that names the request owns it; another window's session cannot.
   assert.equal((await ops.passkey_pending.run(null, { request_id: id, session: "win" })).ok, true);

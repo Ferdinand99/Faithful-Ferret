@@ -455,11 +455,11 @@ test("a_flood_beyond_the_waiting_limit_ends_with_abort_error_and_never_reaches_t
   })()`);
   await page.flush();
   assert.equal(page.sent.filter((m) => m.type === "passkey_request").length, 64, "64 wait for the background");
-  assert.deepEqual(page.page("flood"), Array(6).fill("AbortError"), "the rest end at once with AbortError, as a concurrent call does");
+  assert.deepEqual(JSON.parse(page.page("JSON.stringify(flood)")), Array(6).fill("AbortError"), "the rest end at once with AbortError, as a concurrent call does");
   // The page's abort ends the 64 that wait the same way; none of the 70 calls ever reached the browser.
   page.page("c.abort()");
   await page.flush();
-  assert.deepEqual(page.page("flood"), Array(70).fill("AbortError"));
+  assert.deepEqual(JSON.parse(page.page("JSON.stringify(flood)")), Array(70).fill("AbortError"));
   assert.equal(page.sent.filter((m) => m.type === "passkey_abort").length, 64);
   assert.equal(page.nativeCalls.length, 0);
 });
