@@ -104,7 +104,7 @@
 // frame is caught that way. The answers go back as the results of the
 // extension's own calls, never as messages a page or a frame could send.
 
-import { PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
+import { PUSH_TYPES, decode, encode } from "../shared/contentProtocol.mjs";
 import { TEXT_TYPES, UNRENDERED, autocompleteTokens, classifyField, findGroups, flatParent, isElement, isInside, shadowOf } from "./forms.mjs";
 import { refusedClasses } from "./passwordRules.mjs";
 

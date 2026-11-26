@@ -1,5 +1,5 @@
 // The wire form of a page's WebAuthn options and of the answer (the `passkeys` feature): JSON with the bytes in
-// unpadded base64url, inside the limits of PASSKEY_LIMITS (shared/protocol.mjs). Plain ESM, no dependencies but the
+// unpadded base64url, inside the limits of PASSKEY_LIMITS (shared/contentProtocol.mjs). Plain ESM, no dependencies but the
 // protocol, so it runs in the bridge script of a page, in the background and in a unit test alike.
 //
 //   optionsToWire(kind, plain)      the bridge: what the page's script (content/passkey.main.entry.mjs) copied out of the
@@ -14,7 +14,7 @@
 // Nothing here decides whether Ferret answers a call: that is the background's (design § 9.2). This module only refuses a
 // shape it cannot carry. Bytes are copied, never shared with the caller's buffers.
 
-import { PASSKEY_CREATE_OPTIONS, PASSKEY_GET_OPTIONS, PASSKEY_LIMITS, PASSKEY_RESPONSE, ProtocolError } from "./protocol.mjs";
+import { PASSKEY_CREATE_OPTIONS, PASSKEY_GET_OPTIONS, PASSKEY_LIMITS, PASSKEY_RESPONSE, ProtocolError } from "./contentProtocol.mjs";
 import { validate } from "./schema.mjs";
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

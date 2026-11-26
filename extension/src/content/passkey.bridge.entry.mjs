@@ -25,7 +25,7 @@
 //   taken one that hears nothing for 50 seconds (a bridge that died with the extension).
 //   If the extension cannot be reached, the browser answers.
 
-import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../shared/protocol.mjs";
+import { CONTENT_TYPES, PUSH_TYPES, decode, encode } from "../shared/contentProtocol.mjs";
 import { optionsToWire, responseFromWire } from "../shared/webauthnWire.mjs";
 
 /** The type of the handshake event, as the page's own world has it. Not a secret. */

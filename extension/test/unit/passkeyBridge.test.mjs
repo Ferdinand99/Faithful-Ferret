@@ -4,7 +4,10 @@
 // test/firefox/74-passkey-bridge.spec.mjs.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONTENT_TYPES, PASSKEY_LIMITS, PUSH_TYPES } from "../../src/shared/protocol.mjs";
+import { CONTENT_TYPES, PASSKEY_LIMITS, PUSH_TYPES, UI_TYPES, decode } from "../../src/shared/protocol.mjs";
+import {
+  CONTENT_TYPES as PAGE_CONTENT_TYPES, PASSKEY_LIMITS as PAGE_PASSKEY_LIMITS, PUSH_TYPES as PAGE_PUSH_TYPES, decode as pageDecode, encode as pageEncode,
+} from "../../src/shared/contentProtocol.mjs";
 import { walk } from "../../src/shared/schema.mjs";
 import { fromB64u, optionsToWire, responseFromWire, responseToWire, toB64u } from "../../src/shared/webauthnWire.mjs";
 import { PASSKEY_BRIDGE_MAX_BYTES, PASSKEY_MAIN_MAX_BYTES } from "../../scripts/lib/classic.mjs";
@@ -42,6 +45,28 @@ test("both_scripts_join_and_the_main_script_stays_within_its_budget", () => {
   // The page's script is built from its own file only: no protocol, no shared module.
   assert.match(main, /^\/\/ Files: content\/passkeyResponse\.mjs, content\/passkey\.main\.entry\.mjs$/m);
   assert.match(bridge, /^\/\/ Files: .*shared\/webauthnWire\.mjs.*content\/passkey\.bridge\.entry\.mjs$/m);
+});
+
+test("the_bridge_carries_only_the_content_and_push_schemas", () => {
+  const { bridge } = passkeyScripts();
+  const files = /** @type {RegExpMatchArray} */ (bridge.match(/^\/\/ Files: (.+)$/m))[1].split(", ");
+  // Joined from the content channels of the protocol, never from the module with the tables of the extension pages.
+  assert.ok(files.includes("shared/contentProtocol.mjs"), files.join(", "));
+  assert.equal(files.includes("shared/protocol.mjs"), false, files.join(", "));
+  // No type of the extension pages is in the script (their names with an underscore are distinctive enough to search for).
+  const uiOnly = Object.keys(UI_TYPES).filter((t) => t.includes("_") && !Object.hasOwn(CONTENT_TYPES, t) && !Object.hasOwn(PUSH_TYPES, t));
+  assert.ok(uiOnly.length > 30, `${uiOnly.length}`);
+  for (const type of uiOnly) assert.equal(bridge.includes(type), false, `${type} is in the bridge`);
+  for (const type of [...Object.keys(CONTENT_TYPES), ...Object.keys(PUSH_TYPES)]) assert.ok(bridge.includes(`${type}:`), type);
+  // One definition of each table: what the extension pages and the background import is the bridge's module's own.
+  assert.equal(CONTENT_TYPES, PAGE_CONTENT_TYPES);
+  assert.equal(PUSH_TYPES, PAGE_PUSH_TYPES);
+  assert.equal(PASSKEY_LIMITS, PAGE_PASSKEY_LIMITS);
+  // The content codec knows its own two tables only, and never takes a refusal (a reply of the extension pages' channel).
+  assert.throws(() => pageEncode("state", {}), /unknown_type/);
+  const refusal = JSON.stringify({ v: 1, id: "x", type: "refused", body: { reason: "internal_error" } });
+  assert.throws(() => pageDecode(refusal, PAGE_PUSH_TYPES, { reply: true }), /unknown_type/);
+  assert.equal(decode(refusal, UI_TYPES, { reply: true }).type, "refused");
 });
 
 test("the_handshake_works_in_either_order_and_each_listener_takes_one", async () => {
@@ -371,7 +396,12 @@ test("a_dead_bridge_fails_closed_to_the_original", async () => {
   await conditional.flush();
   conditional.killBridge();
   await conditional.advance(50_000);
-  assert.equal(conditional.nativeCalls.length, 1);
+  // Its own conditional call to the original (beside Ferret's part) is aborted first; then the original gets the page's own options.
+  assert.equal(conditional.nativeCalls.length, 2);
+  assert.equal(conditional.conditionalCalls[0].aborted, true);
+  assert.equal(conditional.nativeCalls[1].args[0], conditional.page("globalThis.lastOptions"));
+  conditional.conditionalCalls[1].resolve("browser");
+  await conditional.flush();
   assert.equal(conditional.page("out.value"), "browser");
 
   // A background that is slow to answer (an event page starting from cold): the bridge said "taken" when it had the request,
@@ -538,4 +568,88 @@ test("the_wire_form_keeps_the_limits", () => {
   assert.equal(back.userHandle, null);
   assert.equal(new Uint8Array(back.clientExtensionResults.prf.results.first).length, 32);
   assert.equal(responseFromWire("create", wire), null, "not an answer to a create");
+});
+
+// ---------------------------------------------------------------- a conditional get beside the browser's own list
+
+/** A conditional get of the page that Ferret took (its list is in the popup), with the original's own call beside it. */
+async function conditionalPage() {
+  const page = createPasskeyPage();
+  page.page(GET(', mediation: "conditional"'));
+  await page.flush();
+  const request = /** @type {any} */ (lastRequest(page));
+  assert.equal(request.body.mediation, "conditional");
+  return { page, request };
+}
+
+test("only_a_success_from_the_original_wins", async () => {
+  const { page, request } = await conditionalPage();
+  // The script's own conditional call to the original: the page's publicKey, its own signal, nothing else of the page's options.
+  assert.equal(page.conditionalCalls.length, 1);
+  const side = page.conditionalCalls[0];
+  assert.equal(side.options.publicKey, page.page("globalThis.lastOptions.publicKey"));
+  assert.notEqual(side.signal, undefined);
+  assert.equal(page.page("out.done"), false);
+  // The person picked a platform passkey in the browser's own list: that credential is the page's answer, and Ferret's request ends.
+  side.resolve("platform-credential");
+  await page.flush();
+  assert.equal(page.page("out.value"), "platform-credential");
+  assert.ok(page.sent.some((m) => m.type === "passkey_abort" && m.body.request_id === request.body.request_id));
+  // Ferret's late answer to it is dropped.
+  await page.push("passkey_error", { request_id: request.body.request_id, name: "NotAllowedError" });
+  assert.equal(page.page("out.error"), undefined);
+
+  // The other way round: Ferret answers first, and the original's call is aborted (a late credential from it counts for nothing).
+  const second = await conditionalPage();
+  await second.page.push("passkey_handover", { request_id: second.request.body.request_id, once: false });
+  assert.equal(second.page.conditionalCalls[0].aborted, true, "aborted before the original gets the page's own call");
+  second.page.conditionalCalls[1].resolve("browser");
+  await second.page.flush();
+  assert.equal(second.page.page("out.value"), "browser");
+  second.page.conditionalCalls[0].resolve("late");
+  await second.page.flush();
+  assert.equal(second.page.page("out.value"), "browser");
+
+  // A modal request replaces the conditional one: the original's conditional call ends with it.
+  const third = await conditionalPage();
+  third.page.page(GET());
+  await third.page.flush();
+  assert.ok(third.page.sent.some((m) => m.type === "passkey_abort" && m.body.request_id === third.request.body.request_id));
+  assert.equal(third.page.conditionalCalls[0].aborted, true);
+});
+
+test("an_error_from_the_original_does_not_end_a_conditional_request", async () => {
+  const { page, request } = await conditionalPage();
+  for (const name of ["NotAllowedError", "SecurityError", "UnknownError"]) {
+    const calls = page.conditionalCalls.length;
+    page.conditionalCalls[calls - 1].reject(name);
+    await page.flush();
+    assert.equal(page.page("out.done"), false, `${name}: Ferret's part still waits`);
+    // Only an AbortError of the browser's own starts the call again.
+    assert.equal(page.conditionalCalls.length, calls, name);
+  }
+  assert.equal(page.sent.some((m) => m.type === "passkey_abort"), false, "nothing is aborted in the background");
+  // Ferret's answer still reaches the page.
+  await page.push("passkey_error", { request_id: request.body.request_id, name: "NotAllowedError" });
+  assert.equal(page.page("out.error"), "NotAllowedError");
+});
+
+test("the_original_is_restarted_once_if_firefox_cancelled_it", async () => {
+  const { page } = await conditionalPage();
+  // The browser aborted its own conditional call (another WebAuthn call of the browser, say): it is made once more.
+  page.conditionalCalls[0].reject("AbortError");
+  await page.flush();
+  assert.equal(page.conditionalCalls.length, 2, "started again");
+  assert.equal(page.conditionalCalls[1].options.publicKey, page.page("globalThis.lastOptions.publicKey"));
+  assert.equal(page.conditionalCalls[1].aborted, false);
+  // Once only.
+  page.conditionalCalls[1].reject("AbortError");
+  await page.flush();
+  assert.equal(page.conditionalCalls.length, 2);
+  assert.equal(page.page("out.done"), false, "Ferret's part still waits");
+  // The script's own abort (the page's request ended) never starts it again.
+  const other = await conditionalPage();
+  await other.page.push("passkey_error", { request_id: other.request.body.request_id, name: "AbortError" });
+  assert.equal(other.page.conditionalCalls[0].aborted, true);
+  assert.equal(other.page.conditionalCalls.length, 1);
 });

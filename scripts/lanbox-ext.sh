@@ -29,6 +29,8 @@
 #                                 set, it uses that stack (started with `e2e-up` unless
 #                                 --no-up) and leaves it up: run
 #                                 `scripts/lanbox-ferret-test.sh e2e-down` afterwards.
+#                                 With FERRET_SHOTS_OUT=<dir> the screenshots the specs take are unpacked
+#                                 into <dir>/gate-shots/<channel>/, as for the firefox step.
 #                                 --passkey-rp: the runner also joins the passkey fixture container's
 #                                 network and trusts its CA (start it first: scripts/lanbox-passkey-rp.sh up),
 #                                 for the specs in which Ferret answers its relying parties.
@@ -625,9 +627,20 @@ passkey_rp_setup() {
 if [ "$mode" = e2e ]; then
   if [ "$passkey_rp" = 1 ]; then passkey_rp_setup; fi
   e2e_setup
-  make_run "${channel:-release,esr}" ""
   rc=0
-  "${run[@]}" < "$work/in.tar" || rc=$?
+  if [ -n "${FERRET_SHOTS_OUT:-}" ]; then
+    # As for the firefox step: the screenshots the specs take come back as a tar archive and are unpacked into
+    # $FERRET_SHOTS_OUT/gate-shots/, also after a failure.
+    mkdir -p "$FERRET_SHOTS_OUT"
+    make_run "${channel:-release,esr}" "" e2e 1
+    "${run[@]}" < "$work/in.tar" > "$work/shots.tar" || rc=$?
+    if [ -s "$work/shots.tar" ]; then
+      tar -x --no-same-owner -C "$FERRET_SHOTS_OUT" < "$work/shots.tar" || rc=$?
+    fi
+  else
+    make_run "${channel:-release,esr}" ""
+    "${run[@]}" < "$work/in.tar" || rc=$?
+  fi
   scan_stack_logs_for_sentinels || { [ "$rc" -ne 0 ] || rc=1; }
   exit "$rc"
 fi

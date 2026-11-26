@@ -33,17 +33,17 @@ function readSources() {
 
 const SMALL = {
   "content/entry.mjs": 'import { run } from "./b.mjs";\n\nglobalThis.answer = run();\n',
-  "content/b.mjs": 'import {\n  one,\n  two,\n} from "../shared/protocol.mjs";\nimport { c } from "./c.mjs";\nexport function run() { return one + two + c; }\nexport { run };\n',
+  "content/b.mjs": 'import {\n  one,\n  two,\n} from "../shared/contentProtocol.mjs";\nimport { c } from "./c.mjs";\nexport function run() { return one + two + c; }\nexport { run };\n',
   "content/c.mjs": "export const c = 3;\n",
-  "shared/protocol.mjs": "export const one = 1;\nexport const two = 2;\n",
+  "shared/contentProtocol.mjs": "export const one = 1;\nexport const two = 2;\n",
 };
 
 test("joins_the_closure_in_dependency_order_without_import_or_export", () => {
   const out = classicScript("content/entry.mjs", pack(SMALL));
   assert.doesNotMatch(out, /^\s*(?:import|export)\b/m);
   const order = [...out.matchAll(/^\/\/ ---- (.+)$/gm)].map((m) => m[1]);
-  assert.deepEqual(order, ["shared/protocol.mjs", "content/c.mjs", "content/b.mjs", "content/entry.mjs"]);
-  assert.match(out, /^\/\/ Files: shared\/protocol\.mjs, content\/c\.mjs, content\/b\.mjs, content\/entry\.mjs$/m);
+  assert.deepEqual(order, ["shared/contentProtocol.mjs", "content/c.mjs", "content/b.mjs", "content/entry.mjs"]);
+  assert.match(out, /^\/\/ Files: shared\/contentProtocol\.mjs, content\/c\.mjs, content\/b\.mjs, content\/entry\.mjs$/m);
   // It runs in order: the entry calls what the others export.
   const context = vm.createContext({});
   vm.runInContext(out, context);
@@ -92,7 +92,7 @@ test("only_the_content_folder_and_the_protocol_files_may_be_joined", () => {
   // The real closure is exactly the entry, the engine, the detection module with its word lists, the protocol and the
   // schema checker.
   const joined = [...classicScript(CONTENT_ENTRY, files).matchAll(/^\/\/ ---- (.+)$/gm)].map((m) => m[1]);
-  assert.deepEqual(joined, ["shared/schema.mjs", "shared/protocol.mjs", "content/patterns.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/fill.mjs", "content/entry.mjs"]);
+  assert.deepEqual(joined, ["shared/schema.mjs", "shared/contentProtocol.mjs", "content/patterns.mjs", "content/forms.mjs", "content/passwordRules.mjs", "content/fill.mjs", "content/entry.mjs"]);
   for (const text of [
     'import "../shared/origin.mjs";\n',
     'import "../background/lock.mjs";\n',
