@@ -18,6 +18,7 @@ use ferret_core::{
     opaque_register_start,
 };
 use ferret_server::http::proxy_guard::ProxyList;
+use ferret_server::product;
 use ferret_server::wire::{b64url, hex16};
 use ferret_server_auth::testing::SMALL;
 use ferret_server_auth::{
@@ -446,6 +447,7 @@ async fn setup_roundtrip_with_real_client() {
 
 #[tokio::test]
 async fn wrong_or_missing_setup_token_is_403_and_throttled_after_repeated_guesses() {
+    product::install();
     set_setup_open_for_tests(Some(false));
     let token = required_setup_token().expect("a setup token is required");
     let app = server().await;
@@ -531,6 +533,7 @@ async fn wrong_or_missing_setup_token_is_403_and_throttled_after_repeated_guesse
 #[tokio::test]
 async fn starts_without_a_token_are_refused_before_the_kit_and_the_throttle() {
     let log = log_buffer();
+    product::install();
     set_setup_open_for_tests(Some(false));
     let token = required_setup_token().expect("a setup token is required");
     let throttle = Arc::new(RecordingThrottle::new());
@@ -603,6 +606,7 @@ async fn guess_from(app: &TestApp, first_line: &str, last_line: &str, n: usize) 
 /// last `X-Forwarded-For` line, whatever the client wrote in the first.
 #[tokio::test]
 async fn the_setup_token_limiter_counts_the_real_client_behind_the_trusted_proxy() {
+    product::install();
     set_setup_open_for_tests(Some(false));
     required_setup_token().expect("a setup token is required");
 
@@ -1695,6 +1699,7 @@ async fn admin_listener_has_no_register_route() {
 #[tokio::test]
 async fn register_bytes_never_reach_the_log() {
     let log = log_buffer();
+    product::install();
     set_setup_open_for_tests(Some(false));
     // The kit logs the token it makes up for itself on purpose, when it is first
     // asked for; that line is the kit's and is not a byte of a request, so the
