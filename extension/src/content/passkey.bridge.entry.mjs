@@ -32,7 +32,10 @@ import { optionsToWire, responseFromWire } from "../shared/webauthnWire.mjs";
 const HANDSHAKE = "ferret.passkeys.handshake";
 /** The ping of the background while a request waits. */
 const PING_MS = 20_000;
-/** The most requests of one document that wait at once; one more goes to the browser, which ends a flood as it always does. */
+/**
+ * The most requests of one document that wait at once. One more ends at once with AbortError, as the background ends a
+ * second modal call of a tab and as the browser ends a call that comes while another runs; a flood never reaches the browser.
+ */
 const MAX_WAITING = 64;
 
 /** @param {any} runtime the extension's `runtime` (the isolated world's own) */
@@ -128,7 +131,7 @@ function startBridge(runtime) {
     if (kind !== "create" && kind !== "get") return;
     const handover = () => toPage({ n, outcome: "handover", once: false });
     if (mediation !== "optional" && mediation !== "required" && mediation !== "conditional") return handover();
-    if (waiting.size >= MAX_WAITING) return handover();
+    if (waiting.size >= MAX_WAITING) return toPage({ n, outcome: "error", name: "AbortError" });
     const options = optionsToWire(kind, d.options);
     if (options === null) return handover();
     const id = newId();
@@ -170,6 +173,24 @@ function startBridge(runtime) {
       void toBackground("passkey_foreign", {});
     }
   };
+
+  // The document goes away (a removed frame, a navigation, the back-forward cache): its requests end with it, as the browser
+  // ends its own when the document is no longer fully active. The background closes Ferret's window for them, and a page that
+  // comes back from the back-forward cache finds its calls ended (it does not wait for the bridge's silence). A capture
+  // listener, registered at document_start: it runs before any listener of the page.
+  window.addEventListener(
+    "pagehide",
+    (/** @type {Event} */ event) => {
+      if (event.isTrusted !== true) return;
+      for (const id of [...waiting.keys()]) {
+        const entry = settle(id);
+        if (entry === null) continue;
+        void toBackground("passkey_abort", { request_id: id });
+        toPage({ n: entry.n, outcome: "error", name: "NotAllowedError" });
+      }
+    },
+    true,
+  );
 
   /** @param {MessagePort} given */
   const connect = (given) => {

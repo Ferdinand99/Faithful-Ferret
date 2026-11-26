@@ -7,7 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf,
+  PASSKEY_SILENT_MS, automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf, refusedRpId,
+  unsupportedOptions,
   PASSKEY_ERROR_DELAY_MS, PASSKEY_EVENT_OP, PASSKEY_GUARD_MS, PASSKEY_PASS_ONCE_MS, PASSKEY_QUIET, PASSKEY_TIMEOUT_MS, PASSKEY_WINDOW_OPS,
 } from "../../src/background/passkeyRequests.mjs";
 import { CORE_OPS } from "../../src/background/coreHost.mjs";
@@ -104,6 +105,8 @@ function world(over = {}) {
     },
     release: true,
     now: clock.now,
+    // The monotonic clock moves with the fake one (a test of a clock jump passes its own).
+    monotonic: clock.now,
     timers: clock.timers,
     random: (bytes) => {
       for (let i = 0; i < bytes.length; i += 1) bytes[i] = (counter + i * 7) & 0xff;
@@ -380,8 +383,13 @@ test("a_modal_request_replaces_a_pending_conditional_one", async () => {
 test("a_conditional_request_has_no_timeout", async () => {
   const w = world();
   const c = /** @type {any} */ (await w.requests.open(senderOf(), getBody("c1", { body: { mediation: "conditional" }, options: { timeout: 1000 } }))).request_id;
-  assert.equal(w.clock.pending().length, 0, "no deadline timer");
-  w.clock.advance(24 * 3600 * 1000);
+  // Only the watch on the bridge's pings, no deadline.
+  assert.deepEqual(w.clock.pending().map((t) => t.ms), [PASSKEY_SILENT_MS], "no deadline timer");
+  // Past the longest deadline of a modal request, while its bridge pings.
+  for (let i = 0; i < 33; i += 1) {
+    w.clock.advance(20_000);
+    await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["c1"] } });
+  }
   assert.equal(w.requests.conditionalFor(4)?.request_id, c);
   assert.equal(w.requests.conditionalFor(4)?.expires_in, null);
   assert.equal(w.pushed.length, 0);
@@ -495,7 +503,7 @@ test("modal_timeouts_are_clamped", async () => {
   assert.equal(modalTimeout(4_294_967_295), 600_000);
   const w = world();
   const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("t1", { options: { timeout: 5 } }))).request_id;
-  assert.deepEqual(w.clock.pending().map((t) => t.ms), [30_000]);
+  assert.deepEqual(w.clock.pending().map((t) => t.ms), [30_000, PASSKEY_SILENT_MS], "the deadline, then the watch on the pings");
   assert.equal(w.requests.forUi(id, "s")?.expires_in, 30_000);
   w.clock.advance(29_999);
   assert.ok(w.requests.forUi(id, "s"));
@@ -508,10 +516,14 @@ test("modal_timeouts_are_clamped", async () => {
   // The clock decides even when the timer comes late.
   const v = world();
   const late = /** @type {any} */ (await v.requests.open(senderOf(), getBody("t2", { options: { timeout: 10_000_000 } }))).request_id;
-  assert.deepEqual(v.clock.pending().map((t) => t.ms), [600_000]);
-  v.clock.timers.clearTimeout(1);
+  assert.deepEqual(v.clock.pending().map((t) => t.ms), [600_000, PASSKEY_SILENT_MS]);
+  // Both timers are late (neither has run): the clock alone ends it, by its deadline.
+  for (const { id } of v.clock.pending()) v.clock.timers.clearTimeout(id);
   v.clock.advance(600_000);
   assert.equal(v.requests.forUi(late, "s"), null);
+  v.clock.advance(PASSKEY_ERROR_DELAY_MS.min + PASSKEY_ERROR_DELAY_MS.spread);
+  await flush();
+  assert.deepEqual(pushesOf(v.pushed, "t2").map((p) => p.body.name), ["NotAllowedError"]);
 });
 
 test("the_page_abort_closes_the_window_with_abort_error", async () => {
@@ -644,6 +656,175 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
   assert.deepEqual(await w.requests.open(senderOf(), createBody("t1", { options: { user: { id: "", name: "a", display_name: "A" } } })), { error: "TypeError" });
   assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "TypeError"]]);
   assert.equal(w.opened.length, 0);
+});
+
+test("an_rp_id_the_browser_refuses_is_a_security_error_before_any_window", async () => {
+  // The browser compares the RP ID as the page gave it with the page's host: one not already in canonical form, or one that is
+  // neither the host nor a suffix of it, is refused before any UI. (The core would canonicalize the first kind to the host.)
+  const refused = [
+    "rp-a.test.", // a trailing dot
+    "RP-A.Test", // upper case
+    "rp-a.Test",
+    `${String.fromCharCode(0xff52)}${String.fromCharCode(0xff50)}-a.test`, // full-width letters
+    `rp-a${String.fromCharCode(0xff0e)}test`, // a full-width full stop
+    `rp-a${String.fromCharCode(0xad)}test`, // a soft hyphen (IDNA drops it)
+    `rp-${String.fromCharCode(0xe4)}.test`, // a U-label
+    "rp-a.test:443", // a port
+    "", // empty
+    "-rp-a.test",
+    "rp-a..test",
+    "www.rp-a.test", // a subdomain of the host, not a suffix
+    "rp-b.test", // another site
+    "a.test", // a string suffix that is not a label suffix
+  ];
+  for (const rpId of refused) {
+    for (const kind of /** @type {const} */ (["create", "get"])) {
+      const options = kind === "create" ? createOptions({ rp: { name: "RP A", id: rpId } }) : getOptions({ rp_id: rpId });
+      assert.equal(refusedRpId(kind, options, "rp-a.test"), true, `${kind} ${JSON.stringify(rpId)}`);
+      const w = world();
+      const body = kind === "create" ? createBody("d1", { options: { rp: { name: "RP A", id: rpId } } }) : getBody("d1", { options: { rp_id: rpId } });
+      assert.deepEqual(await w.requests.open(senderOf(), body), { error: "SecurityError" }, `${kind} ${JSON.stringify(rpId)}`);
+      assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "SecurityError"]], `${kind} ${JSON.stringify(rpId)}`);
+      assert.equal(w.opened.length, 0, `${kind} ${JSON.stringify(rpId)}: no window`);
+      assert.equal(w.requests.waitingFor(4), null, `${kind} ${JSON.stringify(rpId)}: nothing waits`);
+    }
+  }
+  // The host itself, a registrable suffix of it, an A-label host, and no RP ID at all are Ferret's (a public suffix is still the
+  // core's refusal, in the window).
+  for (const [rpId, host] of /** @type {Array<[string | undefined, string]>} */ ([
+    ["rp-a.test", "rp-a.test"],
+    ["rp-a.test", "login.rp-a.test"],
+    ["xn--rp--8cd.test", "xn--rp--8cd.test"],
+    [undefined, "rp-a.test"],
+  ])) {
+    assert.equal(refusedRpId("create", createOptions({ rp: { name: "RP A", ...(rpId === undefined ? {} : { id: rpId }) } }), host), false, `${rpId} on ${host}`);
+    assert.equal(refusedRpId("get", getOptions(rpId === undefined ? {} : { rp_id: rpId }), host), false, `${rpId} on ${host}`);
+  }
+  const w = world();
+  const out = /** @type {any} */ (await w.requests.open(senderOf(), getBody("d2", { options: { rp_id: "rp-a.test" } })));
+  assert.ok("request_id" in out);
+  assert.deepEqual(w.opened, [out.request_id]);
+});
+
+test("prf_eval_by_credential_the_browser_does_not_process_is_not_supported_before_any_window", async () => {
+  const SALT = { first: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" };
+  const byCredential = [{ id: "AAAAAAAAAAAAAAAAAAAAAA", ...SALT }];
+  const allow = [{ type: "public-key", id: "AAAAAAAAAAAAAAAAAAAAAA" }];
+  // At registration any evalByCredential (even an empty one) is NotSupportedError (WebAuthn L3 § 10.1.4).
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval_by_credential: byCredential } } })), true);
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval_by_credential: [] } } })), true);
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval: SALT } } })), false);
+  assert.equal(unsupportedOptions("create", createOptions()), false);
+  // At sign-in only a non-empty evalByCredential with an empty allow list.
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval_by_credential: byCredential } } })), true);
+  assert.equal(unsupportedOptions("get", getOptions({ allow_credentials: allow, extensions: { prf: { eval_by_credential: byCredential } } })), false);
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval_by_credential: [] } } })), false);
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval: SALT } } })), false);
+  for (const [kind, options] of /** @type {const} */ ([
+    ["create", { extensions: { prf: { eval_by_credential: byCredential } } }],
+    ["get", { extensions: { prf: { eval_by_credential: byCredential } } }],
+  ])) {
+    const w = world();
+    const body = kind === "create" ? createBody("p1", { options }) : getBody("p1", { options });
+    assert.deepEqual(await w.requests.open(senderOf(), body), { error: "NotSupportedError" }, kind);
+    assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "NotSupportedError"]], kind);
+    assert.equal(w.opened.length, 0, `${kind}: no window`);
+  }
+  // With the allow list the get is Ferret's.
+  const w = world();
+  const out = /** @type {any} */ (await w.requests.open(senderOf(), getBody("p2", { options: { allow_credentials: allow, extensions: { prf: { eval_by_credential: byCredential } } } })));
+  assert.ok("request_id" in out);
+  // The core's own refusal of the same input reaches the page as the same error.
+  assert.equal(pageErrorOf("unsupported"), "NotSupportedError");
+});
+
+test("a_request_whose_bridge_stops_pinging_ends_and_its_window_closes", async () => {
+  // A removed frame fires no navigation; its bridge's abort may be lost. Without a ping for PASSKEY_SILENT_MS it ends.
+  assert.equal(PASSKEY_SILENT_MS, 45_000);
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), createBody("q1"))).request_id;
+  assert.deepEqual(w.opened, [id]);
+  // The bridge pings every 20 s while it waits: the request stays, past 45 s.
+  for (let i = 0; i < 3; i += 1) {
+    w.clock.advance(20_000);
+    await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["q1"] } });
+    await flush();
+  }
+  assert.equal(w.requests.size(), 1);
+  assert.deepEqual(w.closed, []);
+  // Then it goes silent: 45 s after the last ping the request ends and the window closes. Nothing goes to the frame.
+  w.clock.advance(44_999);
+  await flush();
+  assert.equal(w.requests.size(), 1);
+  w.clock.advance(1);
+  await flush();
+  assert.equal(w.requests.size(), 0);
+  assert.deepEqual(w.closed, [101]);
+  assert.deepEqual(pushesOf(w.pushed, "q1"), []);
+  // A conditional request (no deadline) ends the same way.
+  const c = world();
+  await c.requests.open(senderOf(), getBody("q2", { body: { mediation: "conditional" } }));
+  assert.equal(c.requests.size(), 1);
+  c.clock.advance(45_000);
+  await flush();
+  assert.equal(c.requests.size(), 0);
+});
+
+test("a_check_of_the_pings_that_comes_late_after_a_sleep_waits_for_the_next_ping", async () => {
+  // The machine slept: the timer comes long after its time, and the bridge has not had a chance to ping yet.
+  const w = world();
+  await w.requests.open(senderOf(), getBody("z1", { body: { mediation: "conditional" } }));
+  w.clock.advance(10 * 60_000);
+  await flush();
+  assert.equal(w.requests.size(), 1, "one more wait for the next ping");
+  // The bridge pings after the wake-up: the request lives on.
+  await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["z1"] } });
+  w.clock.advance(25_000);
+  await flush();
+  assert.equal(w.requests.size(), 1);
+  // Without that ping it would have ended after the extra wait.
+  const v = world();
+  await v.requests.open(senderOf(), getBody("z2", { body: { mediation: "conditional" } }));
+  v.clock.advance(10 * 60_000);
+  v.clock.advance(25_000);
+  await flush();
+  assert.equal(v.requests.size(), 0);
+});
+
+test("a_window_still_being_made_for_an_ended_request_keeps_the_one_window_place", async () => {
+  // The first request's window is asked for; the page aborts before the browser has made it.
+  /** @type {Array<(id: number) => void>} */
+  const making = [];
+  const closed = /** @type {number[]} */ ([]);
+  const w = world({
+    windows: {
+      open: () => new Promise((resolve) => making.push(resolve)),
+      close: async (/** @type {number} */ id) => void closed.push(id),
+    },
+  });
+  const first = w.requests.open(senderOf(), createBody("m1"));
+  await flush();
+  assert.equal(making.length, 1);
+  await w.requests.onEvent({ type: "passkey_abort", sender: senderOf(), body: { request_id: "m1" } });
+  // Another tab's request meanwhile gets the mark and the card, not a second window beside the one about to appear.
+  const second = /** @type {any} */ (await w.requests.open(senderOf({ tabId: 7, documentId: "doc-7", url: `${RP}/other` }), createBody("m2")));
+  assert.ok("request_id" in second);
+  assert.equal(making.length, 1, "no second window while the first is being made");
+  // The first window appears and is closed at once; then the waiting request can have the window (from its card).
+  making[0](201);
+  await first;
+  assert.deepEqual(closed, [201]);
+  void w.requests.show(7);
+  await flush();
+  assert.equal(making.length, 2);
+  // A window the person closed frees the place at once (its request ends): the next request opens its own.
+  const v = world();
+  await v.requests.open(senderOf(), createBody("m3"));
+  assert.equal(v.opened.length, 1);
+  v.requests.onWindowRemoved(101);
+  await flush();
+  const next = /** @type {any} */ (await v.requests.open(senderOf(), createBody("m4")));
+  assert.deepEqual(v.opened, [v.opened[0], next.request_id]);
 });
 
 test("an_empty_alg_list_is_answered_by_ferret", async () => {
@@ -957,8 +1138,9 @@ test("passkey_never_keeps_the_cores_rp_id_on_the_list_and_hands_the_call_to_the_
   const w = world({ never: { has: async () => false, add: async (/** @type {string} */ rpId, /** @type {any} */ options) => void added.push([rpId, options]) } });
   const ops = /** @type {any} */ (w.requests.ops);
   assert.equal(ops.passkey_never.vault, true, "it needs the open vault: only then is there an RP ID the core has checked");
-  // The page asks for "rp-a.test"; the core says its canonical form; the list gets the core's, never the page's text.
-  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("n1", { options: { rp_id: "RP-A.test" } }))).request_id;
+  // The list gets the RP ID the core checked, never the page's text. (A page's RP ID that the core would only take after
+  // canonicalizing, such as "RP-A.test", never gets this far: it is a SecurityError before any window.)
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("n1", { options: { rp_id: "rp-a.test" } }))).request_id;
   const client = (/** @type {any} */ rpId) => ({ vault: { passkey_site: async () => ({ origin: RP, host_unicode: "rp-a.test", rp_id: rpId, rp_id_unicode: rpId }) } });
   // The first window that names the request owns it; another window's session cannot.
   assert.equal((await ops.passkey_pending.run(null, { request_id: id, session: "win" })).ok, true);

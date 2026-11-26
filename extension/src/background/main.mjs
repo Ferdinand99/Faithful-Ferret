@@ -186,7 +186,8 @@ passkeyRequests = createPasskeyRequests
       tabs: browser.tabs,
       frames: browser.webNavigation,
       // The chooser window, when the package has its page.
-      windows: PASSKEY_WINDOW_PAGE ? chooserWindows({ windows: browser.windows, getURL: (/** @type {string} */ path) => runtime.getURL(path), page: PASSKEY_WINDOW_PAGE }) : null,
+      // (The test build counts the windows it makes, for the passkey matrix.)
+      windows: PASSKEY_WINDOW_PAGE ? chooserWindows({ windows: hooks?.tapWindows ? hooks.tapWindows(browser.windows) : browser.windows, getURL: (/** @type {string} */ path) => runtime.getURL(path), page: PASSKEY_WINDOW_PAGE }) : null,
       badge,
       // The signed-in server, and whether its device session is live (a device ended remotely keeps its server).
       servers: {

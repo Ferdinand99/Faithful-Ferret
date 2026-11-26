@@ -446,12 +446,83 @@ test("no_listener_waits_without_its_partner_in_opaque_or_insecure_frames", async
   assert.deepEqual(insecure.sent, []);
 });
 
-test("a_flood_beyond_the_waiting_limit_goes_to_the_browser", async () => {
+test("a_flood_beyond_the_waiting_limit_ends_with_abort_error_and_never_reaches_the_browser", async () => {
   const page = createPasskeyPage();
-  page.page(`globalThis.flood = []; for (let i = 0; i < 70; i += 1) navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16) } }).then((v) => flood.push(v), (e) => flood.push(e.name));`);
+  page.page(`(() => {
+    globalThis.c = new AbortController();
+    globalThis.flood = [];
+    for (let i = 0; i < 70; i += 1) navigator.credentials.get({ signal: c.signal, publicKey: { challenge: new Uint8Array(16) } }).then((v) => flood.push(v), (e) => flood.push(e.name));
+  })()`);
   await page.flush();
   assert.equal(page.sent.filter((m) => m.type === "passkey_request").length, 64, "64 wait for the background");
-  assert.equal(page.nativeCalls.length, 6, "the rest go to the browser, untouched");
+  assert.deepEqual(JSON.parse(page.page("JSON.stringify(flood)")), Array(6).fill("AbortError"), "the rest end at once with AbortError, as a concurrent call does");
+  // The page's abort ends the 64 that wait the same way; none of the 70 calls ever reached the browser.
+  page.page("c.abort()");
+  await page.flush();
+  assert.deepEqual(JSON.parse(page.page("JSON.stringify(flood)")), Array(70).fill("AbortError"));
+  assert.equal(page.sent.filter((m) => m.type === "passkey_abort").length, 64);
+  assert.equal(page.nativeCalls.length, 0);
+});
+
+test("a_document_that_goes_away_aborts_its_waiting_requests", async () => {
+  const page = createPasskeyPage();
+  page.page(GET());
+  await page.flush();
+  const id = /** @type {any} */ (lastRequest(page)).body.request_id;
+  // A page's own pagehide event is not the browser's: nothing ends.
+  await page.pagehide(false);
+  assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort"), []);
+  assert.equal(page.page("out.done"), false);
+  // The frame is removed (or the page navigates away): the background hears the abort and closes Ferret's window. The page's
+  // call ends too, so a page restored from the back-forward cache does not wait for the bridge's silence.
+  await page.pagehide();
+  assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort").map((m) => m.body.request_id), [id]);
+  assert.equal(page.page("out.error"), "NotAllowedError");
+  assert.deepEqual(page.intervals(), [], "nothing waits, so nothing pings");
+  // A late answer for it is dropped, and a second pagehide sends nothing more.
+  await page.push("passkey_handover", { request_id: id, once: false });
+  assert.equal(page.nativeCalls.length, 0);
+  await page.pagehide();
+  assert.equal(page.sent.filter((m) => m.type === "passkey_abort").length, 1);
+});
+
+test("the_timeout_is_read_as_a_webidl_unsigned_long", async () => {
+  const page = createPasskeyPage();
+  /** @type {Array<[string, number]>} */
+  const cases = [
+    ["4294967297", 1],
+    ["4294967296", 0],
+    ["4294967295", 4294967295],
+    ["8589934593.9", 1],
+    ["-1", 4294967295],
+    ["-0.5", 0],
+    ["-0", 0],
+    ["2.7", 2],
+    ["NaN", 0],
+    ["Infinity", 0],
+    ["-Infinity", 0],
+    ["60000", 60000],
+  ];
+  for (const [given, expected] of cases) {
+    page.page(`(() => {
+      globalThis.out = { done: false };
+      navigator.credentials.create({ publicKey: {
+        challenge: new Uint8Array(32), rp: { name: "RP" }, user: { id: new Uint8Array([1]), name: "a", displayName: "A" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], timeout: ${given},
+      } }).catch(() => {});
+      navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32), timeout: ${given} } }).catch(() => {});
+    })()`);
+    await page.flush();
+    const [create, get] = page.sent.filter((m) => m.type === "passkey_request").slice(-2).map((m) => m.body);
+    assert.equal(Object.is(create.create.timeout, expected), true, `create ${given}: ${create.create.timeout}`);
+    assert.equal(Object.is(get.get.timeout, expected), true, `get ${given}: ${get.get.timeout}`);
+    for (const id of [create.request_id, get.request_id]) await page.push("passkey_error", { request_id: id, name: "AbortError" });
+  }
+  // Not a number: the browser converts it (and answers), as before.
+  page.nativeCalls.length = 0;
+  page.page(`navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32), timeout: "5000" } }).catch(() => {})`);
+  await page.flush();
+  assert.equal(page.nativeCalls.length, 1);
 });
 
 test("the_bridge_pings_only_while_a_request_waits", async () => {

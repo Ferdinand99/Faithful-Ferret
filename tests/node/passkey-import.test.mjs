@@ -219,7 +219,9 @@ function findInMemory(needle) {
 function freshKey() {
   const ecdh = createECDH("prime256v1");
   ecdh.generateKeys();
-  const d = ecdh.getPrivateKey();
+  // Node drops leading zero bytes of the scalar (about 1 run in 256): pad it to the 32 bytes PKCS#8 and JWK need.
+  const raw = ecdh.getPrivateKey();
+  const d = Buffer.concat([Buffer.alloc(32 - raw.length), raw]);
   const point = ecdh.getPublicKey(); // 04 || x || y
   const pkcs8 = Buffer.concat([
     Buffer.from("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b020101" + "0420", "hex"),

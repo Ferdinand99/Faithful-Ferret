@@ -28,7 +28,13 @@ export const PASSKEY_CHOICE_OPS = Object.freeze(["passkey_create_options"]);
 /** The core's codes that say the vault or its worker is gone: the core host handles those (the window asks for the unlock). */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory", "stopped"]);
 /** What the window is told when the core ended the request, by the page's error. */
-const ENDED = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "excluded", NotAllowedError: "not_allowed" });
+const ENDED = Object.freeze({
+  SecurityError: "security_error",
+  TypeError: "type_error",
+  NotSupportedError: "type_error",
+  InvalidStateError: "excluded",
+  NotAllowedError: "not_allowed",
+});
 const UV = Object.freeze(["required", "preferred", "discouraged"]);
 const REF = /^[0-9a-f]{32}$/;
 /** The most requests whose folder references are kept. */
@@ -222,7 +228,9 @@ export function createPasskeyFlow({ requests, writer, verify, random = (bytes) =
         // The core refused: excludeCredentials named a passkey of the vault (InvalidStateError after the click), or options it
         // cannot take. The request ends as the browser would end it.
         const page = pageErrorOf(code);
-        if (page === "NotAllowedError") return giveBack({ ok: false, reason: "internal_error" });
+        // A NotSupportedError comes only before any window (the prf inputs): after the click, `unsupported` (a key the core
+        // could not make or sign with) leaves the request to the person, as any other failure of the write does.
+        if (page === "NotAllowedError" || page === "NotSupportedError") return giveBack({ ok: false, reason: "internal_error" });
         requests.fail(req.id, req.session, page);
         return { ok: false, reason: ENDED[page] };
       }

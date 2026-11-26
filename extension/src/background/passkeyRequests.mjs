@@ -39,7 +39,9 @@
 //   - the calm period: PASSKEY_QUIET.cancels modal requests of a tab that ended without an answer within windowMs give the
 //     tab quietMs in which a new request only waits with the mark (it is kept, not refused);
 //   - it ends on an answer, a hand-over, the user's cancel (or closing the window), the page's abort, its deadline, a new
-//     document in its frame or above it, the tab closing, and a lock of the open vault. A same-document navigation
+//     document in its frame or above it, the tab closing, and a lock of the open vault. A frame that goes away (removed from
+//     its page, which no browser event reports) ends it through the bridge's abort on `pagehide`, or, should that message be
+//     lost, when its bridge has not pinged for SILENT_MS. A same-document navigation
 //     (`pushState`) keeps it; its origin is checked again, and before an answer the frame chain is checked again.
 // Cancelled, no match and expired all end with NotAllowedError, after the same small random delay, so a page cannot tell
 // them apart by type or by time.
@@ -73,6 +75,13 @@ export const PASSKEY_WINDOW_OPS = Object.freeze([
   "passkey_choose",
   "passkey_verify",
 ]);
+/**
+ * How long a request may go without a ping of its bridge (which pings every 20 s while it waits) before it ends: its frame is
+ * gone. Two pings and a margin.
+ */
+export const PASSKEY_SILENT_MS = 45_000;
+/** The bridge's ping while a request waits. */
+const PING_MS = 20_000;
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -102,11 +111,17 @@ const MAX_FRAMES = 1024;
 const MAX_URL = 8192;
 const REF = /^[0-9a-f]{32}$/;
 const UV = Object.freeze(["required", "preferred", "discouraged"]);
-const PAGE_ERRORS = Object.freeze(["NotAllowedError", "SecurityError", "TypeError", "InvalidStateError", "AbortError"]);
+const PAGE_ERRORS = Object.freeze(["NotAllowedError", "SecurityError", "TypeError", "InvalidStateError", "AbortError", "NotSupportedError"]);
 /** The core's codes that say the vault or its worker is gone: the op's caller (the core host) handles those. */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
 /** What the window is told when `passkey_site` ended the request, by the page's error. */
-const SITE_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
+const SITE_REASONS = Object.freeze({
+  SecurityError: "security_error",
+  TypeError: "type_error",
+  NotSupportedError: "type_error",
+  InvalidStateError: "not_allowed",
+  NotAllowedError: "not_allowed",
+});
 /** The algorithm Ferret signs with (ES256). */
 const ES256 = -7;
 
@@ -119,7 +134,7 @@ const ES256 = -7;
  *   id: string, bridgeId: string, key: string, sender: Sender, origin: string, kind: "create" | "get",
  *   mediation: "optional" | "required" | "conditional", options: any, top: string | null,
  *   deadline: number | null, timer: unknown, state: "window" | "waiting" | "conditional",
- *   windowId: number | null, session: string | null, held: boolean,
+ *   windowId: number | null, session: string | null, held: boolean, lastPing: number, quiet: unknown,
  * }} Request
  * @typedef {{
  *   request_id: string, kind: "create" | "get", mediation: string, origin: string, rp_id: string | null,
@@ -209,6 +224,37 @@ export function malformedOptions(kind, options) {
   return bytes < 1 || bytes > 64;
 }
 
+/** An RP ID already in canonical form: lower-case ASCII LDH labels (A-labels allowed), no trailing dot. */
+const CANONICAL_RP_ID = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * An RP ID the page asked for that the browser refuses with a SecurityError before any UI: one that is not already in
+ * canonical form (a trailing dot, upper case, a port, full-width or other characters that IDNA would map or drop), or one
+ * that is neither the page's host nor a dot-delimited suffix of it. The browser compares the string as the page gave it with
+ * the origin's host; the core would canonicalize such a string first and answer for one the page did not pass. (That a suffix
+ * is not a public suffix is still the core's check, in the window.)
+ * @param {"create" | "get"} kind @param {any} options @param {string} host the page's host, as the URL parser writes it
+ * @returns {boolean}
+ */
+export function refusedRpId(kind, options, host) {
+  const asked = kind === "create" ? options?.rp?.id : options?.rp_id;
+  if (asked === undefined) return false;
+  if (typeof asked !== "string" || !CANONICAL_RP_ID.test(asked)) return true;
+  return asked !== host && !host.endsWith(`.${asked}`);
+}
+
+/**
+ * Options the browser ends with a NotSupportedError in its client extension processing, before any authenticator (WebAuthn
+ * L3 § 10.1.4, prf): `evalByCredential` at registration, and a non-empty `evalByCredential` with an empty `allowCredentials`.
+ * @param {"create" | "get"} kind @param {any} options @returns {boolean}
+ */
+export function unsupportedOptions(kind, options) {
+  const byCredential = options?.extensions?.prf?.eval_by_credential;
+  if (kind === "create") return byCredential !== undefined;
+  const allow = Array.isArray(options?.allow_credentials) ? options.allow_credentials : [];
+  return Array.isArray(byCredential) && byCredential.length > 0 && allow.length === 0;
+}
+
 /**
  * The deadline of a modal request, from the page's `timeout` (milliseconds, a hint): clamped, the default when not given.
  * @param {unknown} timeout @returns {number}
@@ -220,12 +266,14 @@ export function modalTimeout(timeout) {
 
 /**
  * The error a page gets for a code of the core: an RP ID the origin may not use is a SecurityError, malformed options a
- * TypeError, a credential the page excluded an InvalidStateError; everything else (a refused caller, no match, a failed
+ * TypeError, a credential the page excluded an InvalidStateError, an extension input the browser does not process (prf
+ * `evalByCredential` without an allow list) a NotSupportedError; everything else (a refused caller, no match, a failed
  * verification) is the one NotAllowedError, as the browser gives it.
- * @param {unknown} code @returns {"NotAllowedError" | "SecurityError" | "TypeError" | "InvalidStateError"}
+ * @param {unknown} code @returns {"NotAllowedError" | "SecurityError" | "TypeError" | "InvalidStateError" | "NotSupportedError"}
  */
 export function pageErrorOf(code) {
   if (code === "malformed_rp_id") return "SecurityError";
+  if (code === "unsupported") return "NotSupportedError";
   if (code === "invalid_input" || code === "too_large") return "TypeError";
   if (code === "invalid_state") return "InvalidStateError";
   return "NotAllowedError";
@@ -322,6 +370,8 @@ export function createPasskeyRequests({
   const verified = new Map();
   /** The request whose window is open (or being opened). @type {string | null} */
   let windowHolder = null;
+  /** The requests whose window the browser is making now. @type {Set<string>} */
+  const making = new Set();
   let listening = false;
 
   /** @param {Sender} s @param {string} bridgeId */
@@ -468,14 +518,17 @@ export function createPasskeyRequests({
     requests.delete(req.id);
     byBridge.delete(req.key);
     verified.delete(req.id);
-    if (req.timer !== null) {
+    for (const timer of [req.timer, req.quiet]) {
+      if (timer === null) continue;
       try {
-        timers.clearTimeout(req.timer);
+        timers.clearTimeout(timer);
       } catch {
         // Nothing to clear.
       }
     }
-    if (windowHolder === req.id) {
+    // A window still being made keeps the one window place until `showWindow` has closed it again, so a second window never
+    // opens beside one that is about to appear and close.
+    if (windowHolder === req.id && !making.has(req.id)) {
       windowHolder = null;
       if (req.windowId !== null && windows !== null) windows.close(req.windowId).catch(() => {});
     }
@@ -489,6 +542,31 @@ export function createPasskeyRequests({
   const endWithError = async (req, name, unanswered) => {
     if (!end(req, unanswered)) return false;
     return pushError(req.sender, req.bridgeId, name);
+  };
+
+  /**
+   * Ends a request whose bridge has gone silent (its frame went away without a navigation the browser reports, and the
+   * bridge's abort was lost): nothing can be delivered there, and the window closes. Measured on the monotonic clock. A check
+   * that comes more than a ping late (the machine slept) waits once more for the next ping before it ends anything.
+   * @param {Request} req @param {boolean} [grace] this is the one extra wait after a late check
+   */
+  const watchPings = (req, grace = false) => {
+    const ms = grace ? PING_MS + 5_000 : Math.max(1, req.lastPing + PASSKEY_SILENT_MS - monotonic());
+    const due = monotonic() + ms;
+    const check = () => {
+      if (requests.get(req.id) !== req) return;
+      const at = monotonic();
+      if (at - req.lastPing < PASSKEY_SILENT_MS) watchPings(req);
+      else if (!grace && at - due > PING_MS) watchPings(req, true);
+      else end(req, false);
+    };
+    try {
+      req.quiet = timers.setTimeout(check, ms);
+      /** @type {any} */ (req.quiet)?.unref?.();
+    } catch {
+      // Without a timer the request still ends by its deadline, its abort or the check before an answer.
+      req.quiet = null;
+    }
   };
 
   /** A modal request reached its deadline. @param {Request} req */
@@ -666,11 +744,14 @@ export function createPasskeyRequests({
     mark(req.sender.tabId);
     /** @type {number | null} */
     let windowId = null;
+    making.add(req.id);
     try {
       const made = await windows.open(req.id);
       windowId = isIndex(made) ? made : null;
     } catch {
       windowId = null;
+    } finally {
+      making.delete(req.id);
     }
     if (requests.get(req.id) !== req) {
       // It ended while the window opened.
@@ -746,6 +827,15 @@ export function createPasskeyRequests({
       await pushError(s, bridgeId, "TypeError");
       return { error: "TypeError" };
     }
+    // What the browser refuses before any UI is refused here the same way, before any window: never more than the browser.
+    if (refusedRpId(kind, body[kind], hostOf(/** @type {string} */ (s.origin)))) {
+      await pushError(s, bridgeId, "SecurityError");
+      return { error: "SecurityError" };
+    }
+    if (unsupportedOptions(kind, body[kind])) {
+      await pushError(s, bridgeId, "NotSupportedError");
+      return { error: "NotSupportedError" };
+    }
     // Without the chooser window in this build, the browser answers (as before the window existed).
     if (windows === null) return handOver("no_window");
 
@@ -788,11 +878,14 @@ export function createPasskeyRequests({
       windowId: null,
       session: null,
       held: false,
+      lastPing: monotonic(),
+      quiet: null,
     };
     requests.set(req.id, req);
     byBridge.set(key, req.id);
     startListening();
     if (deadline !== null) req.timer = later(() => expire(req), deadline - now());
+    watchPings(req);
     if (conditional || body.activation !== true || inCalm(tabId) || windowHolder !== null) {
       // No window without user activation, during the calm period, or while another request has it: a mark and a card.
       mark(tabId);
@@ -831,7 +924,11 @@ export function createPasskeyRequests({
       if (typeof bridgeId !== "string") continue;
       const key = keyOf(s, bridgeId);
       const id = byBridge.get(key);
-      if (id !== undefined && live(id) !== null) continue;
+      const req = id === undefined ? null : live(id);
+      if (req !== null) {
+        req.lastPing = monotonic();
+        continue;
+      }
       // An abort that came first, or an error that waits for its delay (it must not come early).
       if (aborts.get(s.tabId)?.has(key) || ending.has(key)) continue;
       // Not a request of this sender that waits here (the event page was unloaded, or it ended): it fails closed.

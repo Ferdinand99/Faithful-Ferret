@@ -59,8 +59,19 @@ const ITEM_ID = /^[0-9a-f]{32}$/;
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
 /** The core's codes that refuse the request itself (its options, its RP ID, its caller): the request ends as the browser would end it. */
 const REQUEST_CODES = Object.freeze(["malformed_rp_id", "invalid_input", "too_large", "invalid_state", "not_allowed"]);
+/**
+ * The same, for the list of a request: there the core also checks the prf inputs (`unsupported`, a NotSupportedError, which the
+ * background already refuses before any window). After the person's click, `unsupported` leaves the request to the person.
+ */
+const LIST_CODES = Object.freeze([...REQUEST_CODES, "unsupported"]);
 /** What the window is told when the core refused the request itself (the page gets the error the browser would give). */
-const REFUSED_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
+const REFUSED_REASONS = Object.freeze({
+  SecurityError: "security_error",
+  TypeError: "type_error",
+  NotSupportedError: "type_error",
+  InvalidStateError: "not_allowed",
+  NotAllowedError: "not_allowed",
+});
 
 /** @param {string} code */
 const fail = (code) => Object.assign(new Error(code), { code });
@@ -160,14 +171,14 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
   /**
    * A refusal of the core for the request itself (malformed options, an RP ID the origin may not use, a refused caller): the
    * request ends as the browser would end it, and the window is told why. The vault going away is the core host's.
-   * @param {unknown} error @param {{ request_id: string, session: string }} ref
+   * @param {unknown} error @param {{ request_id: string, session: string }} ref @param {readonly string[]} [codes]
    */
-  const refusal = (error, ref) => {
+  const refusal = (error, ref, codes = REQUEST_CODES) => {
     const code = /** @type {{ code?: unknown }} */ (error)?.code;
     if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
     // Only the core's refusal of the request itself ends it; anything else (an item that changed since the list, a busy engine)
     // leaves the request to the person, who can choose again or use the browser.
-    if (typeof code !== "string" || !REQUEST_CODES.includes(code)) return { ok: false, reason: "internal_error" };
+    if (typeof code !== "string" || !codes.includes(code)) return { ok: false, reason: "internal_error" };
     const name = pageErrorOf(code);
     requests.fail(ref.request_id, ref.session, name);
     return { ok: false, reason: /** @type {Record<string, string>} */ (REFUSED_REASONS)[name] ?? "not_allowed" };
@@ -279,7 +290,7 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
       try {
         list = await listFor(client, source, got.caller, got.request);
       } catch (error) {
-        return refusal(error, ref);
+        return refusal(error, ref, LIST_CODES);
       }
       return { ok: true, candidates: list, ...(await ways()) };
     },

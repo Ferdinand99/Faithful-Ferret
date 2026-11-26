@@ -186,6 +186,18 @@ async function inExt(p, fn) {
   }
 }
 
+/**
+ * The test build's exact count of Ferret's chooser windows (window_watch): "reset" before a case, "read" after it gives the most
+ * that were open at once, counted when the background asked for them, so a window that opens and closes between two looks of the
+ * runner is counted too. Null when the build has no count.
+ * @param {Profile} p @param {"reset" | "read"} cmd @returns {Promise<number | null>}
+ */
+export async function windowWatch(p, cmd) {
+  const reply = /** @type {any} */ (await inExt(p, () => coreOp(p.session, "window_watch", { cmd })).catch(() => null));
+  if (reply?.ok !== true) return null;
+  return cmd === "read" && Number.isInteger(reply.value?.most) ? reply.value.most : 0;
+}
+
 /** The vault's state as the extension says it ("unlocked", "locked" or "signed_out"). @param {Profile} p */
 async function vaultState(p) {
   return inExt(p, async () => /** @type {any} */ (await ask(p.session, "state", {}))?.state ?? "unknown");
@@ -419,6 +431,7 @@ export async function runActionCase(ctx, c) {
 
   const press = { method, name: itemName, password: ctx.account.password };
   const wait = c.waitMs ?? 20_000;
+  await windowWatch(ctx.a, "reset");
   /** @returns {Phase} */
   const now = () => /** @type {Phase} */ (current);
   const running = () => current !== null && !current.ended;
@@ -692,7 +705,9 @@ export async function runActionCase(ctx, c) {
   if (!(await fetchReports(sid)).some((r) => r.kind === "started")) return { status: "not-run", reason: "the page never started (no report from it at all)" };
   const last = judged[judged.length - 1];
   const reports = [...judged.flatMap((ph) => ph.reports.filter((r) => r.kind !== "done")), ...last.reports.filter((r) => r.kind === "done")];
-  const observed = observe(reports, { windowShown: last.windowsOpened > 0, windowsOpened: Math.max(...phases.map((ph) => ph.windowsOpened)) });
+  // The exact count of the test build, where it has one (a window too short-lived for the runner's looks counts as well).
+  const exact = (await windowWatch(ctx.a, "read")) ?? 0;
+  const observed = observe(reports, { windowShown: last.windowsOpened > 0, windowsOpened: Math.max(exact, ...phases.map((ph) => ph.windowsOpened)) });
   // The route of the last call: a Ferret window, or the browser's own answer (its prompt counts: a call the browser holds has no step).
   if (observed.route === "none" && last.windowsOpened === 0 && last.browserPrompted) observed.route = "browser";
   observed.problems = problems.filter((x) => !x.startsWith("UNSAFE: "));

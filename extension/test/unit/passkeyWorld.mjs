@@ -369,6 +369,9 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
   bridgeWorld.clearInterval = (/** @type {number} */ id) => {
     intervals = intervals.filter((t) => t.id !== id);
   };
+  /** The bridge world's listeners on its window (`pagehide`). @type {Array<{ type: string, fn: (event: unknown) => void }>} */
+  const windowListeners = [];
+  bridgeWorld.addEventListener = (/** @type {string} */ type, /** @type {(event: unknown) => void} */ fn) => void windowListeners.push({ type, fn });
   bridgeWorld.browser = {
     runtime: {
       id: RUNTIME_ID,
@@ -445,6 +448,11 @@ export function createPasskeyPage({ order = "main-first", foreign = false, activ
       for (const [core, list] of listeners) listeners.set(core, list.filter((l) => l.realm !== realms.bridge));
       pushListeners.length = 0;
       intervals = [];
+    },
+    /** The document goes away (`pagehide` on the bridge's window). @param {boolean} [trusted] */
+    pagehide: async (trusted = true) => {
+      for (const l of windowListeners.filter((x) => x.type === "pagehide")) l.fn({ type: "pagehide", isTrusted: trusted });
+      await flush();
     },
     /** Moves the page world's clock and runs its timers that fall due. @param {number} ms */
     advance: async (ms) => {
