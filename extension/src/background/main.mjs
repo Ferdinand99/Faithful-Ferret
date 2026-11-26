@@ -273,6 +273,8 @@ const passkeyRegistry = createPasskeyRegistry
       // A release leaves localhost to the browser; the test build keeps it for its fixtures.
       release: variantHooks === null,
       access: httpsAccess,
+      // The setting turned off, or the permission taken back: every request that waits ends, and its window closes.
+      onOff: () => passkeyRequests?.endAll(),
     })
   : null;
 // The settings of the provider: the switch (through the registry), the "never" list and the recent-unlock choice.

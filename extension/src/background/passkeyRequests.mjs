@@ -10,7 +10,8 @@
 // another document of the frame.
 //
 // Who may get Ferret instead of the browser (anything else is handed to the browser at once, with the page's own options):
-//   - the setting is on and the permission for https pages is there, checked at every request (a tab that was open when
+//   - the setting is on and the permission for https pages is there, checked at every request and again before an answer;
+//     every request that waits ends when the setting goes off or the permission is taken back (a tab that was open when
 //     the feature went off, or when the device was signed out, keeps its scripts);
 //   - the device is signed in at a server and its session is live (a device ended remotely keeps its server);
 //   - the calling frame's origin is the browser's (`sender.origin`, the same as its address's), `https`, without a
@@ -946,11 +947,13 @@ export function createPasskeyRequests({
   };
 
   /**
-   * Whether a request may still be answered by Ferret: the device is still signed in with a live session at a server
-   * whose host is not the page's (a sign-out or a server change may have come while it waited).
+   * Whether a request may still be answered by Ferret: the setting is still on and the permission still there, and the device
+   * is still signed in with a live session at a server whose host is not the page's (the person may have turned the setting
+   * off, taken the permission back, signed out or changed the server while it waited).
    * @param {Request} req
    */
   const stillAllowed = async (req) => {
+    if (!(await enabled())) return false;
     const serverHost = await liveServerHost();
     return serverHost !== null && serverHost !== hostOf(req.origin);
   };
