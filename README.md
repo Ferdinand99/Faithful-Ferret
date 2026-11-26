@@ -12,7 +12,7 @@
   <a href="https://hedgerow.tools/Faithful-Ferret/"><img src="https://img.shields.io/badge/website-hedgerow.tools%2FFaithful--Ferret-black.svg" alt="Website"></a>
 </p>
 
-> **Status: in development, pre-1.0 (v0.11.0).** The cryptographic core, the OPAQUE server library, the server and the
+> **Status: in development, pre-1.0 (v0.12.0).** The cryptographic core, the OPAQUE server library, the server and the
 > web vault work end to end in testing. Safe sync between devices and browser tabs came in v0.3.0, and v0.5.0 added
 > recovery with a printed emergency sheet, an encrypted export, import from other password managers, and automatic
 > backups with an encrypted copy off the machine. v0.6.0 added devices: clients other than the web vault sign in with
@@ -25,7 +25,10 @@
 > web vault, and the Firefox extension 0.8.0, built from v0.10.0, is the first signed build that offers to save a new password or update a
 > changed one and has a password generator in its popup. v0.11.0 adds quick unlock and one-time codes: a PIN and a passkey (Windows Hello or Touch ID) open
 > the locked vault in the Firefox extension 0.9.0, a passkey also opens it in the web vault, the web vault has a generator page,
-> and one-time codes (TOTP) are stored in an item and shown by the web vault and the extension. The extension is
+> and one-time codes (TOTP) are stored in an item and shown by the web vault and the extension. v0.12.0 makes Ferret a
+> passkey provider in the Firefox extension 0.12.0: a website that asks for a passkey gets a small Ferret window to make
+> one or sign in with one, passkeys show in the web vault, passkeys can be imported from Bitwarden and AliasVault, and
+> the extension's settings are grouped with clear switches. The extension is
 > not on the Firefox add-ons store. A health check is next. Ferret is a single-author project and is **not for real
 > passwords yet**. There is no external audit, and none is planned.
 
@@ -36,7 +39,7 @@ its admin panel and its API only ever see ciphertext.
 
 ## What works today
 
-These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
+These are in v0.12.0 and are tested on a test instance. All of it is pre-1.0, and none of it has had an external review.
 
 - **Web vault and sync.** Set up an account, sign in, unlock, and view and edit items in the browser. Changes sync
   between devices and browser tabs. If two devices change the same item, both versions are kept side by side and
@@ -52,7 +55,9 @@ These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, an
   it does not open with the master password. For moving to another service, the web vault can also export plain
   CSV or JSON. That file is not encrypted, and it needs the master password again and two separate confirmations.
 - **Import.** From Ferret exports, from Bitwarden (unencrypted JSON and CSV) and from AliasVault (unencrypted `.avux`
-  and CSV). Duplicates are not removed. Folders and collections become folders, and passkeys, tags and attachments are not imported.
+  and CSV). Duplicates are not removed. Folders and collections become folders, and tags and attachments are not imported. The passkeys of
+  Bitwarden (JSON) and AliasVault (`.avux`) files come along as passkeys of the logins they belong to, when the file holds the
+  key and the server offers it (the release has it); the next item says what an imported passkey can and cannot do.
   A one-time password secret in these files comes along (one per item; the others, and Steam Guard secrets, are kept as hidden fields).
   The file is chosen with a button or dropped on the import page, and it is read on the device and not uploaded.
 - **Tabs.** The vault runs in one tab per browser and account. Moving it to another tab keeps unsaved edits in the
@@ -94,6 +99,11 @@ These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, an
   vault, the passkey opens the vault in place of the master password while the session lives; once the session has ended the
   master password is asked for. The list says whether a passkey can be synced between devices (it is then as safe as the
   cloud account it lives in) or stays on this device. The page is there only when the server offers passkeys.
+- **Passkeys in the web vault.** A login that holds a passkey (made by the Firefox extension, or imported) shows it in the item
+  page with the site, the user name and the date, never the key. The list marks such items and has a passkey filter, and the
+  trash names the site of a deleted passkey. You can rename an item and remove the passkey from it; removing it warns that the
+  site still has the public key. The web vault never signs with a passkey of the vault: only the extension does. An imported
+  passkey keeps its key but starts with the counter at 0, so a site that compares counters may need the passkey registered again.
 - **Unlock rules for the administrator.** Settings, Unlock (administrators only) has three switches: allow PIN, allow PIN
   after a restart of the browser, and the shortest PIN (4 to 64, 6 by default). The page says in words how long every PIN of
   the shortest length takes to try offline. The rule is read by every client and enforced when a PIN is set, at every PIN unlock, when the vault is opened,
@@ -140,9 +150,9 @@ These are in v0.11.0 and are tested on a test instance. All of it is pre-1.0, an
 
 The first version of the Firefox extension came in v0.7.0. Version 0.8.0 of the extension, from v0.10.0 of the
 repository, was the first signed build with saving and the password generator, and version 0.9.0, from v0.11.0, adds unlock
-with a PIN or a passkey and one-time codes. From the release after v0.11.0 the extension has the same version number as the server (server 0.12.0 comes with extension 0.12.0); the versions above are history. It needs Firefox 153 or newer and is early: it fills logins from its popup,
-offers to save and update passwords, makes passwords and fills one-time codes, but it cannot handle
-passkeys as logins yet. It is **not on the Firefox add-ons store**. A build that Mozilla has
+with a PIN or a passkey and one-time codes. From v0.12.0 the extension has the same version number as the server (server 0.12.0 comes with extension 0.12.0); the versions above are history. It needs Firefox 153 or newer and is early: it fills logins from its popup,
+offers to save and update passwords, makes passwords and fills one-time codes, and since 0.12.0 it can keep and use
+passkeys (see Passkey provider below). It is **not on the Firefox add-ons store**. A build that Mozilla has
 signed as an unlisted add-on is made by a manually started workflow, and the release downloads of v0.10.0 do not
 include it; the signed builds are on their own releases, named `extension-v` and the version (`extension-v0.8.0` for
 this one). [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes how that build is made, and
@@ -175,6 +185,26 @@ this one). [`docs/EXTENSION-FIREFOX.md`](docs/EXTENSION-FIREFOX.md) describes ho
   its own: Windows Hello, or Touch ID with a passkey provider. A phone through a QR code should work too, but it has not been
   tested by hand yet. It needs the network and a signed-in device (living tokens), and it works whether or not a web vault
   session is open. Ferret never sees biometric data; the operating system confirms that it is you. A security key (YubiKey) is not tested.
+- **Passkey provider (0.12.0).** Ferret can answer a website's request for a passkey, in Firefox, for sites on `https`. It is off
+  until you turn on "Use Ferret for passkeys" in the settings, which asks Firefox for access to `https` pages (the access that
+  saving passwords asks for too) and needs the extension to be signed in. When a site asks to make a passkey or to sign in, Ferret
+  opens a small window of its own, never anything inside the page. It names the site (as Ferret has checked it, not as the page
+  words it), puts Ferret first, and offers "Use the browser instead" (Firefox's own dialog: Windows Hello, Touch ID, a phone or a
+  security key) and "Never on this site". A new passkey is saved in the vault as a login item and syncs like every other item; it
+  can only be made while you are online. A sign-in asks you to verify when it must: a recent unlock counts for 5 minutes (a setting
+  that you can turn off), otherwise Windows Hello or another passkey of your account, the PIN or the master password, in the window.
+  The private key stays in the core of the extension and never reaches the page or the JavaScript of the extension. A page that
+  asks for a passkey as it loads gets no window by itself: the toolbar button gets a mark and the popup a card that opens it. A
+  site that offers passkey autofill (conditional mediation) gets a section in the popup that lists the passkeys for it.
+  Ferret does not detect a cloned passkey and signs with counter 0, as other synced passkeys do, so a site cannot tell a copy
+  from the original; someone at your unlocked computer can sign in with one click in the 5 minutes after an unlock. Not supported:
+  replacing a passkey, related origins, frames of another origin, `largeBlob`, and Ferret as the phone for another device. Another
+  password manager that also takes passkeys may answer first. It was tested against our own test pages and two relying-party
+  libraries in Firefox Release and ESR (both manifest versions), and on a few public demo sites; Windows Hello, a phone through a
+  QR code and Touch ID cannot be driven by an automated run, and they have not been checked by hand yet: the checks are listed in [`docs/TESTING-U4.md`](docs/TESTING-U4.md).
+- **Settings.** The settings page is grouped, with clear switches: the passkey group has the switch for Ferret as a passkey
+  provider, "Count an unlock in the last 5 minutes" (on by default) and the list "Never on these sites", where you can take a site
+  back.
 - **Auto-lock.** The vault locks after 15 seconds to 24 hours without use of Ferret's own pages (15 minutes by
   default). Activity in a web page does not count, and the vault also locks when the browser closes.
 - **Frame and phishing rules.** The extension fills only a frame that matches the item's saved address and that is
@@ -271,6 +301,8 @@ Ferret aims to be a password manager that is light to run and gets the everyday 
 - **Autofill that notices.** Reliable detection of new and changed passwords, tested before release
   against our own test forms, modelled on common sign-in, sign-up and change-password patterns, in Firefox Release and
   ESR.
+- **Passkeys, kept and used.** Ferret keeps your passkeys in the vault and answers a website's request for one in Firefox
+  (since v0.12.0), and brings in the passkeys of Bitwarden and AliasVault. The phone apps and Chromium browsers come later.
 - **Unlock the way you want.** A passkey (Windows Hello, Touch ID) and an optional local PIN, in the Firefox
   extension (since v0.11.0) and for the passkey in the web vault too, and on the phone apps later. Ferret never collects or stores
   biometric data; the operating system confirms it is you.
@@ -378,8 +410,8 @@ The steps are the order of work, not cuts in scope, and there are no dates:
 5. The browser extension and the iOS and Android apps. The first Firefox extension is done (v0.7.0): sign-in, sync,
    suggestions and fill from the popup, copy, and auto-lock; since v0.9.0 it also checks what a form is for before it
    fills. Version 0.8.0 of the extension (v0.10.0) also offers to save new and changed passwords and has a password
-   generator in its popup, and version 0.9.0 (v0.11.0) unlocks with a PIN or a passkey and fills one-time codes; the web
-   vault shows one-time codes and unlocks with a passkey too. A health check and the rest of the 1.0 list are next. The apps are later.
+   generator in its popup, version 0.9.0 (v0.11.0) unlocks with a PIN or a passkey and fills one-time codes, and version 0.12.0
+   (v0.12.0) is a passkey provider in Firefox; the web vault shows one-time codes and passkeys and unlocks with a passkey too. A health check and the rest of the 1.0 list are next. The apps are later.
 6. Hardening and 1.0 (later).
 
 The same overview, with more detail, is on the [website](https://hedgerow.tools/Faithful-Ferret/).

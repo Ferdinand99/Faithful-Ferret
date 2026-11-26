@@ -97,13 +97,14 @@ dev-no-web = []
 e2e-clock = []
 # PIN and passkey unlock on the server: the Unlock tab of the admin pages and the routes for adding and removing
 # passkey methods. A release image is built with it (the release workflow gives docker/server.Dockerfile
-# FEATURES=quick-unlock), and so are CI and the end-to-end image; a build without it is the variant that tests the
+# FEATURES=passkey-import,quick-unlock), and so are CI and the end-to-end image; a build without it is the variant that tests the
 # flag off. The table of the unlock rule is created by a migration that runs in every build, and
 # `GET /api/vault/policy` is mounted in every build (with the feature off it says that no PIN and no passkey unlock is
 # allowed). Without the feature the binary has no trace of its name (tests/build_info.rs).
 quick-unlock = []
 # The import of passkeys from another password manager's file in the web vault of this server. A release image is built
-# without it until the passkey provider is released; CI builds it in. The feature adds no route and no table: it is the
+# with it (the release workflow gives docker/server.Dockerfile FEATURES=passkey-import,quick-unlock), and so is CI; a
+# build without it is the variant that tests the flag off. The feature adds no route and no table: it is the
 # `passkeys.import` flag of `GET /api/vault/policy`, which tells a client that this server has the import. Without the
 # feature the binary has no trace of its name (tests/build_info.rs).
 passkey-import = []

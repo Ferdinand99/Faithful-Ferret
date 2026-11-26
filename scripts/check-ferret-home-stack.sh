@@ -202,13 +202,14 @@ image_exists_for_arm64() {
   grep -qE 'runner: ubuntu-24\.04-arm' "$workflow" || fail "linux/arm64 is built on a native arm64 runner"
   grep -q 'file: docker/server.Dockerfile' "$workflow" || fail "the release image is built from docker/server.Dockerfile"
   # What the workflow builds the image with and what it requires of `ferret --build-info` must agree: one FEATURES line,
-  # one `features:` check, the same value (the release has the cargo feature quick-unlock and no other).
+  # one `features:` check, the same value (the release has the cargo features passkey-import and quick-unlock and no other).
   [ "$(grep -cE '^ *FEATURES=' "$workflow")" = 1 ] || fail "the release workflow must have exactly one FEATURES= build argument"
   [ "$(grep -c "grep -qx 'features: " "$workflow")" = 1 ] || fail "the release workflow must have exactly one check of the features line of --build-info"
   built_with="$(grep -E '^ *FEATURES=' "$workflow" | sed -E 's/^ *FEATURES=//')"
   required_line="$(grep "grep -qx 'features: " "$workflow" | sed -E "s/.*grep -qx 'features: ([^']*)'.*/\1/")"
-  [ "$built_with" = quick-unlock ] || fail "the release image is built with the cargo feature quick-unlock and no other (FEATURES=quick-unlock), not '$built_with'"
-  [ "$required_line" = "$built_with" ] || fail "the release workflow builds with FEATURES=$built_with but requires 'features: $required_line' of the image"
+  [ "$built_with" = passkey-import,quick-unlock ] || fail "the release image is built with the cargo features passkey-import and quick-unlock and no other (FEATURES=passkey-import,quick-unlock), not '$built_with'"
+  # The features line of the build info lists them in alphabetical order with a comma and a space, the build argument with a comma.
+  [ "${required_line//, /,}" = "$built_with" ] || fail "the release workflow builds with FEATURES=$built_with but requires 'features: $required_line' of the image"
   grep -q -- "--build-arg FEATURES=$built_with " scripts/ferret-home.sh || fail "the deploy drill must build its image with the release's FEATURES=$built_with"
   grep -q 'REVISION=' "$workflow" || fail "the release image gets its revision"
   grep -q 'imagetools inspect --raw' "$workflow" || fail "the release workflow must check the manifest of what it publishes"
@@ -258,7 +259,7 @@ case "$*" in
   *"image inspect"*opencontainers.image.revision*) echo "${STUB_REVISION:-}" ;;
   *"image inspect"*opencontainers.image.version*) echo "${STUB_VERSION:-}" ;;
   *"--build-info"*)
-    printf 'ferret %s\nfeatures: %s\n' "${STUB_BUILD_VERSION:-}" "${STUB_FEATURES:-quick-unlock}"
+    printf 'ferret %s\nfeatures: %s\n' "${STUB_BUILD_VERSION:-}" "${STUB_FEATURES:-passkey-import, quick-unlock}"
     [ "${STUB_WASM:-}" = - ] || printf 'wasm: %s\n' "${STUB_WASM:-release 8c50c5ea011c619e63c76c9b4790ba8d873d2077068f82e5712c2f135f5af48c}" ;;
   *"logs"*) ;;
 esac
@@ -305,10 +306,10 @@ up_run() {
 }
 
 the_image_has_no_test_features_and_its_revision_is_the_release_tag() {
-  # The build gives the image its version and revision, and the release builds with quick-unlock and no test feature.
+  # The build gives the image its version and revision, and the release builds with passkey-import and quick-unlock and no test feature.
   grep -q 'org.opencontainers.image.revision' docker/server.Dockerfile || fail "docker/server.Dockerfile must label the revision"
   grep -q 'org.opencontainers.image.version' docker/server.Dockerfile || fail "docker/server.Dockerfile must label the version"
-  grep -qE 'FEATURES=quick-unlock$' .github/workflows/release.yml || fail "the release image must be built with quick-unlock and no other feature"
+  grep -qE 'FEATURES=passkey-import,quick-unlock$' .github/workflows/release.yml || fail "the release image must be built with passkey-import and quick-unlock and no other feature"
   grep -q 'git rev-parse' .github/workflows/release.yml || fail "the release image gets the commit of the tag as its revision"
   # The compose file of the stack never builds the server and has no test variable.
   accepted home "the good file" "0"
@@ -317,6 +318,9 @@ the_image_has_no_test_features_and_its_revision_is_the_release_tag() {
   up_world "$d"
   up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "a good release image was refused: $(cat "$d/err")"
   STUB_FEATURES=none up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "a release from before quick-unlock was refused: $(cat "$d/err")"
+  STUB_FEATURES=quick-unlock up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "the release from before the passkey import was refused: $(cat "$d/err")"
+  STUB_FEATURES=passkey-import up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image with the passkey import and without quick-unlock was started"
+  STUB_FEATURES='e2e-clock, passkey-import, quick-unlock' up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "the end-to-end image with the passkey import was started"
   STUB_FEATURES=e2e-clock up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "an image with a test feature was started"
   grep -q 'cargo features' "$d/err" || fail "up must say why: $(cat "$d/err")"
   STUB_FEATURES='e2e-clock, quick-unlock' up_run "$d" v9.9.9 --yes-ferret-home --no-cosign && fail "the end-to-end image was started"
