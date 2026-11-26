@@ -228,7 +228,9 @@ export function createPasskeyFlow({ requests, writer, verify, random = (bytes) =
         // The core refused: excludeCredentials named a passkey of the vault (InvalidStateError after the click), or options it
         // cannot take. The request ends as the browser would end it.
         const page = pageErrorOf(code);
-        if (page === "NotAllowedError") return giveBack({ ok: false, reason: "internal_error" });
+        // A NotSupportedError comes only before any window (the prf inputs): after the click, `unsupported` (a key the core
+        // could not make or sign with) leaves the request to the person, as any other failure of the write does.
+        if (page === "NotAllowedError" || page === "NotSupportedError") return giveBack({ ok: false, reason: "internal_error" });
         requests.fail(req.id, req.session, page);
         return { ok: false, reason: ENDED[page] };
       }

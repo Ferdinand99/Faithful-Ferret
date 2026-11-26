@@ -14,6 +14,10 @@ export function adversarial({ name, run }) {
   const notes = { page: name, userActivationAtLoad: navigator.userActivation?.isActive ?? null };
   /** The run the page reports to, once the click started it. @type {unknown} */
   let running = null;
+  /** The reports go one after the other, so they arrive in the order they were made (the runner takes the last). */
+  let chain = Promise.resolve();
+  /** @param {Record<string, unknown>} payload */
+  const send = (payload) => (chain = chain.then(() => report(running, payload)));
   /**
    * What the page saw goes to the runner at once as well, not only after the ceremony: a case whose ceremony is meant not to
    * finish (it only waits with the badge and the card) still reports it. The last report counts.
@@ -21,7 +25,7 @@ export function adversarial({ name, run }) {
    */
   const note = (key, value) => {
     notes[key] = value;
-    if (running !== null) void report(running, { kind: "adv", ...notes });
+    if (running !== null) void send({ kind: "adv", ...notes });
   };
   async function go() {
     const spec = pageSpec();
@@ -41,7 +45,7 @@ export function adversarial({ name, run }) {
       notes.pageError = String(/** @type {any} */ (e)?.stack ?? e).slice(0, 400);
       out = { ok: false };
     }
-    await report(spec.run, { kind: "adv", ...notes });
+    await send({ kind: "adv", ...notes });
     result.dataset.state = out?.ok ? "ok" : "failed";
     result.textContent = JSON.stringify({ out, notes }, null, 1);
     return out;

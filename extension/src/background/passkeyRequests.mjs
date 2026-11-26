@@ -79,6 +79,8 @@ export const PASSKEY_WINDOW_OPS = Object.freeze([
  * gone. Two pings and a margin.
  */
 export const PASSKEY_SILENT_MS = 45_000;
+/** The bridge's ping while a request waits. */
+const PING_MS = 20_000;
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -221,15 +223,23 @@ export function malformedOptions(kind, options) {
   return bytes < 1 || bytes > 64;
 }
 
+/** An RP ID already in canonical form: lower-case ASCII LDH labels (A-labels allowed), no trailing dot. */
+const CANONICAL_RP_ID = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 /**
- * An RP ID the page asked for that the browser refuses with a SecurityError although the core would take it: one that ends
- * with a dot or has an upper-case letter. The browser compares the string as the page gave it with the origin's host, which
- * has neither; the core would canonicalize it to the host and answer for a string the page did not pass.
- * @param {"create" | "get"} kind @param {any} options @returns {boolean}
+ * An RP ID the page asked for that the browser refuses with a SecurityError before any UI: one that is not already in
+ * canonical form (a trailing dot, upper case, a port, full-width or other characters that IDNA would map or drop), or one
+ * that is neither the page's host nor a dot-delimited suffix of it. The browser compares the string as the page gave it with
+ * the origin's host; the core would canonicalize such a string first and answer for one the page did not pass. (That a suffix
+ * is not a public suffix is still the core's check, in the window.)
+ * @param {"create" | "get"} kind @param {any} options @param {string} host the page's host, as the URL parser writes it
+ * @returns {boolean}
  */
-export function refusedRpId(kind, options) {
+export function refusedRpId(kind, options, host) {
   const asked = kind === "create" ? options?.rp?.id : options?.rp_id;
-  return typeof asked === "string" && (asked.endsWith(".") || /[A-Z]/.test(asked));
+  if (asked === undefined) return false;
+  if (typeof asked !== "string" || !CANONICAL_RP_ID.test(asked)) return true;
+  return asked !== host && !host.endsWith(`.${asked}`);
 }
 
 /**
@@ -531,17 +541,22 @@ export function createPasskeyRequests({
 
   /**
    * Ends a request whose bridge has gone silent (its frame went away without a navigation the browser reports, and the
-   * bridge's abort was lost): nothing can be delivered there, and the window closes. Checked again at the next ping time.
-   * @param {Request} req
+   * bridge's abort was lost): nothing can be delivered there, and the window closes. Measured on the monotonic clock. A check
+   * that comes more than a ping late (the machine slept) waits once more for the next ping before it ends anything.
+   * @param {Request} req @param {boolean} [grace] this is the one extra wait after a late check
    */
-  const watchPings = (req) => {
+  const watchPings = (req, grace = false) => {
+    const ms = grace ? PING_MS + 5_000 : Math.max(1, req.lastPing + PASSKEY_SILENT_MS - monotonic());
+    const due = monotonic() + ms;
     const check = () => {
       if (requests.get(req.id) !== req) return;
-      if (now() - req.lastPing >= PASSKEY_SILENT_MS) end(req, false);
-      else watchPings(req);
+      const at = monotonic();
+      if (at - req.lastPing < PASSKEY_SILENT_MS) watchPings(req);
+      else if (!grace && at - due > PING_MS) watchPings(req, true);
+      else end(req, false);
     };
     try {
-      req.quiet = timers.setTimeout(check, Math.max(1, req.lastPing + PASSKEY_SILENT_MS - now()));
+      req.quiet = timers.setTimeout(check, ms);
       /** @type {any} */ (req.quiet)?.unref?.();
     } catch {
       // Without a timer the request still ends by its deadline, its abort or the check before an answer.
@@ -805,7 +820,7 @@ export function createPasskeyRequests({
       return { error: "TypeError" };
     }
     // What the browser refuses before any UI is refused here the same way, before any window: never more than the browser.
-    if (refusedRpId(kind, body[kind])) {
+    if (refusedRpId(kind, body[kind], hostOf(/** @type {string} */ (s.origin)))) {
       await pushError(s, bridgeId, "SecurityError");
       return { error: "SecurityError" };
     }
@@ -855,7 +870,7 @@ export function createPasskeyRequests({
       windowId: null,
       session: null,
       held: false,
-      lastPing: now(),
+      lastPing: monotonic(),
       quiet: null,
     };
     requests.set(req.id, req);
@@ -903,7 +918,7 @@ export function createPasskeyRequests({
       const id = byBridge.get(key);
       const req = id === undefined ? null : live(id);
       if (req !== null) {
-        req.lastPing = now();
+        req.lastPing = monotonic();
         continue;
       }
       // An abort that came first, or an error that waits for its delay (it must not come early).

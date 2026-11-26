@@ -472,9 +472,12 @@ test("a_document_that_goes_away_aborts_its_waiting_requests", async () => {
   // A page's own pagehide event is not the browser's: nothing ends.
   await page.pagehide(false);
   assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort"), []);
-  // The frame is removed (or the page navigates away): the background hears the abort and closes Ferret's window.
+  assert.equal(page.page("out.done"), false);
+  // The frame is removed (or the page navigates away): the background hears the abort and closes Ferret's window. The page's
+  // call ends too, so a page restored from the back-forward cache does not wait for the bridge's silence.
   await page.pagehide();
   assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort").map((m) => m.body.request_id), [id]);
+  assert.equal(page.page("out.error"), "NotAllowedError");
   assert.deepEqual(page.intervals(), [], "nothing waits, so nothing pings");
   // A late answer for it is dropped, and a second pagehide sends nothing more.
   await page.push("passkey_handover", { request_id: id, once: false });

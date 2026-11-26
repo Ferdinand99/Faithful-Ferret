@@ -632,6 +632,11 @@ test("only_a_refusal_of_the_request_itself_ends_it", async () => {
   };
   assert.deepEqual(await w.verifyOp(id, { method: "pin", pin: "123456" }), { ok: true });
   assert.deepEqual(await w.choose(id, ID(3)), { ok: false, reason: "internal_error" });
+  // A key the core cannot sign with (`unsupported`) after the click is no NotSupportedError for the page: the request waits too.
+  w.client.vault.passkey_get = async () => {
+    throw Object.assign(new Error("unsupported"), { code: "unsupported" });
+  };
+  assert.deepEqual(await w.choose(id, ID(3)), { ok: false, reason: "internal_error" });
   w.client.vault.passkey_get = sign;
   await flush();
   assert.ok(w.requests.forUi(id, SESSION), "the request still waits");

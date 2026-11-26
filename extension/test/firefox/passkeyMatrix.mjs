@@ -37,7 +37,7 @@ import { appliesTo, caseAddress, computeMatrix, loadCases, observe, specOf, writ
 import { BRIDGE_URL, defaultManifest, e2eCertificateFile, EXTENSION_ORIGIN, openBridge, TEST_ADDON_ID, xpiPath } from "./harness.mjs";
 import { KEEP_BACKGROUND, extensionSignIn, pace, webVaultAccount } from "./e2e.mjs";
 import { addPasskey, ask } from "./unlock.mjs";
-import { freshUnlock, runActionCase, secondProfile, vaultRows } from "./passkeyDrive.mjs";
+import { freshUnlock, runActionCase, secondProfile, vaultRows, windowWatch } from "./passkeyDrive.mjs";
 import { runDemoCase } from "./passkeyDemo.mjs";
 import { revokeLeftDevices } from "./adversary.mjs";
 
@@ -404,6 +404,28 @@ export async function ferretWindows(session, handles, known, back) {
 /** The unlock in a window that shows the vault locked. @param {import("./driver.mjs").Session} session @param {string} password */
 async function unlockInChooser(session, password) {
   await sleep(900);
+  /** Whether the element of a role is shown (not inside a hidden part). @param {string} role */
+  const shown = (role) =>
+    session.content((r) => {
+      const node = document.querySelector(`[data-role="${r}"]`);
+      return node !== null && node.closest("[hidden]") === null && node.getClientRects().length > 0;
+    }, role);
+  // With a PIN on the device the locked view offers the PIN first and hides the master-password form until the person picks
+  // "use the master password" (an earlier case of the run may have set the PIN): this unlock is about the master password.
+  const view = await session
+    .waitFor(async () => ((await shown("passkey-password")) ? "password" : (await shown("pin-unlock-form")) ? "pin" : null), 15_000, "the locked view")
+    .catch(() => null);
+  if (view === null) {
+    const [field] = await session.findAll('[data-role="passkey-password"]');
+    if (!field) return;
+    throw new Error("the window's unlock shows neither the master-password field nor the PIN form");
+  }
+  if (view === "pin") {
+    const [useMaster] = await session.findAll('[data-role="use-master"]');
+    if (!useMaster) throw new Error("the PIN form has no way to the master password");
+    await session.click(useMaster);
+    await session.waitFor(() => shown("passkey-password"), 10_000, "the master-password field after use-master");
+  }
   const [field] = await session.findAll('[data-role="passkey-password"]');
   if (!field) return;
   await session.type(field, password);
@@ -667,6 +689,8 @@ async function runPlainCase(session, c, { provider, drive = null }) {
   const baseline = new Set(await session.windowHandles());
   const promptsBefore = (await browserPrompts(session)).length;
   let windowsOpened = 0;
+  // The test build counts its chooser windows exactly (one that opens and closes between two looks of the runner too).
+  if (provider === "ferret" && drive) await windowWatch(drive.a, "reset");
   /** The chooser windows the runner pressed in (the Ferret provider). @type {Set<string>} */
   const pressed = new Set();
   try {
@@ -792,6 +816,7 @@ async function runPlainCase(session, c, { provider, drive = null }) {
     // A window opened only from the popup's card is right where the case is about a waiting request; elsewhere a clicked request should
     // have opened it itself.
     if (viaCard && !(CARD_CATEGORIES.includes(c.category) || c.gesture === "none")) problems.push("Ferret's window opened only from the popup's card, not for the click");
+    if (provider === "ferret" && drive) windowsOpened = Math.max(windowsOpened, (await windowWatch(drive.a, "read")) ?? 0);
     // A page that left (nav-before-click) or never answered has no "done": that is an outcome (ceremony none), not an error.
     const observed = observe(reports, { windowShown: windowsOpened > 0, windowsOpened });
     if (problems.length > 0) observed.problems = problems;

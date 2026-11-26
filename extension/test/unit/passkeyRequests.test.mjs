@@ -105,6 +105,8 @@ function world(over = {}) {
     },
     release: true,
     now: clock.now,
+    // The monotonic clock moves with the fake one (a test of a clock jump passes its own).
+    monotonic: clock.now,
     timers: clock.timers,
     random: (bytes) => {
       for (let i = 0; i < bytes.length; i += 1) bytes[i] = (counter + i * 7) & 0xff;
@@ -656,24 +658,47 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
   assert.equal(w.opened.length, 0);
 });
 
-test("an_rp_id_with_a_trailing_dot_or_upper_case_is_a_security_error_before_any_window", async () => {
-  // The browser compares the RP ID as the page gave it and refuses both forms; the core would canonicalize them to the host.
-  for (const rpId of ["rp-a.test.", "RP-A.Test", "rp-a.Test", "Rp-a.test."]) {
+test("an_rp_id_the_browser_refuses_is_a_security_error_before_any_window", async () => {
+  // The browser compares the RP ID as the page gave it with the page's host: one not already in canonical form, or one that is
+  // neither the host nor a suffix of it, is refused before any UI. (The core would canonicalize the first kind to the host.)
+  const refused = [
+    "rp-a.test.", // a trailing dot
+    "RP-A.Test", // upper case
+    "rp-a.Test",
+    `${String.fromCharCode(0xff52)}${String.fromCharCode(0xff50)}-a.test`, // full-width letters
+    `rp-a${String.fromCharCode(0xff0e)}test`, // a full-width full stop
+    `rp-a${String.fromCharCode(0xad)}test`, // a soft hyphen (IDNA drops it)
+    `rp-${String.fromCharCode(0xe4)}.test`, // a U-label
+    "rp-a.test:443", // a port
+    "", // empty
+    "-rp-a.test",
+    "rp-a..test",
+    "www.rp-a.test", // a subdomain of the host, not a suffix
+    "rp-b.test", // another site
+    "a.test", // a string suffix that is not a label suffix
+  ];
+  for (const rpId of refused) {
     for (const kind of /** @type {const} */ (["create", "get"])) {
       const options = kind === "create" ? createOptions({ rp: { name: "RP A", id: rpId } }) : getOptions({ rp_id: rpId });
-      assert.equal(refusedRpId(kind, options), true, `${kind} ${rpId}`);
+      assert.equal(refusedRpId(kind, options, "rp-a.test"), true, `${kind} ${JSON.stringify(rpId)}`);
       const w = world();
       const body = kind === "create" ? createBody("d1", { options: { rp: { name: "RP A", id: rpId } } }) : getBody("d1", { options: { rp_id: rpId } });
-      assert.deepEqual(await w.requests.open(senderOf(), body), { error: "SecurityError" }, `${kind} ${rpId}`);
-      assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "SecurityError"]], `${kind} ${rpId}`);
-      assert.equal(w.opened.length, 0, `${kind} ${rpId}: no window`);
-      assert.equal(w.requests.waitingFor(4), null, `${kind} ${rpId}: nothing waits`);
+      assert.deepEqual(await w.requests.open(senderOf(), body), { error: "SecurityError" }, `${kind} ${JSON.stringify(rpId)}`);
+      assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "SecurityError"]], `${kind} ${JSON.stringify(rpId)}`);
+      assert.equal(w.opened.length, 0, `${kind} ${JSON.stringify(rpId)}: no window`);
+      assert.equal(w.requests.waitingFor(4), null, `${kind} ${JSON.stringify(rpId)}: nothing waits`);
     }
   }
-  // The canonical form and no RP ID at all are Ferret's.
-  for (const rpId of ["rp-a.test", undefined]) {
-    assert.equal(refusedRpId("create", createOptions({ rp: { name: "RP A", ...(rpId === undefined ? {} : { id: rpId }) } })), false, String(rpId));
-    assert.equal(refusedRpId("get", getOptions(rpId === undefined ? {} : { rp_id: rpId })), false, String(rpId));
+  // The host itself, a registrable suffix of it, an A-label host, and no RP ID at all are Ferret's (a public suffix is still the
+  // core's refusal, in the window).
+  for (const [rpId, host] of /** @type {Array<[string | undefined, string]>} */ ([
+    ["rp-a.test", "rp-a.test"],
+    ["rp-a.test", "login.rp-a.test"],
+    ["xn--rp--8cd.test", "xn--rp--8cd.test"],
+    [undefined, "rp-a.test"],
+  ])) {
+    assert.equal(refusedRpId("create", createOptions({ rp: { name: "RP A", ...(rpId === undefined ? {} : { id: rpId }) } }), host), false, `${rpId} on ${host}`);
+    assert.equal(refusedRpId("get", getOptions(rpId === undefined ? {} : { rp_id: rpId }), host), false, `${rpId} on ${host}`);
   }
   const w = world();
   const out = /** @type {any} */ (await w.requests.open(senderOf(), getBody("d2", { options: { rp_id: "rp-a.test" } })));
@@ -743,6 +768,27 @@ test("a_request_whose_bridge_stops_pinging_ends_and_its_window_closes", async ()
   c.clock.advance(45_000);
   await flush();
   assert.equal(c.requests.size(), 0);
+});
+
+test("a_check_of_the_pings_that_comes_late_after_a_sleep_waits_for_the_next_ping", async () => {
+  // The machine slept: the timer comes long after its time, and the bridge has not had a chance to ping yet.
+  const w = world();
+  await w.requests.open(senderOf(), getBody("z1", { body: { mediation: "conditional" } }));
+  w.clock.advance(10 * 60_000);
+  await flush();
+  assert.equal(w.requests.size(), 1, "one more wait for the next ping");
+  // The bridge pings after the wake-up: the request lives on.
+  await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["z1"] } });
+  w.clock.advance(25_000);
+  await flush();
+  assert.equal(w.requests.size(), 1);
+  // Without that ping it would have ended after the extra wait.
+  const v = world();
+  await v.requests.open(senderOf(), getBody("z2", { body: { mediation: "conditional" } }));
+  v.clock.advance(10 * 60_000);
+  v.clock.advance(25_000);
+  await flush();
+  assert.equal(v.requests.size(), 0);
 });
 
 test("an_empty_alg_list_is_answered_by_ferret", async () => {

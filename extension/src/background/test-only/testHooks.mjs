@@ -27,9 +27,14 @@ import { createScenarios } from "./measureScenario.mjs";
 import { createItemImportProbe } from "./itemImportProbe.mjs";
 import { createWriteProbe } from "./writeProbe.mjs";
 import { createLeakTap } from "./leakTap.mjs";
+import { createWindowTap } from "./windowTap.mjs";
 
 // The offers of the test build, for the sync (main.mjs passes them as its `captures`).
 export { captures };
+
+/** The exact count of the chooser windows (windowTap.mjs): main.mjs makes them through `tapWindows`. */
+const windowTap = createWindowTap();
+export const tapWindows = windowTap.tap;
 
 /** The engine the sync made last (the test build's probes make test items with it). @type {any} */
 let made = null;
@@ -192,6 +197,8 @@ export function install({ browser, runtime, coreHost, now, offers = null, engine
   // The message side of the passkey leak scan (every port message and runtime message of the background, once started).
   const leakTap = createLeakTap();
   coreHost.addOps(leakTap.ops);
+  // The count of the chooser windows the background asked for (window_watch).
+  coreHost.addOps(windowTap.ops);
   // A planted offer goes with every lock, as a captured one does.
   coreHost.onLocked(() => captures.clear());
   const storageLocal = browser.storage.local;

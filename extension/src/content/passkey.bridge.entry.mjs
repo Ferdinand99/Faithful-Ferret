@@ -175,11 +175,22 @@ function startBridge(runtime) {
   };
 
   // The document goes away (a removed frame, a navigation, the back-forward cache): its requests end with it, as the browser
-  // ends its own when the document is no longer fully active. The background closes Ferret's window for them.
-  window.addEventListener("pagehide", (/** @type {Event} */ event) => {
-    if (event.isTrusted !== true) return;
-    for (const id of [...waiting.keys()]) if (settle(id) !== null) void toBackground("passkey_abort", { request_id: id });
-  });
+  // ends its own when the document is no longer fully active. The background closes Ferret's window for them, and a page that
+  // comes back from the back-forward cache finds its calls ended (it does not wait for the bridge's silence). A capture
+  // listener, registered at document_start: it runs before any listener of the page.
+  window.addEventListener(
+    "pagehide",
+    (/** @type {Event} */ event) => {
+      if (event.isTrusted !== true) return;
+      for (const id of [...waiting.keys()]) {
+        const entry = settle(id);
+        if (entry === null) continue;
+        void toBackground("passkey_abort", { request_id: id });
+        toPage({ n: entry.n, outcome: "error", name: "NotAllowedError" });
+      }
+    },
+    true,
+  );
 
   /** @param {MessagePort} given */
   const connect = (given) => {
