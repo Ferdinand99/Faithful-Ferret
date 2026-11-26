@@ -917,7 +917,7 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
       }
       results.set(c.id, r);
       const failing = r.observed?.reports?.find((/** @type {any} */ x) => x.kind === "step" && !x.ok);
-      log(`${set} ${c.id}: ${r.status === "ran" ? JSON.stringify({ ceremony: r.observed?.ceremony, error: r.observed?.error, route: r.observed?.route, ...(failing ? { step: failing.step, message: failing.error?.message } : {}), ...(r.observed?.problems?.length ? { problems: r.observed.problems } : {}), ...(/** @type {any} */ (r.observed)?.windowsAtEnd?.length ? { windowsAtEnd: /** @type {any} */ (r.observed).windowsAtEnd } : {}) }) : `not run (${r.reason})`}`);
+      log(`${set} ${c.id}: ${r.status === "ran" ? JSON.stringify({ ceremony: r.observed?.ceremony, error: r.observed?.error, route: r.observed?.route, ...(failing ? { step: failing.step, message: failing.error?.message } : {}), ...(r.observed?.problems?.length ? { problems: r.observed.problems } : {}), ...(/** @type {any} */ (r.observed)?.windowsAtEnd?.length ? { windowsAtEnd: /** @type {any} */ (r.observed).windowsAtEnd } : {}) }) : `${r.status === "not-applicable" ? "not applicable" : "not run"} (${r.reason})`}`);
       // The case's tab may be gone (a case that closes it): the next case starts from a tab that is there.
       if (session && drive && !(await session.windowHandles()).includes(await session.windowHandle().catch(() => ""))) {
         const handles = await session.windowHandles();
