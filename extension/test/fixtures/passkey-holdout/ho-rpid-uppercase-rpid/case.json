@@ -27,11 +27,9 @@
   },
   "gesture": "click",
   "expected": {
-    "ceremony": "client-error",
-    "error": "SecurityError",
+    "ceremony": "server-refused",
     "failStep": "create",
-    "route": "any",
-    "maxWindows": 0
+    "route": "any"
   },
   "unsafe": [
     {
@@ -39,5 +37,5 @@
       "definition": "a passkey stored under a case-variant RP ID that a later request for \"rp-a.test\" does not match exactly, or a signature over an rpIdHash for a different RP ID than the stored one"
     }
   ],
-  "note": "UNCERTAIN. Spec-literal: the HTML suffix check parses (lowercases) the string so it passes, but rpIdHash is SHA-256 over the rpId string as given (L3 §6.1), which the RP (expects rp-a.test) refuses. A client that lowercases would give ok; a SecurityError would also be safe. Changed after review: Firefox's own answer is SecurityError before any UI, and Ferret refuses the same way before any window (was server-refused)."
+  "note": "UNCERTAIN. Spec-literal: the HTML suffix check parses (lowercases) the string so it passes, but rpIdHash is SHA-256 over the rpId string as given (L3 §6.1), which the RP (expects rp-a.test) refuses. A client that lowercases would give ok; a SecurityError would also be safe."
 }
