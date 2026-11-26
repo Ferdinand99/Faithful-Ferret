@@ -251,7 +251,7 @@ The stack never gets real data before the checks in the last section of this fil
 without an explicit yes: `scripts/ferret-home.sh up <release tag> --yes-ferret-home`. The script refuses unless the tag is
 a release of this checkout, the image of that release exists for this machine's architecture and for arm64, its
 signature verifies (`cosign`, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
-commit of the tag, the image has no test features (a release has the cargo feature `quick-unlock` and nothing else), and the compose file passes its own check
+commit of the tag, the image has no test features (a release has the cargo features `passkey-import` and `quick-unlock` and nothing else; the release before the passkey provider had `quick-unlock` alone, and the script still starts it), and the compose file passes its own check
 (`scripts/ferret-home.sh config`). It then runs the image by digest and writes the digest down. The header of the compose
 file has the full list of what the host needs (Docker 28 or newer, buildx, compose v2, git with the tags, node).
 
@@ -405,9 +405,10 @@ rest of the database, and a set from before the table gets the default rule when
 Unlock tab and check the rule: an emergency "Allow PIN" switched off after the set was made is undone by the restore.
 
 The same answer has `passkeys.import`. It is `true` only in a build with the cargo feature `passkey-import` (the import of
-passkeys from another password manager's file in the web vault) and `false` in a release image until the passkey
-provider is released. The feature adds no route and no table, and the release workflow requires an image whose
-`--build-info` lists `quick-unlock` and nothing else.
+passkeys from another password manager's file in the web vault): the release image has it, and a build without it (the
+variant that proves the flag off, and the releases before the passkey provider) says `false`. The feature adds no route and
+no table, and the release workflow requires an image whose `--build-info` says `features: passkey-import, quick-unlock`
+and nothing else.
 
 The same build has the routes that add and remove a passkey method (`POST /api/vault/unlock-methods` and
 `DELETE /api/vault/unlock-methods/{id}`); a build without the feature does not mount them (`POST` on the path of the list is answered 405, a `DELETE` on a method 404), and `GET /api/vault/policy`
