@@ -381,8 +381,13 @@ test("a_modal_request_replaces_a_pending_conditional_one", async () => {
 test("a_conditional_request_has_no_timeout", async () => {
   const w = world();
   const c = /** @type {any} */ (await w.requests.open(senderOf(), getBody("c1", { body: { mediation: "conditional" }, options: { timeout: 1000 } }))).request_id;
-  assert.equal(w.clock.pending().length, 0, "no deadline timer");
-  w.clock.advance(24 * 3600 * 1000);
+  // Only the watch on the bridge's pings, no deadline.
+  assert.deepEqual(w.clock.pending().map((t) => t.ms), [PASSKEY_SILENT_MS], "no deadline timer");
+  // Past the longest deadline of a modal request, while its bridge pings.
+  for (let i = 0; i < 33; i += 1) {
+    w.clock.advance(20_000);
+    await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["c1"] } });
+  }
   assert.equal(w.requests.conditionalFor(4)?.request_id, c);
   assert.equal(w.requests.conditionalFor(4)?.expires_in, null);
   assert.equal(w.pushed.length, 0);
@@ -496,7 +501,7 @@ test("modal_timeouts_are_clamped", async () => {
   assert.equal(modalTimeout(4_294_967_295), 600_000);
   const w = world();
   const id = /** @type {any} */ (await w.requests.open(senderOf(), getBody("t1", { options: { timeout: 5 } }))).request_id;
-  assert.deepEqual(w.clock.pending().map((t) => t.ms), [30_000]);
+  assert.deepEqual(w.clock.pending().map((t) => t.ms), [30_000, PASSKEY_SILENT_MS], "the deadline, then the watch on the pings");
   assert.equal(w.requests.forUi(id, "s")?.expires_in, 30_000);
   w.clock.advance(29_999);
   assert.ok(w.requests.forUi(id, "s"));
@@ -509,10 +514,14 @@ test("modal_timeouts_are_clamped", async () => {
   // The clock decides even when the timer comes late.
   const v = world();
   const late = /** @type {any} */ (await v.requests.open(senderOf(), getBody("t2", { options: { timeout: 10_000_000 } }))).request_id;
-  assert.deepEqual(v.clock.pending().map((t) => t.ms), [600_000]);
-  v.clock.timers.clearTimeout(1);
+  assert.deepEqual(v.clock.pending().map((t) => t.ms), [600_000, PASSKEY_SILENT_MS]);
+  // Both timers are late (neither has run): the clock alone ends it, by its deadline.
+  for (const { id } of v.clock.pending()) v.clock.timers.clearTimeout(id);
   v.clock.advance(600_000);
   assert.equal(v.requests.forUi(late, "s"), null);
+  v.clock.advance(PASSKEY_ERROR_DELAY_MS.min + PASSKEY_ERROR_DELAY_MS.spread);
+  await flush();
+  assert.deepEqual(pushesOf(v.pushed, "t2").map((p) => p.body.name), ["NotAllowedError"]);
 });
 
 test("the_page_abort_closes_the_window_with_abort_error", async () => {
