@@ -22,8 +22,8 @@ used only by you, by hand, with an account you can always reach another way.
 | Extension unit tests and type check | The broker, the chooser window, create and get, the verification marks, the hand-over and the one-time pass, the "never" list, the popup section, the bridge's schemas, the architecture rules (signing only in the core, user presence only from Ferret's window) | `scripts/lanbox-ext.sh unit` |
 | The Firefox suite (XP), Release and ESR | The page script and the bridge in real Firefox, the answer objects, the window | `scripts/lanbox-ext.sh firefox --grep passkey --wasm tree` |
 | The passkey matrix (XPM), Release and ESR, MV2 and MV3 | Every case of the fixtures, the adversarial pages and the hold-out set, with Ferret answering (below) | `scripts/lanbox-passkey-rp.sh up`, then `scripts/lanbox-ext.sh passkey-matrix --provider ferret --wasm tree --channel <c> --manifest <m> --set <s>`, then `scripts/lanbox-passkey-rp.sh down` |
-| The demo smoke, one run per channel | A sign-up and a sign-in with a Ferret passkey at the public demo sites | `scripts/lanbox-ext.sh passkey-matrix --provider ferret --wasm tree --set demo --channel <c>` |
-| The end-to-end suite (XE), Release and ESR | Specs 75, 79 and 97 below, against a stack of their own and the fixture container | `scripts/lanbox-ext.sh e2e --passkey-rp --wasm tree` |
+| The demo smoke, one run per channel | A sign-up and a sign-in with a Ferret passkey at the public demo sites; one that needs an e-mail code is checked by hand (check 3) | `scripts/lanbox-ext.sh passkey-matrix --provider ferret --wasm tree --set demo --channel <c>` |
+| The end-to-end suite (XE), Release and ESR | Specs 75, 79, 97 and 98 below, against a stack of their own and the fixture container | `scripts/lanbox-ext.sh e2e --passkey-rp --wasm tree` |
 | The web vault | The passkey card, the mark and the filter in the list, rename, remove, delete and restore, the import of passkeys | `scripts/lanbox-web.sh` |
 
 Until the gate pins a published WASM package with the passkey functions, the extension's runs build the package from the tree
@@ -38,8 +38,9 @@ is a folder with a `case.json` (`extension/test/fixtures/passkey/` for the fixtu
 stack of the run's own and answers, and the runner does in Ferret's window what a person would: "Save in Ferret", the passkey that
 was made, the master password (or the PIN, or the account's passkey) when the window asks to verify.
 
-The gate is 100 % of the cases of every set, in both channels and both manifests, with no unsafe answer. A case that did not run
-counts as failed. The reports are written to `test-results/out/u4-matrix/<set>-<channel>-<manifest>.{json,md}`.
+The gate is 100 % of the cases of the fixtures, the adversarial pages and the hold-out set, in both channels and both manifests, with
+no unsafe answer. A case that did not run counts as failed; a case ruled not applicable to a manifest (it says so in `manifests`) is
+listed as such, outside the total. The demo sites are a smoke test: a failure there is an issue, not a stop, when it is understood. The reports are written to `test-results/out/u4-matrix/<set>-<channel>-<manifest>.{json,md}`.
 
 **Driver steps.** A case that needs more than one click says what happens in its `actions`, and the runner
 (`extension/test/firefox/passkeyDrive.mjs`) does it:
@@ -61,21 +62,26 @@ the browser's own prompt started for it: an enterprise attestation waits for a c
 
 **The hold-out set** (50 cases) was written without the implementation, from the public specifications, and is used as written. Its
 conventions (`$cred`, `$foreign`, `$bytes`, `$view`, `$omit`, `abort`, `navigate`, `removeFrame`, `concurrent`, `__page` and the
-others) are mapped by the test page (`test/passkey-rp/pages/lib.mjs`); no expected outcome was changed. A case that turns out to be
-wrong, or that cannot be expressed, is decided by a reviewer and logged; it is not edited to pass.
+others) are mapped by the test page (`test/passkey-rp/pages/lib.mjs`). A case that turns out to be wrong, or that cannot be expressed,
+is decided by a reviewer, never edited to pass: a reviewer may change an expected outcome, and each change is recorded in the case's
+`note` and in `extension/test/fixtures/fixtures-changes.md`. The same holds for the fixtures.
 
-**Unsafe answers** fail a run whatever else it does: an answer to another origin or frame, an answer to a frame with a foreign
-ancestor, a window without a user gesture, more than one window at a time, a signature where the browser had to refuse the RP ID, and a
-passkey left in the vault that the website never got.
+**Unsafe answers** fail a run whatever else it does (plan section 11.3): an answer to another origin or frame than the one that asked;
+an answer to a frame with a foreign ancestor; user presence without a click in Ferret's window or popup; user verification set without
+a verification or a recent unlock for the request; a signature for an RP ID that is not exactly the stored one; a Ferret window without
+a user gesture; a difference in error type or time between "cancelled" and "no match"; a private key outside the core; and a passkey
+in the vault that the website never got, outside the trash. The runner also counts more than one Ferret window at a time as unsafe.
+The ones that can be seen from outside are checked in every case; the others are covered by the unit tests, the end-to-end specs
+and the leak scan.
 
 ### The end-to-end specs of passkeys
 
 | Spec | Tests | What it shows |
 | --- | --- | --- |
 | `75-passkey.e2e` | `full_u4_flow_end_to_end` | The extension makes a passkey and signs in with it; the web vault shows the site, the user name and the date (never a key); a rename, a delete and a restore from the trash in the web vault reach the extension, which still signs; after "Remove passkey" in the web vault the extension's window offers no passkey for the site |
-| `75-passkey.e2e` | `no_sentinel_key_leaves_the_core` | A passkey with a sentinel private key (`extension/test/fixtures/passkey-sentinel.json`, a test key of the fixture's relying party) goes into the vault through the core's import and signs. None of its forms is then in a file of the browser profile, in the browser's console, in a runtime message, in the address or body of a request the browser sent, or in what the page saw. The run also greps the stack's logs for it |
-| `79-passkey-window.e2e` | the window | The window names the site the core checked; "Use the browser", the one-time pass and "Never on this site" |
-| `98-passkey-conditional.e2e` | the popup section | A conditional get answered from Ferret's popup, and the card for a request without user activation |
+| `75-passkey.e2e` | `no_sentinel_key_leaves_the_core` | A passkey with a sentinel private key (`extension/test/fixtures/passkey-sentinel.json`, a test key of the fixture's relying party) goes into the vault through the core's import and signs. None of its forms is then in a file of the browser profile; in the browser's console output; in a message the background page receives or sends on a port (the passkey bridge's, the chooser window's and the popup's) or a runtime message it receives; in the address or body of a request the browser sent; or in what the page saw. Each scan has a control it must find. Not scanned: the page's own channel between the passkey script and the bridge (what the bridge sends on is), and the bodies of responses. The run also greps the stack's logs for it |
+| `79-passkey-window.e2e` | `the_chooser_window_opens_for_a_page_request_in_release_and_esr` | The window names the site the core checked; "Use the browser", the one-time pass and "Never on this site" |
+| `98-passkey-conditional.e2e` | `conditional_sign_in_from_the_popup_on_both_fixtures`, `conditional_to_modal_switch_with_and_without_the_pages_abort` | A conditional get answered from Ferret's popup at both relying parties, and a modal request that replaces a conditional one, with and without the page's own abort |
 | `97-passkey-get.e2e` | `get_on_both_fixtures_verifies_with_uv_and_without` | A sign-in at both relying parties with user verification (PIN, master password, a recent unlock) and without |
 | `96-passkey-matrix.e2e` | `client_libraries_accept_ferret_answers_through_the_broker` | A passkey made and used through the real broker and window, with `@simplewebauthn/browser`, a hand-written conversion and the code that reads `getPublicKey()`, at both relying parties (run on MV2 and MV3) |
 | `96-passkey-matrix.e2e` | `a_passkey_made_in_one_profile_signs_in_from_the_other` | The two sync cases of the matrix passed in each channel |
@@ -128,12 +134,15 @@ passkey left in the vault that the website never got.
 3. Repeat with "User Verification: Discouraged" (one click, nothing asked) and "Required" (a verification unless you unlocked in the
    last 5 minutes).
 
-### 3. Passkey autofill (about 10 minutes)
+### 3. A demo site with an e-mail code, and passkey autofill (about 15 minutes)
 
-1. On a demo site that offers passkey autofill (for example `https://www.passkeys.io` after a sign-up there), sign out and go to the
+1. On `https://www.passkeys.io` sign up with an address you can read, make a passkey there with Ferret (the window, "Save in Ferret"),
+   sign out and sign in with the passkey. No automated run can do this (the sign-up sends a code by e-mail).
+   *Expected:* both work, with Ferret's window.
+2. On a demo site that offers passkey autofill (for example `https://www.passkeys.io` after the sign-up), sign out and go to the
    sign-in page without clicking anything.
    *Expected:* no window opens by itself; the toolbar button gets a mark.
-2. Open the popup.
+3. Open the popup.
    *Expected:* a section "Passkeys for <site>" lists the passkey; one click (and a verification when it is more than 5 minutes since an
    unlock) signs you in.
 
@@ -235,7 +244,7 @@ Keep these lines with the release notes of the run:
 | XP, Release and ESR |  |  |  |
 | XPM fixtures, adversarial and hold-out, Release and ESR, MV2 and MV3 |  |  |  |
 | Demo smoke, Release and ESR |  |  |  |
-| XE, specs 75, 79 and 97, Release and ESR |  |  |  |
+| XE, specs 75, 79, 97 and 98, Release and ESR |  |  |  |
 | Web vault suites |  |  |  |
 | Check 5, Windows Hello and the phone |  |  |  |
 | Check 5, Windows Hello from the popup and an unlock while autofill waits |  |  |  |
