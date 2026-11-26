@@ -82,6 +82,12 @@ fn unpad_ct(r: &mut CtRunner, rng: &mut BenchRng) {
 fn base64url_decode(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "base64url_decode");
 }
+fn passkey_import_jwk(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "passkey_import_jwk");
+}
+fn passkey_import_pkcs8(r: &mut CtRunner, rng: &mut BenchRng) {
+    bench(r, rng, "passkey_import_pkcs8");
+}
 fn base32_decode(r: &mut CtRunner, rng: &mut BenchRng) {
     bench(r, rng, "base32_decode");
 }
@@ -178,6 +184,8 @@ ctbench_main!(
     crockford_decode,
     unpad_ct,
     base64url_decode,
+    passkey_import_jwk,
+    passkey_import_pkcs8,
     base32_decode,
     kek_pw_commit_path,
     info_unwrap_valid_vs_bad_commit,
