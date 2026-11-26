@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.12.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.11.0...v0.12.0) (2026-11-26)
+
+
+### Features
+
+* **admin:** side-menu shell from vole-kit 0.10 ([#310](https://github.com/Ferdinand99/Faithful-Ferret/issues/310)) ([2753ef5](https://github.com/Ferdinand99/Faithful-Ferret/commit/2753ef52404a820c5f740b15acb5100e0bb9619a))
+* **core:** import a passkey from another password manager ([#319](https://github.com/Ferdinand99/Faithful-Ferret/issues/319)) ([dc35a53](https://github.com/Ferdinand99/Faithful-Ferret/commit/dc35a533ff629a5ffc68d5295d226c5aa813f44e))
+* **core:** passkey candidates, site check, response fields and optional site names ([#309](https://github.com/Ferdinand99/Faithful-Ferret/issues/309)) ([baad603](https://github.com/Ferdinand99/Faithful-Ferret/commit/baad603447e48f0f5b1e71df6cf1008bd8f37b37))
+* **ext:** answer objects and static methods of the passkey page script ([#320](https://github.com/Ferdinand99/Faithful-Ferret/issues/320)) ([e607fc6](https://github.com/Ferdinand99/Faithful-Ferret/commit/e607fc688dfcc1910b9fb59dbf790452fef8a58b))
+* **ext:** chooser window for passkey requests ([#322](https://github.com/Ferdinand99/Faithful-Ferret/issues/322)) ([7049d9f](https://github.com/Ferdinand99/Faithful-Ferret/commit/7049d9f37bb04c307c21ad45f39074c6d9044922))
+* **ext:** conditional passkey requests in the popup, and a card for a request without activation ([#328](https://github.com/Ferdinand99/Faithful-Ferret/issues/328)) ([8973e72](https://github.com/Ferdinand99/Faithful-Ferret/commit/8973e7211e48c7f8c2bcccfe55c59aa01026a474))
+* **ext:** create a passkey in Ferret's chooser window ([#326](https://github.com/Ferdinand99/Faithful-Ferret/issues/326)) ([5292f57](https://github.com/Ferdinand99/Faithful-Ferret/commit/5292f57d0a9edaa6a3a81164b0801da308b6f021))
+* **ext:** grouped settings with clear switches ([#311](https://github.com/Ferdinand99/Faithful-Ferret/issues/311)) ([1186ae5](https://github.com/Ferdinand99/Faithful-Ferret/commit/1186ae54327a887052f057edebd7bb2ee7927a8a))
+* **ext:** hand passkey requests over to the browser, never-list settings and a shared https permission ([#325](https://github.com/Ferdinand99/Faithful-Ferret/issues/325)) ([384bdc2](https://github.com/Ferdinand99/Faithful-Ferret/commit/384bdc21bdb4864aaef54abddb1d81cd416bdc2e))
+* **ext:** page script, bridge and registration for the passkey provider ([#316](https://github.com/Ferdinand99/Faithful-Ferret/issues/316)) ([05425a4](https://github.com/Ferdinand99/Faithful-Ferret/commit/05425a44ab8a4d593a0ffb7cf47884d0a4a102eb))
+* **ext:** request broker for passkey requests ([#321](https://github.com/Ferdinand99/Faithful-Ferret/issues/321)) ([a0f7353](https://github.com/Ferdinand99/Faithful-Ferret/commit/a0f7353321f338a8469ec8cfecc6c71d6e8f34cf))
+* **ext:** sign in with a passkey of Ferret and verify the person ([#327](https://github.com/Ferdinand99/Faithful-Ferret/issues/327)) ([5fb686c](https://github.com/Ferdinand99/Faithful-Ferret/commit/5fb686c77805ba23ff0c848cae0bbc482dc05731))
+* spec and dark build flags for the passkey provider ([#313](https://github.com/Ferdinand99/Faithful-Ferret/issues/313)) ([c1ddb9a](https://github.com/Ferdinand99/Faithful-Ferret/commit/c1ddb9aea77014906bd28e53965970a103e39d09))
+* turn on the passkey provider in release builds ([#335](https://github.com/Ferdinand99/Faithful-Ferret/issues/335)) ([943196b](https://github.com/Ferdinand99/Faithful-Ferret/commit/943196b535de1df446d086dba3a58e4604fef37d))
+* **wasm:** passkey candidates, site check and the new response fields ([#314](https://github.com/Ferdinand99/Faithful-Ferret/issues/314)) ([a825b9d](https://github.com/Ferdinand99/Faithful-Ferret/commit/a825b9dce2d0be75c24908a438b2cabc0f0e706c))
+* **web:** import passkeys from Bitwarden and AliasVault ([#324](https://github.com/Ferdinand99/Faithful-Ferret/issues/324)) ([393ce2e](https://github.com/Ferdinand99/Faithful-Ferret/commit/393ce2e8d1df5f48b6445d3ecd4b4bd6aed265ec))
+* **web:** show passkeys in the item page, the list and the trash ([#318](https://github.com/Ferdinand99/Faithful-Ferret/issues/318)) ([971b35b](https://github.com/Ferdinand99/Faithful-Ferret/commit/971b35be2c27ceb10e87d639e33a91e4a057f6f3))
+
+
+### Bug Fixes
+
+* **ext:** end waiting passkey requests when the setting goes off, and the passkey architecture test ([#334](https://github.com/Ferdinand99/Faithful-Ferret/issues/334)) ([a600664](https://github.com/Ferdinand99/Faithful-Ferret/commit/a60066478ba8f7e1287da61d28ba28338d894073))
+* **ext:** offer the one-time code in a row's copy menu ([#306](https://github.com/Ferdinand99/Faithful-Ferret/issues/306)) ([7de1971](https://github.com/Ferdinand99/Faithful-Ferret/commit/7de19718c6f263adf9d0d7836375feaf03c57383))
+* **ext:** refuse passkey requests as Firefox does before any window ([#333](https://github.com/Ferdinand99/Faithful-Ferret/issues/333)) ([d1fcf06](https://github.com/Ferdinand99/Faithful-Ferret/commit/d1fcf0633faa60f0e87db6f18e190cfb82a84b9b))
+* **release:** give the extension the server's version number ([#315](https://github.com/Ferdinand99/Faithful-Ferret/issues/315)) ([8847bff](https://github.com/Ferdinand99/Faithful-Ferret/commit/8847bffd1a60dbcdc88ee0d016ec43124f29ea38))
+
 ## [0.11.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.10.0...v0.11.0) (2026-11-25)
 
 

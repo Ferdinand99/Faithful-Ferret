@@ -1047,7 +1047,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "ferret-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-server"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "askama",
  "axum",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "ferret-server-auth"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chacha20poly1305",
  "ferret-core",
