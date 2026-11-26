@@ -14,10 +14,20 @@
 //   holdout or demo) whose id contains FERRET_PASSKEY_GREP, with the provider FERRET_PASSKEY_PROVIDER (stub by default), in each
 //   channel. It writes <set>-<channel>-<manifest>.json and .md to FERRET_PASSKEY_OUT and asserts: there are cases, every one has
 //   a result or a reason, and no answer was unsafe.
-// - passkey_matrix_meets_the_gate: 100 % of the cases of the whole set passed, none not run, no unsafe answer (§ 11.3), answered by
-//   Ferret. The stub provider never meets it (it cannot run the cases that need Ferret and cannot see the route); it then asserts that
+// - client_libraries_accept_ferret_answers_through_the_broker (the Ferret provider): a passkey made and used through the real broker,
+//   Ferret's window and the core, with the three client codes against both relying parties, without the answer shim (review U4-4b
+//   M2; the run's manifest, so a run per manifest covers MV2 and MV3).
+// - passkey_matrix_meets_the_gate (named for the set: the_passkey_matrix_passes_in_release_and_esr_mv2_and_mv3 for the fixtures,
+//   the_holdout_set_passes for the hold-out set, the_adversarial_pages_pass, the_demo_sites_pass): 100 % of the cases of the whole
+//   set passed, none not run, no unsafe answer (§ 11.3), answered by Ferret. The stub provider never meets it (it cannot run the cases that need Ferret and cannot see the route); it then asserts that
 //   every case it could run passed, and says how many it could not run. With the provider ferret the gate is asserted as it is, and a
 //   run with --grep fails it.
+// - no_unsafe_answer_in_any_run: no case of any channel had an unsafe answer (asserted per run as well).
+// - a_passkey_made_in_one_profile_signs_in_from_the_other (the Ferret provider, the fixtures): the two sync cases passed in each
+//   channel (two Firefox profiles signed in to one account: made in A, used in B; deleted in A, gone in B).
+//
+// The demo set has no fixture container (the public sites, on a network that reaches them): its run has no self-test and no answer
+// test, only the matrix and its gate.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,7 +59,7 @@ async function ceremony(session, c) {
   return { done, reports: await fetchReports(run) };
 }
 
-test("virtual_authenticator_and_fixture_tls_work_in_both_channels", async () => {
+if (SET !== "demo") test("virtual_authenticator_and_fixture_tls_work_in_both_channels", async () => {
   selfTestPassed = false;
   for (const channel of channels()) {
     const session = await launchMatrixBrowser({ channel });
@@ -91,8 +101,13 @@ test("virtual_authenticator_and_fixture_tls_work_in_both_channels", async () => 
 // With the Ferret provider only (a stub run registers no such test, so it is never skipped there): a new passkey made by Ferret,
 // with the person's "Save in Ferret" in Ferret's own window, is accepted by both relying parties: webauthn-rs (strict) and
 // SimpleWebAuthn verify the registration on their servers. The page got the answer only after Ferret's server had the item.
-if (PROVIDER === "ferret") {
-  test("create_on_both_fixtures_verifies_on_the_server", async (t) => {
+
+// With the Ferret provider only (a stub run registers no such test, so it is never skipped there): a passkey made by Ferret, with the
+// person's "Save in Ferret" in Ferret's own window, and used with a click on it, through the real broker and the MAIN script's own
+// answer objects (no shim), with the three client codes: both relying parties verify the registration and the sign-in on their
+// servers (webauthn-rs, strict, and SimpleWebAuthn). The page got the new passkey only after Ferret's server had the item.
+if (PROVIDER === "ferret" && SET !== "demo") {
+  test("client_libraries_accept_ferret_answers_through_the_broker", async (t) => {
     if (!selfTestPassed) {
       t.skip("the self-test did not pass");
       return;
@@ -102,14 +117,16 @@ if (PROVIDER === "ferret") {
       try {
         await turnOnFerret(session, channel);
         for (const lib of /** @type {const} */ (["rs", "swa"])) {
-          for (const client of /** @type {const} */ (["manual", "swa"])) {
-            const c = { rp: { lib, client }, page: { chain: ["rp-a.test"] }, spec: { steps: ["create"], user: { name: `ferret-${lib}-${client}`, displayName: "Ferret" } } };
-            const run = `ferret-create-${Math.random().toString(16).slice(2, 10)}`;
+          for (const client of /** @type {const} */ (["swa", "manual", "pubkey"])) {
+            const c = { rp: { lib, client }, page: { chain: ["rp-a.test"] }, spec: { steps: ["create", "get"], user: { name: `ferret-${lib}-${client}`, displayName: "Ferret" }, get: { allow: "all" } } };
+            const run = `ferret-libs-${Math.random().toString(16).slice(2, 10)}`;
             const address = caseAddress(c, { spec: specOf(c, run), auto: false });
             const main = await session.windowHandle();
             const baseline = new Set(await session.windowHandles());
             await session.navigate(address.url);
             await session.waitFor(() => session.content(() => document.documentElement.dataset.ready === "1"), 20_000, `the page ${address.url}`);
+            // No shim: the answers are the passkey script's own objects.
+            assert.equal(await session.content(() => typeof (/** @type {any} */ (window).__answered)), "undefined");
             const [go] = await session.findAll("#go");
             assert.ok(go, `#go on ${address.url}`);
             await session.click(go);
@@ -120,13 +137,21 @@ if (PROVIDER === "ferret") {
             const done = await session.waitFor(async () => {
               presses.push(...(await pressInChooser(session, baseline, pressed, main)));
               return (await fetchReports(run)).find((r) => r.kind === "done");
-            }, 60_000, `the report of ${address.url}`);
+            }, 90_000, `the report of ${address.url}`);
             const label = `${channel}: ${lib} with ${client}`;
             const reports = await fetchReports(run);
-            assert.deepEqual(presses, [{ kind: "create", role: "passkey-create-new" }], `${label}: Ferret's window made the passkey`);
+            assert.deepEqual(presses, [{ kind: "create", role: "passkey-create-new" }, { kind: "get", role: "passkey-candidate" }], `${label}: Ferret's window made the passkey and signed in with it`);
             assert.equal(done.ok, true, `${label}: ${JSON.stringify(reports.filter((r) => r.kind === "step").map((r) => ({ step: r.step, stage: r.stage, error: r.error })))}`);
-            const step = reports.find((r) => r.kind === "step" && r.step === "create");
-            assert.equal(step?.ok, true, `${label}: the relying party verified the registration`);
+            assert.equal(done.steps.length, 2, `${label}: create and sign-in both ran`);
+            for (const s of done.steps) assert.equal(s.server?.ok, true, `${label}: the relying party verified the ${s.step}`);
+            if (client === "pubkey") {
+              const extras = done.steps[0].extras;
+              assert.ok(extras.getPublicKey, `${label}: getPublicKey()`);
+              assert.equal(extras.getPublicKeyAlgorithm, -7, `${label}: getPublicKeyAlgorithm()`);
+              assert.ok(extras.getAuthenticatorData, `${label}: getAuthenticatorData()`);
+              assert.ok(Array.isArray(extras.getTransports), `${label}: getTransports()`);
+              assert.equal(extras.toJSON, true, `${label}: toJSON()`);
+            }
             await session.waitFor(async () => (await session.windowHandles()).every((h) => baseline.has(h)), 20_000, `${label}: the window closed`);
           }
         }
@@ -137,7 +162,7 @@ if (PROVIDER === "ferret") {
   });
 }
 
-test("simplewebauthn_browser_and_manual_conversion_both_accept_the_answer", async (t) => {
+if (SET !== "demo") test("simplewebauthn_browser_and_manual_conversion_both_accept_the_answer", async (t) => {
   if (!selfTestPassed) {
     t.skip("the self-test did not pass, so the answer objects are not run");
     return;
@@ -186,7 +211,7 @@ test("simplewebauthn_browser_and_manual_conversion_both_accept_the_answer", asyn
 });
 
 test("passkey_matrix_runs_every_selected_case_and_writes_the_report", async (t) => {
-  if (!selfTestPassed) {
+  if (!selfTestPassed && SET !== "demo") {
     t.skip("the self-test did not pass, so the matrix is not run");
     return;
   }
@@ -209,7 +234,16 @@ test("passkey_matrix_runs_every_selected_case_and_writes_the_report", async (t) 
   }
 });
 
-test("passkey_matrix_meets_the_gate", async (t) => {
+
+/** The name of the gate test for the set (the names of the plan's task U4-13). */
+const GATE_NAME = /** @type {Record<string, string>} */ ({
+  fixtures: "the_passkey_matrix_passes_in_release_and_esr_mv2_and_mv3",
+  holdout: "the_holdout_set_passes",
+  adversarial: "the_adversarial_pages_pass",
+  demo: "the_demo_sites_pass",
+})[SET];
+
+test(`passkey_matrix_meets_the_gate: ${GATE_NAME}`, async (t) => {
   if (runs.size === 0) {
     t.skip("the matrix was not run");
     return;
@@ -229,3 +263,27 @@ test("passkey_matrix_meets_the_gate", async (t) => {
     }
   }
 });
+
+test("no_unsafe_answer_in_any_run", (t) => {
+  if (runs.size === 0) {
+    t.skip("the matrix was not run");
+    return;
+  }
+  const unsafe = [...runs].flatMap(([channel, run]) => run.matrix.rows.filter((r) => r.unsafe.length > 0).map((r) => ({ channel, id: r.id, unsafe: r.unsafe })));
+  assert.deepEqual(unsafe, [], "unsafe answers");
+});
+
+// The sync cases of the fixtures, with the Ferret provider: two Firefox profiles signed in to one account.
+if (PROVIDER === "ferret" && SET === "fixtures" && (GREP === "" || "sync-".includes(GREP) || GREP.startsWith("sync"))) {
+  test("a_passkey_made_in_one_profile_signs_in_from_the_other", (t) => {
+    if (runs.size === 0) {
+      t.skip("the matrix was not run");
+      return;
+    }
+    for (const [channel, run] of runs) {
+      const rows = run.matrix.rows.filter((r) => r.category === "sync");
+      assert.equal(rows.length, 2, `${channel}: the two sync cases ran`);
+      assert.deepEqual(rows.filter((r) => r.status !== "passed").map((r) => ({ id: r.id, status: r.status, problems: r.problems })), [], `${channel}: the sync cases`);
+    }
+  });
+}

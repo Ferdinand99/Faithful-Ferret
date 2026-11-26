@@ -268,7 +268,7 @@ export function specOf(c, run) {
  * @typedef {{
  *   status: "ran" | "not-run",
  *   reason?: string,
- *   observed?: { ceremony: string, error?: string, failStep?: string, route: string, windowShown: boolean, windowsOpened?: number, prf?: string, adv?: Record<string, any>, flags?: { uv?: boolean, be?: boolean, bs?: boolean }, reports?: any[] },
+ *   observed?: { ceremony: string, error?: string, failStep?: string, route: string, windowShown: boolean, windowsOpened?: number, prf?: string, adv?: Record<string, any>, flags?: { uv?: boolean, be?: boolean, bs?: boolean }, reports?: any[], problems?: string[] },
  *   unsafe?: string[],
  *   provider?: "stub" | "ferret",
  * }} CaseResult
@@ -331,6 +331,8 @@ export function judge(c, o, provider) {
     if ("noValue" in check && value && typeof value === "object" && Object.values(value).includes(check.noValue)) problems.push(`the page saw ${check.key} with a value ${JSON.stringify(check.noValue)}`);
     if (value === undefined) problems.push(`the page did not report ${check.key}`);
   }
+  // What the runner's driver steps found wrong themselves (a window that did not say what it must, or stayed open).
+  for (const p of o.problems ?? []) problems.push(p);
   let routeUnchecked = false;
   if (want.route !== "any") {
     if (provider === "stub") routeUnchecked = want.route === "ferret";

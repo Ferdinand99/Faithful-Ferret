@@ -143,8 +143,8 @@ for channel in $channel_list; do
     failed=1
   fi
   # The spec file itself counts as a passed test, so a run that registered no test would pass the check above: the self-test
-  # of the passkey matrix has to be there, and has to have passed.
-  if [ "$mode" = passkey-matrix ] && ! grep -q '^ *ok [0-9]* - virtual_authenticator_and_fixture_tls_work_in_both_channels' "$report"; then
+  # of the passkey matrix has to be there, and has to have passed (the demo set has no fixture container and no self-test).
+  if [ "$mode" = passkey-matrix ] && [ "${FERRET_PASSKEY_SET:-fixtures}" != demo ] && ! grep -q '^ *ok [0-9]* - virtual_authenticator_and_fixture_tls_work_in_both_channels' "$report"; then
     echo "run.sh: the self-test of the passkey matrix did not run or did not pass on $channel" >&2
     failed=1
   fi

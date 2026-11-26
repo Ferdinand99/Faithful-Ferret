@@ -356,6 +356,9 @@ own_stack=""
 stack="${FERRET_EXT_STACK_SCRIPT:-scripts/lanbox-ferret-test.sh}"
 # shellcheck disable=SC2317  # called by the trap
 cleanup() {
+  if [ -n "$demo_network" ]; then
+    docker "${docker_args[@]}" network rm "$demo_network" > /dev/null 2>&1 || echo "lanbox-ext.sh: the network $demo_network was not removed" >&2
+  fi
   if [ -n "$own_stack" ]; then
     FERRET_E2E_SUFFIX="$own_stack" bash "$stack" e2e-down >&2 || echo "lanbox-ext.sh: e2e-down of the stack $own_stack failed; run FERRET_E2E_SUFFIX=$own_stack $stack e2e-down" >&2
   fi
@@ -410,6 +413,8 @@ e2e_volume_args=()
 # ordinary bridge and trusts no test CA.
 passkey_network=none
 passkey_ca=""
+# The demo set with the Ferret provider: a network of this run's own that reaches the public demo sites, beside the stack's.
+demo_network=""
 
 # A /28 for this run's stack network, the first three octets: 172.30.<n> with n from 200 to 239,
 # starting at a random n, that overlaps no network the Docker host has. Prints nothing when every
@@ -598,17 +603,26 @@ if [ "$mode" = firefox ]; then
 fi
 
 # The unlock specs (extension/test/firefox/unlock.mjs) use PINs that start with this text. None of them may be in a log of the
-# stack's containers: a PIN is not sent to the server, and the server logs nothing a person typed. Returns 1 when one is.
+# stack's containers: a PIN is not sent to the server, and the server logs nothing a person typed. Neither may any form of the
+# passkey leak scan's sentinel private key (the "needles" of extension/test/fixtures/passkey-sentinel.json): a key never leaves
+# the core. Returns 1 when one is.
 SENTINEL_PIN_PREFIX="ferret-sentinel-pin-"
+sentinel_needles() {
+  echo "$SENTINEL_PIN_PREFIX"
+  sed -n '/"needles": *\[/,/\]/p' extension/test/fixtures/passkey-sentinel.json | grep -o '"[^"]*"' | tr -d '"' | grep -v '^needles$'
+}
 scan_stack_logs_for_sentinels() {
-  local id found=0 count=0
+  local id found=0 count=0 needles
+  needles="$(mktemp)"
+  sentinel_needles > "$needles"
   for id in $(docker "${docker_args[@]}" ps -a -q --filter "label=owner=ferret-${FERRET_E2E_SUFFIX:-e2e}"); do
     count=$((count + 1))
-    if docker "${docker_args[@]}" logs "$id" 2>&1 | grep -q -F "$SENTINEL_PIN_PREFIX"; then
-      echo "lanbox-ext.sh: the log of the container $id of the stack holds a sentinel PIN" >&2
+    if docker "${docker_args[@]}" logs "$id" 2>&1 | grep -q -F -f "$needles"; then
+      echo "lanbox-ext.sh: the log of the container $id of the stack holds a sentinel (a PIN or the passkey key)" >&2
       found=1
     fi
   done
+  rm -f "$needles"
   # A scan that read no container (a label that does not match, a stack that is already gone) proves nothing.
   if [ "$count" -eq 0 ]; then
     echo "lanbox-ext.sh: no container of the stack ferret-${FERRET_E2E_SUFFIX:-e2e} was found, so no log was scanned for a sentinel PIN" >&2
@@ -649,7 +663,14 @@ if [ "$mode" = passkey-matrix ]; then
   # The fixture container must be up (scripts/lanbox-passkey-rp.sh up); the runner joins its internal network and trusts its CA.
   out_dir="${FERRET_EXT_OUT_DIR:-test-results/out}"
   mkdir -p "$out_dir"
-  if [ "$passkey_set" = demo ]; then
+  if [ "$passkey_set" = demo ] && [ "$passkey_provider" = ferret ]; then
+    # The public demo sites and the end-to-end stack the extension signs in to: the default bridge cannot be joined together with
+    # another network, so the run gets a network of its own with a way out (and nothing else on it), beside the stack's.
+    e2e_setup
+    demo_network="ferret-$e2e_suffix-demo"
+    docker "${docker_args[@]}" network create --label owner=ferret-core --label "owner-run=$e2e_suffix" "$demo_network" > /dev/null
+    passkey_network="$demo_network"
+  elif [ "$passkey_set" = demo ]; then
     passkey_network=bridge
   else
     passkey_network="$(bash scripts/lanbox-passkey-rp.sh network)"

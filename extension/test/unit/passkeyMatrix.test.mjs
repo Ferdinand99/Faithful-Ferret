@@ -296,6 +296,12 @@ test("the set selection finds the cases of each set and tells a missing hold-out
   assert.equal(selectCases("holdout").cases.length, 0);
 });
 
+test("a driver step of every fixture case is one the runner has", () => {
+  const known = new Set(["start-create", "start-get", "start-waiting-create", "start-waiting-get", "choose-in-window", "choose-browser", "choose-never", "lock", "unlock-in-window", "unlock", "age-unlock", "go-offline", "age-offline", "create-online", "verify-pin", "verify-master-password", "verify-prf", "navigate", "pushState", "close-tab", "terminate-background", "wait-for-saving", "expect-notice", "expect-no-candidate", "profile", "sync", "delete-passkey"]);
+  const { cases } = loadCases([SET_DIRS.fixtures]);
+  for (const c of cases) for (const a of c.actions ?? []) assert.ok(known.has(a.do), `${c.id}: ${a.do}`);
+});
+
 test("the licences of the fixtures' libraries are recorded (UK128)", () => {
   const notice = readFileSync(join(rpDir, "NOTICE"), "utf8");
   assert.match(notice, /webauthn-rs/);
