@@ -990,7 +990,7 @@ test("a_release_with_passkeys_on_is_not_built_against_a_package_that_lacks_what_
     const options = { root: env.root, webRoot: env.webRoot, wasmTar: join(env.dir, "wasm.tar.gz") };
 
     // The old package: a release is refused, naming the missing functions, with the status that tells a caller why (the
-    // status that release-build.sh turns into a warning while the lock is behind 0.12.0, and into a failure after it).
+    // status of a build that a signing run or a CI job fails on).
     pin(old);
     for (const manifest of ["mv2", "mv3"]) {
       await assert.rejects(
