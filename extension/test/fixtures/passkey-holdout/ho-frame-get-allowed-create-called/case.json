@@ -1,0 +1,44 @@
+{
+  "id": "ho-frame-get-allowed-create-called",
+  "set": "holdout",
+  "category": "frames",
+  "title": "cross-origin iframe delegated only publickey-credentials-get calls create",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-b.test"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      "publickey-credentials-get"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "rpId": "rp-b.test"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "create",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "a credential created for the framed rp-b.test"
+    }
+  ],
+  "note": "L3 §5.1.3 step 2: a cross-origin create needs publickey-credentials-create (a separate feature from -get) -> NotAllowedError."
+}

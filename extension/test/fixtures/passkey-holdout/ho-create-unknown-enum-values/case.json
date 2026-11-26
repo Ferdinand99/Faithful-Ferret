@@ -1,0 +1,57 @@
+{
+  "id": "ho-create-unknown-enum-values",
+  "set": "holdout",
+  "category": "create-options",
+  "title": "unknown attestation, userVerification, attachment, hints and attestationFormats values are ignored",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "attestation": "x-bogus",
+      "attestationFormats": [
+        "x-bogus"
+      ],
+      "hints": [
+        "x-bogus"
+      ],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "x-bogus",
+        "authenticatorAttachment": "x-bogus"
+      }
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ],
+      "userVerification": "x-bogus",
+      "hints": [
+        "x-bogus"
+      ]
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "UV=1 in either response without a verification, although the unknown userVerification value means the default preferred"
+    }
+  ],
+  "note": "L3 §2.1.1 + §5.4: these members are DOMString and clients MUST ignore unknown values (no TypeError); unknown userVerification falls back to preferred. Route is any because a provider may hand unknown attachment values to the browser."
+}

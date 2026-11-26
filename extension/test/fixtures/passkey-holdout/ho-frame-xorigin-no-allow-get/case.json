@@ -1,0 +1,47 @@
+{
+  "id": "ho-frame-xorigin-no-allow-get",
+  "set": "holdout",
+  "category": "frames",
+  "title": "cross-origin iframe without allow calls get",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-b.test"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      ""
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "rp-b.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "any assertion delivered to rp-b.test framed by rp-a.test"
+    }
+  ],
+  "note": "L3 §5.1.4.1 + §5.9: publickey-credentials-get default allowlist is 'self'; a cross-origin frame without delegation -> NotAllowedError."
+}

@@ -1,0 +1,57 @@
+{
+  "id": "ho-exclude-hit-behind-unknown-type",
+  "set": "holdout",
+  "category": "create-exclude",
+  "title": "excludeCredentials: unknown-type entry, a foreign id, then the real hit",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "create"
+    ],
+    "create": [
+      {},
+      {
+        "excludeCredentials": [
+          {
+            "type": "x-unknown",
+            "id": "$cred"
+          },
+          {
+            "type": "public-key",
+            "id": {
+              "$foreign": 32
+            }
+          },
+          {
+            "type": "public-key",
+            "id": "$cred"
+          }
+        ]
+      }
+    ]
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "InvalidStateError",
+    "failStep": "create",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a second passkey stored although the second create rejected"
+    }
+  ],
+  "note": "L3 §5.8.3: descriptors with an unknown type are ignored (not a TypeError) and processing continues; the third entry is a hit -> InvalidStateError (§6.3.2 step 3)."
+}

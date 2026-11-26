@@ -1,0 +1,56 @@
+{
+  "id": "ho-prf-evalbycred-empty-allow",
+  "set": "holdout",
+  "category": "get-prf",
+  "title": "prf.evalByCredential with empty allowCredentials is NotSupportedError",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "extensions": {
+        "prf": {}
+      }
+    },
+    "get": {
+      "allowCredentials": [],
+      "extensions": {
+        "prf": {
+          "evalByCredential": {
+            "$cred": {
+              "first": {
+                "$bytes": 32
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotSupportedError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "up-without-click",
+      "definition": "an assertion for a get that must fail in client extension processing"
+    }
+  ],
+  "note": "L3 §10.1.4 (prf) authentication step 1: evalByCredential non-empty and allowCredentials empty -> NotSupportedError before the authenticator. maxWindows 1 counts the create window only."
+}

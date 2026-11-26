@@ -1,0 +1,49 @@
+{
+  "id": "ho-get-default-rpid-on-child",
+  "set": "holdout",
+  "category": "get-modal",
+  "title": "login.rp-a.test makes a passkey for rp-a.test, then calls get without rpId",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "login.rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "rp": {
+        "id": "rp-a.test"
+      }
+    },
+    "get": {
+      "rpId": {
+        "$omit": true
+      },
+      "allowCredentials": [],
+      "timeout": 5000
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "an assertion for the rp-a.test passkey (or any signature) on a request whose RP ID defaulted to login.rp-a.test"
+    }
+  ],
+  "waitMs": 40000,
+  "note": "L3 §5.1.4.1: rpId defaults to the caller's effective domain (login.rp-a.test), so the rp-a.test passkey is out of scope; result is NotAllowedError (same as cancel/timeout). UNCERTAIN: relies on the runner not cancelling the \"no passkey\" window with another error."
+}

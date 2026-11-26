@@ -1,0 +1,49 @@
+{
+  "id": "ho-get-uv-required-after-discouraged-create",
+  "set": "holdout",
+  "category": "get-modal",
+  "title": "passkey made with UV discouraged, then get with userVerification required",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "discouraged"
+      }
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ],
+      "userVerification": "required"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "flags": {
+      "uv": true
+    }
+  },
+  "unsafe": [
+    {
+      "id": "uv-without-verification",
+      "definition": "UV=1 on the get without a verification or recent unlock for this request (the create used discouraged, so no verification may be carried over from it)"
+    }
+  ],
+  "note": "L3 §5.8.6/§6.3.3: required means the authenticator must verify and set UV=1; how the credential was created does not matter. webauthn-rs rejects UV=0 here."
+}

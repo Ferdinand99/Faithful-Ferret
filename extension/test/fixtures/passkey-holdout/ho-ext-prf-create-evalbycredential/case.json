@@ -1,0 +1,49 @@
+{
+  "id": "ho-ext-prf-create-evalbycredential",
+  "set": "holdout",
+  "category": "create-extensions",
+  "title": "prf.evalByCredential at registration is rejected",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "create": {
+      "extensions": {
+        "prf": {
+          "evalByCredential": {
+            "AAAAAAAAAAAAAAAAAAAAAA": {
+              "first": {
+                "$bytes": 32
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotSupportedError",
+    "failStep": "create",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored although the create must fail in client extension processing"
+    }
+  ],
+  "note": "L3 §10.1.4 (prf) registration client processing step 1: if evalByCredential is present return NotSupportedError, before any authenticator is invoked."
+}

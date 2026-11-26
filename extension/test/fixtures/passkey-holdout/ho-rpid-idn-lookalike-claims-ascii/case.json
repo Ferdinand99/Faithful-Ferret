@@ -1,0 +1,40 @@
+{
+  "id": "ho-rpid-idn-lookalike-claims-ascii",
+  "set": "holdout",
+  "category": "origin-rpid",
+  "title": "look-alike xn--rp--8cd.test (rp-а.test, Cyrillic a) asks for RP ID rp-a.test",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "xn--rp--8cd.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "rp-a.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "SecurityError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "any rp-a.test assertion given to the look-alike host"
+    }
+  ],
+  "note": "L3 §5.1.4.1 step 7: rp-a.test is neither equal to nor a registrable suffix of xn--rp--8cd.test -> SecurityError; comparison is on the A-label, not on how it renders."
+}

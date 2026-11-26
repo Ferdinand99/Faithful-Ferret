@@ -1,0 +1,40 @@
+{
+  "id": "ho-cond-abort-and-modal-same-tick",
+  "set": "holdout",
+  "category": "get-conditional",
+  "title": "abort the conditional request and start the modal one in the same task",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "conditional",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    },
+    "switch": "abort-conditional-then-get-same-tick"
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "too-many-windows",
+      "definition": "a second Ferret window (one for the aborted conditional request, one for the modal)"
+    }
+  ],
+  "note": "L3 §5.1.4.1 abort steps apply only to the aborted call's signal; the conditional rejects with AbortError while the modal get (own signal) must proceed and succeed."
+}

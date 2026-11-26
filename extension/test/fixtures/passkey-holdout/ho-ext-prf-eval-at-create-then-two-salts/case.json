@@ -1,0 +1,63 @@
+{
+  "id": "ho-ext-prf-eval-at-create-then-two-salts",
+  "set": "holdout",
+  "category": "create-extensions",
+  "title": "prf with eval at create, then get with first and second salts",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": {
+              "$bytes": 32
+            }
+          }
+        }
+      }
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ],
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": {
+              "$bytes": 32
+            },
+            "second": {
+              "$bytes": 32
+            }
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "prf": "results"
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "PRF outputs or the hmac-secret seed exposed anywhere except the get result (e.g. in the page-visible create result when the provider does not support eval at create)"
+    }
+  ],
+  "note": "L3 §10.1.4: eval is allowed at registration (results optional, enabled reported); at authentication results.first and results.second are returned for two salts."
+}

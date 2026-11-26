@@ -1,0 +1,45 @@
+{
+  "id": "ho-users-missing-displayname",
+  "set": "holdout",
+  "category": "create-users",
+  "title": "user without displayName is a TypeError",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create"
+    ],
+    "user": {
+      "id": {
+        "$bytes": 16
+      },
+      "name": "alice",
+      "displayName": {
+        "$omit": true
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "TypeError",
+    "failStep": "create",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a passkey stored for an options object WebIDL must reject"
+    }
+  ],
+  "note": "L3 §5.4.3: displayName is a required member of PublicKeyCredentialUserEntity, so WebIDL dictionary conversion throws TypeError before any UI."
+}

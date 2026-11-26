@@ -1,0 +1,50 @@
+{
+  "id": "ho-frame-nested-inner-missing-allow",
+  "set": "holdout",
+  "category": "frames",
+  "title": "rp-a -> rp-b (allow get) -> rp-a (no allow) calls get",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test",
+      "rp-b.test",
+      "rp-a.test"
+    ],
+    "kinds": [
+      "iframe",
+      "iframe"
+    ],
+    "allow": [
+      "publickey-credentials-get",
+      ""
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "rp-a.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "NotAllowedError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "any assertion to the inner rp-a.test frame that has rp-b.test as ancestor"
+    }
+  ],
+  "note": "Permissions Policy: the inner frame's container (in rp-b) does not delegate, and the default 'self' is checked against the parent rp-b -> disabled; L3 §5.1.4.1 -> NotAllowedError despite the top being rp-a."
+}

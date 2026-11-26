@@ -1,0 +1,51 @@
+{
+  "id": "ho-algs-rs256-before-es256",
+  "set": "holdout",
+  "category": "create-algs",
+  "title": "pubKeyCredParams [-257, -7]: RS256 preferred, ES256 also listed",
+  "rp": {
+    "lib": "rs",
+    "client": "pubkey"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        }
+      ]
+    },
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "any"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a credential whose getPublicKeyAlgorithm() does not match the key in the attestation (RP verification would be fooled into a wrong alg)"
+    }
+  ],
+  "note": "L3 §5.4 pubKeyCredParams is ordered by preference and CTAP2 §6.1.2 step 3 picks the first supported alg; an ES256-only provider must accept since -7 is listed, and getPublicKey()/getPublicKeyAlgorithm() must match (L3 §5.2.1.1)."
+}
