@@ -5,13 +5,13 @@
 // request, or for the conditional one when the person verifies with Windows Hello). The popup's choice and its verification step
 // are `passkey_choose` and `passkey_verify` with a `tab_id` (passkeyWindow.handler.mjs).
 //
-// Only from the popup itself: a top-level page of this extension at the popup's address. The popup names a tab, never a request:
-// the broker finds the tab's request. The list goes back to the popup only; nothing of it reaches a page.
+// Only from the popup itself: a top-level page of this extension at the popup's address, and only for the popup's own tab (the
+// broker checks it). The popup names a tab, never a request: the broker finds the tab's request. The list goes back to the popup only; nothing of it reaches a page.
 //
 // Off in a build without the feature: refused as `not_available` before anything else, as if this handler were not there.
 
 import { FEATURES } from "../../shared/features.mjs";
-import { isPopupPage } from "../../shared/origin.mjs";
+import { isPopupPage, popupTabOf } from "../../shared/origin.mjs";
 
 const notAvailable = () => Object.assign(new Error("not_available"), { code: "not_available" });
 
@@ -19,8 +19,11 @@ const notAvailable = () => Object.assign(new Error("not_available"), { code: "no
 async function handle(body, ctx) {
   if (!FEATURES.passkeys) throw notAvailable();
   if (ctx.channel !== "ui" || ctx.runtime === undefined || typeof ctx.call !== "function" || !isPopupPage(ctx.sender, ctx.runtime)) throw notAvailable();
-  if (ctx.type === "passkey_tab_open") return ctx.call("passkey_tab_open", { tab_id: body.tab_id, which: body.which });
-  return ctx.call(ctx.type, { tab_id: body.tab_id });
+  // The popup's own tab, from its address (a popped-out popup); the broker checks the named tab against it, or against the active
+  // tab when the address names none (the toolbar panel).
+  const own = { tab_id: body.tab_id, popup_tab: popupTabOf(ctx) };
+  if (ctx.type === "passkey_tab_open") return ctx.call("passkey_tab_open", { ...own, which: body.which });
+  return ctx.call(ctx.type, own);
 }
 
 export default {

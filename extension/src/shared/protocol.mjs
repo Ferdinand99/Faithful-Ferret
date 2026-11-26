@@ -494,8 +494,8 @@ export const UI_TYPES = defineTypes({
   // The person's choice in the window: for a create request a new item (`name`, `folder_id` from passkey_create_options) or an
   // item to add to (`item_id`); for a get request a passkey of the vault (`item_id`). Nothing about presence or verification: the
   // click in this window is the background's evidence of presence, and verification is its own mark for the request.
-  // From Ferret's popup (a get only), for the tab's conditional request: `tab_id` in place of `request_id` (the handler takes exactly
-  // one of the two, and `tab_id` only from the popup page).
+  // From Ferret's popup (a get only), for the tab's conditional request: `tab_id` with the `request_id` and `origin` the popup listed
+  // (from the popup page only; the broker answers `gone` when the tab's request is another one now).
   passkey_choose: {
     request: object(
       {
@@ -506,8 +506,9 @@ export const UI_TYPES = defineTypes({
         name: string({ min: 1, max: 800 }),
         folder_id: pkRequestRef,
         item_id: pkRequestRef,
+        origin: string({ min: 1, max: 300 }),
       },
-      { optional: ["request_id", "tab_id", "mode", "name", "folder_id", "item_id"] },
+      { optional: ["request_id", "tab_id", "mode", "name", "folder_id", "item_id", "origin"] },
     ),
     reply: okReply,
   },
@@ -530,7 +531,8 @@ export const UI_TYPES = defineTypes({
     ),
   },
   // The verification step (request only, never a reply): of the chooser window of the request, or of Ferret's popup for the tab's
-  // conditional request (`tab_id` in place of `request_id`; the PIN or the master password only: a passkey needs the window).
+  // conditional request (`tab_id` with the `request_id` and `origin` it listed; the PIN or the master password only: a passkey needs
+  // the window).
   passkey_verify: {
     request: object(
       {
@@ -542,8 +544,9 @@ export const UI_TYPES = defineTypes({
         sk: string({ min: 1, max: 128 }),
         credential_id: string({ min: 1, max: 1024, pattern: B64U }),
         prf_output: string({ min: 43, max: 43, pattern: B64U }),
+        origin: string({ min: 1, max: 300 }),
       },
-      { optional: ["request_id", "tab_id", "pin", "mp", "sk", "credential_id", "prf_output"] },
+      { optional: ["request_id", "tab_id", "pin", "mp", "sk", "credential_id", "prf_output", "origin"] },
     ),
     reply: object(
       { ok: boolean(), reason, left: integer({ min: 0, max: 5 }), wait_ms: integer({ min: 0, max: 3_600_000 }) },
@@ -565,10 +568,11 @@ export const UI_TYPES = defineTypes({
         reason,
         waiting: nullable(object({ origin: string({ min: 1, max: 300 }), kind: string({ max: 8, oneOf: ["create", "get"] }) })),
         conditional: boolean(),
+        request: nullable(object({ request_id: pkRequestRef, origin: string({ min: 1, max: 300 }) })),
         again: nullable(string({ max: 8, oneOf: ["create", "get"] })),
         foreign: boolean(),
       },
-      { optional: ["reason", "waiting", "conditional", "again", "foreign"] },
+      { optional: ["reason", "waiting", "conditional", "request", "again", "foreign"] },
     ),
   },
   passkey_tab_list: {
@@ -578,6 +582,8 @@ export const UI_TYPES = defineTypes({
         ok: boolean(),
         reason,
         mode: string({ max: 8, oneOf: ["none", "pick", "info"] }),
+        request_id: pkRequestRef,
+        origin: string({ min: 1, max: 300 }),
         host: string({ max: 300 }),
         candidates: array(
           object({ item_id: pkRequestRef, name: string({ max: 1024 }), user_name: string({ max: 1024 }), created: nullable(integer({ min: 0, max: 8_640_000_000_000_000 })) }),
@@ -587,7 +593,7 @@ export const UI_TYPES = defineTypes({
         methods: pkWays,
         online: boolean(),
       },
-      { optional: ["reason", "mode", "host", "candidates", "recent", "methods", "online"] },
+      { optional: ["reason", "mode", "request_id", "origin", "host", "candidates", "recent", "methods", "online"] },
     ),
   },
   passkey_tab_open: {

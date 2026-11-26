@@ -27,7 +27,10 @@
 //
 // Ferret's popup has the same three for a page's conditional request (`passkey_tab_list`, `passkey_tab_choose`,
 // `passkey_tab_verify`): the popup names its tab, never a request, and the broker gives the tab's conditional request with the
-// popup's session (`tabRef`). The click in the popup is the evidence of presence (its handler lets only the popup page send it);
+// popup's session (`tabRef`). A choice and a verification name the request the popup listed (its id and origin): a new request in
+// the tab (another site, after a navigation between two looks of the popup) is not it, and the answer is `gone`. The tab must be the
+// popup's own (`popupTabOk`). Listing never ends the page's request, so a page cannot learn that the popup was opened. The click in
+// the popup is the evidence of presence (its handler lets only the popup page send it);
 // verification there is the recent unlock, the PIN or the master password, never a passkey (only Ferret's window can make that
 // call: the popup opens it). The list goes to the popup only. Without a conditional request the popup gets the passkeys of the
 // tab's site for information, with no way to sign (`tabSite`).
@@ -135,7 +138,8 @@ export function getAnswerOf(signed, askedPrf) {
  *   callerOf(id: string, session: string): Readonly<Record<string, unknown>> | null,
  *   answer(id: string, session: string, response: Record<string, unknown>): Promise<boolean>,
  *   fail(id: string, session: string, name: string): boolean,
- *   tabRef?(tabId: unknown): { request_id: string, session: string } | null,
+ *   tabRef?(tabId: unknown, expect?: { request_id: unknown, origin: unknown } | null): { request_id: string, session: string, origin: string } | null,
+ *   popupTabOk?(args: any): Promise<boolean>,
  *   tabSite?(tabId: unknown): Promise<{ caller: Readonly<Record<string, unknown>> } | null>,
  * }} Broker the request broker (passkeyRequests.mjs): every call names the window session that owns the request
  */
@@ -376,33 +380,49 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     }
   }
 
+  /** Whether the tab a popup op names is the popup's own (the broker decides; without the check, none is). @param {any} args */
+  const tabOk = async (args) => (typeof requests.popupTabOk === "function" ? (await requests.popupTabOk(args)) === true : false);
+
+  /**
+   * The tab's conditional request for a choice or a verification of the popup: only the one it listed (the same id and origin), and
+   * only for the popup's own tab. Null otherwise.
+   * @param {any} args
+   */
+  const listedRef = async (args) => {
+    if (!(await tabOk(args))) return null;
+    if (typeof args?.request_id !== "string" || typeof args?.origin !== "string") return null;
+    return requests.tabRef?.(args.tab_id, { request_id: args.request_id, origin: args.origin }) ?? null;
+  };
+
   /** @type {import("./coreHost.mjs").CoreOp} */
   const tabList = {
     vault: true,
     worker: "vault",
     async run(client, args) {
       const tabId = args?.tab_id;
+      if (!(await tabOk(args))) return { ok: true, mode: "none" };
       const source = items();
       if (source === null) return { ok: false, reason: "busy" };
       const ref = requests.tabRef?.(tabId) ?? null;
       if (ref !== null) {
         const got = getOf(ref);
-        if (got === null || got.kind !== "get") return { ok: true, mode: "none" };
-        if (got.request === null) {
-          requests.fail(ref.request_id, ref.session, "TypeError");
-          return { ok: true, mode: "none" };
-        }
+        // A request the core cannot take (options it cannot read, an RP ID the origin may not use) is not ended here: the list is
+        // read when the person opens the popup, and a page must not learn that from its promise. The browser's own call answers it.
+        if (got === null || got.kind !== "get" || got.request === null) return { ok: true, mode: "none" };
         /** @type {Array<{ item_id: string, name: string, user_name: string, created: number | null }>} */
         let list = [];
         try {
           list = await listFor(client, source, got.caller, got.request);
         } catch (error) {
-          const refused = refusal(error, ref);
-          return refused.reason === "internal_error" ? refused : { ok: true, mode: "none" };
+          const code = /** @type {{ code?: unknown }} */ (error)?.code;
+          if (typeof code === "string" && VAULT_GONE.includes(code)) throw error;
+          return { ok: true, mode: "none" };
         }
         const host = await siteName(client, got.caller, got.options?.rp_id);
         const found = await ways();
-        return { ok: true, mode: "pick", host, candidates: list, recent: found.recent, methods: found.methods, online: found.online };
+        return {
+          ok: true, mode: "pick", request_id: ref.request_id, origin: ref.origin, host, candidates: list, recent: found.recent, methods: found.methods, online: found.online,
+        };
       }
       // No conditional request: the passkeys of the tab's site, for information (nothing can be signed without a request).
       const site = (await requests.tabSite?.(tabId)) ?? null;
@@ -426,7 +446,7 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     vault: true,
     worker: "vault",
     async run(client, args) {
-      const ref = requests.tabRef?.(args?.tab_id) ?? null;
+      const ref = await listedRef(args);
       if (ref === null) return { ok: false, reason: "gone" };
       const got = getOf(ref);
       if (got === null || got.kind !== "get") return { ok: false, reason: "gone" };
@@ -439,7 +459,7 @@ export function createPasskeyGet({ requests, verify, items, create = null }) {
     vault: true,
     worker: "vault",
     async run(_client, args) {
-      const ref = requests.tabRef?.(args?.tab_id) ?? null;
+      const ref = await listedRef(args);
       if (ref === null) return { ok: false, reason: "gone" };
       const method = typeof args?.method === "string" ? args.method : "";
       // A passkey of the vault (Windows Hello) is never checked for the popup: the popup cannot make that call, the window does.

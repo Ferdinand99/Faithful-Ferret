@@ -13,6 +13,8 @@ import { PASSKEY_PAGES_GEN_FILE, passkeyPagesModule } from "../../scripts/build.
 
 const ID = (/** @type {number} */ n) => n.toString(16).padStart(32, "0");
 const RLO = String.fromCharCode(0x202e);
+const REQ_A = Object.freeze({ request_id: "a1".repeat(16), origin: "https://example.com" });
+const REQ_B = Object.freeze({ request_id: "b2".repeat(16), origin: "https://other.example" });
 const CANDIDATES = [
   { item_id: ID(1), name: "Example", user_name: "anna", created: 1_800_000_000_000 },
   { item_id: ID(3), name: `Example ${RLO}(work)`, user_name: "anna@example.com", created: 1_700_000_000_000 },
@@ -61,7 +63,7 @@ function clockWorld() {
  */
 function background(over = {}) {
   const state = {
-    tab: { ok: true, waiting: null, conditional: false, again: null, foreign: false },
+    tab: { ok: true, waiting: null, conditional: false, request: null, again: null, foreign: false },
     list: { ok: true, mode: "none" },
     choose: /** @type {any[]} */ ([{ ok: true }]),
     verify: { ok: true },
@@ -96,7 +98,7 @@ const text = (node) => (node === null ? "" : node.textContent);
 test("the_popup_part_shows_the_card_the_line_and_the_list_and_counts_only_guarded_clicks", async () => {
   const { part, texts } = await setup();
   const clock = clockWorld();
-  const bg = background({ tab: { ok: true, waiting: { origin: "https://xn--bcher-kva.example", kind: "get" }, conditional: false, again: null, foreign: true } });
+  const bg = background({ tab: { ok: true, waiting: { origin: "https://xn--bcher-kva.example", kind: "get" }, conditional: false, request: null, again: null, foreign: true } });
   const answered = { n: 0 };
   const view = part.createPopupPasskeys({ texts, request: bg.request, tabId: 7, unlocked: false, onAnswered: () => void (answered.n += 1), ...clock });
   await view.start();
@@ -117,11 +119,11 @@ test("the_popup_part_shows_the_card_the_line_and_the_list_and_counts_only_guarde
   await tap(open);
   assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_tab_open").map((c) => c.body), [{ tab_id: 7, which: "waiting" }]);
   // The window took it: the card goes at the next look, and the part hides when nothing is left.
-  bg.state.tab = { ok: true, waiting: null, conditional: false, again: "get", foreign: false };
+  bg.state.tab = { ok: true, waiting: null, conditional: false, request: null, again: "get", foreign: false };
   await clock.tick(1000);
   assert.equal(one(view.root, "passkey-popup-card"), null);
   assert.match(text(one(view.root, "passkey-popup-again")), /click the passkey button on the page again/i);
-  bg.state.tab = { ok: true, waiting: null, conditional: false, again: null, foreign: false };
+  bg.state.tab = { ok: true, waiting: null, conditional: false, request: null, again: null, foreign: false };
   await clock.tick(1000);
   assert.equal(view.root.hidden, true);
   view.stop();
@@ -133,8 +135,8 @@ test("the_popup_part_picks_a_passkey_of_a_conditional_request_and_verifies_in_th
   const { part, texts } = await setup();
   const clock = clockWorld();
   const bg = background({
-    tab: { ok: true, waiting: null, conditional: true, again: null, foreign: false },
-    list: { ok: true, mode: "pick", host: "example.com", candidates: CANDIDATES, recent: false, methods: ["prf", "pin", "password"], online: true },
+    tab: { ok: true, waiting: null, conditional: true, request: REQ_A, again: null, foreign: false },
+    list: { ok: true, mode: "pick", request_id: REQ_A.request_id, origin: REQ_A.origin, host: "example.com", candidates: CANDIDATES, recent: false, methods: ["prf", "pin", "password"], online: true },
     choose: [{ ok: false, reason: "verification_needed" }, { ok: true }],
   });
   let answered = 0;
@@ -148,7 +150,7 @@ test("the_popup_part_picks_a_passkey_of_a_conditional_request_and_verifies_in_th
   assert.equal(one(view.root, "passkey-popup-not-asked"), null);
   await clock.tick(400);
   await tap(rows[0]);
-  assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_choose").map((c) => c.body), [{ tab_id: 7, kind: "get", item_id: ID(3) }]);
+  assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_choose").map((c) => c.body), [{ tab_id: 7, kind: "get", item_id: ID(3), ...REQ_A }]);
   // Verification: the PIN and the master password here; Windows Hello opens Ferret's window (the popup cannot ask for it).
   // One way, to keep the popup short: the PIN when there is one (else the master password).
   assert.ok(one(view.root, "passkey-verify-pin-form"));
@@ -166,7 +168,7 @@ test("the_popup_part_picks_a_passkey_of_a_conditional_request_and_verifies_in_th
   for (const [type, fn] of form.listeners) if (type === "submit") fn({ type, target: form, preventDefault() {} });
   assert.equal(pin.value, "", "emptied at once");
   await settle();
-  assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_verify").map((c) => c.body), [{ tab_id: 7, method: "pin", pin: "123456" }]);
+  assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_verify").map((c) => c.body), [{ tab_id: 7, method: "pin", pin: "123456", ...REQ_A }]);
   assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_choose").map((c) => c.body.item_id), [ID(3), ID(3)]);
   assert.equal(answered, 1);
   view.stop();
@@ -185,12 +187,12 @@ test("the_popup_part_follows_the_tab_and_lists_for_information_without_a_request
   assert.equal(byRole(view.root, "passkey-popup-info").length, 2);
   assert.match(text(one(view.root, "passkey-popup-not-asked")), /has not asked/);
   // The page starts its conditional request: the list is read again and gets its buttons.
-  bg.state.tab = { ok: true, waiting: null, conditional: true, again: null, foreign: false };
-  bg.state.list = { ok: true, mode: "pick", host: "example.com", candidates: CANDIDATES, recent: true, methods: ["recent"], online: true };
+  bg.state.tab = { ok: true, waiting: null, conditional: true, request: REQ_A, again: null, foreign: false };
+  bg.state.list = { ok: true, mode: "pick", request_id: REQ_A.request_id, origin: REQ_A.origin, host: "example.com", candidates: CANDIDATES, recent: true, methods: ["recent"], online: true };
   await clock.tick(1000);
   assert.equal(byRole(view.root, "passkey-popup-pick").length, 2);
   // The page aborts (or navigates): the buttons go at the next look.
-  bg.state.tab = { ok: true, waiting: null, conditional: false, again: null, foreign: false };
+  bg.state.tab = { ok: true, waiting: null, conditional: false, request: null, again: null, foreign: false };
   bg.state.list = { ok: true, mode: "none" };
   await clock.tick(1000);
   assert.deepEqual(byRole(view.root, "passkey-popup-pick"), []);
@@ -212,4 +214,34 @@ test("the_popup_reaches_its_passkey_part_only_through_the_generated_module", () 
   assert.match(off, /^export const createPopupPasskeys = null;$/m);
   assert.doesNotMatch(off, /import|from/);
   assert.throws(() => passkeyPagesModule([], new Map([[PASSKEY_PAGES_GEN_FILE, Buffer.from("")]])), /generated by the build/);
+});
+
+test("the_popup_part_lists_again_when_the_tabs_request_changes_and_names_the_one_it_listed", async () => {
+  const { part, texts } = await setup();
+  const clock = clockWorld();
+  const bg = background({
+    tab: { ok: true, waiting: null, conditional: true, request: REQ_A, again: null, foreign: false },
+    list: { ok: true, mode: "pick", ...REQ_A, host: "example.com", candidates: CANDIDATES, recent: false, methods: ["pin"], online: true },
+    choose: [{ ok: false, reason: "verification_needed" }],
+  });
+  const view = part.createPopupPasskeys({ texts, request: bg.request, tabId: 7, unlocked: true, ...clock });
+  await view.start();
+  await clock.tick(400);
+  const rows = byRole(view.root, "passkey-popup-pick");
+  await tap(rows[0]);
+  assert.ok(one(view.root, "passkey-verify-pin-form"), "the step for example.com");
+  // Between two looks the tab's request is another site's, with the same "conditional" flag: the list is read again, and the step
+  // that was typed into for example.com goes.
+  bg.state.tab = { ok: true, waiting: null, conditional: true, request: REQ_B, again: null, foreign: false };
+  bg.state.list = { ok: true, mode: "pick", ...REQ_B, host: "other.example", candidates: CANDIDATES.slice(0, 1), recent: false, methods: ["pin"], online: true };
+  const lists = bg.calls.filter((c) => c.type === "passkey_tab_list").length;
+  await clock.tick(1000);
+  assert.equal(bg.calls.filter((c) => c.type === "passkey_tab_list").length, lists + 1);
+  assert.equal(one(view.root, "passkey-verify-pin-form"), null);
+  assert.equal(text(one(view.root, "passkey-popup-host")), "other.example");
+  // A choice names the request of the list it was made in.
+  await clock.tick(400);
+  await tap(byRole(view.root, "passkey-popup-pick")[0]);
+  assert.deepEqual(bg.calls.filter((c) => c.type === "passkey_choose").at(-1)?.body, { tab_id: 7, kind: "get", item_id: ID(1), ...REQ_B });
+  view.stop();
 });

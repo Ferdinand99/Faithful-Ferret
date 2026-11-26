@@ -84,6 +84,8 @@ export const PASSKEY_QUIET = Object.freeze({ cancels: 3, windowMs: 60_000, quiet
  * request, and any popup of this extension may act for the tab it shows. A window opened for the request takes it over.
  */
 export const POPUP_SESSION = "popup";
+/** How long a mark of verification counts (the same five minutes as a recent unlock), on the monotonic clock and the wall clock. */
+export const MARK_MS = 5 * 60_000;
 /** The delay of every NotAllowedError (cancel, no match, deadline): `min` plus a random part below `spread`. */
 export const PASSKEY_ERROR_DELAY_MS = Object.freeze({ min: 120, spread: 200 });
 
@@ -248,7 +250,7 @@ export function chooserWindows({ windows, getURL, page }) {
 
 /**
  * @param {{
- *   tabs: { sendMessage(tabId: number, message: unknown, options: { frameId: number, documentId: string }): Promise<unknown>, update?(tabId: number, props: { active: true }): Promise<unknown> },
+ *   tabs: { sendMessage(tabId: number, message: unknown, options: { frameId: number, documentId: string }): Promise<unknown>, update?(tabId: number, props: { active: true }): Promise<unknown>, query?(q: { active: true, lastFocusedWindow: true }): Promise<Array<{ id?: number }>> },
  *   frames?: Frames | null,
  *   windows?: Windows | null,
  *   badge?: { passkey(tabId: number, on: boolean): void } | null,
@@ -260,6 +262,7 @@ export function chooserWindows({ windows, getURL, page }) {
  *   listen?: { start(): void, stop(): void } | null,
  *   release?: boolean,
  *   now?: () => number,
+ *   monotonic?: () => number,
  *   random?: (bytes: Uint8Array) => Uint8Array,
  *   timers?: Timers,
  * }} deps
@@ -267,7 +270,8 @@ export function chooserWindows({ windows, getURL, page }) {
  *   browser); `badge`: the toolbar button's passkey mark; `servers`: the signed-in server; `storageLocal` and `permissions`:
  *   the setting and the permission, read at every request; `never`: the "never on this site" list; `passStorage`: where the one-time passes of "use the browser" are also kept (the session storage); `listen`: starts the
  *   navigation, tab and window listeners while a request waits and stops them when none does (so they never wake an event
- *   page); `release`: a release leaves localhost and the loopback addresses to the browser.
+ *   page); `release`: a release leaves localhost and the loopback addresses to the browser. `now` (the wall clock) and `monotonic`
+ *   measure the age of a mark of verification.
  */
 export function createPasskeyRequests({
   tabs,
@@ -282,6 +286,7 @@ export function createPasskeyRequests({
   listen = null,
   release = true,
   now = () => Date.now(),
+  monotonic = () => globalThis.performance.now(),
   random = (bytes) => globalThis.crypto.getRandomValues(/** @type {Uint8Array<ArrayBuffer>} */ (bytes)),
   timers = { setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms), clearTimeout: (id) => globalThis.clearTimeout(id) },
 }) {
@@ -307,8 +312,13 @@ export function createPasskeyRequests({
   const passTimers = new Map();
   /** Per tab: the moments its modal requests ended without an answer, and the end of its calm period. @type {Map<number, { ended: number[], until: number }>} */
   const calm = new Map();
-  /** The one-time marks that the user was verified for a request (UV), by request id. Gone with the request and at every lock. */
-  const verified = new Set();
+  /**
+   * The one-time marks that the user was verified for a request (UV), by request id, with when they were made on both clocks. Gone
+   * with the request, at every lock, and after MARK_MS on either clock (a conditional request has no deadline, so a mark could
+   * otherwise wait for hours).
+   * @type {Map<string, { mono: number, wall: number }>}
+   */
+  const verified = new Map();
   /** The request whose window is open (or being opened). @type {string | null} */
   let windowHolder = null;
   let listening = false;
@@ -675,6 +685,33 @@ export function createPasskeyRequests({
     }
     req.windowId = windowId;
     return true;
+  };
+
+  /** Opens the window for the tab's modal request that waits without one (the popup's card). @param {unknown} tabId */
+  const showWaiting = async (tabId) => {
+    if (!isIndex(tabId)) return false;
+    for (const req of [...requests.values()]) {
+      if (req.sender.tabId === tabId && req.state === "waiting" && live(req.id) !== null) return showWindow(req);
+    }
+    return false;
+  };
+
+  /**
+   * Whether the tab a popup op names is the popup's own: the tab of its address (`?tab=N`, a popped-out popup) when it has one
+   * (`popup_tab`, from the handler), else the active tab of the last focused window (the toolbar panel). Fails closed.
+   * @param {any} args @returns {Promise<boolean>}
+   */
+  const popupTabOk = async (args) => {
+    const tabId = args?.tab_id;
+    if (!isIndex(tabId)) return false;
+    if (isIndex(args?.popup_tab)) return tabId === args.popup_tab;
+    if (typeof tabs.query !== "function") return false;
+    try {
+      const [active] = await tabs.query({ active: true, lastFocusedWindow: true });
+      return active?.id === tabId;
+    } catch {
+      return false;
+    }
   };
 
   /**
@@ -1104,13 +1141,7 @@ export function createPasskeyRequests({
      * activation). It takes the tab, not an id: the popup never needs one for it.
      * @param {number} tabId
      */
-    show: async (tabId) => {
-      if (!isIndex(tabId)) return false;
-      for (const req of [...requests.values()]) {
-        if (req.sender.tabId === tabId && req.state === "waiting" && live(req.id) !== null) return showWindow(req);
-      }
-      return false;
-    },
+    show: (tabId) => showWaiting(tabId),
     /**
      * What the window's create op needs of a create request it owns (the same gate as the window's ops: `{ request_id, session,
      * window_id? }`): the page's options, the frame's address, the caller (built here) and the RP ID the page asked for. Null for
@@ -1160,13 +1191,20 @@ export function createPasskeyRequests({
     markVerified: (id, session) => {
       const req = owned(id, session);
       if (req === null) return false;
-      verified.add(req.id);
+      verified.set(req.id, { mono: monotonic(), wall: now() });
       return true;
     },
     /** Takes the mark of verification of a request, for the session that owns it: true once. @param {string} id @param {string} session */
     takeVerified: (id, session) => {
       const req = owned(id, session);
-      return req !== null && verified.delete(req.id);
+      if (req === null) return false;
+      const made = verified.get(req.id);
+      if (made === undefined) return false;
+      verified.delete(req.id);
+      // Older than MARK_MS on either clock, or a clock that went back: no mark (the person verifies again).
+      const mono = monotonic() - made.mono;
+      const wall = now() - made.wall;
+      return mono >= 0 && wall >= 0 && mono < MARK_MS && wall < MARK_MS;
     },
     onEvent,
     onNavigation,
@@ -1188,18 +1226,22 @@ export function createPasskeyRequests({
     passPendingFor: (tabId) => (isIndex(tabId) ? passes.pendingIn(tabId) : null),
     /**
      * The tab's conditional request for Ferret's popup: the request and the popup's session name, while it waits for the popup (no
-     * window has it), or null. The popup names the tab and never learns an id it could send elsewhere: the ops of the popup take
-     * the tab and ask for this.
-     * @param {unknown} tabId @returns {{ request_id: string, session: string } | null}
+     * window has it), or null. With `expect` (the id and origin the popup listed), only that request: a new request in the tab is
+     * not it. The id is good for nothing outside the popup's ops (the window's ops take it only from the window's own address).
+     * @param {unknown} tabId @param {{ request_id: unknown, origin: unknown } | null} [expect]
+     * @returns {{ request_id: string, session: string, origin: string } | null}
      */
-    tabRef: (tabId) => {
+    tabRef: (tabId, expect = null) => {
       if (!isIndex(tabId)) return null;
       for (const req of [...requests.values()]) {
         if (req.sender.tabId !== tabId || req.mediation !== "conditional" || req.state !== "conditional") continue;
-        return owned(req.id, POPUP_SESSION) === null ? null : Object.freeze({ request_id: req.id, session: POPUP_SESSION });
+        // The request the popup listed, and no other: a new request in the tab (another site, after a navigation) is not it.
+        if (expect !== null && (expect.request_id !== req.id || expect.origin !== req.origin)) return null;
+        return owned(req.id, POPUP_SESSION) === null ? null : Object.freeze({ request_id: req.id, session: POPUP_SESSION, origin: req.origin });
       }
       return null;
     },
+    popupTabOk,
     /**
      * The page of a tab when Ferret would answer it and no request waits (the popup then lists the passkeys for information only,
      * with no button): its top frame's `https` origin, under the same rules as a request (the setting, a live server that is not the
@@ -1256,6 +1298,7 @@ export function createPasskeyRequests({
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
           const tabId = args?.tab_id;
           if (!isIndex(tabId)) return { ok: false, reason: "invalid_input" };
+          if (!(await popupTabOk(args))) return { ok: false, reason: "gone" };
           const waiting = viewIn(tabId, (r) => r.state === "waiting");
           const conditional = viewIn(tabId, (r) => r.mediation === "conditional" && r.state === "conditional");
           // A stopped event page reads its passes back first.
@@ -1265,6 +1308,7 @@ export function createPasskeyRequests({
             ok: true,
             waiting: waiting === null ? null : { origin: waiting.origin, kind: waiting.kind },
             conditional: conditional !== null,
+            request: conditional === null ? null : { request_id: conditional.request_id, origin: conditional.origin },
             again: pass === null ? null : pass.kind,
             foreign: (waiting ?? conditional)?.foreign === true,
           };
@@ -1278,10 +1322,11 @@ export function createPasskeyRequests({
         run: async (/** @type {unknown} */ _client, /** @type {any} */ args) => {
           const tabId = args?.tab_id;
           if (!isIndex(tabId)) return { ok: false, reason: "invalid_input" };
+          if (!(await popupTabOk(args))) return { ok: false, reason: "gone" };
           if (windowHolder !== null) return { ok: false, reason: "busy" };
+          if (args?.which === "waiting") return (await showWaiting(tabId)) ? { ok: true } : { ok: false, reason: "gone" };
           for (const req of [...requests.values()]) {
             if (req.sender.tabId !== tabId || live(req.id) === null) continue;
-            if (args?.which === "waiting" && req.state === "waiting") return (await showWindow(req)) ? { ok: true } : { ok: false, reason: "busy" };
             if (args?.which === "conditional" && req.mediation === "conditional" && req.state === "conditional") {
               if (req.session !== null && req.session !== POPUP_SESSION) return { ok: false, reason: "busy" };
               req.session = null;

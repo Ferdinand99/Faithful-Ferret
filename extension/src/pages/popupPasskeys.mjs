@@ -10,8 +10,10 @@
 //     information only, with no button (the site has not asked yet).
 //   - After "use the browser" in Ferret's window: one line, "click the button on the page again".
 //
-// The popup names its tab, never a request: the background finds the tab's request (passkey_tab, passkey_tab_list, passkey_tab_open,
-// and passkey_choose / passkey_verify with the tab). The list stays in the popup. A click counts only when the person made it
+// The popup names its tab: the background finds the tab's request (passkey_tab, passkey_tab_list, passkey_tab_open). A choice and a
+// verification (passkey_choose / passkey_verify with the tab) carry the id and origin of the request the popup listed, so that they
+// act on that request and no other; when the tab's request changes (another site after a navigation), the list is read again. The
+// list stays in the popup. A click counts only when the person made it
 // (`isTrusted`) and 400 ms after the part last changed. Names of items are cleaned and isolated as in Ferret's window; the hosts are
 // the browser's and the core's, never a text of the page.
 //
@@ -45,9 +47,19 @@ function hostOf(origin) {
 }
 
 /**
- * @typedef {{ waiting: { host: string, kind: "create" | "get" } | null, conditional: boolean, pass: boolean, foreign: boolean }} TabState
+ * The id and origin of a conditional request as the background gave them, or null.
+ * @param {unknown} raw @returns {{ request_id: string, origin: string } | null}
+ */
+function listedOf(raw) {
+  if (!isRecord(raw) || typeof raw.request_id !== "string" || !/^[0-9a-f]{32}$/.test(raw.request_id) || typeof raw.origin !== "string") return null;
+  return hostOf(raw.origin) === "" ? null : { request_id: raw.request_id, origin: raw.origin };
+}
+
+/**
+ * @typedef {{ request_id: string, origin: string }} Listed the conditional request a list is for
+ * @typedef {{ waiting: { host: string, kind: "create" | "get" } | null, conditional: boolean, request: Listed | null, pass: boolean, foreign: boolean }} TabState
  * @typedef {{ itemId: string, name: string, userName: string, created: number | null }} Candidate
- * @typedef {{ mode: "none" | "pick" | "info", host: string, candidates: Candidate[], methods: string[] }} TabList
+ * @typedef {{ mode: "none" | "pick" | "info", request: Listed | null, host: string, candidates: Candidate[], methods: string[] }} TabList
  */
 
 /**
@@ -70,13 +82,14 @@ export function createTabBackend(request, tabId) {
     /** @returns {Promise<TabState>} */
     async state() {
       const reply = await ask("passkey_tab", {});
-      const none = { waiting: null, conditional: false, pass: false, foreign: false };
+      const none = { waiting: null, conditional: false, request: null, pass: false, foreign: false };
       if (!isRecord(reply) || reply.ok !== true) return none;
       const w = isRecord(reply.waiting) ? reply.waiting : null;
       const host = w === null ? "" : hostOf(w.origin);
       return {
         waiting: w !== null && host !== "" && (w.kind === "create" || w.kind === "get") ? { host, kind: w.kind } : null,
         conditional: reply.conditional === true,
+        request: listedOf(reply.request),
         pass: reply.again === "create" || reply.again === "get",
         foreign: reply.foreign === true,
       };
@@ -84,7 +97,7 @@ export function createTabBackend(request, tabId) {
     /** @returns {Promise<TabList>} */
     async list() {
       const reply = await ask("passkey_tab_list", {});
-      if (!isRecord(reply) || reply.ok !== true || (reply.mode !== "pick" && reply.mode !== "info")) return { mode: "none", host: "", candidates: [], methods: [] };
+      if (!isRecord(reply) || reply.ok !== true || (reply.mode !== "pick" && reply.mode !== "info")) return { mode: "none", request: null, host: "", candidates: [], methods: [] };
       /** @type {Candidate[]} */
       const candidates = [];
       for (const raw of Array.isArray(reply.candidates) ? reply.candidates.slice(0, 200) : []) {
@@ -94,24 +107,28 @@ export function createTabBackend(request, tabId) {
       }
       return {
         mode: reply.mode,
+        request: reply.mode === "pick" ? listedOf(reply) : null,
         host: siteText(reply.host, 253),
         candidates: sortCandidates(candidates),
         methods: (Array.isArray(reply.methods) ? reply.methods : []).filter((m) => typeof m === "string"),
       };
     },
-    /** The person's click on a passkey. @param {string} itemId @returns {Promise<{ ok: true } | { ok: false, reason: string }>} */
-    async choose(itemId) {
-      const reply = await ask("passkey_choose", { kind: "get", item_id: itemId });
+    /**
+     * The person's click on a passkey of the list of `listed`.
+     * @param {string} itemId @param {Listed} listed @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+     */
+    async choose(itemId, listed) {
+      const reply = await ask("passkey_choose", { kind: "get", item_id: itemId, request_id: listed.request_id, origin: listed.origin });
       return reply?.ok === true ? { ok: true } : { ok: false, reason: typeof reply?.reason === "string" ? reply.reason : "internal_error" };
     },
     /**
      * One try of the verification step (the PIN or the master password).
-     * @param {"prf" | "pin" | "password"} method @param {Record<string, string>} input
+     * @param {"prf" | "pin" | "password"} method @param {Record<string, string>} input @param {Listed} listed
      * @returns {Promise<{ ok: true } | { ok: false, reason: string, left?: number, wait_ms?: number }>}
      */
-    async verify(method, input) {
+    async verify(method, input, listed) {
       if (!POPUP_WAYS.includes(method)) return { ok: false, reason: "not_available" };
-      const reply = await ask("passkey_verify", { method, ...input });
+      const reply = await ask("passkey_verify", { method, ...input, request_id: listed.request_id, origin: listed.origin });
       if (reply?.ok === true) return { ok: true };
       return {
         ok: false,
@@ -163,9 +180,9 @@ export function createPopupPasskeys({
   const root = el("section", { class: "ff-pk-popup", "data-role": "passkey-popup", "aria-live": "polite", hidden: true, ...FEATURE });
   const alertNode = el("p", { class: "ff-error", role: "alert", "data-role": "passkey-popup-error", hidden: true });
   /** @type {TabState} */
-  let state = { waiting: null, conditional: false, pass: false, foreign: false };
+  let state = { waiting: null, conditional: false, request: null, pass: false, foreign: false };
   /** @type {TabList} */
-  let list = { mode: "none", host: "", candidates: [], methods: [] };
+  let list = { mode: "none", request: null, host: "", candidates: [], methods: [] };
   /** The verification step that is shown, for the passkey the person clicked. @type {{ step: ReturnType<typeof createVerifyStep>, itemId: string } | null} */
   let verifying = null;
   let busy = false;
@@ -219,7 +236,8 @@ export function createPopupPasskeys({
   const pick = (itemId) =>
     holding(async () => {
       say(null);
-      const outcome = await backend.choose(itemId);
+      if (list.request === null) return;
+      const outcome = await backend.choose(itemId, list.request);
       if (outcome.ok) {
         verifying?.step.wipe();
         verifying = null;
@@ -243,7 +261,7 @@ export function createPopupPasskeys({
       texts,
       // One way, to keep the popup short: the PIN when there is one, else the master password.
       ways: list.methods.includes("pin") ? ["pin"] : list.methods.filter((m) => POPUP_WAYS.includes(m)),
-      verify: (method, input) => backend.verify(method, input),
+      verify: (method, input) => (list.request === null ? Promise.resolve({ ok: false, reason: "gone" }) : backend.verify(method, input, list.request)),
       proof: null,
       action,
       onVerified: () => void pick(itemId),
@@ -338,12 +356,15 @@ export function createPopupPasskeys({
   async function refresh(relist = false) {
     const next = await backend.state();
     if (stopped) return;
-    const changed = next.conditional !== state.conditional;
+    // Another request than the one listed (the page re-armed, or the tab went to another site between two looks): read the list again.
+    const same = (/** @type {Listed | null} */ a, /** @type {Listed | null} */ b) => (a === null ? b === null : b !== null && a.request_id === b.request_id && a.origin === b.origin);
+    const changed = next.conditional !== state.conditional || !same(next.request, state.request);
     state = next;
     if (unlocked && (relist || changed)) {
       list = await backend.list();
       if (stopped) return;
-      if (list.mode !== "pick" || !state.conditional) {
+      // A step for another request (or none) goes: what was typed for one site never serves another.
+      if (changed || list.mode !== "pick" || !state.conditional) {
         verifying?.step.wipe();
         verifying = null;
       }

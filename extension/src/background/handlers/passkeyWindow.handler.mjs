@@ -18,7 +18,7 @@
 //
 // Off in a build without the feature: refused as `not_available` before anything else, as if this handler were not there.
 
-import { isPopupPage, isTopLevelExtensionPage } from "../../shared/origin.mjs";
+import { isPopupPage, isTopLevelExtensionPage, popupTabOf } from "../../shared/origin.mjs";
 import { FEATURES } from "../../shared/features.mjs";
 
 /** The page of the chooser window, in the package. */
@@ -58,16 +58,19 @@ const FIELDS = Object.freeze({
  */
 async function fromPopup(body, ctx) {
   if (ctx.channel !== "ui" || ctx.runtime === undefined || typeof ctx.call !== "function" || !isPopupPage(ctx.sender, ctx.runtime)) throw notAvailable();
+  // The request the popup listed: its id and origin, sent back so that the broker acts on that request and no other.
+  if (typeof body.request_id !== "string" || typeof body.origin !== "string") throw notAvailable();
+  const listed = { tab_id: body.tab_id, request_id: body.request_id, origin: body.origin, popup_tab: popupTabOf(ctx) };
   if (ctx.type === "passkey_choose") {
     if (body.kind !== "get" || typeof body.item_id !== "string" || Object.hasOwn(body, "mode") || Object.hasOwn(body, "name") || Object.hasOwn(body, "folder_id")) throw notAvailable();
-    return ctx.call("passkey_tab_choose", { tab_id: body.tab_id, item_id: body.item_id });
+    return ctx.call("passkey_tab_choose", { ...listed, item_id: body.item_id });
   }
   if (ctx.type === "passkey_verify") {
     if ((body.method !== "pin" && body.method !== "password") || Object.hasOwn(body, "credential_id") || Object.hasOwn(body, "prf_output")) throw notAvailable();
     /** @type {Record<string, unknown>} */
     const extra = {};
     for (const key of ["method", "pin", "mp", "sk"]) if (Object.hasOwn(body, key)) extra[key] = body[key];
-    return ctx.call("passkey_tab_verify", { ...extra, tab_id: body.tab_id });
+    return ctx.call("passkey_tab_verify", { ...extra, ...listed });
   }
   throw notAvailable();
 }
@@ -75,10 +78,9 @@ async function fromPopup(body, ctx) {
 /** @param {any} body @param {import("../router.mjs").HandlerContext} ctx */
 async function handle(body, ctx) {
   if (!FEATURES.passkeys) throw notAvailable();
-  // Exactly one of the two names: the window's request, or the popup's tab.
-  const byTab = Object.hasOwn(body ?? {}, "tab_id");
-  if (byTab === Object.hasOwn(body ?? {}, "request_id")) throw notAvailable();
-  if (byTab) return fromPopup(body, ctx);
+  // The popup names its tab (with the request it listed); the window names only its request.
+  if (Object.hasOwn(body ?? {}, "tab_id")) return fromPopup(body, ctx);
+  if (Object.hasOwn(body ?? {}, "origin")) throw notAvailable();
   if (typeof ctx.call !== "function" || !fromWindow(ctx, body?.request_id)) throw notAvailable();
   // The browser window the page is in: the broker checks it against the window it opened for the request.
   const windowId = ctx.sender?.tab?.windowId;

@@ -90,6 +90,20 @@ export function isTopLevelExtensionPage(sender, runtime) {
 const POPUP_PAGE = "pages/popup.html";
 
 /**
+ * The tab a popped-out popup is about (`?tab=N` in its address), or null (the toolbar panel, or an address without it).
+ * @param {{ sender?: Sender | null }} ctx
+ * @returns {number | null}
+ */
+export function popupTabOf(ctx) {
+  try {
+    const named = new URL(String(ctx?.sender?.url)).searchParams.get("tab");
+    return named !== null && /^[0-9]{1,10}$/.test(named) ? Number(named) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * True when the sender is Ferret's popup: a top-level page of this extension at the popup's address (with or without its query).
  * @param {Sender | null | undefined} sender
  * @param {Runtime} runtime

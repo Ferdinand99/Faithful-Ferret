@@ -439,6 +439,9 @@ body.ff-chooser-window {
 
 .ff-pk-popup .ff-pk-rows {
   max-height: 9.5rem;
+  /* The list's own scroll bar follows the scheme (a light one in the dark scheme would be the brightest thing in the popup). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 .ff-pk-row.ff-pk-row-info {
@@ -458,16 +461,6 @@ body.ff-chooser-window {
   align-self: flex-start;
 }
 
-.ff-pk-popup .ff-pk-verify-step {
-  gap: var(--sp-2);
-}
-
 .ff-pk-popup[aria-busy="true"] {
   cursor: progress;
-}
-
-/* The list's own scroll bar follows the scheme (a light one in the dark scheme would be the brightest thing in the popup). */
-.ff-pk-popup .ff-pk-rows {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
 }
