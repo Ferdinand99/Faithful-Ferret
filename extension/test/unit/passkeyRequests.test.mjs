@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf, refusedRpId,
+  PASSKEY_SILENT_MS, automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf, refusedRpId,
   unsupportedOptions,
   PASSKEY_ERROR_DELAY_MS, PASSKEY_EVENT_OP, PASSKEY_GUARD_MS, PASSKEY_PASS_ONCE_MS, PASSKEY_QUIET, PASSKEY_TIMEOUT_MS, PASSKEY_WINDOW_OPS,
 } from "../../src/background/passkeyRequests.mjs";
@@ -702,6 +702,38 @@ test("prf_eval_by_credential_the_browser_does_not_process_is_not_supported_befor
   assert.ok("request_id" in out);
   // The core's own refusal of the same input reaches the page as the same error.
   assert.equal(pageErrorOf("unsupported"), "NotSupportedError");
+});
+
+test("a_request_whose_bridge_stops_pinging_ends_and_its_window_closes", async () => {
+  // A removed frame fires no navigation; its bridge's abort may be lost. Without a ping for PASSKEY_SILENT_MS it ends.
+  assert.equal(PASSKEY_SILENT_MS, 45_000);
+  const w = world();
+  const id = /** @type {any} */ (await w.requests.open(senderOf(), createBody("q1"))).request_id;
+  assert.deepEqual(w.opened, [id]);
+  // The bridge pings every 20 s while it waits: the request stays, past 45 s.
+  for (let i = 0; i < 3; i += 1) {
+    w.clock.advance(20_000);
+    await w.requests.onEvent({ type: "passkey_ping", sender: senderOf(), body: { request_ids: ["q1"] } });
+    await flush();
+  }
+  assert.equal(w.requests.size(), 1);
+  assert.deepEqual(w.closed, []);
+  // Then it goes silent: 45 s after the last ping the request ends and the window closes. Nothing goes to the frame.
+  w.clock.advance(44_999);
+  await flush();
+  assert.equal(w.requests.size(), 1);
+  w.clock.advance(1);
+  await flush();
+  assert.equal(w.requests.size(), 0);
+  assert.deepEqual(w.closed, [101]);
+  assert.deepEqual(pushesOf(w.pushed, "q1"), []);
+  // A conditional request (no deadline) ends the same way.
+  const c = world();
+  await c.requests.open(senderOf(), getBody("q2", { body: { mediation: "conditional" } }));
+  assert.equal(c.requests.size(), 1);
+  c.clock.advance(45_000);
+  await flush();
+  assert.equal(c.requests.size(), 0);
 });
 
 test("an_empty_alg_list_is_answered_by_ferret", async () => {

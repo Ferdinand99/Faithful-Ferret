@@ -464,6 +464,25 @@ test("a_flood_beyond_the_waiting_limit_ends_with_abort_error_and_never_reaches_t
   assert.equal(page.nativeCalls.length, 0);
 });
 
+test("a_document_that_goes_away_aborts_its_waiting_requests", async () => {
+  const page = createPasskeyPage();
+  page.page(GET());
+  await page.flush();
+  const id = /** @type {any} */ (lastRequest(page)).body.request_id;
+  // A page's own pagehide event is not the browser's: nothing ends.
+  await page.pagehide(false);
+  assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort"), []);
+  // The frame is removed (or the page navigates away): the background hears the abort and closes Ferret's window.
+  await page.pagehide();
+  assert.deepEqual(page.sent.filter((m) => m.type === "passkey_abort").map((m) => m.body.request_id), [id]);
+  assert.deepEqual(page.intervals(), [], "nothing waits, so nothing pings");
+  // A late answer for it is dropped, and a second pagehide sends nothing more.
+  await page.push("passkey_handover", { request_id: id, once: false });
+  assert.equal(page.nativeCalls.length, 0);
+  await page.pagehide();
+  assert.equal(page.sent.filter((m) => m.type === "passkey_abort").length, 1);
+});
+
 test("the_timeout_is_read_as_a_webidl_unsigned_long", async () => {
   const page = createPasskeyPage();
   /** @type {Array<[string, number]>} */

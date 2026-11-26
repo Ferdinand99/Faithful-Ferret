@@ -38,7 +38,9 @@
 //   - the calm period: PASSKEY_QUIET.cancels modal requests of a tab that ended without an answer within windowMs give the
 //     tab quietMs in which a new request only waits with the mark (it is kept, not refused);
 //   - it ends on an answer, a hand-over, the user's cancel (or closing the window), the page's abort, its deadline, a new
-//     document in its frame or above it, the tab closing, and a lock of the open vault. A same-document navigation
+//     document in its frame or above it, the tab closing, and a lock of the open vault. A frame that goes away (removed from
+//     its page, which no browser event reports) ends it through the bridge's abort on `pagehide`, or, should that message be
+//     lost, when its bridge has not pinged for SILENT_MS. A same-document navigation
 //     (`pushState`) keeps it; its origin is checked again, and before an answer the frame chain is checked again.
 // Cancelled, no match and expired all end with NotAllowedError, after the same small random delay, so a page cannot tell
 // them apart by type or by time.
@@ -72,6 +74,11 @@ export const PASSKEY_WINDOW_OPS = Object.freeze([
   "passkey_choose",
   "passkey_verify",
 ]);
+/**
+ * How long a request may go without a ping of its bridge (which pings every 20 s while it waits) before it ends: its frame is
+ * gone. Two pings and a margin.
+ */
+export const PASSKEY_SILENT_MS = 45_000;
 /** The deadline of a modal request: the page's `timeout`, clamped; the default when the page gave none. Conditional ones have none. */
 export const PASSKEY_TIMEOUT_MS = Object.freeze({ min: 30_000, max: 600_000, default: 300_000 });
 /** A click in Ferret's window counts only this long after the window got the focus or its content last changed. */
@@ -124,7 +131,7 @@ const ES256 = -7;
  *   id: string, bridgeId: string, key: string, sender: Sender, origin: string, kind: "create" | "get",
  *   mediation: "optional" | "required" | "conditional", options: any, top: string | null,
  *   deadline: number | null, timer: unknown, state: "window" | "waiting" | "conditional",
- *   windowId: number | null, session: string | null, held: boolean,
+ *   windowId: number | null, session: string | null, held: boolean, lastPing: number, quiet: unknown,
  * }} Request
  * @typedef {{
  *   request_id: string, kind: "create" | "get", mediation: string, origin: string, rp_id: string | null,
@@ -498,9 +505,10 @@ export function createPasskeyRequests({
     requests.delete(req.id);
     byBridge.delete(req.key);
     verified.delete(req.id);
-    if (req.timer !== null) {
+    for (const timer of [req.timer, req.quiet]) {
+      if (timer === null) continue;
       try {
-        timers.clearTimeout(req.timer);
+        timers.clearTimeout(timer);
       } catch {
         // Nothing to clear.
       }
@@ -519,6 +527,26 @@ export function createPasskeyRequests({
   const endWithError = async (req, name, unanswered) => {
     if (!end(req, unanswered)) return false;
     return pushError(req.sender, req.bridgeId, name);
+  };
+
+  /**
+   * Ends a request whose bridge has gone silent (its frame went away without a navigation the browser reports, and the
+   * bridge's abort was lost): nothing can be delivered there, and the window closes. Checked again at the next ping time.
+   * @param {Request} req
+   */
+  const watchPings = (req) => {
+    const check = () => {
+      if (requests.get(req.id) !== req) return;
+      if (now() - req.lastPing >= PASSKEY_SILENT_MS) end(req, false);
+      else watchPings(req);
+    };
+    try {
+      req.quiet = timers.setTimeout(check, Math.max(1, req.lastPing + PASSKEY_SILENT_MS - now()));
+      /** @type {any} */ (req.quiet)?.unref?.();
+    } catch {
+      // Without a timer the request still ends by its deadline, its abort or the check before an answer.
+      req.quiet = null;
+    }
   };
 
   /** A modal request reached its deadline. @param {Request} req */
@@ -827,11 +855,14 @@ export function createPasskeyRequests({
       windowId: null,
       session: null,
       held: false,
+      lastPing: now(),
+      quiet: null,
     };
     requests.set(req.id, req);
     byBridge.set(key, req.id);
     startListening();
     if (deadline !== null) req.timer = later(() => expire(req), deadline - now());
+    watchPings(req);
     if (conditional || body.activation !== true || inCalm(tabId) || windowHolder !== null) {
       // No window without user activation, during the calm period, or while another request has it: a mark and a card.
       mark(tabId);
@@ -870,7 +901,11 @@ export function createPasskeyRequests({
       if (typeof bridgeId !== "string") continue;
       const key = keyOf(s, bridgeId);
       const id = byBridge.get(key);
-      if (id !== undefined && live(id) !== null) continue;
+      const req = id === undefined ? null : live(id);
+      if (req !== null) {
+        req.lastPing = now();
+        continue;
+      }
       // An abort that came first, or an error that waits for its delay (it must not come early).
       if (aborts.get(s.tabId)?.has(key) || ending.has(key)) continue;
       // Not a request of this sender that waits here (the event page was unloaded, or it ended): it fails closed.
