@@ -101,11 +101,17 @@ const MAX_FRAMES = 1024;
 const MAX_URL = 8192;
 const REF = /^[0-9a-f]{32}$/;
 const UV = Object.freeze(["required", "preferred", "discouraged"]);
-const PAGE_ERRORS = Object.freeze(["NotAllowedError", "SecurityError", "TypeError", "InvalidStateError", "AbortError"]);
+const PAGE_ERRORS = Object.freeze(["NotAllowedError", "SecurityError", "TypeError", "InvalidStateError", "AbortError", "NotSupportedError"]);
 /** The core's codes that say the vault or its worker is gone: the op's caller (the core host) handles those. */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
 /** What the window is told when `passkey_site` ended the request, by the page's error. */
-const SITE_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
+const SITE_REASONS = Object.freeze({
+  SecurityError: "security_error",
+  TypeError: "type_error",
+  NotSupportedError: "type_error",
+  InvalidStateError: "not_allowed",
+  NotAllowedError: "not_allowed",
+});
 /** The algorithm Ferret signs with (ES256). */
 const ES256 = -7;
 
@@ -209,6 +215,29 @@ export function malformedOptions(kind, options) {
 }
 
 /**
+ * An RP ID the page asked for that the browser refuses with a SecurityError although the core would take it: one that ends
+ * with a dot or has an upper-case letter. The browser compares the string as the page gave it with the origin's host, which
+ * has neither; the core would canonicalize it to the host and answer for a string the page did not pass.
+ * @param {"create" | "get"} kind @param {any} options @returns {boolean}
+ */
+export function refusedRpId(kind, options) {
+  const asked = kind === "create" ? options?.rp?.id : options?.rp_id;
+  return typeof asked === "string" && (asked.endsWith(".") || /[A-Z]/.test(asked));
+}
+
+/**
+ * Options the browser ends with a NotSupportedError in its client extension processing, before any authenticator (WebAuthn
+ * L3 § 10.1.4, prf): `evalByCredential` at registration, and a non-empty `evalByCredential` with an empty `allowCredentials`.
+ * @param {"create" | "get"} kind @param {any} options @returns {boolean}
+ */
+export function unsupportedOptions(kind, options) {
+  const byCredential = options?.extensions?.prf?.eval_by_credential;
+  if (kind === "create") return byCredential !== undefined;
+  const allow = Array.isArray(options?.allow_credentials) ? options.allow_credentials : [];
+  return Array.isArray(byCredential) && byCredential.length > 0 && allow.length === 0;
+}
+
+/**
  * The deadline of a modal request, from the page's `timeout` (milliseconds, a hint): clamped, the default when not given.
  * @param {unknown} timeout @returns {number}
  */
@@ -219,12 +248,14 @@ export function modalTimeout(timeout) {
 
 /**
  * The error a page gets for a code of the core: an RP ID the origin may not use is a SecurityError, malformed options a
- * TypeError, a credential the page excluded an InvalidStateError; everything else (a refused caller, no match, a failed
+ * TypeError, a credential the page excluded an InvalidStateError, an extension input the browser does not process (prf
+ * `evalByCredential` without an allow list) a NotSupportedError; everything else (a refused caller, no match, a failed
  * verification) is the one NotAllowedError, as the browser gives it.
- * @param {unknown} code @returns {"NotAllowedError" | "SecurityError" | "TypeError" | "InvalidStateError"}
+ * @param {unknown} code @returns {"NotAllowedError" | "SecurityError" | "TypeError" | "InvalidStateError" | "NotSupportedError"}
  */
 export function pageErrorOf(code) {
   if (code === "malformed_rp_id") return "SecurityError";
+  if (code === "unsupported") return "NotSupportedError";
   if (code === "invalid_input" || code === "too_large") return "TypeError";
   if (code === "invalid_state") return "InvalidStateError";
   return "NotAllowedError";
@@ -744,6 +775,15 @@ export function createPasskeyRequests({
     if (malformedOptions(kind, body[kind])) {
       await pushError(s, bridgeId, "TypeError");
       return { error: "TypeError" };
+    }
+    // What the browser refuses before any UI is refused here the same way, before any window: never more than the browser.
+    if (refusedRpId(kind, body[kind])) {
+      await pushError(s, bridgeId, "SecurityError");
+      return { error: "SecurityError" };
+    }
+    if (unsupportedOptions(kind, body[kind])) {
+      await pushError(s, bridgeId, "NotSupportedError");
+      return { error: "NotSupportedError" };
     }
     // Without the chooser window in this build, the browser answers (as before the window existed).
     if (windows === null) return handOver("no_window");

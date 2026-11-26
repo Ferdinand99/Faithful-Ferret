@@ -58,9 +58,15 @@ const ITEM_ID = /^[0-9a-f]{32}$/;
 /** The core's codes that say the vault or its worker is gone: the core host handles those (the window unlocks first). */
 const VAULT_GONE = Object.freeze(["vault_locked", "locked", "worker_failed", "internal", "kdf_out_of_memory"]);
 /** The core's codes that refuse the request itself (its options, its RP ID, its caller): the request ends as the browser would end it. */
-const REQUEST_CODES = Object.freeze(["malformed_rp_id", "invalid_input", "too_large", "invalid_state", "not_allowed"]);
+const REQUEST_CODES = Object.freeze(["malformed_rp_id", "invalid_input", "too_large", "invalid_state", "unsupported", "not_allowed"]);
 /** What the window is told when the core refused the request itself (the page gets the error the browser would give). */
-const REFUSED_REASONS = Object.freeze({ SecurityError: "security_error", TypeError: "type_error", InvalidStateError: "not_allowed", NotAllowedError: "not_allowed" });
+const REFUSED_REASONS = Object.freeze({
+  SecurityError: "security_error",
+  TypeError: "type_error",
+  NotSupportedError: "type_error",
+  InvalidStateError: "not_allowed",
+  NotAllowedError: "not_allowed",
+});
 
 /** @param {string} code */
 const fail = (code) => Object.assign(new Error(code), { code });

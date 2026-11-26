@@ -7,7 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf,
+  automaticHandover, createPasskeyRequests, httpsOrigin, isLoopbackHost, malformedOptions, modalTimeout, pageErrorOf, refusedRpId,
+  unsupportedOptions,
   PASSKEY_ERROR_DELAY_MS, PASSKEY_EVENT_OP, PASSKEY_GUARD_MS, PASSKEY_PASS_ONCE_MS, PASSKEY_QUIET, PASSKEY_TIMEOUT_MS, PASSKEY_WINDOW_OPS,
 } from "../../src/background/passkeyRequests.mjs";
 import { CORE_OPS } from "../../src/background/coreHost.mjs";
@@ -644,6 +645,63 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
   assert.deepEqual(await w.requests.open(senderOf(), createBody("t1", { options: { user: { id: "", name: "a", display_name: "A" } } })), { error: "TypeError" });
   assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "TypeError"]]);
   assert.equal(w.opened.length, 0);
+});
+
+test("an_rp_id_with_a_trailing_dot_or_upper_case_is_a_security_error_before_any_window", async () => {
+  // The browser compares the RP ID as the page gave it and refuses both forms; the core would canonicalize them to the host.
+  for (const rpId of ["rp-a.test.", "RP-A.Test", "rp-a.Test", "Rp-a.test."]) {
+    for (const kind of /** @type {const} */ (["create", "get"])) {
+      const options = kind === "create" ? createOptions({ rp: { name: "RP A", id: rpId } }) : getOptions({ rp_id: rpId });
+      assert.equal(refusedRpId(kind, options), true, `${kind} ${rpId}`);
+      const w = world();
+      const body = kind === "create" ? createBody("d1", { options: { rp: { name: "RP A", id: rpId } } }) : getBody("d1", { options: { rp_id: rpId } });
+      assert.deepEqual(await w.requests.open(senderOf(), body), { error: "SecurityError" }, `${kind} ${rpId}`);
+      assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "SecurityError"]], `${kind} ${rpId}`);
+      assert.equal(w.opened.length, 0, `${kind} ${rpId}: no window`);
+      assert.equal(w.requests.waitingFor(4), null, `${kind} ${rpId}: nothing waits`);
+    }
+  }
+  // The canonical form and no RP ID at all are Ferret's.
+  for (const rpId of ["rp-a.test", undefined]) {
+    assert.equal(refusedRpId("create", createOptions({ rp: { name: "RP A", ...(rpId === undefined ? {} : { id: rpId }) } })), false, String(rpId));
+    assert.equal(refusedRpId("get", getOptions(rpId === undefined ? {} : { rp_id: rpId })), false, String(rpId));
+  }
+  const w = world();
+  const out = /** @type {any} */ (await w.requests.open(senderOf(), getBody("d2", { options: { rp_id: "rp-a.test" } })));
+  assert.ok("request_id" in out);
+  assert.deepEqual(w.opened, [out.request_id]);
+});
+
+test("prf_eval_by_credential_the_browser_does_not_process_is_not_supported_before_any_window", async () => {
+  const SALT = { first: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" };
+  const byCredential = [{ id: "AAAAAAAAAAAAAAAAAAAAAA", ...SALT }];
+  const allow = [{ type: "public-key", id: "AAAAAAAAAAAAAAAAAAAAAA" }];
+  // At registration any evalByCredential (even an empty one) is NotSupportedError (WebAuthn L3 § 10.1.4).
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval_by_credential: byCredential } } })), true);
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval_by_credential: [] } } })), true);
+  assert.equal(unsupportedOptions("create", createOptions({ extensions: { prf: { eval: SALT } } })), false);
+  assert.equal(unsupportedOptions("create", createOptions()), false);
+  // At sign-in only a non-empty evalByCredential with an empty allow list.
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval_by_credential: byCredential } } })), true);
+  assert.equal(unsupportedOptions("get", getOptions({ allow_credentials: allow, extensions: { prf: { eval_by_credential: byCredential } } })), false);
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval_by_credential: [] } } })), false);
+  assert.equal(unsupportedOptions("get", getOptions({ extensions: { prf: { eval: SALT } } })), false);
+  for (const [kind, options] of /** @type {const} */ ([
+    ["create", { extensions: { prf: { eval_by_credential: byCredential } } }],
+    ["get", { extensions: { prf: { eval_by_credential: byCredential } } }],
+  ])) {
+    const w = world();
+    const body = kind === "create" ? createBody("p1", { options }) : getBody("p1", { options });
+    assert.deepEqual(await w.requests.open(senderOf(), body), { error: "NotSupportedError" }, kind);
+    assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "NotSupportedError"]], kind);
+    assert.equal(w.opened.length, 0, `${kind}: no window`);
+  }
+  // With the allow list the get is Ferret's.
+  const w = world();
+  const out = /** @type {any} */ (await w.requests.open(senderOf(), getBody("p2", { options: { allow_credentials: allow, extensions: { prf: { eval_by_credential: byCredential } } } })));
+  assert.ok("request_id" in out);
+  // The core's own refusal of the same input reaches the page as the same error.
+  assert.equal(pageErrorOf("unsupported"), "NotSupportedError");
 });
 
 test("an_empty_alg_list_is_answered_by_ferret", async () => {

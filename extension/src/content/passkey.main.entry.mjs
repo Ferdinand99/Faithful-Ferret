@@ -407,6 +407,18 @@ function install() {
   const str = (x) => (typeof x === "string" ? x : fail());
   /** @param {unknown} x */
   const num = (x) => (typeof x === "number" && x === x && x !== Infinity && x !== -Infinity ? x : fail());
+  /**
+   * A number as WebIDL reads an `unsigned long` (`timeout`): NaN and the infinities are 0, the rest is truncated and wraps
+   * modulo 2^32, as the browser does. Pure arithmetic: no built-in the page could replace. Anything but a number is the
+   * browser's to convert.
+   * @param {unknown} x
+   */
+  const u32 = (x) => {
+    if (typeof x !== "number") return fail();
+    const n = x === x && x !== Infinity && x !== -Infinity ? x : 0;
+    const m = (n - (n % 1)) % 4294967296;
+    return m < 0 ? m + 4294967296 : m + 0;
+  };
   /** A dictionary of the page's: absent (null), or an object. @param {unknown} x @returns {any} */
   const dict = (x) => (x === undefined || x === null ? null : typeof x === "object" || typeof x === "function" ? x : fail());
   /** @param {unknown} x */
@@ -507,7 +519,7 @@ function install() {
       out.alg = num(p.alg);
       return out;
     });
-    optional(o, pk, "timeout", num);
+    optional(o, pk, "timeout", u32);
     const exclude = pk.excludeCredentials;
     o.excludeCredentials = exclude === undefined ? [] : seq(exclude, descriptor);
     const selection = dict(pk.authenticatorSelection);
@@ -532,7 +544,7 @@ function install() {
     const pk = need(x);
     const o = rec();
     o.challenge = bytes(pk.challenge);
-    optional(o, pk, "timeout", num);
+    optional(o, pk, "timeout", u32);
     optional(o, pk, "rpId", str);
     const allow = pk.allowCredentials;
     o.allowCredentials = allow === undefined ? [] : seq(allow, descriptor);
