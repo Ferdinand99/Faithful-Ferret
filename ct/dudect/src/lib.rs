@@ -30,6 +30,8 @@
 //! | `unpad_ct` | `unpad_scan`, 1024 bytes | marker last | marker first |
 //! | `base32_decode` | `decode_letters`, 32 letters | all `A` | random letters, mixed case |
 //! | `base64url_decode` | `decode`, 43 symbols (a JWK scalar) | all `A` | random symbols |
+//! | `passkey_import_jwk` | `passkey_import`, a JWK with `d` only, whole path | the scalar 1 | random scalars |
+//! | `passkey_import_pkcs8` | `passkey_import`, PKCS#8 DER without the public key, whole path | the scalar 1 | random scalars |
 //! | `kek_pw_commit_path` | `unwrap_vk`, whole path | commit: first byte wrong | commit: last byte wrong |
 //! | `info_unwrap_valid_vs_bad_commit` | `unwrap_vk` | intact (AEAD runs) | commit wrong (AEAD skipped) |
 //! | `kek_pin_commit_path` | `unwrap_vk` of a PIN wrap, whole path | commit: first byte wrong | commit: last byte wrong |
@@ -56,8 +58,9 @@
 
 use ferret_core::testing::TestRng;
 use ferret_core::{
-    AccountId, Kek, KsfProfile, Method, MethodId, PinProfile, UnlockedVault, VaultContext, VaultId,
-    VaultKey, WrapRecord, unwrap_vk, wrap_vk,
+    AccountId, ImportKey, ImportPrf, ImportedPasskeyInput, Kek, KsfProfile, Method, MethodId,
+    PinProfile, UnlockedVault, VaultContext, VaultId, VaultKey, WrapRecord, passkey_import,
+    unwrap_vk, wrap_vk,
 };
 use std::hint::black_box;
 use subtle::ConstantTimeEq;
@@ -523,6 +526,149 @@ fn base64url_decode(mix: &mut Mix) -> Base64url {
     }
 }
 
+// ------------------------------------------------------- passkey import
+
+/// How the private key reaches `passkey_import`.
+#[derive(Clone, Copy)]
+enum ImportForm {
+    /// A JWK with the private scalar `d` only (the core derives the point).
+    Jwk,
+    /// A PKCS#8 `PrivateKeyInfo` for P-256 without the public key (RFC 5958,
+    /// RFC 5915), 67 bytes.
+    Pkcs8,
+}
+
+/// The scalar 1 as 32 big-endian bytes: the left class, the lowest weight
+/// that a valid key can have.
+const SCALAR_ONE: [u8; 32] = {
+    let mut s = [0u8; 32];
+    s[31] = 1;
+    s
+};
+
+/// A random scalar below the group order: the top bit is cleared, so the
+/// value is under n (which starts with 0xffffffff00000000), and the scalar is
+/// not zero (the last byte is made odd).
+fn random_scalar(m: &mut Mix) -> [u8; 32] {
+    let mut s = m.array::<32>();
+    s[0] &= 0x7f;
+    s[31] |= 1;
+    s
+}
+
+/// Unpadded base64url of 32 bytes: 43 symbols.
+fn base64url_32(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(43);
+    for chunk in bytes.chunks(3) {
+        let mut word = 0u32;
+        for (i, b) in chunk.iter().enumerate() {
+            word |= u32::from(*b) << (16 - 8 * i);
+        }
+        for k in 0..chunk.len() + 1 {
+            out.push(char::from(BASE64URL[((word >> (18 - 6 * k)) & 63) as usize]));
+        }
+    }
+    out
+}
+
+/// The key as the file holds it.
+fn import_key_bytes(form: ImportForm, scalar: &[u8; 32]) -> Vec<u8> {
+    match form {
+        ImportForm::Jwk => format!(
+            "{{\"kty\":\"EC\",\"crv\":\"P-256\",\"d\":\"{}\"}}",
+            base64url_32(scalar)
+        )
+        .into_bytes(),
+        ImportForm::Pkcs8 => {
+            let mut der = vec![
+                0x30, 0x41, 0x02, 0x01, 0x00, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+                0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x27,
+                0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20,
+            ];
+            der.extend_from_slice(scalar);
+            der
+        }
+    }
+}
+
+/// One import of `bytes`; everything but the key is the same every time.
+fn import_once(form: ImportForm, bytes: &[u8]) -> bool {
+    let key = match form {
+        ImportForm::Jwk => ImportKey::JwkJson(core::str::from_utf8(bytes).unwrap_or("")),
+        ImportForm::Pkcs8 => ImportKey::Pkcs8Der(bytes),
+    };
+    let input = ImportedPasskeyInput {
+        cred_id: &[7; 16],
+        rp_id: "example.com",
+        user_handle: &[9; 16],
+        user_name: "alice@example.com",
+        rp_name: Some("Example"),
+        user_display_name: Some("Alice"),
+        created: 1_700_000_000_000,
+        key,
+        prf: ImportPrf::None,
+        counter: 0,
+    };
+    passkey_import(&input).is_ok()
+}
+
+struct Import {
+    name: &'static str,
+    form: ImportForm,
+    pools: Pools<Vec<u8>>,
+    cell: Vec<u8>,
+}
+
+impl Target for Import {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    /// Two runs in one measurement: the WebAssembly run repeats a one-run
+    /// target eight times, which for an operation of this size takes hours.
+    fn reps(&self) -> u32 {
+        2
+    }
+    fn prepare(&mut self, class: Class, i: usize) {
+        self.cell.clear();
+        self.cell.extend_from_slice(self.pools.get(class, i));
+    }
+    fn run(&self, reps: u32) -> u64 {
+        let mut acc = 0u64;
+        for _ in 0..reps {
+            acc = acc.wrapping_add(u64::from(import_once(self.form, black_box(&self.cell))));
+        }
+        black_box(acc)
+    }
+}
+
+/// `passkey_import_*`: the whole import of a key (the reading of the secret
+/// scalar, the key checks and the record), the scalar 1 against random
+/// scalars.
+fn import_target(mix: &mut Mix, name: &'static str, form: ImportForm) -> Import {
+    let pools = Pools::new(mix, |m| {
+        (
+            import_key_bytes(form, &SCALAR_ONE),
+            import_key_bytes(form, &random_scalar(m)),
+        )
+    });
+    // Every key of both classes must be accepted, or the bench would time the
+    // refusal path.
+    for i in 0..POOL {
+        for class in [Class::Left, Class::Right] {
+            assert!(
+                import_once(form, pools.get(class, i)),
+                "bench key {i} is refused"
+            );
+        }
+    }
+    Import {
+        name,
+        form,
+        cell: pools.get(Class::Left, 0).clone(),
+        pools,
+    }
+}
+
 // -------------------------------------------------------------- padding
 
 const PADDED: usize = 1024;
@@ -771,6 +917,8 @@ pub fn targets(seed: u64) -> Vec<Box<dyn Target + Send>> {
         Box::new(key_eq(&mut mix)),
         Box::new(crockford_decode(&mut mix)),
         Box::new(base64url_decode(&mut mix)),
+        Box::new(import_target(&mut mix, "passkey_import_jwk", ImportForm::Jwk)),
+        Box::new(import_target(&mut mix, "passkey_import_pkcs8", ImportForm::Pkcs8)),
         Box::new(unpad_target(
             &mut mix,
             "unpad_ct",
