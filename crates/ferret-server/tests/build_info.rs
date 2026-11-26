@@ -334,7 +334,10 @@ mod passkey_import_build {
     /// (the unlock feature too, no test clock) exactly the two features the release workflow requires.
     #[test]
     fn a_release_build_says_exactly_the_two_features() {
-        assert_eq!(run_build_info(&[]).lines().nth(1), Some(format!("features: {}", expected_features()).as_str()));
+        assert_eq!(
+            run_build_info(&[]).lines().nth(1),
+            Some(format!("features: {}", expected_features()).as_str())
+        );
         if cfg!(feature = "quick-unlock") && !cfg!(feature = "e2e-clock") {
             assert_eq!(expected_features(), "passkey-import, quick-unlock");
         }
