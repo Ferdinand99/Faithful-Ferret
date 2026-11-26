@@ -817,6 +817,14 @@ test("a_window_still_being_made_for_an_ended_request_keeps_the_one_window_place"
   void w.requests.show(7);
   await flush();
   assert.equal(making.length, 2);
+  // A window the person closed frees the place at once (its request ends): the next request opens its own.
+  const v = world();
+  await v.requests.open(senderOf(), createBody("m3"));
+  assert.equal(v.opened.length, 1);
+  v.requests.onWindowRemoved(101);
+  await flush();
+  const next = /** @type {any} */ (await v.requests.open(senderOf(), createBody("m4")));
+  assert.deepEqual(v.opened, [v.opened[0], next.request_id]);
 });
 
 test("an_empty_alg_list_is_answered_by_ferret", async () => {

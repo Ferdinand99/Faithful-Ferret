@@ -369,6 +369,8 @@ export function createPasskeyRequests({
   const verified = new Map();
   /** The request whose window is open (or being opened). @type {string | null} */
   let windowHolder = null;
+  /** The requests whose window the browser is making now. @type {Set<string>} */
+  const making = new Set();
   let listening = false;
 
   /** @param {Sender} s @param {string} bridgeId */
@@ -523,15 +525,11 @@ export function createPasskeyRequests({
         // Nothing to clear.
       }
     }
-    if (windowHolder === req.id) {
-      if (req.windowId !== null) {
-        windowHolder = null;
-        if (windows !== null) windows.close(req.windowId).catch(() => {});
-      } else if (req.state !== "window") {
-        windowHolder = null;
-      }
-      // Otherwise its window is still being made: it keeps the place until `showWindow` has closed it again, so a second window
-      // never opens beside one that is about to close.
+    // A window still being made keeps the one window place until `showWindow` has closed it again, so a second window never
+    // opens beside one that is about to appear and close.
+    if (windowHolder === req.id && !making.has(req.id)) {
+      windowHolder = null;
+      if (req.windowId !== null && windows !== null) windows.close(req.windowId).catch(() => {});
     }
     if (unanswered && req.mediation !== "conditional") countEnded(req.sender.tabId);
     mark(req.sender.tabId);
@@ -745,11 +743,14 @@ export function createPasskeyRequests({
     mark(req.sender.tabId);
     /** @type {number | null} */
     let windowId = null;
+    making.add(req.id);
     try {
       const made = await windows.open(req.id);
       windowId = isIndex(made) ? made : null;
     } catch {
       windowId = null;
+    } finally {
+      making.delete(req.id);
     }
     if (requests.get(req.id) !== req) {
       // It ended while the window opened.
