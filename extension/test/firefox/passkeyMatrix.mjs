@@ -37,7 +37,7 @@ import { appliesTo, caseAddress, computeMatrix, loadCases, observe, specOf, writ
 import { BRIDGE_URL, defaultManifest, e2eCertificateFile, EXTENSION_ORIGIN, openBridge, TEST_ADDON_ID, xpiPath } from "./harness.mjs";
 import { KEEP_BACKGROUND, extensionSignIn, pace, webVaultAccount } from "./e2e.mjs";
 import { addPasskey, ask } from "./unlock.mjs";
-import { runActionCase, secondProfile, vaultRows } from "./passkeyDrive.mjs";
+import { freshUnlock, runActionCase, secondProfile, vaultRows } from "./passkeyDrive.mjs";
 import { runDemoCase } from "./passkeyDemo.mjs";
 import { revokeLeftDevices } from "./adversary.mjs";
 
@@ -134,6 +134,9 @@ export async function turnOnPasskeyScripts(session) {
   return tab;
 }
 
+
+/** How often the runner unlocks the vault for real (under the five minutes in which a recent unlock counts). */
+export const FRESH_UNLOCK_MS = 4 * 60_000;
 
 /** The address of Ferret's chooser window. */
 export const CHOOSER_PAGE = `${EXTENSION_ORIGIN}/pages/passkey.html?r=`;
@@ -910,7 +913,17 @@ export async function runSet({ channel, manifest, set, grep = "", provider = "st
     }
     const bridgeTab = session && BRIDGE_ON && provider === "stub" ? await turnOnPasskeyScripts(session) : null;
     let lastState = "";
+    /** When the runner last unlocked the vault for real (the Ferret provider). */
+    let unlockedAt = 0;
     for (const c of cases) {
+      // An unlock in the last five minutes, as a person who uses the vault has: renewed before the first case and every four minutes.
+      if (session && drive && Date.now() - unlockedAt > FRESH_UNLOCK_MS) {
+        const back = await session.windowHandle().catch(() => null);
+        await freshUnlock(drive.a, drive.account.password);
+        unlockedAt = Date.now();
+        if (back) await session.switchTo(back).catch(() => {});
+        log(`${set} ${c.id}: the vault was unlocked before the case (the recent unlock is renewed every ${FRESH_UNLOCK_MS / 60_000} minutes)`);
+      }
       if (session && provider === "ferret") {
         // A tab of its own for each case: Ferret's calm period (several requests of a tab that ended without an answer) is per
         // tab, and the cases that end without an answer on purpose must not change how the next case is shown.

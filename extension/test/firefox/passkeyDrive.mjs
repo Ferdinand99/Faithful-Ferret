@@ -200,6 +200,18 @@ async function unlockNow(p, password) {
   });
 }
 
+/**
+ * A real unlock now (the popup's lock, then the master password): the unlock in the last five minutes counts, as it does for a person
+ * who just opened the vault, so a click in Ferret's window needs no verification step. Without it a request's verification (the
+ * master password signs in to the server, and waits for its sign-in limit) can take longer than Firefox's user activation lasts,
+ * and the page's next call then waits without a window. passkeyMatrix.mjs runs it before the first case and every four minutes.
+ * @param {Profile} p @param {string} password
+ */
+export async function freshUnlock(p, password) {
+  await lockNow(p);
+  await unlockNow(p, password);
+}
+
 /** The popup's lock, over the UI port. @param {Profile} p */
 async function lockNow(p) {
   return inExt(p, () => ask(p.session, "lock", {}));
@@ -781,8 +793,10 @@ async function cleanUp(ctx, profile, phases, undo) {
  */
 export async function secondProfile({ channel, manifest }) {
   const session = await launchMatrixBrowser({ channel, manifest });
-  const { tab } = await turnOnFerret(session, channel, { revoke: false });
-  return { name: "b", session, extTab: tab, pageTab: null };
+  const { tab, account } = await turnOnFerret(session, channel, { revoke: false });
+  const b = { name: "b", session, extTab: tab, pageTab: null };
+  await freshUnlock(b, account.password);
+  return b;
 }
 
 export { launchMatrixBrowser };
