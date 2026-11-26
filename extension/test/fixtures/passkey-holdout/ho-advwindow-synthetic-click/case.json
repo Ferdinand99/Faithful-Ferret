@@ -1,0 +1,38 @@
+{
+  "id": "ho-advwindow-synthetic-click",
+  "set": "holdout",
+  "category": "adv-window",
+  "title": "page calls #go.click() itself (untrusted click) to start create",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "synthetic-click",
+    "steps": [
+      "create"
+    ],
+    "tamper": "document.querySelector(\"#go\").click()",
+    "holdMs": 6000
+  },
+  "gesture": "none",
+  "expected": {
+    "ceremony": "none",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "window-without-gesture",
+      "definition": "a Ferret window opened from a script-dispatched click (isTrusted=false, no transient activation)"
+    }
+  ],
+  "waitMs": 12000,
+  "note": "HTML user activation: only trusted activation-triggering events grant transient activation; el.click() does not. UNCERTAIN on ceremony: a browser hand-over could still answer; the hard check is maxWindows 0."
+}

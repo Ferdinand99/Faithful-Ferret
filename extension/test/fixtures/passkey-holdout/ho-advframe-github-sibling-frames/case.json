@@ -1,0 +1,46 @@
+{
+  "id": "ho-advframe-github-sibling-frames",
+  "set": "holdout",
+  "category": "adv-frames",
+  "title": "evil.github.io frames user.github.io (delegated) and the frame registers for itself",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "evil.github.io",
+      "user.github.io"
+    ],
+    "kinds": [
+      "iframe"
+    ],
+    "allow": [
+      "publickey-credentials-create; publickey-credentials-get"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "rpId": "user.github.io",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "browser",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "response-to-foreign-ancestor",
+      "definition": "Ferret answering for user.github.io while its top is evil.github.io (separate sites under the public suffix)"
+    }
+  ],
+  "note": "L3 §5.1.3/§5.1.4.1: delegated cross-origin ceremonies are valid (crossOrigin=true, topOrigin evil.github.io); a provider must not treat same-\"github.io\" as same-site (PSL) and should leave it to the browser."
+}

@@ -1,0 +1,64 @@
+{
+  "id": "ho-prf-evalbycred-and-eval",
+  "set": "holdout",
+  "category": "get-prf",
+  "title": "prf with both eval and a matching evalByCredential entry",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "create": {
+      "extensions": {
+        "prf": {}
+      }
+    },
+    "get": {
+      "allowCredentials": [
+        {
+          "$foreign": 32
+        },
+        "$cred"
+      ],
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": {
+              "$bytes": 32
+            }
+          },
+          "evalByCredential": {
+            "$cred": {
+              "first": {
+                "$bytes": 32
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "prf": "results"
+  },
+  "unsafe": [
+    {
+      "id": "key-outside-core",
+      "definition": "PRF output derived from a salt other than the evalByCredential one leaving the core for another credential"
+    }
+  ],
+  "note": "L3 §10.1.4: for the chosen credential the evalByCredential entry takes precedence over eval; results.first is returned. (Which salt was used is not checkable here.)"
+}

@@ -1,0 +1,49 @@
+{
+  "id": "ho-advbridge-proto-pollution-origin",
+  "set": "holdout",
+  "category": "adv-bridge",
+  "title": "page sets Object.prototype.origin/topOrigin/crossOrigin before a normal ceremony",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "__page": "proto-pollution",
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": []
+    },
+    "tamper": {
+      "Object.prototype.origin": "https://rp-b.test",
+      "Object.prototype.topOrigin": "https://rp-b.test",
+      "Object.prototype.crossOrigin": false,
+      "Object.prototype.sameOriginWithAncestors": true,
+      "Object.prototype.frameId": 0
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "clientDataJSON.origin other than https://rp-a.test, or the answer routed by a page-controlled origin"
+    },
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a credential for rp-b.test"
+    }
+  ],
+  "note": "L3 §5.1.3 step: callerOrigin is the relevant settings object's origin, never page data; none of these names are WebIDL members of the options dictionaries, so the ceremony must be unaffected (RP checks origin)."
+}

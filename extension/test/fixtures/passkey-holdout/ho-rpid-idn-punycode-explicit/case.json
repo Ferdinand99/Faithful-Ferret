@@ -1,0 +1,38 @@
+{
+  "id": "ho-rpid-idn-punycode-explicit",
+  "set": "holdout",
+  "category": "origin-rpid",
+  "title": "IDN host passes its own A-label as RP ID explicitly",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "xn--rp--8cd.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "rpId": "xn--rp--8cd.test",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "a passkey stored under the U-label or under rp-a.test, or offered to rp-a.test later"
+    }
+  ],
+  "note": "L3 §5.1.3 step 7: an RP ID equal to the effective domain is valid; origin is https://xn--rp--8cd.test (URL serialisation uses A-labels)."
+}

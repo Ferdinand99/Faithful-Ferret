@@ -1,0 +1,46 @@
+{
+  "id": "ho-nav-hash-change-mid-get",
+  "set": "holdout",
+  "category": "navigation",
+  "title": "page changes location.hash while the get is pending",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "get": {
+      "allowCredentials": [
+        "$cred"
+      ]
+    },
+    "navigate": {
+      "step": "get",
+      "afterMs": 1000,
+      "kind": "hash",
+      "to": "#moved"
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret",
+    "maxWindows": 1
+  },
+  "unsafe": [
+    {
+      "id": "response-to-other-frame",
+      "definition": "the assertion delivered to a different document or frame than the one that asked"
+    }
+  ],
+  "note": "HTML \"navigate to a fragment\" keeps the same Document (like pushState), so the request is not aborted and must still complete."
+}

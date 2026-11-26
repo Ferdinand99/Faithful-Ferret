@@ -1,0 +1,40 @@
+{
+  "id": "ho-rpid-sibling-github",
+  "set": "holdout",
+  "category": "origin-rpid",
+  "title": "evil.github.io calls get for RP ID user.github.io",
+  "rp": {
+    "lib": "rs",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "evil.github.io"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "get"
+    ],
+    "rpId": "user.github.io",
+    "get": {
+      "allowCredentials": []
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "client-error",
+    "error": "SecurityError",
+    "failStep": "get",
+    "route": "any",
+    "maxWindows": 0
+  },
+  "unsafe": [
+    {
+      "id": "signature-for-other-rp-id",
+      "definition": "any assertion for user.github.io given to evil.github.io"
+    }
+  ],
+  "note": "L3 §5.1.4.1 step 7 + HTML registrable-suffix algorithm: a sibling under the public suffix github.io is never a suffix -> SecurityError."
+}

@@ -1,0 +1,62 @@
+{
+  "id": "ho-create-buffer-subviews",
+  "set": "holdout",
+  "category": "create-options",
+  "title": "challenge and user.id passed as Uint8Array views with a non-zero byteOffset",
+  "rp": {
+    "lib": "swa",
+    "client": "manual"
+  },
+  "page": {
+    "chain": [
+      "rp-a.test"
+    ],
+    "scheme": "https"
+  },
+  "spec": {
+    "steps": [
+      "create",
+      "get"
+    ],
+    "user": {
+      "id": {
+        "$bytes": 16,
+        "$view": {
+          "bufferBytes": 64,
+          "byteOffset": 7
+        }
+      }
+    },
+    "create": {
+      "challenge": {
+        "$bytes": 32,
+        "$view": {
+          "bufferBytes": 64,
+          "byteOffset": 7
+        }
+      }
+    },
+    "get": {
+      "allowCredentials": [],
+      "challenge": {
+        "$bytes": 32,
+        "$view": {
+          "bufferBytes": 96,
+          "byteOffset": 13
+        }
+      }
+    }
+  },
+  "gesture": "click",
+  "expected": {
+    "ceremony": "ok",
+    "route": "ferret"
+  },
+  "unsafe": [
+    {
+      "id": "passkey-not-delivered",
+      "definition": "a stored passkey whose user.id is the whole 64-byte buffer instead of the 16-byte view, so the page/RP never got the passkey it asked for"
+    }
+  ],
+  "note": "WebIDL \"get a copy of the bytes held by the buffer source\" honours byteOffset/byteLength; the RP checks the 32-byte challenge and userHandle, so a provider copying view.buffer fails."
+}
