@@ -393,6 +393,7 @@ mod tests {
 
     #[test]
     fn a_stricter_rule_is_announced_in_words() {
+        crate::product::install();
         let saved = UnlockPolicy::default();
         let next = UnlockPolicy {
             pin_allowed: false,
