@@ -140,7 +140,7 @@ if (PROVIDER === "ferret" && SET !== "demo") {
             }, 90_000, `the report of ${address.url}`);
             const label = `${channel}: ${lib} with ${client}`;
             const reports = await fetchReports(run);
-            assert.deepEqual(presses, [{ kind: "create", role: "passkey-create-new" }, { kind: "get", role: "passkey-candidate" }], `${label}: Ferret's window made the passkey and signed in with it`);
+            assert.deepEqual(presses.filter((x) => !x.role.startsWith("verified-")), [{ kind: "create", role: "passkey-create-new" }, { kind: "get", role: "passkey-candidate" }], `${label}: Ferret's window made the passkey and signed in with it`);
             assert.equal(done.ok, true, `${label}: ${JSON.stringify(reports.filter((r) => r.kind === "step").map((r) => ({ step: r.step, stage: r.stage, error: r.error })))}`);
             assert.equal(done.steps.length, 2, `${label}: create and sign-in both ran`);
             for (const s of done.steps) assert.equal(s.server?.ok, true, `${label}: the relying party verified the ${s.step}`);

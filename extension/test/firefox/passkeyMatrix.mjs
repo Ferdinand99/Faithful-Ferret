@@ -279,7 +279,8 @@ export async function browserPrompts(session) {
  * presses that instead. A window that shows the vault locked is unlocked there with the master password first. When the window then
  * asks the person to verify, `method` says how ("password", "pin" with MATRIX_PIN, "prf" with the account's passkey, "none":
  * nothing); when it says nothing can verify now, "Use the browser" is pressed. Windows already pressed in (`pressed`) and the ones
- * that were there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window.
+ * that were there before the case (`baseline`) are left alone; the session comes back to `main`. Returns what was pressed, per window,
+ * and `verified-<method>` after a verification the window asked for.
  * A case whose page aborts its own call while Ferret has nothing to offer (`browserWhenEmpty` false) is left waiting: the page's
  * abort is what it is about.
  * @param {import("./driver.mjs").Session} session @param {Set<string>} baseline @param {Set<string>} pressed @param {string} main
@@ -337,6 +338,7 @@ export async function pressInChooser(session, baseline, pressed, main, { browser
       done.push({ kind: shown.kind, role });
       if (role === "passkey-candidate" || role === "passkey-create-new") {
         const after = await verifyInChooser(session, handle, method, password);
+        if (after === "verified") done.push({ kind: shown.kind, role: `verified-${method}` });
         if (after === "unavailable") {
           // Nothing can verify now (no server, no PIN that works offline, no recent unlock): the window offers the browser.
           await sleep(900);
@@ -689,6 +691,8 @@ async function runPlainCase(session, c, { provider, drive = null }) {
     let viaCard = false;
     /** When each new window was first seen. @type {Map<string, number>} */
     const firstSeen = new Map();
+    /** The Ferret windows already named in the log. @type {Set<string>} */
+    const logged = new Set();
     let deadline = started + (c.waitMs ?? 20_000);
     let quietSince = started;
     let cardTries = 0;
@@ -699,12 +703,23 @@ async function runPlainCase(session, c, { provider, drive = null }) {
     for (;;) {
       await sleep(250);
       const handles = await session.windowHandles().catch(() => /** @type {string[]} */ ([]));
-      windowsOpened = Math.max(windowsOpened, await ferretWindows(session, handles.filter((h) => !baseline.has(h)), isFerret, main));
-      for (const h of handles) if (!baseline.has(h) && !firstSeen.has(h)) firstSeen.set(h, Date.now());
+      const ferretNow = await ferretWindows(session, handles.filter((h) => !baseline.has(h)), isFerret, main);
+      windowsOpened = Math.max(windowsOpened, ferretNow);
+      for (const h of handles) {
+        if (baseline.has(h) || firstSeen.has(h)) continue;
+        firstSeen.set(h, Date.now());
+      }
+      for (const [h, ferret] of isFerret) {
+        if (ferret && !logged.has(h)) {
+          logged.add(h);
+          console.error(`${c.id}: a Ferret window ${((Date.now() - started) / 1000).toFixed(1)} s after the click`);
+        }
+      }
       if (provider === "ferret" && holdMs > 0 && handles.some((h) => !baseline.has(h) && !pressed.has(h) && Date.now() - (firstSeen.get(h) ?? 0) < holdMs)) {
         // The page does something to its own call first (an abort, a frame taken out): a person has not clicked yet.
       } else if (provider === "ferret" && !pressNothing && handles.some((h) => !baseline.has(h) && !pressed.has(h))) {
         const did = await pressInChooser(session, baseline, pressed, main, { browserWhenEmpty: c.expected.error !== "AbortError" });
+        if (did.length > 0) console.error(`${c.id}: pressed ${JSON.stringify(did)} ${((Date.now() - started) / 1000).toFixed(1)} s after the click`);
         if (did.length > 0) {
           deadline = Math.max(deadline, Date.now() + (c.waitMs ?? 20_000));
           quietSince = Date.now();

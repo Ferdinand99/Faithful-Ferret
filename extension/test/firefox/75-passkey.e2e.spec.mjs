@@ -109,7 +109,7 @@ test("full_u4_flow_end_to_end", async () => {
       // 1. The extension makes a passkey, and signs in with it.
       let made = await ceremony(session, pageTab, { sid, steps: ["create", "get"], name, password: account.password });
       assert.equal(made.result.ok, true, `${channel}: create and sign-in: ${JSON.stringify(made.result.steps?.map((/** @type {any} */ s) => ({ step: s.step, error: s.error })))}`);
-      assert.deepEqual(made.presses.map((p) => p.role), ["passkey-create-new", "passkey-candidate"], `${channel}: made and used in Ferret's window`);
+      assert.deepEqual(made.presses.map((p) => p.role).filter((r) => !r.startsWith("verified-")), ["passkey-create-new", "passkey-candidate"], `${channel}: made and used in Ferret's window`);
       const item = await syncUntil(session, extTab, name, true);
       assert.match(item.id, /^[0-9a-f]{32}$/);
 
