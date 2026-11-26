@@ -271,6 +271,10 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "One pending **modal** request per tab",
     "a request from another tab while the window is busy gets a badge and waits, and never replaces the open one.",
     "`timeout` is clamped to 30 seconds to 10 minutes (default 5 minutes); a conditional request has none.",
+    "The page's `timeout` is read first as the browser reads it, a WebIDL `unsigned long`, so a number of 2^32 or more wraps.",
+    "A call of a document while 64 of its calls already wait ends at once with `AbortError`, like a second modal call of a tab, and never goes to the browser.",
+    // The core still canonicalizes an RP ID with a trailing dot or upper case; the extension refuses those first.
+    "The extension therefore refuses such an RP ID itself, with a `SecurityError` and before any window, for `create` and for `get`, so a page call never reaches that path of the core.",
     "**Calm period:** three cancelled requests within one minute from the same tab give five minutes in which new requests from that tab only get the badge and the card in the popup, with no window.",
     "the stored `rp_id` must be **exactly equal** to the requested `rpId`.",
   ]) {
@@ -303,7 +307,7 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "`authenticatorAttachment: \"platform\"` and `getTransports()` = `[\"hybrid\", \"internal\"]`",
     "`credProps: { rk: true }`",
     "`NotAllowedError` for cancelled, no match, timeout, verification impossible and a wrong RP at signing (the same type, and a cancellation is answered no sooner than a normal answer would be",
-    "`InvalidStateError` only for `excludeCredentials`, **after** the user's click; `SecurityError` for an RP ID the page cannot use; `AbortError` with the page's `signal.reason`; `TypeError` for malformed options",
+    "`InvalidStateError` only for `excludeCredentials`, **after** the user's click; `SecurityError` for an RP ID the page cannot use; `NotSupportedError` for a `prf` `evalByCredential` at `create`, or at `get` with an empty `allowCredentials`, before any window; `AbortError` with the page's `signal.reason`; `TypeError` for malformed options",
     "**Imported passkeys** (§ 9.6) get counter 0 like every Ferret passkey.",
     "so a passkey that had a counter above zero must be registered again at the site.",
     // The privacy rule.
