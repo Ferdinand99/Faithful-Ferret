@@ -560,12 +560,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * The cases of a set (those of the fixtures and adversarial sets share a folder and are told apart by `set`).
- * @param {"fixtures" | "adversarial" | "holdout" | "demo"} set @param {string} [grep] a text that the id contains
+ * @param {"fixtures" | "adversarial" | "holdout" | "demo"} set @param {string} [grep] a text that the id contains (or several, comma-separated)
  * @returns {{ cases: any[], problems: string[] }}
  */
 export function selectCases(set, grep = "") {
   const { cases, problems } = loadCases([SET_DIRS[set]]);
-  return { cases: cases.filter((c) => c.set === set && c.id.includes(grep)), problems };
+  // The filter is a text the id contains, or several of them separated by commas (any of them).
+  const parts = grep.split(",").filter((x) => x !== "");
+  return { cases: cases.filter((c) => c.set === set && (parts.length === 0 || parts.some((x) => c.id.includes(x)))), problems };
 }
 
 /**

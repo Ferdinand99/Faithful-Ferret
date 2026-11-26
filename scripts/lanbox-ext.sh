@@ -222,7 +222,7 @@ case "$matrix_set" in corpus | holdout | parity) ;; *) usage ;; esac
 case "$passkey_set" in fixtures | adversarial | holdout | demo) ;; *) usage ;; esac
 case "$passkey_provider" in stub | ferret) ;; *) usage ;; esac
 # A case id is lower case letters, digits and dashes; the text goes into the container's environment.
-case_re='^[a-z0-9-]{0,80}$'
+case_re='^[a-z0-9,-]{0,200}$'
 if { [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && ! (LC_ALL=C; [[ $grep_name =~ $case_re ]]); then usage; fi
 # The gate and the matrix run the Firefox build: MV2 with a persistent background, unless --manifest names another.
 if { [ "$mode" = gate ] || [ "$mode" = matrix ] || [ "$mode" = passkey-matrix ]; } && [ "$manifest_given" = 0 ]; then manifest=mv2; fi
