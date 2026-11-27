@@ -682,6 +682,19 @@ test("a_registration_with_appid_exclude_as_github_sends_it_opens_ferrets_window"
   // The core's create request does not carry the extension (it is left unprocessed).
   assert.equal("appid_exclude" in createRequestOf(createOptions(github)), false);
   assert.equal(JSON.stringify(createRequestOf(createOptions(github))).includes("trusted_facets"), false);
+  // accounts.google.com's registration: appidExclude too (its security-key origins file), direct attestation (answered with
+  // none) and a platform authenticator. Ferret takes it as well.
+  const google = {
+    rp: { name: "Google", id: "rp-a.test" },
+    pub_key_cred_params: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+    authenticator_selection: { authenticator_attachment: "platform", resident_key: "preferred", user_verification: "preferred" },
+    attestation: "direct",
+    extensions: { appid_exclude: "https://rp-a.test/securitykey/origins.json" },
+  };
+  assert.equal(automaticHandover("create", createOptions(google), "optional"), null);
+  const g = world();
+  assert.ok("request_id" in /** @type {any} */ (await g.requests.open(senderOf(), createBody("gg1", { options: google }))), "Ferret takes Google's request");
+  assert.equal(g.opened.length, 1, "Ferret's window opens for Google's request");
   // The legacy appid of a get is still the browser's.
   assert.equal(automaticHandover("get", getOptions({ extensions: { appid: "https://rp-a.test/u2f/trusted_facets" } }), "optional"), "appid");
 });
