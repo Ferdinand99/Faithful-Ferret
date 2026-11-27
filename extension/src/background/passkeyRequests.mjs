@@ -201,7 +201,8 @@ export function automaticHandover(kind, options, mediation) {
   // A create's `appidExclude` (sites that moved from U2F send it with every registration, github.com among them) only keeps an
   // authenticator that holds such a U2F credential from registering again. Ferret's passkeys are all scoped to an RP ID, made
   // here or imported, never to an AppID, so the exclusion always holds for Ferret: the extension is left unprocessed (a client
-  // may ignore an extension, and the core's create request does not carry it) and Ferret answers the request.
+  // may ignore an extension) and Ferret answers the request. Firefox itself does not implement it (bug 1570429), so neither
+  // validating it nor reporting it would answer as the browser does; the page's script does not even copy it to the wire.
   if (extensions.appid !== undefined) return "appid";
   if (options?.attestation === "enterprise") return "enterprise";
   if (kind === "create") {

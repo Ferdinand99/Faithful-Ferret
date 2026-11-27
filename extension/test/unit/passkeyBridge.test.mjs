@@ -108,6 +108,61 @@ test("a_request_carries_the_options_activation_and_policy_and_no_origin", async 
   assert.equal(/** @type {any} */ (lastRequest(page)).body.activation, false);
 });
 
+test("appid_exclude_is_not_read_or_carried_whatever_its_value_as_firefox_ignores_it", async () => {
+  // github.com's registration carries appidExclude. Firefox does not implement it, so no value of it changes anything there:
+  // here the request reaches the bridge without it, never the browser's own function, and the page's getter never runs.
+  /** @type {Array<[string, string]>} */
+  const values = [
+    ["a string", "'https://rp.example/u2f/trusted_facets'"],
+    ["a number", "42"],
+    ["an over-long string", "'x'.repeat(100000)"],
+  ];
+  for (const [name, value] of values) {
+    const page = createPasskeyPage();
+    page.page(`(() => {
+      globalThis.out = { done: false };
+      navigator.credentials.create({ publicKey: {
+        challenge: new Uint8Array(32).fill(7),
+        rp: { name: "GitHub", id: "rp.example" },
+        user: { id: new Uint8Array([1, 2, 3]), name: "alice", displayName: "Alice" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+        authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+        attestation: "none",
+        extensions: { credProps: true, appidExclude: ${value} },
+      } }).then((v) => { out.done = true; out.value = v; }, (e) => { out.done = true; out.error = e.name; });
+    })()`);
+    await page.flush();
+    const request = /** @type {any} */ (lastRequest(page));
+    assert.ok(request, `${name}: the request reached the bridge`);
+    assert.deepEqual(request.body.create.extensions, { cred_props: true }, `${name}: only credProps is carried`);
+    assert.equal(page.nativeCalls.length, 0, `${name}: the browser's own function was not called`);
+  }
+  // A getter of the page for appidExclude never runs.
+  const page = createPasskeyPage();
+  page.page(`(() => {
+    globalThis.read = 0;
+    const extensions = { credProps: true };
+    Object.defineProperty(extensions, "appidExclude", { enumerable: true, get() { globalThis.read += 1; return "https://rp.example/u2f"; } });
+    navigator.credentials.create({ publicKey: {
+      challenge: new Uint8Array(32).fill(7),
+      rp: { name: "RP", id: "rp.example" },
+      user: { id: new Uint8Array([1, 2, 3]), name: "alice", displayName: "Alice" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      extensions,
+    } }).then(() => {}, () => {});
+  })()`);
+  await page.flush();
+  assert.ok(lastRequest(page), "the request reached the bridge");
+  assert.equal(page.page("globalThis.read"), 0, "the getter of appidExclude never ran");
+  // The wire form drops it too, and its schema has no field for it.
+  const wire = /** @type {any} */ (optionsToWire("create", {
+    challenge: new Uint8Array(32).buffer, rp: { name: "RP" }, user: { id: new Uint8Array(1).buffer, name: "a", displayName: "A" },
+    pubKeyCredParams: [], excludeCredentials: [], hints: [], extensions: { credProps: true, appidExclude: "https://rp.example/u2f" },
+  }));
+  assert.ok(wire);
+  assert.deepEqual(wire.extensions, { cred_props: true });
+});
+
 test("passkey_messages_have_no_origin_field", () => {
   const forbidden = /origin|top|frame|url|href|host|document|tab|referr|sender/i;
   for (const [table, types] of /** @type {const} */ ([[CONTENT_TYPES, ["passkey_request", "passkey_abort", "passkey_foreign", "passkey_ping"]], [PUSH_TYPES, ["passkey_result", "passkey_handover", "passkey_error"]]])) {

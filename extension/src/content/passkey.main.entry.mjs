@@ -476,8 +476,9 @@ function install() {
     }
     const appid = e.appid;
     if (appid !== undefined) out.appid = str(appid);
-    const appidExclude = e.appidExclude;
-    if (appidExclude !== undefined) out.appidExclude = str(appidExclude);
+    // `appidExclude` is not read at all: Firefox does not implement it (no validation, no output), so a value of any type or
+    // length changes nothing there, and here it neither sends the call to the browser nor runs a getter of the page. It is a
+    // known name, so it is not listed among the others either.
     // The names of the other extensions the page asked for, for the background to judge; at most 16.
     const names = OK(e);
     /** @type {string[]} */

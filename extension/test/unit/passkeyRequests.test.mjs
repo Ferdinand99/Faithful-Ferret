@@ -622,6 +622,7 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
     ["appid", "get", { extensions: { appid: "https://rp-a.test/app" } }, "appid"],
     // appidExclude only excludes legacy U2F credentials, which Ferret never holds: Ferret answers.
     ["appidExclude", "create", { extensions: { appid_exclude: "https://rp-a.test/app" } }, null],
+    ["appidExclude on a get (Firefox ignores it)", "get", { extensions: { appid_exclude: "https://rp-a.test/app" } }, null],
     ["enterprise attestation", "create", { attestation: "enterprise" }, "enterprise"],
     ["direct attestation (answered with none)", "create", { attestation: "direct" }, null],
     ["indirect attestation", "create", { attestation: "indirect" }, null],
@@ -663,7 +664,8 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
 test("a_registration_with_appid_exclude_as_github_sends_it_opens_ferrets_window", async () => {
   // github.com's passkey registration (through @github/webauthn-json, which keeps appidExclude and credProps and drops hints):
   // ES256 and RS256, a resident key, attestation none, and appidExclude for the AppID of its old U2F security keys. It used to
-  // go straight to the browser's own dialog.
+  // go straight to the browser's own dialog. (The page's script no longer copies appidExclude to the wire, see
+  // passkeyBridge.test.mjs; the broker takes the request whether or not it is there.)
   const github = {
     rp: { name: "GitHub", id: "rp-a.test" },
     pub_key_cred_params: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],

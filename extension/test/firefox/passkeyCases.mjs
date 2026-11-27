@@ -70,7 +70,7 @@ export const CATEGORIES = Object.freeze({
   "create-options": { set: "fixtures", min: 8, summary: "residentKey, userVerification, attestation and authenticatorAttachment" },
   "create-algs": { set: "fixtures", min: 4, summary: "pubKeyCredParams: empty, ES256 and RS256, RS256 only, EdDSA only" },
   "create-exclude": { set: "fixtures", min: 2, summary: "excludeCredentials with and without a Ferret match" },
-  "create-extensions": { set: "fixtures", min: 4, summary: "credProps, prf with and without eval, appid" },
+  "create-extensions": { set: "fixtures", min: 5, summary: "credProps, prf with and without eval, appidExclude" },
   "create-users": { set: "fixtures", min: 4, summary: "two users on one relying party, the same user.id again, user.id of 0 and 65 bytes" },
   "create-gesture": { set: "fixtures", min: 1, summary: "create without user activation" },
   "get-modal": { set: "fixtures", min: 8, summary: "modal get: allowCredentials, userVerification, timeout and the page's AbortSignal" },
