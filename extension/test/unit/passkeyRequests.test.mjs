@@ -12,6 +12,7 @@ import {
   PASSKEY_ERROR_DELAY_MS, PASSKEY_EVENT_OP, PASSKEY_GUARD_MS, PASSKEY_PASS_ONCE_MS, PASSKEY_QUIET, PASSKEY_TIMEOUT_MS, PASSKEY_WINDOW_OPS,
 } from "../../src/background/passkeyRequests.mjs";
 import { CORE_OPS } from "../../src/background/coreHost.mjs";
+import { createRequestOf } from "../../src/background/passkeyFlow.mjs";
 import { LOCK_EXEMPT } from "../../src/background/lock.mjs";
 import { contentSender, withBrowserOrigin } from "../../src/shared/origin.mjs";
 import { decode, PASSKEY_REQUEST_VIEW, PUSH_TYPES, UI_TYPES } from "../../src/shared/protocol.mjs";
@@ -619,7 +620,8 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
     ["ES256 of another type", "create", { pub_key_cred_params: [{ type: "other", alg: -7 }] }, "algorithms"],
     ["ES256 and RS256", "create", { pub_key_cred_params: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }] }, null],
     ["appid", "get", { extensions: { appid: "https://rp-a.test/app" } }, "appid"],
-    ["appidExclude", "create", { extensions: { appid_exclude: "https://rp-a.test/app" } }, "appid"],
+    // appidExclude only excludes legacy U2F credentials, which Ferret never holds: Ferret answers.
+    ["appidExclude", "create", { extensions: { appid_exclude: "https://rp-a.test/app" } }, null],
     ["enterprise attestation", "create", { attestation: "enterprise" }, "enterprise"],
     ["direct attestation (answered with none)", "create", { attestation: "direct" }, null],
     ["indirect attestation", "create", { attestation: "indirect" }, null],
@@ -656,6 +658,30 @@ test("automatic_handover_cases_follow_the_request_properties", async () => {
   assert.deepEqual(await w.requests.open(senderOf(), createBody("t1", { options: { user: { id: "", name: "a", display_name: "A" } } })), { error: "TypeError" });
   assert.deepEqual(w.pushed.map((p) => [p.type, p.body.name]), [["passkey_error", "TypeError"]]);
   assert.equal(w.opened.length, 0);
+});
+
+test("a_registration_with_appid_exclude_as_github_sends_it_opens_ferrets_window", async () => {
+  // github.com's passkey registration (through @github/webauthn-json, which keeps appidExclude and credProps and drops hints):
+  // ES256 and RS256, a resident key, attestation none, and appidExclude for the AppID of its old U2F security keys. It used to
+  // go straight to the browser's own dialog.
+  const github = {
+    rp: { name: "GitHub", id: "rp-a.test" },
+    pub_key_cred_params: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+    authenticator_selection: { resident_key: "required", user_verification: "preferred" },
+    attestation: "none",
+    extensions: { cred_props: true, appid_exclude: "https://rp-a.test/u2f/trusted_facets" },
+  };
+  assert.equal(automaticHandover("create", createOptions(github), "optional"), null);
+  const w = world();
+  const out = /** @type {any} */ (await w.requests.open(senderOf(), createBody("gh1", { options: github })));
+  assert.ok("request_id" in out, "Ferret takes the request");
+  assert.equal(w.pushed.filter((p) => p.type === "passkey_handover").length, 0, "no hand-over to the browser");
+  assert.equal(w.opened.length, 1, "Ferret's window opens");
+  // The core's create request does not carry the extension (it is left unprocessed).
+  assert.equal("appid_exclude" in createRequestOf(createOptions(github)), false);
+  assert.equal(JSON.stringify(createRequestOf(createOptions(github))).includes("trusted_facets"), false);
+  // The legacy appid of a get is still the browser's.
+  assert.equal(automaticHandover("get", getOptions({ extensions: { appid: "https://rp-a.test/u2f/trusted_facets" } }), "optional"), "appid");
 });
 
 test("an_rp_id_the_browser_refuses_is_a_security_error_before_any_window", async () => {

@@ -22,7 +22,8 @@
 //     frame of the top's origin below a frame of another);
 //   - `document.featurePolicy` (where the browser has it) allows the call;
 //   - the request is not one only the browser can answer (a list of algorithms without ES256, `appid`, enterprise
-//     attestation, a cross-platform create that hints only at a security key or a phone, a conditional create).
+//     attestation, a cross-platform create that hints only at a security key or a phone, a conditional create). A create's
+//     `appidExclude` is not one: it excludes legacy U2F credentials, which Ferret never holds (see automaticHandover).
 // The caller the core is given is built here and nowhere else (`callerOf`, `passkey_site`), from those facts only.
 //
 // What happens to a request Ferret takes:
@@ -196,7 +197,12 @@ export function automaticHandover(kind, options, mediation) {
   // Conditional creation (WebAuthn L3) is not supported.
   if (kind === "create" && mediation === "conditional") return "conditional_create";
   const extensions = options?.extensions ?? {};
-  if (extensions.appid !== undefined || extensions.appid_exclude !== undefined) return "appid";
+  // `appid` asks for a credential made with the legacy U2F API under that AppID: only the browser's authenticators can hold one.
+  // A create's `appidExclude` (sites that moved from U2F send it with every registration, github.com among them) only keeps an
+  // authenticator that holds such a U2F credential from registering again. Ferret's passkeys are all scoped to an RP ID, made
+  // here or imported, never to an AppID, so the exclusion always holds for Ferret: the extension is left unprocessed (a client
+  // may ignore an extension, and the core's create request does not carry it) and Ferret answers the request.
+  if (extensions.appid !== undefined) return "appid";
   if (options?.attestation === "enterprise") return "enterprise";
   if (kind === "create") {
     // An empty list means ES256 and RS256 (WebAuthn): Ferret answers. A list of only other algorithms (or other types) does not.
