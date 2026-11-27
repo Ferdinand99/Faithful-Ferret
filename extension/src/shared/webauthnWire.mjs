@@ -170,9 +170,8 @@ function extensions(x) {
     }
     out.prf = p;
   }
-  for (const [name, key] of /** @type {const} */ ([["appid", "appid"], ["appidExclude", "appid_exclude"]])) {
-    if (own(x, name) !== undefined) out[key] = text(own(x, name));
-  }
+  // `appidExclude` is not carried (Firefox ignores it, and so does Ferret); it stays a known name, so it is never an other.
+  if (own(x, "appid") !== undefined) out.appid = text(own(x, "appid"));
   const others = own(x, "others");
   if (others !== undefined) {
     const names = list(others, PASSKEY_LIMITS.otherExtensions, (n) => {

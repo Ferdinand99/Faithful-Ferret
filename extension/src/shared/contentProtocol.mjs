@@ -116,11 +116,10 @@ const pkExtensions = object(
       { optional: ["eval", "eval_by_credential"] },
     ),
     appid: pkText,
-    appid_exclude: pkText,
     // Extensions the page asked for that the wire does not carry, by name only.
     others: array(string({ min: 1, max: 64 }), { max: PASSKEY_LIMITS.otherExtensions }),
   },
-  { optional: ["cred_props", "prf", "appid", "appid_exclude", "others"] },
+  { optional: ["cred_props", "prf", "appid", "others"] },
 );
 /** The options of a page's `create` (PublicKeyCredentialCreationOptions), on the wire. */
 export const PASSKEY_CREATE_OPTIONS = object(

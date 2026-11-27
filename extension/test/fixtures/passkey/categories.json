@@ -29,8 +29,8 @@
     },
     "create-extensions": {
       "set": "fixtures",
-      "min": 4,
-      "summary": "credProps, prf with and without eval, appid"
+      "min": 5,
+      "summary": "credProps, prf with and without eval, appidExclude"
     },
     "create-users": {
       "set": "fixtures",

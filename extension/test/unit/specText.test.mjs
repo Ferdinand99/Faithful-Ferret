@@ -329,7 +329,9 @@ test("the_passkey_rules_are_in_the_spec", () => {
     "**\"Never on this site\"** and **Cancel**",
     "no default button, no initial focus on an action, and Enter does nothing; a click counts only with `isTrusted` and 400 ms after the window got focus or its content changed.",
     "**The browser's own dialog is given only when the user chooses it, or when Ferret cannot or must not answer.**",
-    "`pubKeyCredParams` that is not empty and has no ES256 (an **empty** list means ES256 and RS256, and Ferret answers it); `extensions.appid` or `appidExclude`; `attestation: \"enterprise\"`",
+    "`pubKeyCredParams` that is not empty and has no ES256 (an **empty** list means ES256 and RS256, and Ferret answers it); `extensions.appid`; `attestation: \"enterprise\"`",
+    "A create's `appidExclude` is no reason to hand over: it only excludes credentials made with the legacy U2F API, which Ferret never holds",
+    "Firefox does not implement `appidExclude` either (no validation, no output), so the page gets what Firefox would give it; Ferret never reports `appidExclude: true` in `getClientExtensionResults()`.",
     "and a call without `publicKey` (`password`, `federated`, `identity`, `otp`).",
     "The script calls the saved original with the page's **own options**, which Ferret never changes.",
     "the **next** call of the same kind (`create` or `get`) from the same tab, frame, `documentId` and origin within 60 seconds goes untouched to the browser, once.",
@@ -341,6 +343,7 @@ test("the_passkey_rules_are_in_the_spec", () => {
     assert.ok(choice.includes(rule), rule);
   }
   assert.equal(choice.includes("The browser's own dialog** is given only if the user chooses it."), false, "the old wording is gone");
+  assert.equal(choice.includes("`extensions.appid` or `appidExclude`"), false, "a create's appidExclude no longer hands over");
 
   // 9.5 and 9.6: conditional UI as a part of the popup and a badge, PRF from Ferret, the import.
   const conditional = section("### 9.5 Conditional UI and PRF via Ferret");
