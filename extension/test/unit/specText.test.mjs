@@ -451,3 +451,77 @@ test("the_passkey_rules_are_in_the_spec", () => {
   assert.ok(appendixB.includes("`rp_name` and `user_display_name` are optional, at most 1 KiB each"));
   assert.ok(spec.includes("**Changes for the passkey provider in the extension (2026-11-25).**"));
 });
+
+test("the_several_accounts_rules_are_in_the_spec", () => {
+  // § 0 and § 1: the change log of delivery 1 and the terms.
+  assert.ok(spec.includes("**Changes for several accounts (delivery 1, 2026-11-27).**"));
+  const terms = section("## 1. Scope and terms");
+  assert.equal(terms.includes("One vault per user in v1 (no sharing)."), false, "the old wording is gone");
+  for (const rule of [
+    "| **Invitation** | A one-time link that an administrator makes for one new account (§ 11): `<vault origin>/vault/setup#invite=<token>`.",
+    "| **Account log** |",
+    "Nothing is shared between accounts in delivery 1",
+  ]) assert.ok(terms.includes(rule), rule);
+
+  // § 2.3 and § 2.5: root and the log, and what the server sees of the accounts.
+  assert.ok(section("### 2.3 Outside the threat model (documented limitations)").includes("**L10 Root on the server and the account log**"));
+  const metadata = section("### 2.5 Metadata the server sees");
+  for (const rule of [
+    "who invited whom (an invitation's `created_by` and `used_by`)",
+    "Anything in a vault: no item, name, URL, username, password, note or key of any account.",
+    "Delivery 2 (sharing) adds what the server learns about who shares with whom",
+  ]) assert.ok(metadata.includes(rule), rule);
+
+  // § 4.2: registration with an invitation, the check, the deviation and pre-login.
+  const signIn = section("### 4.2 Sign-in to the server: OPAQUE (E11, reverses the maintainer's decision from 2026-10-27)");
+  for (const rule of [
+    "`invite` **or** `setup_token`, never both (`400 bad_request`).",
+    "no users yet and an `invite` → `403 invite_invalid`; users and no `invite` → `409 registration_closed` (as before)",
+    "Only an invitation that was found pending is counted, so a made-up token never enters the count.",
+    "No account is made without a spent invitation.",
+    "**`POST /api/auth/invite/check {invite}`**",
+    "**A deliberate deviation: `email_taken`.**",
+    "**Pre-login with several accounts**",
+    "can learn that the number of accounts changed, not which account",
+  ]) assert.ok(signIn.includes(rule), rule);
+
+  // § 4.5: no key pair per user yet.
+  assert.ok(section("### 4.5 Derivations from VK and signing keys").includes("Delivery 1 makes none and adds no construction."));
+
+  // § 6.3: every code is in the log, and what is and is not one transaction.
+  const recovery = section("### 6.3 Recovery flow (new device, forgotten MP)");
+  for (const rule of [
+    "**Every code is in the account log**",
+    "The kit's `insert` commits in a transaction of its own, so the code and its event cannot share one: if the event cannot be written, the code is revoked again (`revoke_for_user`) and the action fails",
+    "A redeemed code is written (`sign_in_code_redeemed`, actor `account`) in the same transaction as the reset session (`open_session_tx`).",
+    "the code stays spent",
+  ]) assert.ok(recovery.includes(rule), rule);
+  assert.equal(recovery.includes("the kit does not let an administrator make a code for their own account there"), false, "the old wording is gone");
+
+  // § 8.2 and § 8.8: the stream limit and the known limits.
+  assert.ok(section("### 8.2 API (behind an access token, or a session cookie for the web vault)").includes("At most 2 streams per device, 40 per vault and 1 024 on the server"));
+  const limits = section("### 8.8 Known limits of the first sync release");
+  assert.equal(limits.includes("revisit it when more users can register"), false, "the old wording is gone");
+  for (const rule of [
+    "**Several accounts** *(known limits of delivery 1, written down 2026-11-27)*",
+    "**People behind one public address share its limits.**",
+    "the cache of used `jti` values (65 536 in all, § 7.6) and the 1 024 event streams are shared by every account",
+    "**One account per extension profile.**",
+    "**Two accounts in one browser**",
+  ]) assert.ok(limits.includes(rule), rule);
+
+  // § 11: the Users page, the logging rule and its two exceptions.
+  const server = section("## 11. Server and vole-kit – limits");
+  for (const rule of [
+    "- **Several accounts** *(delivery 1, 2026-11-27)*.",
+    "No action of the Users page works on the administrator's own account or on another administrator (`403`)",
+    "**What an administrator cannot do:**",
+    "Every route takes the acting account, its vault and its user from the session, the token or the code, never from the request.",
+    "**Every action on another account writes its event in the same transaction as the change,** or it does not happen. There are two exceptions.",
+    "(2) **A deletion:** the account's log is deleted with the account (the table cascades), so no event can outlive it.",
+    "a good backup set exists whose run started after the account's last `account_disabled` event (strictly after",
+    "On the admin listener `GET /settings/users` answers `303` to `/settings/accounts`, and every other path under `/settings/users` answers `404`",
+    "refuses an account that is not an administrator (`403 forbidden`)",
+    "also revokes every pending invitation, so a restore never wakes a link that the administrator had revoked",
+  ]) assert.ok(server.includes(rule), rule);
+});
