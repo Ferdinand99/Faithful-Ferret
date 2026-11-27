@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.12.0...v0.12.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ext:** answer passkey registrations that carry appidExclude ([#338](https://github.com/Ferdinand99/Faithful-Ferret/issues/338)) ([c158588](https://github.com/Ferdinand99/Faithful-Ferret/commit/c158588b75e87d623b702dcf7a81bf43d972bc62))
+
 ## [0.12.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.11.0...v0.12.0) (2026-11-26)
 
 
