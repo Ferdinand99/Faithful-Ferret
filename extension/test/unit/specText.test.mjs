@@ -508,6 +508,8 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "the cache of used `jti` values (65 536 in all, § 7.6) and the 1 024 event streams are shared by every account",
     "**One account per extension profile.**",
     "**Two accounts in one browser**",
+    "**A restore brings the accounts back as the set holds them.**",
+    "The administrator therefore checks the Users page after every restore and disables again what should stay disabled.",
   ]) assert.ok(limits.includes(rule), rule);
 
   // § 11: the Users page, the logging rule and its two exceptions.
@@ -523,5 +525,6 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "On the admin listener `GET /settings/users` answers `303` to `/settings/accounts`, and every other path under `/settings/users` answers `404`",
     "refuses an account that is not an administrator (`403 forbidden`)",
     "also revokes every pending invitation, so a restore never wakes a link that the administrator had revoked",
+    "The administrator makes new links after a restore and checks the Users page: the accounts come back as the set holds them",
   ]) assert.ok(server.includes(rule), rule);
 });
