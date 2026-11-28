@@ -21,6 +21,7 @@ export default {
       setupToken: entry.setupToken,
       spentToken: clearSetupToken,
       invite: entry.invite,
+      joinLost: entry.joinLost,
       checkInvite: (invite) => checkInvite(services.api, invite),
       spentInvite: clearInvite,
       host: globalThis.location?.host ?? "",

@@ -79,6 +79,7 @@
   "account.join.intro": "Make your account. You will get an emergency sheet with a recovery key and a secret key; keep it safe.",
   "account.join.invited_by": "{name} invited you to this server.",
   "account.join.invited_unknown": "An administrator of this server invited you.",
+  "account.join.lost": "This page no longer has the invitation link, or the link was not complete. Open the link you were sent again. Nothing has been sent to the server.",
   "account.login.email": "E-mail",
   "account.login.heading": "Sign in to your vault",
   "account.login.password": "Master password",

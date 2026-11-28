@@ -218,3 +218,32 @@ test("the_first_administrator_setup_is_unchanged_without_an_invitation", async (
     assert.equal(plain(root.childNodes[0]), i18n().t("account.setup.heading"));
   });
 });
+
+test("a_reload_after_the_token_was_read_says_the_link_is_lost_and_asks_for_nothing", async () => {
+  await withDom(async () => {
+    for (const lang of ["en", "nb"]) {
+      const checks = [];
+      const root = setupView({
+        t: i18n(lang).t,
+        locale: lang,
+        session: {},
+        setupToken: null,
+        invite: null,
+        joinLost: true,
+        host: HOST,
+        checkInvite: async (x) => checks.push(x),
+        adminUrl: "https://admin.example",
+        go() {},
+        handoff: {},
+      });
+      await settle();
+      assert.equal(plain(byRole(root, "invite-lost")), i18n(lang).t("account.join.lost"), lang);
+      assert.ok(plain(byRole(root, "join-heading")).includes(HOST));
+      // Not the first administrator's form, and no field at all: nothing to type a password into.
+      for (const role of ["setup-form", "email", "password", "password-repeat", "setup-token", "submit"]) assert.equal(byRole(root, role), null, `${lang}: ${role}`);
+      assert.deepEqual(checks, [], "nothing is asked of the server");
+      assert.ok(root.childNodes.some((n) => textOf(n).includes(i18n(lang).t("account.setup.login_link"))));
+      assert.ok(byRole(root, "trust-notice"));
+    }
+  });
+});

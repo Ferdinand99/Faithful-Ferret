@@ -122,7 +122,23 @@ test("an_invited_person_joins_gets_the_sheet_and_signs_in_again", async ({ brows
   page.on("request", (r) => {
     if (r.url().includes("/api/auth/opaque/register/finish")) finishes.push(r.url());
   });
-  // The sheet comes before the upload: nothing goes before the keys are typed back.
+  // A reload after the page has read the token (and taken it out of the address) does not fall back to the first
+  // administrator's form: it says the link is lost, with no field to type into, and asks the server nothing.
+  await page.goto(link);
+  await expect(page.locator('[data-role="setup-form"]')).toBeVisible({ timeout: 20_000 });
+  expect(page.url()).not.toContain(token);
+  const asked = [];
+  page.on("request", (r) => {
+    if (/\/api\/auth\/(invite\/check|opaque\/register\/)/.test(r.url())) asked.push(r.url());
+  });
+  await page.reload();
+  await expect(page.locator('[data-role="invite-lost"]')).toContainText("no longer has the invitation link", { timeout: 20_000 });
+  await expect(page.locator('[data-role="setup-page"] input')).toHaveCount(0);
+  await expect(page.locator('[data-role="setup-form"]')).toHaveCount(0);
+  expect(asked).toEqual([]);
+  expect(JSON.stringify(await page.evaluate(() => history.state))).not.toContain(token);
+
+  // Opening the link again works, and the sheet comes before the upload: nothing goes before the keys are typed back.
   await join(page, link, person, () => {
     expect(finishes).toEqual([]);
     expect(page.url()).not.toContain(token);

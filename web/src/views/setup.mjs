@@ -9,7 +9,9 @@
 // dead link is said before anyone chooses a master password. A good link shows
 // who made it and when it runs out, then the same form, sheet and checks as for
 // the first administrator. An invited account is not an administrator, so the
-// done page has no way to the admin pages.
+// done page has no way to the admin pages. A page that came from an invitation
+// but has lost its token (a reload after the token was read, a tab the browser
+// brought back, a link that was not complete) says so and asks for nothing.
 import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { el, mount } from "../dom.mjs";
@@ -26,6 +28,7 @@ import { sheetView } from "./sheet.mjs";
  * @property {(invite: string) => Promise<{ ok: true, expiresAt: number, invitedBy: string } | { ok: false, code: string }>} [checkInvite]
  *   asks the server whether the link still works (`flows/invite.mjs`)
  * @property {() => void} [spentInvite] called once the account the invitation made exists
+ * @property {boolean} [joinLost] the page came from an invitation link but no longer has a usable token
  * @property {string} [host] the host of this vault, for the heading of the join page
  * @property {string} [locale] the language of the page, for the expiry of the link
  * @property {string | null} adminUrl
@@ -39,6 +42,7 @@ export function setupView(deps) {
   const { t, session, adminUrl, go, handoff } = deps;
   const invite = typeof deps.invite === "string" && deps.invite !== "" ? deps.invite : null;
   const joining = invite !== null;
+  const joinLost = !joining && deps.joinLost === true;
   const root = el("section", { class: "auth-card account", "data-role": "setup-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
@@ -177,6 +181,18 @@ export function setupView(deps) {
 
   mount(form, email.row, password.row, repeat.row, useSk.row, noSkWarning, rememberRow, ...(token ? [token.row] : []), ...(tokenNote ? [tokenNote] : []), submit);
   const loginLink = el("p", null, el("a", { href: "#/login" }, t("account.setup.login_link")));
+  if (joinLost) {
+    // Not the first administrator's form: on a server with accounts it would end in `registration_closed` only
+    // after the master password was typed.
+    mount(
+      root,
+      el("h1", { "data-role": "join-heading" }, t("account.join.heading", { host: deps.host ?? "" })),
+      el("p", { class: "error", role: "alert", "data-role": "invite-lost" }, t("account.join.lost")),
+      loginLink,
+      trust,
+    );
+    return root;
+  }
   if (!joining) {
     mount(root, el("h1", null, t("account.setup.heading")), el("p", null, t("account.setup.intro")), form, status, errorBox, loginLink, trust);
     return root;

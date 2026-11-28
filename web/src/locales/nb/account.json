@@ -79,6 +79,7 @@
   "account.join.intro": "Lag kontoen din. Du får et nødark med en gjenopprettingsnøkkel og en hemmelig nøkkel; oppbevar det trygt.",
   "account.join.invited_by": "{name} har invitert deg til denne tjeneren.",
   "account.join.invited_unknown": "En administrator på denne tjeneren har invitert deg.",
+  "account.join.lost": "Denne siden har ikke lenger invitasjonslenken, eller lenken var ikke hel. Åpne lenken du fikk på nytt. Ingenting er sendt til tjeneren.",
   "account.login.email": "E-post",
   "account.login.heading": "Logg inn på hvelvet ditt",
   "account.login.password": "Hovedpassord",
