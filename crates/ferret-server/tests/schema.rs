@@ -7,15 +7,15 @@ mod support;
 use std::path::Path;
 
 use ferret_server::db::{CORE_MIGRATIONS, MIGRATION_FILES};
-use ferret_server::ids::ItemId;
 use ferret_server::product;
-use ferret_server::vault::quota::Limits;
-use ferret_server::vault::store::{PutBody, PutOutcome, PutRequest, put_item};
 use rusqlite::{Connection, params};
-use support::accounts::{TestAccount, add_account, id16};
+use support::accounts::{add_account, id16};
+use support::upgrade::{
+    BUILD_AT_U3, CORE_AT_0_12, NOW, database_at_0_12, empty_database, files_up_to, put_live,
+};
 use vole_kit::db::migrate::{
-    CORE, MigrationError, MigrationSet, SIGN_IN_CODES, all_migration_names, apply_migrations,
-    apply_migrations_with,
+    CORE, INVITES, MigrationError, MigrationSet, SIGN_IN_CODES, all_migration_names,
+    apply_migrations, apply_migrations_with,
 };
 
 /// A database with every migration applied, foreign keys on as in the pool.
@@ -53,7 +53,8 @@ fn migrations_apply_in_name_order_and_twice_without_change() {
             "0006_restore_seq.sql",
             "0007_reauth.sql",
             "0008_devices.sql",
-            "0009_unlock.sql"
+            "0009_unlock.sql",
+            "0010_accounts.sql"
         ]
     );
     let mut sorted = names.clone();
@@ -196,6 +197,7 @@ fn schema_matches_section_7() {
         names,
         [
             "ferret_access",
+            "ferret_account_events",
             "ferret_accounts",
             "ferret_checkpoints",
             "ferret_devices",
@@ -628,16 +630,6 @@ fn an_account_has_one_user_and_one_vault_and_the_hint_is_a_flag() {
 
 // ---------------------------------------------------------------- the schema with re-authentication and sign-in codes
 
-const NOW: i64 = 1_793_491_200;
-
-fn files_up_to(last: &str) -> Vec<(String, String)> {
-    MIGRATION_FILES
-        .iter()
-        .filter(|(name, _)| *name <= last)
-        .map(|(name, sql)| ((*name).to_string(), (*sql).to_string()))
-        .collect()
-}
-
 fn up_to_0006() -> Vec<(String, String)> {
     files_up_to("0006_restore_seq.sql")
 }
@@ -678,7 +670,7 @@ static BUILD_AT_0007: MigrationSet = MigrationSet {
 /// What the third milestone ran: the kit's core set with the sign-in codes, and
 /// our migrations up to 0007. `tests/fixtures/schema/m3.sql` is its schema.
 static BUILD_AT_M3: MigrationSet = MigrationSet {
-    core: &CORE_MIGRATIONS,
+    core: &CORE_AT_0_12,
     adopt_core: None,
     migrations: up_to_0007,
     fk_off_marker: "-- ff:foreign_keys=off",
@@ -690,43 +682,13 @@ static BUILD_AT_M3: MigrationSet = MigrationSet {
 /// sign-in codes, and our migrations up to 0008. `tests/fixtures/schema/m5a.sql`
 /// is its schema.
 static BUILD_AT_0008: MigrationSet = MigrationSet {
-    core: &CORE_MIGRATIONS,
+    core: &CORE_AT_0_12,
     adopt_core: None,
     migrations: up_to_0008,
     fk_off_marker: "-- ff:foreign_keys=off",
     baseline: None,
     after: no_fixups,
 };
-
-fn empty_database() -> Connection {
-    product::install();
-    let conn = Connection::open_in_memory().expect("open");
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .expect("pragma");
-    conn
-}
-
-fn put_live(conn: &mut Connection, a: &TestAccount, n: u8, base_rev: u8) {
-    let blob = format!("envelope of item {n} at revision {}", base_rev + 1).into_bytes();
-    let mut item = [0u8; 16];
-    item[0] = 0x10;
-    item[1] = n;
-    let req = PutRequest {
-        item_id: ItemId::from_bytes(item),
-        base_rev: u64::from(base_rev),
-        body: PutBody::Live {
-            blob: &blob,
-            tag: [n; 32],
-        },
-        idem: id16(0xe0, n.wrapping_mul(16).wrapping_add(base_rev)),
-        request_hash: [n; 32],
-        resurrect: false,
-        restore_epoch: None,
-    };
-    let outcome =
-        put_item(conn, &a.vault_id, &a.device, &req, &Limits::DEFAULT, NOW).expect("put_item");
-    assert!(matches!(outcome, PutOutcome::Stored { .. }), "{outcome:?}");
-}
 
 /// A database as the previous release left it: its migrations only, two
 /// accounts with items, and sessions of every scope, one of them ended.
@@ -927,16 +889,22 @@ fn migration_0007_adds_reauth_at_and_keeps_every_m2_row() {
 #[test]
 fn kit_sign_in_codes_migration_runs_after_0006_and_0007_and_keeps_every_row() {
     product::install();
-    // The kit's migration is part of the core set of this build, and the last
-    // of it, after everything the kit's own core set holds.
+    // The kit's migration was part of the core set of the third milestone (and
+    // of every release up to 0.12.x), and the last of it, after everything the
+    // kit's own core set holds; this build keeps that list as its start.
     assert_eq!(
-        CORE_MIGRATIONS.last().map(|(name, _)| *name),
+        CORE_AT_0_12.last().map(|(name, _)| *name),
         Some(SIGN_IN_CODES.0)
     );
     assert_eq!(
-        &CORE_MIGRATIONS[..CORE.len()],
+        &CORE_AT_0_12[..CORE.len()],
         CORE,
         "all of the kit's core set is there"
+    );
+    assert_eq!(
+        &CORE_MIGRATIONS[..CORE_AT_0_12.len()],
+        &CORE_AT_0_12[..],
+        "this build starts with the list of 0.12.x"
     );
     let fresh = {
         let mut conn = empty_database();
@@ -1578,9 +1546,15 @@ fn an_m3_build_refuses_a_database_with_0008() {
             .expect("the same build")
             .is_empty()
     );
+    // The kit runs its pending core migration first.
     assert_eq!(
         apply_migrations(&mut old).expect("this build"),
-        ["0008_devices.sql", "0009_unlock.sql"]
+        [
+            INVITES.0,
+            "0008_devices.sql",
+            "0009_unlock.sql",
+            "0010_accounts.sql"
+        ]
     );
 }
 
@@ -1661,7 +1635,7 @@ fn the_migration_runs_from_0008_in_every_build() {
     let before = dump_rows(&conn, &kept_tables);
     let schema_before = dump_schema(&conn);
 
-    let applied = apply_migrations(&mut conn).expect("0009 applies over data");
+    let applied = apply_migrations_with(&mut conn, &BUILD_AT_U3).expect("0009 applies over data");
     assert_eq!(applied, ["0009_unlock.sql"], "only 0009 was missing");
     assert_eq!(before, dump_rows(&conn, &kept_tables), "every row kept");
     let schema_after = dump_schema(&conn);
@@ -1669,7 +1643,7 @@ fn the_migration_runs_from_0008_in_every_build() {
         assert!(schema_after.contains(entry), "changed: {entry}");
     }
     let mut fresh = empty_database();
-    apply_migrations(&mut fresh).expect("a fresh database");
+    apply_migrations_with(&mut fresh, &BUILD_AT_U3).expect("a fresh database");
     assert_eq!(schema_after, dump_schema(&fresh));
 
     // The seeded row is the default rule.
@@ -1739,9 +1713,11 @@ fn the_unlock_policy_table_is_one_strict_row_with_checked_values() {
 }
 
 #[test]
-fn schema_after_0009_matches_the_frozen_schema() {
+fn the_0_12_schema_still_matches_u3_sql() {
+    // What 0.12.x ran (0001 to 0009 and the kit's seven core migrations) still
+    // makes the schema of `u3.sql`: the frozen set did not move.
     let mut conn = empty_database();
-    apply_migrations(&mut conn).expect("migrations apply");
+    apply_migrations_with(&mut conn, &BUILD_AT_U3).expect("migrations apply");
     let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema");
     let path = dir.join("u3.sql");
@@ -1788,4 +1764,557 @@ fn schema_after_0009_matches_the_frozen_schema() {
     ] {
         assert!(frozen.contains(needle), "{needle}");
     }
+}
+
+// ---------------------------------------------------------------- several accounts
+
+/// The tables the upgrade to several accounts adds: the account log and the
+/// kit's invitations.
+const L1_TABLES: [&str; 2] = ["ferret_account_events", "invites"];
+
+/// Their indexes.
+const L1_INDEXES: [&str; 2] = ["ferret_account_events_user", "idx_invites_open"];
+
+/// The columns of `table`, in their order.
+fn columns_of(conn: &Connection, table: &str) -> Vec<String> {
+    conn.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+        .expect("prepare")
+        .query_map([table], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect()
+}
+
+/// The tables of a database with the columns they have now.
+fn with_columns(conn: &Connection) -> Vec<(String, Vec<String>)> {
+    tables(conn)
+        .into_iter()
+        .map(|table| {
+            let columns = columns_of(conn, &table);
+            (table, columns)
+        })
+        .collect()
+}
+
+/// Every row of the named tables, as text, in a fixed order: only the named
+/// columns, so a table that gets a column is compared on the ones it had.
+fn dump_columns(conn: &Connection, tables: &[(String, Vec<String>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (table, columns) in tables {
+        let list = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = conn
+            .prepare(&format!("SELECT {list} FROM \"{table}\" ORDER BY 1, 2"))
+            .expect("prepare");
+        let rows: Vec<String> = stmt
+            .query_map([], |row| {
+                let mut cells = Vec::new();
+                for i in 0..columns.len() {
+                    cells.push(format!("{:?}", row.get_ref(i)?));
+                }
+                Ok(cells.join("|"))
+            })
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        out.push(format!("{table}: {}", rows.join("\n")));
+    }
+    out
+}
+
+fn rows_in(conn: &Connection, table: &str) -> i64 {
+    conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |r| {
+        r.get(0)
+    })
+    .expect("count")
+}
+
+#[test]
+fn migration_0010_keeps_every_0_12_row() {
+    let names: Vec<&str> = MIGRATION_FILES.iter().map(|(name, _)| *name).collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).expect(name);
+    assert_eq!(at("0010_accounts.sql"), at("0009_unlock.sql") + 1);
+
+    // Additive: one column, one table and its index, nothing else.
+    let made = statements("0010_accounts.sql");
+    assert_eq!(made.len(), 3, "{made:?}");
+    assert_eq!(
+        made[0],
+        "ALTER TABLE ferret_registrations ADD COLUMN invite_hash BLOB \
+         CHECK(invite_hash IS NULL OR length(invite_hash) = 32)"
+    );
+    assert!(
+        made[1].starts_with("CREATE TABLE ferret_account_events ("),
+        "{}",
+        made[1]
+    );
+    assert!(made[1].ends_with(") STRICT"), "{}", made[1]);
+    assert_eq!(
+        made[2],
+        "CREATE INDEX ferret_account_events_user ON ferret_account_events(user_id, id)"
+    );
+
+    let (mut conn, a) = database_at_0_12();
+    let kept = with_columns(&conn);
+    for table in L1_TABLES {
+        assert!(!kept.iter().any(|(t, _)| t == table), "{table} was there");
+    }
+    // The database holds what 0.12.x can hold, in every table the upgrade must
+    // keep.
+    for (table, rows) in [
+        ("users", 1),
+        ("ferret_accounts", 1),
+        ("ferret_vaults", 1),
+        ("ferret_items", 3),
+        ("ferret_checkpoints", 1),
+        ("ferret_unlock_methods", 3),
+        ("ferret_devices", 1),
+        ("ferret_refresh", 2),
+        ("ferret_access", 1),
+        ("ferret_unlock_policy", 1),
+        ("sign_in_codes", 1),
+        ("user_emails", 1),
+        ("ferret_sessions", 4),
+        ("ferret_handoffs", 1),
+        ("ferret_registrations", 1),
+        ("ferret_login_states", 1),
+    ] {
+        assert_eq!(rows_in(&conn, table), rows, "{table}");
+    }
+    let before = dump_columns(&conn, &kept);
+    let schema_before = dump_schema(&conn);
+
+    let applied = apply_migrations(&mut conn).expect("the upgrade applies over data");
+    assert_eq!(applied, [INVITES.0, "0010_accounts.sql"], "only the two");
+
+    // Every row of every table that was there is as it was, in every column it
+    // had; the registration has the new column, empty, and the new tables are
+    // empty.
+    assert_eq!(before, dump_columns(&conn, &kept), "every 0.12.x row kept");
+    let (rows, with_hash): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(invite_hash) FROM ferret_registrations",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("count");
+    assert_eq!(
+        (rows, with_hash),
+        (1, 0),
+        "the registration has no invitation"
+    );
+    for table in L1_TABLES {
+        assert_eq!(rows_in(&conn, table), 0, "{table}");
+    }
+    // The first account is the administrator it was, with its unlock rule.
+    let role: String = conn
+        .query_row("SELECT role FROM users WHERE id = ?1", [a.user_id], |r| {
+            r.get(0)
+        })
+        .expect("the user");
+    assert_eq!(role, "admin");
+    let rule: (i64, i64, i64) = conn
+        .query_row(
+            "SELECT pin_allowed, pin_after_restart, pin_min_length FROM ferret_unlock_policy",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("the rule");
+    assert_eq!(rule, (1, 0, 8));
+
+    // The schema of every table, index and trigger that was there is the same,
+    // but for the one table that got the column; the result is the schema of a
+    // fresh database of this build, and nothing points nowhere.
+    let schema_after = dump_schema(&conn);
+    for entry in schema_before.split("\n\n") {
+        if entry.starts_with("-- table ferret_registrations\n") {
+            continue;
+        }
+        assert!(schema_after.contains(entry), "changed: {entry}");
+    }
+    let mut fresh = empty_database();
+    apply_migrations(&mut fresh).expect("a fresh database");
+    assert_eq!(schema_after, dump_schema(&fresh));
+    let dangling: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+            r.get(0)
+        })
+        .expect("foreign keys");
+    assert_eq!(dangling, 0);
+
+    // The log of the first account takes its first event.
+    conn.execute(
+        "INSERT INTO ferret_account_events (user_id, at, kind, actor) \
+         VALUES (?1, ?2, 'server_restored', 'server')",
+        params![a.user_id, NOW + 100],
+    )
+    .expect("an event");
+}
+
+#[test]
+fn kit_invites_runs_before_0010_on_a_0_12_database() {
+    product::install();
+    // The kit's invitations are the eighth core migration: the seven of 0.12.x
+    // as they were, then the new one, last.
+    assert_eq!(CORE_MIGRATIONS.len(), 8);
+    assert_eq!(&CORE_MIGRATIONS[..7], &CORE_AT_0_12[..]);
+    assert_eq!(
+        CORE_MIGRATIONS.last().map(|(name, _)| *name),
+        Some(INVITES.0)
+    );
+    assert_eq!(INVITES.0, "kit/0007_invites.sql");
+
+    // A database of 0.12.x records the two after everything it had: first the
+    // kit's, then ours.
+    let (mut conn, _) = database_at_0_12();
+    let before = recorded(&conn);
+    assert!(!before.iter().any(|n| n == INVITES.0));
+    apply_migrations(&mut conn).expect("the upgrade");
+    let after = recorded(&conn);
+    assert_eq!(
+        &after[..before.len()],
+        &before[..],
+        "the old names stay first"
+    );
+    assert_eq!(
+        &after[before.len()..],
+        [INVITES.0, "0010_accounts.sql"],
+        "kit/0007_invites.sql, then 0010_accounts.sql"
+    );
+
+    // A fresh database runs the whole core set, invitations last, before ours.
+    let mut fresh = empty_database();
+    apply_migrations(&mut fresh).expect("a fresh database");
+    let order = recorded(&fresh);
+    let position = |name: &str| order.iter().position(|n| n == name).expect(name);
+    assert!(position(SIGN_IN_CODES.0) < position(INVITES.0));
+    assert!(position(INVITES.0) < position("0001_vault.sql"));
+    assert_eq!(order.last().map(String::as_str), Some("0010_accounts.sql"));
+
+    // The kit's table is usable: an invitation of the administrator, with the
+    // SHA-256 of its token.
+    let user: i64 = conn
+        .query_row("SELECT id FROM users ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .expect("a user");
+    conn.execute(
+        "INSERT INTO invites (token_hash, role, created_by, expires_at) \
+         VALUES (?1, 'viewer', ?2, datetime('now', '+7 days'))",
+        params![vole_kit::auth::invites::hash("x").as_slice(), user],
+    )
+    .expect("an invitation");
+}
+
+#[test]
+fn schema_after_l1_matches_the_frozen_schema() {
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let actual = format!("{GOLDEN_HEADER}\n{}", dump_schema(&conn));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema");
+    let path = dir.join("l1.sql");
+    if std::env::var("FERRET_UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(&path, &actual).expect("write the frozen schema");
+        return;
+    }
+    let frozen = std::fs::read_to_string(&path)
+        .expect("tests/fixtures/schema/l1.sql")
+        .replace('\r', "");
+    let first_difference = frozen
+        .lines()
+        .zip(actual.lines())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| frozen.lines().count().min(actual.lines().count()))
+        + 1;
+    assert!(
+        frozen == actual,
+        "the schema is not the frozen one. A change of the schema needs a migration and a new \
+         frozen file (FERRET_UPDATE_GOLDEN=1); the first difference is at line {first_difference}"
+    );
+
+    // Against the schema of 0.12.x: every entry is still there, the same, but
+    // the one table that got a column; the two tables and their indexes are
+    // new.
+    let u3 = std::fs::read_to_string(dir.join("u3.sql"))
+        .expect("tests/fixtures/schema/u3.sql")
+        .replace('\r', "");
+    let old = golden_entries(&u3);
+    let new = golden_entries(&frozen);
+    assert!(old.len() > 20, "the entries of u3.sql were found");
+    let first_line = |entry: &String| entry.lines().next().unwrap_or_default().to_string();
+    let changed: Vec<String> = old
+        .iter()
+        .filter(|entry| !new.contains(entry))
+        .map(first_line)
+        .collect();
+    assert_eq!(changed, ["table ferret_registrations"]);
+    let mut added: Vec<String> = new
+        .iter()
+        .filter(|entry| !old.contains(entry))
+        .map(first_line)
+        .filter(|line| line != "table ferret_registrations")
+        .collect();
+    added.sort();
+    let mut expected: Vec<String> = L1_TABLES
+        .iter()
+        .map(|t| format!("table {t}"))
+        .chain(L1_INDEXES.iter().map(|i| format!("index {i}")))
+        .collect();
+    expected.sort();
+    assert_eq!(added, expected);
+    for needle in [
+        "invite_hash BLOB",
+        "CHECK(invite_hash IS NULL OR length(invite_hash) = 32)",
+        "CREATE TABLE ferret_account_events (",
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+        "kind TEXT NOT NULL CHECK(length(kind) BETWEEN 1 AND 64)",
+        "actor TEXT NOT NULL CHECK(actor IN ('admin','server_command','server','account'))",
+        "actor_name TEXT NOT NULL DEFAULT '' CHECK(length(actor_name) <= 254)",
+        "CREATE INDEX ferret_account_events_user ON ferret_account_events(user_id, id)",
+        "CREATE TABLE invites (",
+        "token_hash BLOB NOT NULL UNIQUE",
+        "created_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "CREATE INDEX idx_invites_open ON invites (expires_at) WHERE used_at IS NULL AND revoked_at IS NULL",
+    ] {
+        assert!(frozen.contains(needle), "{needle}");
+    }
+}
+
+#[test]
+fn a_0_12_build_refuses_a_database_with_0010() {
+    // A database made by this build.
+    let mut conn = empty_database();
+    apply_migrations(&mut conn).expect("migrations apply");
+    let before = dump_schema(&conn);
+    let recorded_before = recorded(&conn);
+
+    // A build of 0.12.x knows neither the kit's invitations nor 0010, says no
+    // and changes nothing.
+    let refused = apply_migrations_with(&mut conn, &BUILD_AT_U3).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+    assert_eq!(dump_schema(&conn), before, "nothing was changed");
+    assert_eq!(recorded(&conn), recorded_before, "nothing was recorded");
+
+    // A control: the same build goes on with a database that has only what it
+    // knows, and this build adds the two to it.
+    let (mut old, _) = database_at_0_12();
+    assert!(
+        apply_migrations_with(&mut old, &BUILD_AT_U3)
+            .expect("the same build")
+            .is_empty()
+    );
+    assert_eq!(
+        apply_migrations(&mut old).expect("this build"),
+        [INVITES.0, "0010_accounts.sql"]
+    );
+    // Once it has them, 0.12.x says no to that database as well.
+    let refused = apply_migrations_with(&mut old, &BUILD_AT_U3).expect_err("a newer schema");
+    assert!(
+        matches!(refused, MigrationError::NewerSchema { .. }),
+        "{refused}"
+    );
+}
+
+/// Adds an event to the log of `user`.
+fn insert_event(
+    conn: &Connection,
+    user: i64,
+    kind: &str,
+    actor: &str,
+    name: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO ferret_account_events (user_id, at, kind, actor, actor_name) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user, NOW, kind, actor, name],
+    )
+}
+
+#[test]
+fn account_events_check_kind_actor_and_name() {
+    let conn = migrated();
+    let strict: i64 = conn
+        .query_row(
+            "SELECT strict FROM pragma_table_list WHERE name = 'ferret_account_events'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the table");
+    assert_eq!(strict, 1, "STRICT");
+    let user = insert_user(&conn);
+
+    // Every kind of delivery 1, and each actor.
+    for (kind, actor, name) in [
+        ("account_created", "admin", "admin@example.com"),
+        ("account_created", "admin", ""),
+        ("sign_in_code_issued", "server_command", ""),
+        ("sign_in_code_redeemed", "account", ""),
+        ("account_disabled", "admin", "admin@example.com"),
+        ("account_enabled", "admin", "admin@example.com"),
+        ("signed_out_everywhere", "admin", "admin@example.com"),
+        ("server_restored", "server", ""),
+    ] {
+        assert!(
+            insert_event(&conn, user, kind, actor, name).is_ok(),
+            "{kind} {actor}"
+        );
+    }
+    // A kind has 1 to 64 characters: later deliveries add kinds of their own.
+    assert!(
+        insert_event(&conn, user, "", "server", "").is_err(),
+        "an empty kind"
+    );
+    assert!(insert_event(&conn, user, &"k".repeat(64), "server", "").is_ok());
+    assert!(
+        insert_event(&conn, user, &"k".repeat(65), "server", "").is_err(),
+        "a kind of 65 characters"
+    );
+    // The four actors and no other word.
+    for actor in ["root", "Admin", "server-command", "user", ""] {
+        assert!(
+            insert_event(&conn, user, "account_created", actor, "").is_err(),
+            "actor {actor:?}"
+        );
+    }
+    // The name of an administrator: an e-mail of at most 254 characters.
+    assert!(insert_event(&conn, user, "account_created", "admin", &"a".repeat(254)).is_ok());
+    assert!(
+        insert_event(&conn, user, "account_created", "admin", &"a".repeat(255)).is_err(),
+        "a name of 255 characters"
+    );
+    // Characters, not bytes.
+    let clef = "\u{1d11e}";
+    assert!(insert_event(&conn, user, "account_created", "admin", &clef.repeat(254)).is_ok());
+    // Left out, the name is empty.
+    conn.execute(
+        "INSERT INTO ferret_account_events (user_id, at, kind, actor) \
+         VALUES (?1, ?2, 'server_restored', 'server')",
+        params![user, NOW],
+    )
+    .expect("an event without a name");
+    let name: String = conn
+        .query_row(
+            "SELECT actor_name FROM ferret_account_events ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the event");
+    assert_eq!(name, "");
+    // An event belongs to a user, and its time is a number.
+    assert!(
+        insert_event(&conn, 4242, "account_created", "admin", "").is_err(),
+        "no such user"
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_account_events (user_id, at, kind, actor) \
+             VALUES (?1, 'now', 'server_restored', 'server')",
+            params![user],
+        )
+        .is_err(),
+        "a time as text"
+    );
+    // The index reads the log of one account, newest first, a page at a time.
+    let plan: Vec<String> = conn
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT id FROM ferret_account_events \
+             WHERE user_id = ?1 AND id < 10 ORDER BY id DESC LIMIT 100",
+        )
+        .expect("prepare")
+        .query_map([user], |r| r.get::<_, String>(3))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("ferret_account_events_user")),
+        "{plan:?}"
+    );
+}
+
+#[test]
+fn registration_invite_hash_is_32_bytes_or_null() {
+    let conn = migrated();
+    let reg = |n: u8, hash: Option<&[u8]>| {
+        conn.execute(
+            "INSERT INTO ferret_registrations \
+             (registration_id, account_id, vault_id, email, expires_at, invite_hash) \
+             VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![
+                [n; 16].as_slice(),
+                [n; 16].as_slice(),
+                [n; 16].as_slice(),
+                format!("r{n}@example.com"),
+                hash
+            ],
+        )
+    };
+    assert!(
+        reg(1, None).is_ok(),
+        "no invitation (the first administrator)"
+    );
+    assert!(reg(2, Some(&[7; 32])).is_ok(), "the SHA-256 of a token");
+    assert!(reg(3, Some(&[7; 31])).is_err(), "31 bytes");
+    assert!(reg(4, Some(&[7; 33])).is_err(), "33 bytes");
+    assert!(reg(5, Some(&[])).is_err(), "empty");
+    assert!(
+        conn.execute(
+            "INSERT INTO ferret_registrations \
+             (registration_id, account_id, vault_id, email, expires_at, invite_hash) \
+             VALUES (?1, ?1, ?1, 'r6@example.com', 0, ?2)",
+            params![[6u8; 16].as_slice(), "a".repeat(32)],
+        )
+        .is_err(),
+        "text of 32 characters"
+    );
+}
+
+#[test]
+fn deleting_a_user_removes_its_events() {
+    let mut conn = migrated();
+    let admin = insert_named_user(&conn, "admin@example.com", "admin");
+    let member = insert_named_user(&conn, "member@example.com", "viewer");
+    for user in [admin, member] {
+        for kind in ["account_created", "account_disabled", "account_enabled"] {
+            insert_event(&conn, user, kind, "admin", "admin@example.com").expect("an event");
+        }
+    }
+    // The invitation the member used, and one the member made (as only an
+    // administrator would, but the table does not know roles).
+    conn.execute(
+        "INSERT INTO invites (token_hash, role, created_by, expires_at, used_at, used_by) \
+         VALUES (?1, 'viewer', ?2, '2026-11-08 00:00:00', '2026-11-02 00:00:00', ?3)",
+        params![[1u8; 32].as_slice(), admin, member],
+    )
+    .expect("a used invitation");
+    conn.execute(
+        "INSERT INTO invites (token_hash, role, created_by, expires_at) \
+         VALUES (?1, 'viewer', ?2, '2026-11-08 00:00:00')",
+        params![[2u8; 32].as_slice(), member],
+    )
+    .expect("a pending invitation");
+    assert_eq!(count_user(&conn, "ferret_account_events", member), 3);
+
+    // The kit's way to delete a user.
+    let result = vole_kit::db::users::delete_user(&mut conn, member).expect("delete");
+    assert!(result.is_ok(), "the user could not be deleted");
+
+    // The log of the member went with the account; the administrator's stayed.
+    assert_eq!(count_user(&conn, "ferret_account_events", member), 0);
+    assert_eq!(count_user(&conn, "ferret_account_events", admin), 3);
+    // The invitations stay, with the deleted account's part of them empty: who
+    // made the second one is no one now (an empty `actor_name`).
+    let rows: Vec<(Option<i64>, Option<i64>)> = conn
+        .prepare("SELECT created_by, used_by FROM invites ORDER BY id")
+        .expect("prepare")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert_eq!(rows, [(Some(admin), None), (None, None)]);
 }

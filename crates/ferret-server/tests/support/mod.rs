@@ -20,6 +20,7 @@ pub mod handoff;
 pub mod m3;
 pub mod session;
 pub mod sync;
+pub mod upgrade;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

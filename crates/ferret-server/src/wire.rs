@@ -158,6 +158,29 @@ pub const MAX_DEVICES: usize = 20;
 /// tokens and the browsers with a session.
 pub const MAX_DEVICE_LIST: usize = 200;
 
+/// The length of an invitation token on the wire: the kit's token, 43
+/// characters of base62 (`0-9`, `A-Z`, `a-z`), about 256 bits.
+///
+/// Spec: Fase 1 § 1 (Invitation), § 4.2 (registration with an invitation).
+pub const INVITE_CHARS: usize = 43;
+
+// The kit makes the tokens; the wire takes exactly its length.
+const _: () = assert!(INVITE_CHARS == vole_kit::auth::invites::TOKEN_LEN);
+
+/// The most events in one page of the account log ([`AccountEventsRes`]).
+///
+/// Spec: Fase 1 § 11 (the account log, `limit` 1 to 100).
+pub const MAX_EVENTS_PAGE: usize = 100;
+
+/// The most characters of an administrator's e-mail where the wire names one:
+/// `actor_name` in the account log and `invited_by` in the check of an
+/// invitation. Empty is allowed: no administrator, or one whose account is
+/// gone.
+pub const MAX_ACTOR_NAME: usize = 254;
+
+/// The most characters of the kind of an event in the account log.
+const EVENT_KIND_MAX_CHARS: usize = 64;
+
 /// The words a platform has on the wire, in the order of [`PlatformJson`].
 pub const PLATFORMS: &[&str] = &[
     "windows", "macos", "linux", "android", "ios", "chromeos", "other",
@@ -742,6 +765,60 @@ pub mod device_list {
     }
 }
 
+/// `deserialize_with = "event_kind::deserialize"`: the kind of an event in the
+/// account log, 1 to 64 characters of `a-z` and `_`. The set of kinds is open:
+/// a later delivery adds kinds, and a client shows a kind it does not know as
+/// another event.
+pub mod event_kind {
+    use super::{Deserialize, Deserializer, EVENT_KIND_MAX_CHARS, de};
+
+    /// Reads a kind and refuses an empty, a long or a mixed-case one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let kind = String::deserialize(deserializer)?;
+        if kind.is_empty()
+            || kind.len() > EVENT_KIND_MAX_CHARS
+            || !kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        {
+            return Err(de::Error::custom(
+                "an event kind is 1 to 64 characters of a-z and _",
+            ));
+        }
+        Ok(kind)
+    }
+}
+
+/// `deserialize_with = "actor_name::deserialize"`: an administrator's e-mail of
+/// at most [`MAX_ACTOR_NAME`] characters, or `""`.
+pub mod actor_name {
+    use super::{Deserialize, Deserializer, MAX_ACTOR_NAME, de};
+
+    /// Reads a name, which may be empty, and refuses a long one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if name.chars().count() > MAX_ACTOR_NAME {
+            return Err(de::Error::custom("a name has at most 254 characters"));
+        }
+        Ok(name)
+    }
+}
+
+/// `deserialize_with = "event_list::deserialize"`: at most
+/// [`MAX_EVENTS_PAGE`] events.
+pub mod event_list {
+    use super::{AccountEventJson, Deserialize, Deserializer, MAX_EVENTS_PAGE, de};
+
+    /// Reads the page and refuses a longer one.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<AccountEventJson>, D::Error> {
+        let events = Vec::<AccountEventJson>::deserialize(deserializer)?;
+        if events.len() > MAX_EVENTS_PAGE {
+            return Err(de::Error::custom("more than 100 events"));
+        }
+        Ok(events)
+    }
+}
+
 macro_rules! redacted_debug {
     ($($ty:ident),+ $(,)?) => {$(
         impl fmt::Debug for $ty {
@@ -851,9 +928,15 @@ pub struct CheckpointHeadJson {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterStartReq {
-    /// The setup token, when the server asks for one.
+    /// The setup token, when the server asks for one (the first
+    /// administrator).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_token: Option<String>,
+    /// The token of an invitation link (every later account). Never together
+    /// with `setup_token`: the route refuses a body with both. Left out when
+    /// empty, so the body of the first administrator is the text it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite: Option<InviteToken>,
     /// The login name.
     pub email: String,
     /// The OPAQUE registration request (32 bytes).
@@ -2498,6 +2581,131 @@ pub struct RevokeAllRes {
     pub revoked: u32,
 }
 
+/// An invitation token on the wire: exactly [`INVITE_CHARS`] characters of
+/// base62, the form the kit makes (`vole_kit::auth::invites::is_well_formed`).
+/// Anything else is refused when it is read (`bad_request`). The text is a
+/// secret: its `Debug` shows nothing, it is zeroed when dropped, and the
+/// server only hashes it (`vole_kit::auth::invites::hash`) to find the
+/// invitation, so it is never compared as text.
+///
+/// Spec: Fase 1 § 1 (Invitation: the token travels in the fragment only),
+/// § 11 (never in a log, a path or a query string).
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct InviteToken(String);
+
+impl InviteToken {
+    /// The text of the token, to hash it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for InviteToken {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut text = zeroize::Zeroizing::new(String::deserialize(deserializer)?);
+        if text.len() != INVITE_CHARS || !vole_kit::auth::invites::is_well_formed(&text) {
+            return Err(de::Error::custom(
+                "an invitation token is 43 characters of base62",
+            ));
+        }
+        Ok(InviteToken(std::mem::take(&mut *text)))
+    }
+}
+
+impl Drop for InviteToken {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+/// `POST /api/auth/invite/check`: the token of an invitation link, which the
+/// page reads from the fragment of the link before the user chooses a master
+/// password.
+///
+/// Spec: Fase 1 § 4.2 (registration with an invitation).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InviteCheckReq {
+    /// The token.
+    pub invite: InviteToken,
+}
+
+/// The `200` answer to [`InviteCheckReq`] for a pending invitation; every
+/// other token is `403 invite_invalid`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InviteCheckRes {
+    /// When the invitation runs out (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub expires_at: u64,
+    /// The e-mail of the administrator who made it, at most
+    /// [`MAX_ACTOR_NAME`] characters; `""` when that account is gone.
+    #[serde(deserialize_with = "actor_name::deserialize")]
+    pub invited_by: String,
+}
+
+/// Who caused an event in the account log.
+///
+/// Spec: Fase 1 § 11 (the account log).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorJson {
+    /// An administrator, on the admin pages; `actor_name` is that
+    /// administrator's e-mail, or `""` when that account is gone.
+    Admin,
+    /// A command on the server (`ferret sign-in-code issue`).
+    ServerCommand,
+    /// The server itself (a restore).
+    Server,
+    /// The account itself (a redeemed sign-in code).
+    Account,
+}
+
+/// One event of `GET /api/account/events`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountEventJson {
+    /// The event; a later event has a larger id.
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub id: u64,
+    /// When it happened (Unix seconds).
+    #[serde(deserialize_with = "u53::deserialize")]
+    pub at: u64,
+    /// What happened: 1 to 64 characters of `a-z` and `_`.
+    #[serde(deserialize_with = "event_kind::deserialize")]
+    pub kind: String,
+    /// Who caused it.
+    pub actor: ActorJson,
+    /// For [`ActorJson::Admin`] the administrator's e-mail, at most
+    /// [`MAX_ACTOR_NAME`] characters; otherwise `""`.
+    #[serde(deserialize_with = "actor_name::deserialize")]
+    pub actor_name: String,
+}
+
+/// `GET /api/account/events?before=<id>&limit=<1-100>`: one page of the
+/// account's own log, newest first, at most [`MAX_EVENTS_PAGE`] events
+/// (checked when the page is read), and whether older events follow.
+///
+/// Spec: Fase 1 § 11 (the account log).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountEventsRes {
+    /// The events, newest first.
+    #[serde(deserialize_with = "event_list::deserialize")]
+    pub events: Vec<AccountEventJson>,
+    /// Whether older events follow.
+    pub more: bool,
+}
+
+redacted_debug!(
+    InviteToken,
+    InviteCheckReq,
+    InviteCheckRes,
+    AccountEventJson,
+    AccountEventsRes,
+);
+
 redacted_debug!(
     DeviceLoginFinishReq,
     DeviceLoginFinishRes,
@@ -2616,4 +2824,6 @@ pub const ERROR_CODES: &[&str] = &[
     "token_expired",
     "token_reused",
     "device_revoked",
+    "invite_invalid",
+    "email_taken",
 ];

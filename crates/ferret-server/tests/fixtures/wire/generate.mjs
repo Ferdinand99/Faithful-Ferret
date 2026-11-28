@@ -32,6 +32,10 @@ export function bytes(label, n) {
 const b64 = (label, n) => bytes(label, n).toString("base64url");
 const id = (label) => bytes(label, 16).toString("hex");
 
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/** An invitation token as the kit makes them: 43 characters of base62. */
+const invite = (label) => [...bytes(label, 43)].map((b) => BASE62[b % 62]).join("");
+
 /** An envelope-sized blob: header (version 1, suite 1, kind), then bytes. */
 const envelope = (label, kind, n) =>
   Buffer.concat([Buffer.from([1, 1, kind]), bytes(label, n - 3)]).toString("base64url");
@@ -172,6 +176,16 @@ const listedBrowsers = (n) =>
     current: i === 0,
   }));
 
+/** `n` events of one account, newest first, as a full page of the log shows them. */
+const pageOfEvents = (n) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: 1000 - i,
+    at: 1800000000 - 60 * i,
+    kind: i % 2 === 0 ? "sign_in_code_issued" : "sign_in_code_redeemed",
+    actor: i % 2 === 0 ? "admin" : "account",
+    actor_name: i % 2 === 0 ? "ada@example.test" : "",
+  }));
+
 /** Every fixture: file name -> object. The type is the name before the first dot. */
 export function fixtures() {
   return {
@@ -190,6 +204,32 @@ export function fixtures() {
       email: "ada@example.test",
       request: b64("registration request", 32),
     },
+    // A later account: an invitation instead of the setup token.
+    "register_start_req.invite.json": {
+      invite: invite("invitation"),
+      email: "grace@example.test",
+      request: b64("registration request invite", 32),
+    },
+    "invite_check_req.json": { invite: invite("invitation") },
+    "invite_check_res.json": { expires_at: 1800604800, invited_by: "ada@example.test" },
+    // The log of an account, newest first: every kind of the first delivery and
+    // every actor; an administrator's e-mail, or none for the others and for an
+    // administrator whose account is gone.
+    "account_events_res.json": {
+      events: [
+        { id: 9, at: 1800003600, kind: "server_restored", actor: "server", actor_name: "" },
+        { id: 8, at: 1800003000, kind: "signed_out_everywhere", actor: "admin", actor_name: "ada@example.test" },
+        { id: 7, at: 1800002400, kind: "account_enabled", actor: "admin", actor_name: "ada@example.test" },
+        { id: 6, at: 1800001800, kind: "account_disabled", actor: "admin", actor_name: "ada@example.test" },
+        { id: 5, at: 1800001200, kind: "sign_in_code_redeemed", actor: "account", actor_name: "" },
+        { id: 4, at: 1800000600, kind: "sign_in_code_issued", actor: "server_command", actor_name: "" },
+        { id: 2, at: 1800000000, kind: "account_created", actor: "admin", actor_name: "" },
+      ],
+      more: false,
+    },
+    "account_events_res.empty.json": { events: [], more: false },
+    // A full page, and more to come.
+    "account_events_res.more.json": { events: pageOfEvents(100), more: true },
     "register_start_res.json": {
       registration_id: id("registration"),
       account_id: id("account"),
@@ -530,10 +570,13 @@ export function fixtures() {
   };
 }
 
-/** The shape of a fixture file: the name before the first dot; `<shape>.device.json` is `<shape>_device`. */
+/**
+ * The shape of a fixture file: the name before the first dot; `<shape>.device.json` is `<shape>_device`
+ * and `<shape>.invite.json` is `<shape>_invite`.
+ */
 export function shapeOf(file) {
   const [shape, variant] = file.split(".");
-  return variant === "device" ? `${shape}_device` : shape;
+  return variant === "device" || variant === "invite" ? `${shape}_${variant}` : shape;
 }
 
 /**
@@ -596,6 +639,8 @@ export const ERROR_CODES = [
   "token_expired",
   "token_reused",
   "device_revoked",
+  "invite_invalid",
+  "email_taken",
 ];
 
 /**
@@ -647,6 +692,8 @@ export const STATUS_OF = {
   token_expired: 401,
   token_reused: 401,
   device_revoked: 401,
+  invite_invalid: 403,
+  email_taken: 409,
 };
 
 /**
@@ -1483,6 +1530,98 @@ export function invalidCases() {
   for (const [name, value] of [["2^32", 4294967296], ["negative", -1], ["a string", "7"], ["a fraction", 1.5]]) {
     parse(`devices_res more ${name}`, "devices_res", text({ ...full, more: value }), "more is a whole number of 32 bits");
   }
+
+  // Several accounts. An invitation token is the kit's: exactly 43 characters
+  // of base62 (0-9, A-Z, a-z), so no `-`, `_`, `=`, `+` or space.
+  const inviteToken = (shape, file) => {
+    const good = all[file].invite;
+    for (const [name, value] of [
+      ["42 characters", good.slice(0, 42)],
+      ["44 characters", `${good}A`],
+      ["with -", `${good.slice(0, 42)}-`],
+      ["with _", `${good.slice(0, 42)}_`],
+      ["padded", `${good.slice(0, 42)}=`],
+      ["with +", `+${good.slice(1)}`],
+      ["with a space", `${good.slice(0, 42)} `],
+      ["with a non-ASCII letter", `${good.slice(0, 42)}é`],
+      ["empty", ""],
+      ["a number", 5],
+      ["a list", [good]],
+    ]) {
+      parse(`${shape} invite ${name}`, shape, with_(file, { invite: value }), "an invitation token is 43 characters of base62");
+    }
+  };
+  inviteToken("register_start_req_invite", "register_start_req.invite.json");
+  inviteToken("invite_check_req", "invite_check_req.json");
+  parse("invite_check_req invite null", "invite_check_req", with_("invite_check_req.json", { invite: null }), "invite is required");
+  parse("invite_check_req without invite", "invite_check_req", "{}", "invite is required");
+  sized("request", "register_start_req_invite", "register_start_req.invite.json", 32, "malformed_registration_request");
+  parse("register_start_req_invite email is a number", "register_start_req_invite", with_("register_start_req.invite.json", { email: 5 }), "email is a string");
+
+  // The check of a link: when it runs out, and who made it (an e-mail of at
+  // most 254 characters, or none).
+  const check = "invite_check_res.json";
+  for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "1800604800"], ["a fraction", 1.5], ["null", null]]) {
+    parse(`invite_check_res expires_at ${name}`, "invite_check_res", with_(check, { expires_at: value }), "expires_at is a whole number up to 2^53 - 1");
+  }
+  for (const [name, value] of [["255 characters", "a".repeat(255)], ["255 characters, 1020 bytes", "\u{1d11e}".repeat(255)], ["a number", 5], ["null", null]]) {
+    parse(`invite_check_res invited_by ${name}`, "invite_check_res", with_(check, { invited_by: value }), "invited_by is text of at most 254 characters");
+  }
+  for (const field of ["expires_at", "invited_by"]) {
+    parse(`invite_check_res without ${field}`, "invite_check_res", with_(check, { [field]: undefined }), `${field} is required`);
+  }
+
+  // The account log: at most 100 events a page; a kind of 1 to 64 characters
+  // of a-z and `_`; one of the four actors; a name of at most 254 characters.
+  const events = all["account_events_res.json"].events;
+  const eventRow = (fields) => {
+    const row = { ...events[0] };
+    for (const [key, v] of Object.entries(fields)) {
+      if (v === undefined) delete row[key];
+      else row[key] = v;
+    }
+    return text({ events: [row, events[1]], more: false });
+  };
+  const page = (n) => text({ events: Array.from({ length: n }, (_, i) => ({ ...events[1], id: 500 - i })), more: true });
+  parse("account_events_res with 101 events", "account_events_res", page(101), "a page has at most 100 events");
+  parse("account_events_res with 150 events", "account_events_res", page(150), "a page has at most 100 events");
+  parse("account_events_res events is not a list", "account_events_res", text({ events: {}, more: false }), "events is a list");
+  parse("account_events_res events is null", "account_events_res", text({ events: null, more: false }), "events is a list");
+  parse("account_events_res events holds a string", "account_events_res", text({ events: ["x"], more: false }), "an event is an object");
+  parse("account_events_res without events", "account_events_res", text({ more: false }), "events is required");
+  for (const [name, value] of [["a string", "true"], ["a number", 1], ["null", null]]) {
+    parse(`account_events_res more ${name}`, "account_events_res", text({ events: [], more: value }), "more is a boolean");
+  }
+  parse("account_events_res without more", "account_events_res", text({ events: [] }), "more is required");
+  for (const [name, value] of [
+    ["empty", ""],
+    ["65 characters", "k".repeat(65)],
+    ["upper case", "Account_created"],
+    ["all upper case", "ACCOUNT_CREATED"],
+    ["with -", "account-created"],
+    ["with a space", "account created"],
+    ["with a digit", "account_created2"],
+    ["with a non-ASCII letter", "konto_ø"],
+    ["a number", 5],
+    ["null", null],
+  ]) {
+    parse(`account_events_res kind ${name}`, "account_events_res", eventRow({ kind: value }), "a kind is 1 to 64 characters of a-z and _");
+  }
+  for (const value of ["Admin", "root", "server-command", "serverCommand", "user", "", 1, null]) {
+    parse(`account_events_res actor ${JSON.stringify(value)}`, "account_events_res", eventRow({ actor: value }), "actor is admin, server_command, server or account");
+  }
+  for (const [name, value] of [["255 characters", "a".repeat(255)], ["255 characters, 1020 bytes", "\u{1d11e}".repeat(255)], ["a number", 5], ["null", null]]) {
+    parse(`account_events_res actor_name ${name}`, "account_events_res", eventRow({ actor_name: value }), "actor_name is text of at most 254 characters");
+  }
+  for (const field of ["id", "at"]) {
+    for (const [name, value] of [["2^53", 9007199254740992], ["negative", -1], ["a string", "7"], ["a fraction", 1.5]]) {
+      parse(`account_events_res ${field} ${name}`, "account_events_res", eventRow({ [field]: value }), `${field} is a whole number up to 2^53 - 1`);
+    }
+  }
+  for (const field of ["id", "at", "kind", "actor", "actor_name"]) {
+    parse(`account_events_res event without ${field}`, "account_events_res", eventRow({ [field]: undefined }), `${field} is required`);
+  }
+  nested("unknown field in an event of account_events_res", "account_events_res", "account_events_res.json", ["events", 1], "an unknown field is refused inside a part");
 
   return cases;
 }
