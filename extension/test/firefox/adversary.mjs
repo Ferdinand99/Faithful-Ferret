@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ORIGINS } from "../fixtures/sites/index.mjs";
-import { POPUP_URL, SLOW, extensionSignIn, helpers, start, webVaultAccount } from "./e2e.mjs";
+import { POPUP_URL, SLOW, extensionSignIn, helpers, start, webVaultAccount, webVaultSignIn } from "./e2e.mjs";
 import { EXTENSION_ORIGIN, TEST_SHORTCUT, fixtures, openBridge } from "./harness.mjs";
 import { base32 } from "./totp.mjs";
 
@@ -130,14 +130,15 @@ export async function documentsHolding(session, value) {
  * A Firefox signed in to the stack, with the entries made (names tagged with the channel and the time).
  * `grant`: ids of test sites (or page addresses, `https://...`) whose waiting frames get their host permission in the
  * grant tab, as a person gives it (a frame of another origin on the same site waits for it).
+ * `account`: whose the browser and the extension are (the run's first account when not given).
  * @param {"release" | "esr"} channel
- * @param {{ grant?: string[], entries?: Partial<typeof ENTRIES> }} [options]
+ * @param {{ grant?: string[], entries?: Partial<typeof ENTRIES>, account?: { email: string, password: string, secretKey: string, qrText?: string } }} [options]
  */
-export async function world(channel, { grant = [], entries = ENTRIES } = {}) {
+export async function world(channel, { grant = [], entries = ENTRIES, account: chosen } = {}) {
   const server = await fixtures();
   const session = await start(channel);
   const page = helpers(session);
-  const account = await webVaultAccount(session, channel);
+  const account = chosen ? await webVaultSignIn(session, channel, chosen) : await webVaultAccount(session, channel);
   const vaultTab = await session.windowHandle();
   await revokeLeftDevices(session);
   const bridgeTab = await session.newTab();

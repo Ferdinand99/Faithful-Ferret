@@ -81,7 +81,7 @@ test("admin_handoff_gives_the_admin_origin_a_session", async ({ browser }) => {
   const menu = page.locator("nav.side-nav");
   await expect(menu).toBeVisible();
   expect(await page.locator(".settings-side, .settings-nav, .tabbar, .topbar").count()).toBe(0);
-  for (const path of ["/settings/backup", "/settings/users", "/settings/unlock", "/settings/security", "/settings/general"]) {
+  for (const path of ["/settings/backup", "/settings/accounts", "/settings/unlock", "/settings/security", "/settings/general"]) {
     await menu.locator(`a[href="${path}"]`).click();
     await page.waitForURL((url) => url.origin === adminUrl && url.pathname === path, { timeout: 30_000 });
     await expect(menu.locator(`a[href="${path}"][aria-current="page"]`)).toBeVisible();
@@ -90,6 +90,10 @@ test("admin_handoff_gives_the_admin_origin_a_session", async ({ browser }) => {
   }
   await page.locator(".side-head a.brand").click();
   await page.waitForURL((url) => url.origin === adminUrl && url.pathname === "/settings/general", { timeout: 30_000 });
+  // The brand link leads to the page that is already open, so the address does not say when the page's view transition
+  // is over; a resize in the middle of one makes WebKit skip it with an unhandled rejection. Wait for its animations.
+  await page.waitForTimeout(300);
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
   // On a phone the menu is a drawer that the bar at the top opens and Escape closes.
   await page.setViewportSize({ width: 390, height: 800 });
   await expect(menu).toBeHidden();

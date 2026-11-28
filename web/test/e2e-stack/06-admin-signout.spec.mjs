@@ -26,9 +26,9 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
   await page.waitForURL((url) => url.origin === adminUrl && url.pathname === "/settings/general", { timeout: SLOW });
 
   // Open another admin page by an htmx navigation (a boosted link): htmx snapshots the page it leaves.
-  await page.locator('.side-nav a[href="/settings/users"]').click();
-  await expect(page.locator('.side-nav a[href="/settings/users"][aria-current="page"]')).toBeVisible();
-  expect(new URL(page.url()).pathname).toBe("/settings/users");
+  await page.locator('.side-nav a[href="/settings/accounts"]').click();
+  await expect(page.locator('.side-nav a[href="/settings/accounts"][aria-current="page"]')).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/settings/accounts");
   // The control: the cache holds a signed-in page now, so the empty cache below is the sign-out's doing.
   const before = await cachedPages(page);
   expect(JSON.stringify(before)).toContain("/settings/general");
@@ -61,7 +61,7 @@ test("admin_sign_out_empties_the_history_cache_and_back_shows_no_admin_page", as
   }
   expect(await page.locator(".side-nav, .side-account, .user-button, #user-menu").count()).toBe(0);
   const html = await page.content();
-  expect(html).not.toContain("/settings/users");
+  expect(html).not.toContain("/settings/accounts");
   expect(html).not.toContain("/settings/general");
 
   // The cache of the admin origin is still empty (read from a page of that origin in this tab).
@@ -80,7 +80,7 @@ test("a_session_that_ended_without_log_out_leaves_no_cache_after_the_next_hand_o
   // A page of the admin origin that is not the hand-over page, to put the old snapshot in this tab.
   await page.goto(`${adminUrl}/static/favicon.svg`);
   await page.evaluate((key) => {
-    window.sessionStorage.setItem(key, JSON.stringify([{ url: "/settings/users", content: "private" }]));
+    window.sessionStorage.setItem(key, JSON.stringify([{ url: "/settings/accounts", content: "private" }]));
     window.sessionStorage.setItem("unrelated", "kept");
   }, CACHE_KEY);
   expect(await cachedPages(page)).toHaveLength(1);

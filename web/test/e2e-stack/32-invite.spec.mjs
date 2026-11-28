@@ -11,104 +11,15 @@
 // does not move it), so its expiry is covered by the unit tests and the server's
 // own tests, not here.
 //
-// The administrator's browser is Chromium in every project: Playwright's WebKit stops with an internal
-// "Assertion error" on the redirect from the admin origin to the vault's password check (`/vault/reauth`),
+// The administrator's browser is Chromium in every project (see accounts.mjs): Playwright's WebKit stops with an
+// internal "Assertion error" on the redirect from the admin origin to the vault's password check (`/vault/reauth`),
 // and the admin page is not what this file tests. The invited person's browser is the project's own.
-import { chromium } from "@playwright/test";
-import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  adminUrl, bodyText, confirmSheet, expect, freshContext, outDir, pace, readSheet, requireAccount, secrets, signInHere, signOutOn,
-  SLOW, test, untilStartAccepted, vaultUrl,
-} from "./support.mjs";
+import { invitee, join, makeInvite } from "./accounts.mjs";
+import { adminUrl, bodyText, expect, freshContext, outDir, requireAccount, signInHere, signOutOn, test, vaultUrl } from "./support.mjs";
 
-const ACCOUNTS = "/settings/accounts";
-const vaultPattern = vaultUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** The link the Users page shows: the vault's setup page with the token in the fragment. */
-const LINK = new RegExp(`^${vaultPattern}/vault/setup#invite=([0-9A-Za-z]{43})$`);
 /** The link the first test used, for the second one (a failed test ends the worker, so it is kept in a file). */
 const usedFile = `${outDir}/invite-used.json`;
-
-/** A person of this run who is not the administrator. */
-function invitee(name) {
-  const tag = randomBytes(5).toString("hex");
-  return { email: `${name}-${tag}@e2e.example.test`, password: `Invitee-${tag}-correct-battery`, secretKey: "", recoveryKey: "" };
-}
-
-/**
- * The administrator makes an invitation on the Users page, in a browser of her own, and reads the link that the
- * page shows once. Making a link needs a fresh check of the password: when the page asks for it, the check is made
- * on the vault origin and the page comes back.
- * @returns {Promise<{ link: string, token: string }>}
- */
-async function makeInvite() {
-  const browser = await chromium.launch();
-  const context = await freshContext(browser);
-  try {
-    const page = await context.newPage();
-    await page.goto(`${adminUrl}${ACCOUNTS}`);
-    await signInHere(page, { expectList: false });
-    await page.waitForURL((url) => url.origin === adminUrl && url.pathname === ACCOUNTS, { timeout: SLOW });
-    await expect(page.locator("main h1")).toBeVisible({ timeout: 20_000 });
-    const make = page.locator('form[action="/settings/accounts/invites"] button[type="submit"]');
-    if ((await make.count()) === 0) {
-      // The page's "Confirm it's you" link.
-      await page.locator('a[href^="/vault/reauth"]').first().click();
-      const credentials = page.locator('[data-role="credentials"]');
-      await expect(credentials).toBeVisible({ timeout: 20_000 });
-      expect(new URL(page.url()).origin).toBe(vaultUrl);
-      await credentials.locator('[data-role="password"]').fill(secrets.password);
-      await untilStartAccepted(context, async () => {
-        await pace();
-        await credentials.locator('[data-role="submit"]').click();
-      });
-      await page.waitForURL((url) => url.origin === adminUrl && url.pathname === ACCOUNTS, { timeout: SLOW });
-      await expect(make).toBeVisible({ timeout: 20_000 });
-    }
-    await make.click();
-    const shown = page.locator("#created-invite");
-    await expect(shown).toBeVisible({ timeout: 20_000 });
-    const link = ((await shown.textContent()) ?? "").trim();
-    const match = LINK.exec(link);
-    expect(match, `the link the page shows: ${link}`).not.toBeNull();
-    return { link, token: /** @type {RegExpExecArray} */ (match)[1] };
-  } finally {
-    await context.close();
-    await browser.close();
-  }
-}
-
-/**
- * The invited person opens the link and makes her account: the join page, the form, the sheet, the keys typed back.
- * Leaves the page on the done screen.
- * @param {import("@playwright/test").Page} page
- * @param {string} link
- * @param {ReturnType<typeof invitee>} person
- * @param {() => void} [beforeConfirm] runs while the sheet is shown, before the keys are typed back
- */
-async function join(page, link, person, beforeConfirm) {
-  await page.goto(link);
-  const heading = page.locator('[data-role="join-heading"]');
-  await expect(heading).toHaveText(`Join Ferret on ${new URL(vaultUrl).host}`, { timeout: 20_000 });
-  await expect(page.locator('[data-role="setup-form"]')).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('[data-role="invited-by"]')).toContainText(secrets.email);
-  await expect(page.locator('[data-role="invite-expires"]')).toContainText("works until");
-  // The first administrator's field is not here, and the secret key is on.
-  await expect(page.locator('[data-role="setup-token"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="use-sk"]')).toBeChecked();
-  await page.locator('[data-role="email"]').fill(person.email);
-  await page.locator('[data-role="password"]').fill(person.password);
-  await page.locator('[data-role="password-repeat"]').fill(person.password);
-  await page.locator('[data-role="setup-form"] [data-role="submit"]').click();
-  await expect(page.locator('[data-role="sheet-page"]')).toBeVisible({ timeout: SLOW });
-  const keys = await readSheet(page);
-  expect(keys.recoveryKey.length).toBeGreaterThan(10);
-  expect(keys.secretKey.length).toBeGreaterThan(10);
-  person.recoveryKey = keys.recoveryKey;
-  person.secretKey = keys.secretKey;
-  beforeConfirm?.();
-  await confirmSheet(page, keys);
-}
 
 test("an_invited_person_joins_gets_the_sheet_and_signs_in_again", async ({ browser }) => {
   test.setTimeout(600_000);
