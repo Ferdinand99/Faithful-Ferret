@@ -502,8 +502,21 @@ export async function enterVault(ctx) {
     }
   };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
-  const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
+  const lockedScreen = () => unlockScreen({
+    session, t, go, onUnlocked, ...noteTools, locale: i18n.lang,
+    ...(lockedForOther.has(session) ? { notice: t("vault.unlock.other_account") } : {}),
+  });
+  // The browser's session became another account's under this tab (another tab signed in as it): the sync service has
+  // stopped the engine, with the outbox kept, and the vault locks here, with a notice that says why.
+  if (typeof sync.onSessionOther === "function" && !otherWatched.has(sync)) {
+    otherWatched.add(sync);
+    sync.onSessionOther(() => {
+      lockedForOther.add(session);
+      void autoLock.lock();
+    });
+  }
   if (!open) return { locked: lockedScreen() };
+  lockedForOther.delete(session);
 
   // An open vault always has an idle lock, whatever else fails below (Spec: Fase 1 section 7.1).
   if (!autoLock.running()) autoLock.start();
@@ -572,6 +585,12 @@ export async function enterVault(ctx) {
     },
   };
 }
+
+/** The sessions whose vault was locked because the browser's session is another account's now (until the next unlock). @type {WeakSet<object>} */
+const lockedForOther = new WeakSet();
+
+/** The sync services whose `onSessionOther` is followed (once per page). @type {WeakSet<object>} */
+const otherWatched = new WeakSet();
 
 /** The unlocks whose pins were read back already (each unlock is a new `current()` object). @type {WeakSet<object>} */
 const pinsRead = new WeakSet();

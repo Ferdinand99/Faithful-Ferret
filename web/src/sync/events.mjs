@@ -179,6 +179,11 @@ function seqOf(data) {
  * - The wait after a failure or a 429 binds: the page being shown again or the
  *   network returning does not start a try before it has passed. (The wait in
  *   the fallback, and the wait with no network, do not bind.)
+ * - With `confirm`, the first `hello` of each connection (the first one and
+ *   every reconnect) is acted on only after `confirm()` has resolved: the web
+ *   vault checks there that the session is still the unlocked account's. A
+ *   `confirm` that rejects with a 401 stops the channel as a 401 of the stream
+ *   does; any other rejection is a failed connection.
  *
  * @param {{
  *   api: { stream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStreamDefaultReader<Uint8Array>> },
@@ -186,6 +191,7 @@ function seqOf(data) {
  *   now?: () => number,
  *   onHint: (seq: number | null) => unknown,
  *   onState?: (state: LiveState) => void,
+ *   confirm?: () => Promise<unknown>,
  *   helloTimeoutMs?: number,
  *   silenceMs?: number,
  *   maxFailures?: number,
@@ -203,6 +209,7 @@ export function createLiveChannel({
   now = Date.now,
   onHint,
   onState = () => {},
+  confirm,
   helloTimeoutMs = 10_000,
   silenceMs = 60_000,
   maxFailures = 3,
@@ -415,9 +422,14 @@ export function createLiveChannel({
             const seq = seqOf(item.data);
             if (seq === null) throw new Error("bad hello");
             if (!one.hello) {
-              one.hello = true;
               if (one.helloTimer !== null) timers.clear(one.helloTimer);
               one.helloTimer = null;
+              if (confirm !== undefined) {
+                // Nothing of this connection is acted on before the check has passed (see above). A rejection ends the try.
+                await confirm();
+                if (one.over) return;
+              }
+              one.hello = true;
               clearGrace();
               failures = 0;
               liveSince = now();

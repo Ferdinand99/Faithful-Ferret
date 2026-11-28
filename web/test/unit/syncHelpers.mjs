@@ -475,8 +475,17 @@ export function createFakeApi(model, { order = [] } = {}) {
     batchFaults: [], // failures for the next batches: `{ kind: "network" | "lost" | "status", status, code, retryAfter, body }`
     failFeed: null, // an ApiError to throw on the next feed calls (count in failFeedTimes)
     failFeedTimes: 0,
+    // The account the session of the browser is (`GET /api/auth/session`); null: no session (401). Set it to another
+    // account to play a sign-in of another account in another tab of the browser.
+    sessionAccount: ACCOUNT,
+    sessionGets: 0, // how often the session was asked for
     async get(path) {
       const url = new URL(path, "https://vault.invalid");
+      if (url.pathname === "/api/auth/session") {
+        api.sessionGets += 1;
+        if (api.sessionAccount === null) throw new ApiError(401, "unauthorized");
+        return { account_id: api.sessionAccount, email: "someone@example.test", scope: "full", origin: "vault" };
+      }
       if (url.pathname === "/api/sync/checkpoint") {
         api.checkpointGets.push(path);
         const fault = api.checkpointFaults.shift();

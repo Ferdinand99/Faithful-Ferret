@@ -3,6 +3,8 @@
 // mark of what "Activity" last showed and the remembered account are each kept per account, and neither ever sees
 // an item of the other. When one tab signs in as the other account (the session cookie of the profile changes under
 // a tab that is open), the open tab never shows the other account's log as its own and never stores its mark.
+// An open tab whose profile session becomes the other account's stops its sync and locks: nothing it writes then goes
+// into the other account's vault, and what it wrote waits in its outbox for its own account's next sign-in.
 // The invited account also adds a passkey and opens the vault with it, as the first account can (Chromium only: the
 // virtual authenticator is Chromium's).
 //
@@ -227,6 +229,73 @@ test("two_accounts_in_one_browser_never_see_each_other", async ({ browser }) => 
   expect(await (await findRows(page, nameA)).count()).toBe(1);
   await openList(page);
   expect(await (await findRows(page, nameB)).count()).toBe(0);
+  await context.close();
+});
+
+test("an_open_tab_never_writes_into_the_vault_of_the_account_that_signed_in_elsewhere", async ({ browser }) => {
+  test.setTimeout(900_000);
+  requireAccount();
+  const person = second();
+  const context = await freshContext(browser);
+  const page = await context.newPage();
+
+  // B is signed in and unlocked in its tab, and its sync is running: a first item has gone out to B's vault.
+  await signInOn(page, { account: person });
+  const first = `B-before-${tag}`;
+  await createItem(page, { name: first });
+  await synced(page);
+  const b = await sessionOf(context);
+  expect(b?.email).toBe(person.email);
+
+  // A signs in elsewhere in the same profile, without B signing out: the profile's session cookie is A's from now on (it
+  // is the cookie of A's own sign-in, so B's tab is told nothing). This is what a sign-in of A in another tab does once
+  // B's session has ended without B's tab noticing.
+  const elsewhere = await freshContext(browser);
+  const aPage = await elsewhere.newPage();
+  await signInOn(aPage);
+  const a = await sessionOf(elsewhere);
+  expect(a?.email).toBe(secrets.email);
+  const vaultHost = new URL(vaultUrl).hostname;
+  await context.addCookies((await elsewhere.cookies()).filter((cookie) => cookie.domain.replace(/^\./, "") === vaultHost));
+  expect((await sessionOf(context))?.email, "the profile's session is A's now").toBe(secrets.email);
+  const before = new Set((await feedOf(elsewhere)).changes.map((change) => change.id));
+
+  // B's tab, still open and unlocked, saves a new item.
+  const name = `B-after-${tag}`;
+  await page.locator('[data-role="nav-items"]').click();
+  await expect(page.locator('[data-role="list"]')).toBeVisible();
+  await page.locator('[data-role="new-item"]').click();
+  await expect(page.locator('[data-role="edit-form"]')).toBeVisible();
+  await page.locator('[data-role="name"]').fill(name);
+  await page.locator('[data-role="notes"]').fill(`notes-of-b-after-${tag}`);
+  await page.locator('[data-role="save"]').click();
+
+  // The tab locks and says why; nothing of it reached A's vault.
+  const notice = page.locator('[data-role="session-other-account"]');
+  const locked = await notice.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false);
+  const leaked = (await feedOf(elsewhere)).changes.map((change) => change.id).filter((id) => !before.has(id));
+  expect(leaked, "nothing B's tab wrote went into A's vault").toEqual([]);
+  expect(locked, "B's tab locks, with the notice").toBe(true);
+  await expect(page.locator('[data-role="unlock"]')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-role="list"]')).toHaveCount(0);
+
+  // The write waits in B's outbox, under B.
+  const waiting = /** @type {any[]} */ ((await readStores(page)).outbox.values).filter((entry) => entry.accountId === b?.accountId);
+  expect(waiting.length, "B's write waits in B's outbox").toBe(1);
+  const itemB = String(waiting[0].itemId);
+  expect((await feedOf(elsewhere)).changes.map((change) => change.id)).not.toContain(itemB);
+  await elsewhere.close();
+
+  // B signs in again (the profile has no session now, and the browser remembers B): the write goes to B's vault.
+  await context.clearCookies();
+  await signInOn(page, { account: person });
+  await synced(page);
+  expect((await readStores(page)).outbox.count).toBe(0);
+  expect((await feedOf(context)).changes.map((change) => change.id)).toContain(itemB);
+  await openList(page);
+  expect(await (await findRows(page, name)).count()).toBe(1);
+  await openList(page);
+  expect(await (await findRows(page, first)).count()).toBe(1);
   await context.close();
 });
 

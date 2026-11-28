@@ -42,6 +42,8 @@ export default {
       const made = createLiveChannel({
         api,
         onHint: () => engine.syncNow(),
+        // After each connection, the session must still be the account the engine runs for (`flows/sessionBound.mjs`).
+        ...(typeof sync.confirmSession === "function" ? { confirm: () => sync.confirmSession(engine) } : {}),
         onState: (next) => {
           if (channel === made) setState(next);
         },
