@@ -17,6 +17,23 @@
 //!   account is what it was, that A's session, token, import window and
 //!   nonce still work, and that A's stream heard nothing.
 //!
+//! The routes, as `server::vault_router` mounts them (and the hand-over
+//! redeem of the admin listener):
+//!
+//! * sync: changes, items, restore rows, PUT of an item, batch, import window,
+//!   checkpoint GET and PUT, events (session and token);
+//! * the vault: unlock methods GET, POST (with quick-unlock) and DELETE of one
+//!   (with quick-unlock), the password, the recovery wrap GET, a new recovery
+//!   key, recover, policy;
+//! * auth: session, challenge and reregister start (both under every signed
+//!   route above), devices, revoking one, forget old, redeem, token refresh and
+//!   sign-out, the hand-over and its redeem, logout; revoke-all in
+//!   `revoke_all_and_a_redeemed_code_of_b_leave_a_alone`; the account log.
+//!
+//! Not here, because they take neither a session nor an id of an account:
+//! sign-in start and finish, registration start and finish, the invitation
+//! check (`login.rs`, `register.rs`, `invites.rs`), and the static files.
+//!
 //! Spec: Fase 1 § 4.6, § 7.6, § 8 (sync), § 11 (several accounts); Global
 //! Constraint 84 of the L1 plan.
 
@@ -28,12 +45,14 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use ferret_server::accounts::actions::issue_sign_in_code;
 use ferret_server::accounts::log::Actor;
+use ferret_server::ids::TokenSecret;
 use ferret_server::wire::{b64url, hex16};
 use ferret_server_auth::{Clock as _, SessionScope};
 use serde_json::{Value, json};
 use support::accounts::{
     CLIENT_PASSWORD, Client, add_account_to_app, body_bytes, client_account, client_session,
-    password_change, password_put_req, post_recover, recovered, send_signed,
+    password_change, password_put_req, post_recover, put_recovery, recovered, renewed_recovery,
+    send_signed,
 };
 use support::device::{DeviceClient, device_app};
 use support::events::Stream;
@@ -90,6 +109,61 @@ fn page(method: Method, uri: &str, jar: &Jar, body: Option<&Value>) -> Request<B
 async fn send(app: &TestApp, method: Method, uri: &str, jar: &Jar, body: Option<&Value>) -> Res {
     app.call_raw(Which::Vault, page(method, uri, jar, body))
         .await
+}
+
+const REFRESH: &str = "/api/auth/token/refresh";
+const REVOKE: &str = "/api/auth/token/revoke";
+
+/// `POST` of a refresh token to `path` (to renew or to sign out), with a
+/// proof of `device`, as a device client sends it.
+async fn token_post(app: &TestApp, device: &DeviceClient, path: &str, token: &TokenSecret) -> Res {
+    let proof = device.proof(app, "POST", path, None);
+    let req = support::Req::post(path)
+        .header("ferret-protocol", "1")
+        .header("x-forwarded-proto", "https")
+        .header("dpop", &proof)
+        .json(&json!({ "refresh_token": token.to_wire() }));
+    app.call_raw(Which::Vault, req.build()).await
+}
+
+/// The change that adds a passkey with the method id `id` to `client`'s
+/// vault, as the core makes it.
+#[cfg(feature = "quick-unlock")]
+fn passkey_change(client: &mut Client, id: [u8; 16]) -> ferret_core::MethodChange {
+    use ferret_core::{CurrentManifest, Kek, Method as WrapMethod, PasskeyMeta, PrfOutput};
+    let credential_id = vec![0x5c; 24];
+    let output = PrfOutput::from_slice(&[0x16; 32]).expect("a PRF output");
+    let kek = Kek::from_prf(&credential_id, &output).expect("a key");
+    let wrap = client
+        .vault
+        .wrap_for_method(
+            &mut client.rng,
+            &kek,
+            ferret_server::ids::MethodId::from_bytes(id),
+            1,
+            WrapMethod::Prf {
+                credential_id,
+                prf_salt: [0x4c; 32],
+            },
+        )
+        .expect("a wrap");
+    ferret_core::manifest_add_method(
+        &mut client.rng,
+        &client.vault,
+        &CurrentManifest {
+            rev: client.manifest.rev,
+            envelope: &client.manifest.envelope,
+            tag: &client.manifest.tag,
+        },
+        wrap,
+        &PasskeyMeta {
+            aaguid: [0x9d; 16],
+            name: "Laptop of B",
+            be: false,
+            bs: false,
+        },
+    )
+    .expect("the core adds the passkey")
 }
 
 /// A request of a device client with its access token.
@@ -573,6 +647,59 @@ async fn accounts_matrix_no_route_crosses_accounts() {
     // B's vault only.
     let res = send(&app, Method::GET, "/api/sync/checkpoint", &b_jar, None).await;
     m.check("checkpoint", &res, StatusCode::OK, "");
+    let theirs = send(&app, Method::GET, "/api/sync/checkpoint", &a_jar, None)
+        .await
+        .json();
+    let upload = json!({
+        "seq": theirs["seq"],
+        "digest": theirs["digest"],
+        "mac": theirs["mac"],
+        "entries": theirs["entries"],
+    });
+    let res = send(
+        &app,
+        Method::PUT,
+        "/api/sync/checkpoint",
+        &b_jar,
+        Some(&upload),
+    )
+    .await;
+    // At A's seq it is no newer than B's own: stale, and the answer names
+    // B's stored seq only.
+    m.check(
+        "A's checkpoint uploaded by B",
+        &res,
+        StatusCode::CONFLICT,
+        "checkpoint_stale",
+    );
+    // At B's own head it replaces B's checkpoint (the server cannot tell
+    // whose entries they are; that is the client's check), and only B's.
+    let head = send(
+        &app,
+        Method::GET,
+        "/api/sync/changes?since=0&limit=1",
+        &b_jar,
+        None,
+    )
+    .await
+    .json()["latest_seq"]
+        .clone();
+    let mut newer = upload.clone();
+    newer["seq"] = head;
+    let res = send(
+        &app,
+        Method::PUT,
+        "/api/sync/checkpoint",
+        &b_jar,
+        Some(&newer),
+    )
+    .await;
+    m.check(
+        "A's checkpoint at B's head, uploaded by B",
+        &res,
+        StatusCode::OK,
+        "",
+    );
 
     // Devices: B's list, A's token device unknown to B, the shared browser id
     // is B's own browser, and forgetting old devices is B's.
@@ -685,6 +812,41 @@ async fn accounts_matrix_no_route_crosses_accounts() {
         StatusCode::UNAUTHORIZED,
         "denied",
     );
+    // A new recovery key that A's client made, signed with A's key, sent in
+    // B's session: the proof is checked against B's key.
+    let renewal = renewed_recovery(&mut a.client);
+    let res = put_recovery(&app, &b_jar, &a.client, &renewal).await;
+    m.check(
+        "A's new recovery key in B's session",
+        &res,
+        StatusCode::UNAUTHORIZED,
+        "denied",
+    );
+    #[cfg(feature = "quick-unlock")]
+    {
+        // B adds a passkey under the id of A's passkey method: the id is
+        // taken (on any account), and A's method is not touched.
+        let change = passkey_change(&mut b.client, a_prf);
+        let nonce = nonce_for(&app, &b_jar).await;
+        let proof = ferret_core::auth_sign(&b.client.vault, change.op, &nonce, &change.body)
+            .expect("a proof");
+        let res = send_signed(
+            &app,
+            &b_jar,
+            Method::POST,
+            "/api/vault/unlock-methods",
+            &nonce,
+            &proof,
+            change.body.clone(),
+        )
+        .await;
+        m.check(
+            "a passkey of B under A's method id",
+            &res,
+            StatusCode::CONFLICT,
+            "conflict",
+        );
+    }
 
     // The account log and the policy.
     let res = send(
@@ -731,9 +893,10 @@ async fn accounts_matrix_no_route_crosses_accounts() {
         "denied",
     );
 
-    // The sign-in code of A redeemed with B's e-mail, and with A's e-mail by a
-    // browser that holds B's session: neither gives anything of A but the
-    // session the code is for.
+    // The sign-in code of A with B's e-mail, from the browser that holds B's
+    // session: a code is good for its own account only. (A's code with A's
+    // e-mail is A's own recovery, which ends A's sessions on purpose; the last
+    // test of this file uses it.)
     let res = app
         .call_raw(
             Which::Vault,
@@ -814,6 +977,72 @@ async fn accounts_matrix_no_route_crosses_accounts() {
         "token: the account log is not for a token",
         res.status == StatusCode::UNAUTHORIZED || res.status == StatusCode::FORBIDDEN,
     );
+    // B's device renews and then signs out with its own refresh token: only
+    // B's token rows change.
+    let renewed = token_post(
+        &app,
+        &b.device,
+        REFRESH,
+        b.device.refresh.as_ref().expect("signed in"),
+    )
+    .await;
+    m.check("token: refresh of B", &renewed, StatusCode::OK, "");
+    let refresh = renewed.json()["refresh_token"]
+        .as_str()
+        .and_then(|t| TokenSecret::from_wire(t).ok());
+    m.fact("token: refresh of B gives a token", refresh.is_some());
+    if let Some(refresh) = refresh {
+        let res = token_post(&app, &b.device, REVOKE, &refresh).await;
+        m.check("token: sign-out of B", &res, StatusCode::NO_CONTENT, "");
+    }
+
+    // ---- the rest of B's session, on both listeners
+
+    // The hand-over to the admin pages: B is no administrator, and a code that
+    // was never made is nothing on the admin listener.
+    let res = send(
+        &app,
+        Method::POST,
+        "/api/auth/handoff",
+        &b_jar,
+        Some(&json!({
+            "purpose": "login",
+            "next": "/settings/general",
+            "challenge": b64url::encode(&[7u8; 32]),
+        })),
+    )
+    .await;
+    m.check("hand-over of B", &res, StatusCode::FORBIDDEN, "forbidden");
+    let res = app
+        .call_raw(
+            Which::Admin,
+            support::Req::post("/api/auth/handoff/redeem")
+                .page_fetch(Which::Admin)
+                .json(&json!({ "code": b64url::encode(&[9u8; 32]) }))
+                .build(),
+        )
+        .await;
+    m.check(
+        "a made-up hand-over code",
+        &res,
+        StatusCode::BAD_REQUEST,
+        "handoff_invalid",
+    );
+    // B's own event stream opens and says hello; A's stream (checked below)
+    // hears nothing of it.
+    let b_stream = stream(&app, &b_jar).await;
+    m.fact("B's stream opens", b_stream.status == StatusCode::OK);
+    drop(b_stream);
+    // B signs out last, from the browser id that A's session carries too.
+    let res = send(&app, Method::POST, "/api/auth/logout", &b_jar, None).await;
+    m.check("sign-out of B", &res, StatusCode::NO_CONTENT, "");
+    let res = send(&app, Method::GET, "/api/auth/session", &b_jar, None).await;
+    m.check(
+        "B is signed out",
+        &res,
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+    );
 
     // ---- A is as it was
 
@@ -879,7 +1108,7 @@ async fn accounts_matrix_no_route_crosses_accounts() {
         res.status == StatusCode::OK,
     );
     drop(a_stream);
-    m.done(45);
+    m.done(55);
 }
 
 // ------------------------------------------------------- a challenge of one
