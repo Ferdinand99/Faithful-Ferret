@@ -112,17 +112,27 @@ const trail = /** @type {string[]} */ ([]);
 const stamp = () => new Date().toISOString().slice(11, 23);
 
 /**
- * WebKit reports a request of the page's API client that a navigation or a closing page cancelled as an uncaught page
- * error ("Fetch API cannot load <url> due to access control checks."), although the client catches the rejection (it
- * becomes `ApiError(0, "network")`). Such an error is only that when the browser has just said that this very request was
- * cancelled; anything else stays an uncaught error of the page.
+ * WebKit reports a request of the page's API client that it did not complete (cancelled by a reload, a navigation or a
+ * closing page) as an uncaught page error: "Fetch API cannot load <url> due to access control checks.", sometimes with
+ * no `requestfailed` for it. It is not an error of the page: the API client turns every rejection of `fetch` into an
+ * `ApiError` (`web/src/api.mjs`, `exchange`), so the raw `TypeError` of a request under `/api/` of the vault can never
+ * be uncaught in the page's code. Only that text, only in WebKit, only for the vault's `/api/`, is left out (and noted
+ * in the trail); every other page error counts.
+ * @param {import("@playwright/test").Page} page
  * @param {string} text
  */
-function cancelledApiLoad(text) {
+function webkitCancelledApiLoad(page, text) {
+  if (page.context().browser()?.browserType().name() !== "webkit") return false;
   const match = /^(?:TypeError: )?Fetch API cannot load (\S+(?: \S+)?) due to access control checks\.$/.exec(text);
   if (!match) return false;
-  const path = match[1].replace(/^https?:\s*\/+[^/]+/, "");
-  return path.startsWith("/api/") && trail.slice(-3).some((line) => line.endsWith(`${path} failed: Load request cancelled`));
+  const host = new URL(vaultUrl).host;
+  const url = match[1].replace(/^(https?):\s*\/+/, "$1://");
+  try {
+    const parsed = new URL(url);
+    return parsed.host === host && parsed.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
 }
 const testTitle = () => {
   try {
@@ -176,8 +186,8 @@ export async function watch(context) {
     // An uncaught error says which test it came in, what the page was doing, and the last things that went wrong on the network
     // or closed before it, so that a failure of the whole-run check can be placed.
     page.on("pageerror", (e) => {
-      if (cancelledApiLoad(String(e))) {
-        trail.push(`${stamp()} WebKit reported the cancelled request as a page error: ${String(e)}`);
+      if (webkitCancelledApiLoad(page, String(e))) {
+        trail.push(`${stamp()} WebKit reported an API request it did not complete as a page error: ${String(e)}`);
         return;
       }
       findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`);
