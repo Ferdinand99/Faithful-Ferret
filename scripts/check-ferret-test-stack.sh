@@ -262,6 +262,22 @@ for bad in 'FERRET_E2E_SUFFIX=Bad' 'FERRET_E2E_SUFFIX=waytoolongsuffix' 'FERRET_
     exit 1
   fi
 done
+# The upgrade drill refuses a tag that is not a release tag, the stack of the suffix e2e and a candidate with a WebAssembly
+# package from the tree, each with its own message and before it calls docker.
+for bad in main v0.12 'v0.12.1;x' ''; do
+  if drill_out="$(FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill "$bad" 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill accepted the tag '$bad'" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -q '^upgrade-drill: the tag must be a release tag' || { echo "check-ferret-test-stack: upgrade-drill '$bad': $drill_out" >&2; exit 1; }
+done
+for bad in 'FERRET_E2E_SUFFIX=e2e:never runs on the stack of the suffix e2e' 'FERRET_WASM_SOURCE=tree:the candidate is a release build'; do
+  if drill_out="$(env "${bad%%:*}" FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill v0.12.1 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill ran with ${bad%%:*}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -qF "${bad#*:}" || { echo "check-ferret-test-stack: upgrade-drill with ${bad%%:*}: $drill_out" >&2; exit 1; }
+done
 labels_out="$(DEV_RUN=check-run DEV_TITLE='A "title" $x' bash -c '
   FERRET_DOCKER_ARGS="--context stub"
   source scripts/lanbox-ferret-test.sh

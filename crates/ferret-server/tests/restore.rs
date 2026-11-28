@@ -44,6 +44,7 @@ use sha2::{Digest as _, Sha256};
 use support::accounts::{TestAccount, add_account_to_app, id16};
 use support::backup::{capture_log, cfg, copy_set, make};
 use support::session::issue;
+use support::upgrade::{BUILD_AT_U3, database_at_0_12};
 use support::{ADMIN_URL, Jar, PEER, Res, START, TestApp, VAULT_URL, Which};
 use tower::ServiceExt as _;
 
@@ -667,6 +668,271 @@ async fn restore_migrates_an_older_set_before_the_bump() {
 
     // And the server starts on it.
     let state = start_on(scene.data()).await.expect("the server starts");
+    drop(state);
+}
+
+// ---------------------------------------------------------------- a set of 0.12.x
+
+/// Every row of `table` in a database as text, in a fixed order, with the
+/// columns named in `skip` left out.
+fn rows_of(conn: &Connection, table: &str, skip: &[&str]) -> Vec<String> {
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+        .expect("prepare")
+        .query_map([table], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("a column"))
+        .filter(|c: &String| !skip.contains(&c.as_str()))
+        .collect();
+    assert!(!columns.is_empty(), "{table} has columns");
+    let list = columns
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut stmt = conn
+        .prepare(&format!("SELECT {list} FROM \"{table}\" ORDER BY 1"))
+        .expect("prepare");
+    stmt.query_map([], |row| {
+        let mut cells = Vec::new();
+        for i in 0..columns.len() {
+            cells.push(format!("{:?}", row.get_ref(i)?));
+        }
+        Ok(cells.join("|"))
+    })
+    .expect("query")
+    .map(|r| r.expect("a row"))
+    .collect()
+}
+
+/// The names of the migrations a 0.12.x server ran ([`BUILD_AT_U3`]), sorted.
+fn migrations_of_0_12() -> Vec<String> {
+    let mut names: Vec<String> = BUILD_AT_U3
+        .core
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .chain((BUILD_AT_U3.migrations)().into_iter().map(|(name, _)| name))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The tables of a 0.12.x set that a restore leaves as they are; each has rows
+/// in [`database_at_0_12`].
+const KEPT_BY_A_RESTORE: [&str; 15] = [
+    "ferret_accounts",
+    "ferret_items",
+    "ferret_checkpoints",
+    "ferret_unlock_methods",
+    "ferret_unlock_policy",
+    "user_emails",
+    "api_tokens",
+    "api_token_scopes",
+    "passkeys",
+    "passkey_challenges",
+    "push_devices",
+    "push_events",
+    "push_registrations",
+    "settings",
+    "ferret_meta",
+];
+
+/// A backup set as a 0.12.x server leaves it, in a folder of its own: the
+/// scene's set with its database replaced by [`database_at_0_12`] (made with
+/// [`BUILD_AT_U3`]), the server's own rows of `ferret_meta` (the fingerprint
+/// of its set-up among them) taken from the scene's set so that the secret
+/// files match, and the manifest written again from what the folder holds, as
+/// 0.12.1 wrote it.
+fn set_at_0_12(scene: &Scene) -> (Dir, PathBuf, TestAccount) {
+    let (dir, set_dir) = copy_of_backup(scene, "at-0-12");
+    let (conn, account) = database_at_0_12();
+    let db = set_dir.join(DB_FILE);
+    let db_text = db.to_str().expect("a path").to_string();
+    conn.execute("ATTACH DATABASE ?1 AS scene", [&db_text])
+        .expect("attach the scene's set");
+    conn.execute_batch(
+        "INSERT OR REPLACE INTO main.ferret_meta SELECT * FROM scene.ferret_meta; \
+         DETACH DATABASE scene;",
+    )
+    .expect("the server's own rows");
+    std::fs::remove_file(&db).expect("remove the scene's database");
+    conn.execute("VACUUM INTO ?1", [&db_text])
+        .expect("the 0.12.x database into the set");
+    drop(conn);
+    reseal(&set_dir);
+    let path = set_dir.join(MANIFEST_FILE);
+    let mut manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(&path).expect("a manifest")).expect("parses");
+    let copy = peek(&db);
+    manifest.vaults = copy
+        .prepare("SELECT lower(hex(vault_id)), seq, restore_epoch FROM ferret_vaults")
+        .expect("prepare")
+        .query_map([], |row| {
+            Ok(ferret_server::backup::ManifestVault {
+                vault_id: row.get(0)?,
+                seq: u64::try_from(row.get::<_, i64>(1)?).expect("a seq"),
+                restore_epoch: u64::try_from(row.get::<_, i64>(2)?).expect("an epoch"),
+            })
+        })
+        .expect("query")
+        .map(|r| r.expect("a vault"))
+        .collect();
+    drop(copy);
+    manifest.server_version = "0.12.1".to_string();
+    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("json")).expect("write");
+    (dir, set_dir, account)
+}
+
+#[tokio::test]
+async fn a_0_12_backup_set_restores_into_this_build() {
+    let scene = new_scene().await;
+    let (_old, old, a) = set_at_0_12(&scene);
+
+    // A good set of 0.12.x: the migrations of that release and not one more.
+    let manifest = set::verify(&old, &set::build_migrations()).expect("a 0.12.x set is good");
+    let mut listed = manifest.migrations.clone();
+    listed.sort();
+    assert_eq!(listed, migrations_of_0_12());
+    assert!(
+        !listed
+            .iter()
+            .any(|n| n == "0010_accounts.sql" || n == "kit/0007_invites.sql")
+    );
+    let set_db = peek(&old.join(DB_FILE));
+    let before: BTreeMap<&str, Vec<String>> = KEPT_BY_A_RESTORE
+        .iter()
+        .map(|table| (*table, rows_of(&set_db, table, &[])))
+        .collect();
+    let users_before = rows_of(&set_db, "users", &["session_version"]);
+    let version_before: i64 = set_db
+        .query_row(
+            "SELECT session_version FROM users WHERE id = ?1",
+            [a.user_id],
+            |r| r.get(0),
+        )
+        .expect("a version");
+    drop(set_db);
+    for (table, rows) in &before {
+        assert!(!rows.is_empty(), "{table} has rows in the 0.12.x set");
+    }
+
+    // Migrated in the staging folder, put in place, bumped and swept.
+    let report = restore_scene(&scene, &old).expect("a restore");
+    assert_eq!(
+        report,
+        RestoreReport {
+            restore_epoch: u64::try_from(NOW).unwrap(),
+            vaults: 1,
+            // The vault session, the admin session and the pending one: the
+            // reset session had ended.
+            sessions_ended: 3,
+            devices_revoked: 1,
+            // 0.12.x had no invitations.
+            invites_revoked: 0,
+            accounts_logged: 1,
+            moved_aside: scene.aside(),
+            seen_epoch_unknown: false,
+        }
+    );
+    assert!(!scene.staging().exists(), "nothing is left in staging");
+    let db = scene.data().join(DB_FILE);
+    let conn = peek(&db);
+    let applied: Vec<String> = conn
+        .prepare("SELECT name FROM schema_migrations")
+        .expect("prepare")
+        .query_map([], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("a name"))
+        .collect();
+    for name in set::build_migrations() {
+        assert!(applied.iter().any(|a| a == name), "{name} is applied");
+    }
+    let verdict: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .expect("a check");
+    assert_eq!(verdict, "ok");
+
+    // Everything is there: every row of every table a restore does not touch
+    // is as the 0.12.x set had it, and the user is the administrator it was in
+    // every column but the session version (one up: every session ended).
+    for (table, rows) in &before {
+        assert_eq!(
+            &rows_of(&conn, table, &[]),
+            rows,
+            "{table} after the restore"
+        );
+    }
+    assert_eq!(rows_of(&conn, "users", &["session_version"]), users_before);
+    let (role, version): (String, i64) = conn
+        .query_row(
+            "SELECT role, session_version FROM users WHERE id = ?1",
+            [a.user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("the user");
+    assert_eq!((role.as_str(), version), ("admin", version_before + 1));
+    // What a restore ends, it ends: the sessions, the code, the device tokens
+    // and the one-time rows. The restore is in the account's log, and the new
+    // table of invitations is there and empty.
+    for (sql, want) in [
+        (
+            "SELECT COUNT(*) FROM ferret_sessions WHERE revoked_at IS NULL",
+            0,
+        ),
+        ("SELECT COUNT(*) FROM ferret_sessions", 4),
+        (
+            "SELECT COUNT(*) FROM sign_in_codes WHERE revoked_at IS NULL",
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM ferret_devices WHERE revoked_at IS NULL",
+            0,
+        ),
+        ("SELECT COUNT(*) FROM ferret_refresh", 0),
+        ("SELECT COUNT(*) FROM ferret_access", 0),
+        ("SELECT COUNT(*) FROM ferret_handoffs", 0),
+        ("SELECT COUNT(*) FROM ferret_login_states", 0),
+        ("SELECT COUNT(*) FROM ferret_registrations", 0),
+        ("SELECT COUNT(*) FROM invites", 0),
+        (
+            "SELECT COUNT(*) FROM ferret_account_events \
+             WHERE kind = 'server_restored' AND actor = 'server'",
+            1,
+        ),
+    ] {
+        let got: i64 = conn.query_row(sql, [], |r| r.get(0)).expect(sql);
+        assert_eq!(got, want, "{sql}");
+    }
+    drop(conn);
+    assert_eq!(epochs(&db), [u64::try_from(NOW).unwrap()]);
+
+    // And this build serves it: the items, the three unlock methods (the
+    // passkey among them) and the PIN rule of 0.12.x.
+    let state = start_on(scene.data()).await.expect("the server starts");
+    let jar = sign_in(&state, a.user_id).await;
+    let items = vault_get(&state, &jar, "/api/sync/items").await;
+    assert_eq!(items.status, StatusCode::OK, "{}", items.text());
+    assert_eq!(
+        items.json()["restore_epoch"].as_u64(),
+        Some(report.restore_epoch)
+    );
+    let methods = vault_get(&state, &jar, "/api/vault/unlock-methods").await;
+    assert_eq!(methods.status, StatusCode::OK, "{}", methods.text());
+    let methods = methods.json();
+    let kinds: Vec<u64> = methods["methods"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|m| m["method_type"].as_u64().expect("a type"))
+        .collect();
+    assert_eq!(kinds.len(), 3, "{methods}");
+    assert!(kinds.contains(&3), "the passkey method: {methods}");
+    let rule = state
+        .vault_db
+        .with_conn(|conn| ferret_server::vault::policy::read(conn))
+        .await
+        .expect("the rule");
+    assert!(rule.pin_allowed && !rule.pin_after_restart && rule.pin_min_length == 8);
     drop(state);
 }
 

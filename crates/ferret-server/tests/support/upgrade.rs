@@ -108,7 +108,8 @@ fn run(conn: &Connection, sql: &str, args: &[&dyn rusqlite::ToSql]) {
 /// chain and an access token, a changed PIN rule, a pending one-time sign-in
 /// code with its e-mail, sessions of the vault and the admin pages (one with a
 /// fresh re-authentication, one ended), a hand-over code, a pending
-/// registration, a login state and a row of the server's own settings.
+/// registration, a login state and a row of the server's own settings; and
+/// rows in the kit's tables of 0.12.x ([`seed_kit_tables`]).
 /// Returns the database and the account.
 pub fn database_at_0_12() -> (Connection, TestAccount) {
     let mut conn = empty_database();
@@ -278,5 +279,85 @@ pub fn database_at_0_12() -> (Connection, TestAccount) {
         "INSERT INTO ferret_meta (key, value) VALUES ('upgrade_probe', x'0102')",
         &[],
     );
+    seed_kit_tables(&conn, a.user_id);
     (conn, a)
+}
+
+/// The kit's tables of 0.12.x with rows in them: the user's sealed second-factor
+/// columns, an API token with its scopes, a sign-in passkey and a challenge,
+/// the push tables and the server's settings. Ferret uses few of them (the
+/// kit's own sign-in pages are closed in its mode), but a database of 0.12.x
+/// can hold them all, and an upgrade keeps every row.
+fn seed_kit_tables(conn: &Connection, user_id: i64) {
+    run(
+        conn,
+        "UPDATE users SET totp_secret = 'sealed:v1:c2VjcmV0LW9mLTAuMTI', totp_enabled = 0, \
+         recovery_codes = '[\"$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA\"]', \
+         totp_last_step = 59000000, language = 'nb', last_login_at = '2026-11-01 00:00:20' \
+         WHERE id = ?1",
+        params![user_id],
+    );
+    run(
+        conn,
+        "INSERT INTO api_tokens (id, user_id, name, prefix, token_hash, scope, created_at, \
+          last_used_at, expires_at) \
+         VALUES (7, ?1, 'a script', 'vk_abcd', ?2, 'write', '2026-11-01 00:00:30', \
+          '2026-11-01 00:01:00', '2027-11-01 00:00:00')",
+        params![user_id, "ab".repeat(32)],
+    );
+    for scope in ["monitors:read", "monitors:write"] {
+        run(
+            conn,
+            "INSERT INTO api_token_scopes (token_id, scope) VALUES (7, ?1)",
+            params![scope],
+        );
+    }
+    run(
+        conn,
+        "INSERT INTO passkeys (id, user_id, credential_id, public_key, alg, user_handle, name, \
+          sign_count, transports, backup_eligible, backed_up, created_at, last_used_at) \
+         VALUES (3, ?1, ?2, ?3, -7, ?4, 'a sign-in passkey', 4, 'internal,hybrid', 1, 1, \
+          '2026-11-01 00:00:40', '2026-11-01 00:02:00')",
+        params![
+            user_id,
+            [0xa7u8; 32].as_slice(),
+            [0xa8u8; 77].as_slice(),
+            [0xa9u8; 32].as_slice()
+        ],
+    );
+    run(
+        conn,
+        "INSERT INTO passkey_challenges (challenge, purpose, user_id, user_handle, expires_at) \
+         VALUES ('Y2hhbGxlbmdlLW9mLTAuMTI', 'register', ?1, ?2, ?3)",
+        params![user_id, [0xa9u8; 32].as_slice(), NOW + 300],
+    );
+    run(
+        conn,
+        "INSERT INTO push_devices (id, user_id, token_id, handle_sealed, handle_hash, created_at) \
+         VALUES (5, ?1, 7, 'sealed:v1:aGFuZGxl', ?2, '2026-11-01 00:00:50')",
+        params![user_id, "cd".repeat(32)],
+    );
+    run(
+        conn,
+        "INSERT INTO push_events (ref, title, body, kind, level, occurred_at, created_at) \
+         VALUES ('cmVmLW9mLTAuMTItZXZlbnQ', 'Backup', 'A set was made', 'recovered', 'ok', \
+          '2026-11-01T00:01:00Z', '2026-11-01 00:01:00')",
+        &[],
+    );
+    run(
+        conn,
+        "INSERT INTO push_registrations (user_id, created_at) VALUES (?1, '2026-11-01 00:01:10')",
+        params![user_id],
+    );
+    for (key, value) in [
+        ("site_name", "Ferret at home"),
+        ("timezone", "Europe/Oslo"),
+        ("language", "nb"),
+    ] {
+        run(
+            conn,
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        );
+    }
 }

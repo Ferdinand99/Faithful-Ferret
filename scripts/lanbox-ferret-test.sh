@@ -78,6 +78,24 @@
 #                                          web/package-lock.json (checked against the lock's integrity), is in the
 #                                          volume ferret-e2e-pwcore, which a test container mounts read-only on /pw
 #   scripts/lanbox-ferret-test.sh e2e-down     remove the stack and its image
+#   scripts/lanbox-ferret-test.sh upgrade-drill <release tag>  the upgrade from a release (for example v0.12.1) on an
+#                                          end-to-end stack of its own: the suffix upg and the network 172.30.246 unless
+#                                          FERRET_E2E_SUFFIX and FERRET_E2E_SUBNET say others (never the suffix e2e). The app
+#                                          runs the published image of the tag (FERRET_IMAGE_REPO, default
+#                                          ghcr.io/ferdinand99/faithful-ferret) by digest, refused unless its revision is
+#                                          the commit of the tag and its version, cargo features and WebAssembly package are
+#                                          a release's; its signature is checked with cosign when cosign is installed here,
+#                                          or in a container of FERRET_COSIGN_IMAGE (an image of cosign 3, as the release
+#                                          workflow signs with, pinned by digest), and the run says openly when it was not
+#                                          checked. In Chromium: the first half of the scenarios
+#                                          (web/test/e2e-stack/phase-upgrade-before.spec.mjs: an account with everything in
+#                                          it), a backup set made by the release, the app's image swapped for a release build
+#                                          of this checkout (the cargo features of a release, no test feature, the locked
+#                                          WebAssembly package) on the same data while the browser and the device stay
+#                                          open, then phase-upgrade-after.spec.mjs in a fresh browser. The stack is left
+#                                          running: FERRET_E2E_SUFFIX=upg scripts/lanbox-ferret-test.sh e2e-down removes it
+#                                          with the candidate image; the release image is removed by the drill when it
+#                                          pulled it and no container uses it any more
 #
 # docker/.env (not in git; on a Unix host it is made with mode 600) holds
 # FERRET_SETUP_TOKEN and FERRET_TRUSTED_PROXIES of the test stack. It is made on
@@ -130,7 +148,11 @@ dc() { dk compose -p "$project" -f "$composefile" --env-file "$envfile" "$@"; }
 # suffix is `e2e` unless FERRET_E2E_SUFFIX says another one (letters and digits), and the
 # network's first three octets are FERRET_E2E_SUBNET (default 172.30.250), so a second stack can
 # run beside the first: another project, containers, volumes, network, label and host names
-# (vault-<suffix>.test), and nothing of the first is touched.
+# (vault-<suffix>.test), and nothing of the first is touched. The upgrade drill has a stack of its
+# own: the suffix upg and the network 172.30.246 when nothing else is set.
+if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = upgrade-drill ]; then
+  : "${FERRET_E2E_SUFFIX:=upg}" "${FERRET_E2E_SUBNET:=172.30.246}"
+fi
 e2e_suffix="${FERRET_E2E_SUFFIX:-e2e}"
 case "$e2e_suffix" in
   '' | *[!a-z0-9]* | ?????????????*) echo "lanbox-ferret-test: FERRET_E2E_SUFFIX is 1 to 12 lower-case letters and digits" >&2; exit 2 ;;
@@ -1090,11 +1112,13 @@ exit $status'
   trap "rm -f '$deps'" RETURN
   # A stack built against the package of this commit (FERRET_WASM_SOURCE=tree) has its device client run the
   # Node build of the same package; the stack must be the one that was asked for.
+  # The upgrade drill runs its first half on a release image, whose web vault has the package of its own release run
+  # (e2e_wasm_stack=release); its device client still runs the locked package, which a release's core matches.
   local node_env=() node_pack=() want have node_tar
   want="${FERRET_WASM_SOURCE:-lock}"
   have="$(wasm_of "$e2e_app")"
   case "$have" in
-    "" | "$want "*) ;;
+    "" | "${e2e_wasm_stack:-$want} "*) ;;
     *) echo "lanbox-ferret-test: the web vault of the stack was built with the WebAssembly package '$have', but FERRET_WASM_SOURCE says $want; run e2e-up again" >&2; exit 1 ;;
   esac
   if [ "$want" = tree ]; then
@@ -1141,6 +1165,206 @@ exit $status'
         sh -c "$inner" sh "$@" > /dev/null
       dk start -a -i "$PW_NAME"
     }
+}
+
+# --- The upgrade drill --------------------------------------------------------------
+# A release image on an end-to-end stack, an account with everything in it, a backup set of the release, the image
+# swapped for a release build of this checkout on the same data, and the checks after it (see the head of this file).
+
+upgrade_repo="${FERRET_IMAGE_REPO:-ghcr.io/ferdinand99/faithful-ferret}"
+upgrade_signer="${FERRET_RELEASE_REPO:-Ferdinand99/Faithful-Ferret}"
+upgrade_candidate="ferret-$e2e_suffix-candidate:latest"
+upgrade_token=""
+upgrade_push=""
+upgrade_set=""
+upgrade_release=""
+upgrade_pulled=0
+
+upgrade_refuse() { echo "upgrade-drill: $*" >&2; exit 1; }
+
+# The JSON a phase left, by name (the runner prints the name, the JSON, an empty line).
+upgrade_left() { # output, name
+  printf '%s\n' "$1" | awk -v n="$2" '$0 == n { getline; print; exit }'
+}
+
+# The release image of the tag, pulled and checked; sets upgrade_release to its digest reference.
+upgrade_release_image() { # tag, commit of the tag
+  local tag="$1" commit="$2" version="${1#v}" ref info cosign_state=verified
+  local identity="^https://github.com/${upgrade_signer}/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$"
+  ref="$upgrade_repo:$version"
+  dk image inspect "$ref" > /dev/null 2>&1 || upgrade_pulled=1
+  dk pull -q "$ref" > /dev/null || upgrade_refuse "could not pull $ref"
+  upgrade_release="$(dk image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep -E "^${upgrade_repo//./\\.}@sha256:[0-9a-f]{64}$" | head -n 1 || true)"
+  [ -n "$upgrade_release" ] || upgrade_refuse "the pulled image has no digest of $upgrade_repo"
+  if command -v cosign > /dev/null 2>&1; then
+    cosign verify "$upgrade_release" --certificate-identity-regexp "$identity" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
+      || upgrade_refuse "the signature of $upgrade_release is not good"
+  elif [ -n "${FERRET_COSIGN_IMAGE:-}" ]; then
+    [[ "$FERRET_COSIGN_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || upgrade_refuse "FERRET_COSIGN_IMAGE must be pinned by digest (…@sha256:<64 hex>)"
+    dk run --rm --name "$e2e_project-cosign" --label "$e2e_label" "${e2e_dev_labels[@]}" --network bridge \
+      --read-only --cap-drop ALL --security-opt no-new-privileges:true --memory 256m --tmpfs /tmp:size=64m -e HOME=/tmp \
+      "$FERRET_COSIGN_IMAGE" verify "$upgrade_release" --certificate-identity-regexp "$identity" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
+      || upgrade_refuse "the signature of $upgrade_release is not good"
+  else
+    cosign_state=SKIPPED
+    echo "upgrade-drill: WARNING: the signature of the release image was NOT checked (no cosign here and no FERRET_COSIGN_IMAGE);" >&2
+    echo "upgrade-drill: the checks below read labels of a tag that anyone with write access to the registry can move." >&2
+  fi
+  [ "$(dk image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$upgrade_release")" = "$commit" ] \
+    || upgrade_refuse "the revision of $upgrade_release is not the commit of $tag ($commit)"
+  [ "$(dk image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$upgrade_release")" = "$version" ] \
+    || upgrade_refuse "the version label of $upgrade_release is not $version"
+  info="$(dk run --rm --name "$e2e_project-info" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint /usr/local/bin/ferret "$upgrade_release" --build-info)"
+  printf '%s\n' "$info" | grep -qx "ferret $version" || upgrade_refuse "the image says it is not version $version"
+  printf '%s\n' "$info" | grep -Eqx 'features: (none|quick-unlock|passkey-import, quick-unlock)' \
+    || upgrade_refuse "the image has the cargo features of a test build: $(printf '%s' "$info" | sed -n 's/^features: //p')"
+  printf '%s\n' "$info" | grep -Eqx 'wasm: (lock|release) [0-9a-f]{64}' || upgrade_refuse "the web vault of the image was not built from a released WebAssembly package"
+  echo "release: $upgrade_release (cosign=$cosign_state)"
+  printf '%s\n' "$info" | sed 's/^/  /'
+}
+
+# The candidate: a release build of this checkout (the release's cargo features, the locked WebAssembly package, a
+# revision), labelled as the stack's, so e2e-down removes it.
+upgrade_build_candidate() {
+  local info revision
+  revision="$(git rev-parse HEAD)"
+  [ -z "$(git status --porcelain --untracked-files=no)" ] || echo "upgrade-drill: the checkout has changes that are not committed; the candidate holds them" >&2
+  dk build --label "$e2e_label" -t "$upgrade_candidate" \
+    --build-arg FEATURES=passkey-import,quick-unlock --build-arg VERSION=candidate --build-arg REVISION="$revision" \
+    --build-arg WASM_SOURCE=lock --build-arg CARGO_JOBS="$FERRET_E2E_CARGO_JOBS" \
+    -f docker/server.Dockerfile . >&2
+  info="$(dk run --rm --name "$e2e_project-info" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint /usr/local/bin/ferret "$upgrade_candidate" --build-info)"
+  printf '%s\n' "$info" | grep -qx 'features: passkey-import, quick-unlock' \
+    || upgrade_refuse "the candidate has other cargo features than a release: $(printf '%s' "$info" | sed -n 's/^features: //p')"
+  printf '%s\n' "$info" | grep -Eqx 'wasm: lock [0-9a-f]{64}' || upgrade_refuse "the candidate's web vault was not built from the locked WebAssembly package"
+  echo "candidate: $upgrade_candidate (revision $revision)"
+  printf '%s\n' "$info" | sed 's/^/  /'
+}
+
+# The image the app container runs.
+upgrade_running_image() { dk inspect -f '{{.Image}}' "$e2e_app"; }
+
+# The swap: the candidate takes the place of the release on the same data volume, with the same settings.
+upgrade_swap() {
+  dk tag "$upgrade_candidate" "$e2e_image"
+  FERRET_E2E_SETUP_TOKEN="$upgrade_token" FERRET_E2E_PUSH_TOKEN="$upgrade_push" \
+    dce up -d --no-build --no-deps --force-recreate --wait "$e2e_app_service" >&2
+  [ "$(upgrade_running_image)" = "$(dk image inspect -f '{{.Id}}' "$upgrade_candidate")" ] || { echo "the app does not run the candidate" >&2; return 1; }
+  echo "the app runs the candidate on the data of the release" >&2
+  # The set the release made, checked by the new build (in a container of its own: the app keeps its address).
+  [ -z "$upgrade_set" ] || dk run --rm --name "$e2e_project-verify" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none \
+    --read-only --cap-drop ALL --security-opt no-new-privileges:true --memory 256m -u 1000:1000 \
+    -v "$e2e_backups_volume:/backups:ro" --entrypoint /usr/local/bin/ferret \
+    "$upgrade_candidate" backup verify "/backups/$upgrade_set" >&2
+}
+
+# One step the first half asks for while its browser and device stay open.
+upgrade_step() { # step
+  local out rc=0
+  case "$1" in
+    backup)
+      out="$( (set -e; e2e_backup) 2>&1)" || rc=$?
+      printf '%s\n' "$out" >&2
+      [ "$rc" = 0 ] || return "$rc"
+      upgrade_set="$(printf '%s\n' "$out" | sed -n 's/.*backup set \([A-Za-z0-9._-]*\) made.*/\1/p' | head -n 1)"
+      [ -n "$upgrade_set" ] || { echo "the backup named no set" >&2; return 1; }
+      printf '%s' "$upgrade_set" | dk exec -i "$e2e_playwright" sh -c "cat > /tmp/host-out-backup" > /dev/null
+      ;;
+    upgrade) (set -e; upgrade_swap) || return 1 ;;
+    *) echo "the tests asked for a step the drill does not know: $1" >&2; return 1 ;;
+  esac
+}
+
+# The first half, with this script as its host: the runner container asks for a step by writing
+# /tmp/host-request-<step> and waits for /tmp/host-done-<step> or /tmp/host-failed-<step> (web/test/e2e-stack/support.mjs).
+upgrade_before_out=""
+upgrade_before() { # state left by the phase goes to upgrade_before_out
+  local out pid rc=0 request step
+  out="$(mktemp)"
+  (FERRET_E2E_PHASE=upgrade-before e2e_wasm_stack=release e2e_run --project=chromium phase-upgrade-before > "$out") &
+  pid=$!
+  for _ in $(seq 1 900); do
+    [ "$(dk inspect -f '{{.State.Running}}' "$e2e_playwright" 2>/dev/null || true)" = true ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  dk exec "$e2e_playwright" touch /tmp/host-ready > /dev/null 2>&1 || { wait "$pid" || true; rm -f "$out"; echo "upgrade-drill: the runner did not come up" >&2; return 1; }
+  while kill -0 "$pid" 2>/dev/null; do
+    for request in $(dk exec "$e2e_playwright" sh -c 'ls /tmp/host-request-* 2>/dev/null' 2>/dev/null || true); do
+      step="${request#/tmp/host-request-}"
+      dk exec "$e2e_playwright" rm -f "$request" > /dev/null 2>&1 || true
+      echo "== host step for the tests: $step" >&2
+      if upgrade_step "$step"; then
+        dk exec "$e2e_playwright" touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
+      else
+        echo "upgrade-drill: the host step $step failed" >&2
+        dk exec "$e2e_playwright" touch "/tmp/host-failed-$step" > /dev/null 2>&1 || true
+      fi
+    done
+    sleep 2
+  done
+  wait "$pid" || rc=$?
+  upgrade_before_out="$(cat "$out")"
+  rm -f "$out"
+  return "$rc"
+}
+
+upgrade_cleanup() {
+  [ "$upgrade_pulled" = 1 ] && [ -n "$upgrade_release" ] || return 0
+  dk image rm "$upgrade_repo:${upgrade_tag#v}" > /dev/null 2>&1 || true
+  if ! dk image inspect "$upgrade_release" > /dev/null 2>&1; then
+    echo "upgrade-drill: the release image it pulled is removed" >&2
+  else
+    echo "upgrade-drill: the release image is still in use; after e2e-down remove it with: docker image rm $upgrade_release" >&2
+  fi
+}
+
+upgrade_tag=""
+upgrade_drill() { # release tag
+  upgrade_tag="${1:-}"
+  [[ "$upgrade_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || upgrade_refuse "the tag must be a release tag, for example v0.12.1 (got '${upgrade_tag}')"
+  [ "$e2e_suffix" != e2e ] || upgrade_refuse "the drill never runs on the stack of the suffix e2e"
+  case "${FERRET_WASM_SOURCE:-lock}" in
+    lock) export FERRET_WASM_SOURCE=lock FERRET_WASM_COMMIT="" ;;
+    *) upgrade_refuse "the candidate is a release build, with the locked WebAssembly package (FERRET_WASM_SOURCE=lock)" ;;
+  esac
+  local commit state rc=0 after
+  commit="$(git rev-parse --verify -q "refs/tags/${upgrade_tag}^{commit}")" || upgrade_refuse "$upgrade_tag is not a tag of this checkout (fetch the tags)"
+  trap upgrade_cleanup EXIT
+
+  echo "== the release image of $upgrade_tag" >&2
+  upgrade_release_image "$upgrade_tag" "$commit"
+  echo "== the candidate (a release build of $(git rev-parse --short HEAD))" >&2
+  upgrade_build_candidate
+
+  echo "== the stack $e2e_project on the release" >&2
+  e2e_remove
+  dk tag "$upgrade_release" "$e2e_image"
+  upgrade_token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  upgrade_push="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  FERRET_E2E_SETUP_TOKEN="$upgrade_token" FERRET_E2E_PUSH_TOKEN="$upgrade_push" dce build "$e2e_monitor_service" "$e2e_evil_service" >&2
+  FERRET_E2E_SETUP_TOKEN="$upgrade_token" FERRET_E2E_PUSH_TOKEN="$upgrade_push" dce up -d --no-build --wait >&2
+  [ "$(upgrade_running_image)" = "$(dk image inspect -f '{{.Id}}' "$upgrade_release")" ] || upgrade_refuse "the app does not run the release image"
+  echo "the app runs $upgrade_release; open files allowed in it: $(dk exec "$e2e_app" sh -c 'ulimit -n')" >&2
+
+  echo "== the first half on the release, the backup and the swap (phase-upgrade-before)" >&2
+  upgrade_before || rc=$?
+  state="$(upgrade_left "$upgrade_before_out" state)"
+  if [ "$rc" != 0 ] || [ -z "$(upgrade_left "$upgrade_before_out" upgrade-before)" ] || [ -z "$state" ]; then
+    upgrade_refuse "the first half failed or did not run (exit $rc); the stack is left as it is for a look"
+  fi
+  [ "$(upgrade_running_image)" = "$(dk image inspect -f '{{.Id}}' "$upgrade_candidate")" ] || upgrade_refuse "the app does not run the candidate after the first half"
+
+  echo "== the second half on the candidate (phase-upgrade-after)" >&2
+  after="$(FERRET_E2E_STATE="$state" FERRET_E2E_PHASE=upgrade-after e2e_run --project=chromium phase-upgrade-after)" || rc=$?
+  if [ "$rc" != 0 ] || [ -z "$(upgrade_left "$after" upgrade-after)" ]; then
+    upgrade_refuse "the second half failed or did not run (exit $rc); the stack is left as it is for a look"
+  fi
+  echo "upgrade-drill: $upgrade_tag -> $(git rev-parse --short HEAD): passed. Remove the stack with: FERRET_E2E_SUFFIX=$e2e_suffix $0 e2e-down"
 }
 
 # --- Snapshot and restore of the stack behind Pangolin ---------------------------
@@ -1363,6 +1587,9 @@ case "${1:-}" in
   e2e-ca)
     e2e_require_running
     e2e_ca
+    ;;
+  upgrade-drill)
+    upgrade_drill "${2:-}"
     ;;
   *)
     sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
