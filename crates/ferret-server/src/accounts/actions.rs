@@ -20,13 +20,25 @@
 //!   kit's `insert` does not count), "send again" as a revoke and a new one in
 //!   one transaction. Each asks, in its write, that the actor is still an
 //!   active administrator.
+//! * [`disable`], [`enable`] and [`sign_out_everywhere`] change the account
+//!   and write its event in one `BEGIN IMMEDIATE`, which first asks the actor
+//!   and [`target`] again; an event that cannot be written undoes the change.
+//!   [`disable`] and [`sign_out_everywhere`] return what they ended, for the
+//!   caller to announce after the commit.
+//! * [`delete`] removes a disabled account for good, once a good backup set
+//!   was made after its last `account_disabled`. It is the one action with no
+//!   event: the account's log goes with it (the tables cascade), so it writes
+//!   one line to the server's log instead, with the actor's and the account's
+//!   ids and the time, never the e-mail.
 //!
 //! Spec: Fase 1 § 11 ("The acting account and the target", "Every action on
-//! another account writes its event in the same transaction as the change")
-//! and § 6.3 (every code is in the account log).
+//! another account writes its event in the same transaction as the change",
+//! "Disable, enable and sign out everywhere", "Deletion") and § 6.3 (every
+//! code is in the account log).
 
 use std::fmt;
 
+use ferret_server_auth::normalize_login_name;
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use vole_kit::auth::{invites, sign_in_codes};
 use vole_kit::db::invites::MAX_PENDING;
@@ -35,6 +47,7 @@ use zeroize::Zeroizing;
 use crate::accounts::invites::INVITED_ROLE;
 use crate::accounts::log::{self, Actor, EventKind};
 use crate::admin::codes::IssuedCode;
+use crate::auth::session::{Ended, end_all_credentials};
 use crate::error::StoreError;
 
 /// Why an action on an account was not taken.
@@ -347,6 +360,169 @@ pub fn revoke_invite(conn: &Connection, id: i64, by: &Actor) -> Result<bool, Act
         tracing::info!(admin = admin, invite_id = id, "an invitation was revoked");
     }
     Ok(revoked)
+}
+
+/// `Ok` when `by` may act now, asked in the caller's transaction: an
+/// administrator who is still an active administrator, or the server
+/// command. Anyone else is [`ActionError::NotAllowed`].
+fn require_actor(conn: &Connection, by: &Actor) -> Result<(), ActionError> {
+    match by {
+        Actor::ServerCommand => Ok(()),
+        _ => require_active_admin(conn, admin_of(by)?),
+    }
+}
+
+/// Disables `target` for `by`: the kit's `active` goes to 0, the user's
+/// `session_version` is raised (so the kit's cookies stop too) and every
+/// credential of the account ends (`end_all_credentials` with nothing kept:
+/// every session on both origins, every device with tokens, every pending
+/// sign-in code), with `account_disabled` in the same transaction. The
+/// account must pass [`target`] and be active ([`ActionError::Disabled`]
+/// when it is disabled already). Returns what ended, for the caller to
+/// announce after the commit; renewing the pre-login policy is the caller's.
+///
+/// This mirrors the kit's `db::users::set_active(.., false)`, which writes
+/// the same two columns and revokes the codes, but in a transaction of its
+/// own that could not hold the event. The kit's "last administrator" rule is
+/// not needed: [`target`] never lets an administrator be disabled here.
+pub fn disable(
+    conn: &mut Connection,
+    target: i64,
+    by: &Actor,
+    now: i64,
+) -> Result<Ended, ActionError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_actor(&tx, by)?;
+    let user = self::target(&tx, by, target)?.require_active()?;
+    tx.execute(
+        "UPDATE users SET active = 0, session_version = session_version + 1 WHERE id = ?1",
+        params![user.user_id],
+    )?;
+    let ended = end_all_credentials(&tx, user.user_id, None, now)?;
+    log::record(&tx, user.user_id, EventKind::AccountDisabled, by, now)?;
+    tx.commit()?;
+    Ok(ended)
+}
+
+/// Enables the disabled account `target` again for `by`, with
+/// `account_enabled` in the same transaction. The account must pass
+/// [`target`] and be disabled ([`ActionError::NotDisabled`] otherwise).
+/// Nothing that the disable ended comes back: a device it revoked stays
+/// revoked and signs in again with the master password. As the kit's
+/// `set_active(.., true)` does, a pending sign-in code is revoked (a disabled
+/// account cannot be given one, so there is none in practice). Renewing the
+/// pre-login policy is the caller's.
+pub fn enable(conn: &mut Connection, target: i64, by: &Actor, now: i64) -> Result<(), ActionError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_actor(&tx, by)?;
+    let user = self::target(&tx, by, target)?.require_disabled()?;
+    tx.execute(
+        "UPDATE users SET active = 1 WHERE id = ?1",
+        params![user.user_id],
+    )?;
+    vole_kit::db::sign_in_codes::revoke_for_user(&tx, user.user_id)?;
+    log::record(&tx, user.user_id, EventKind::AccountEnabled, by, now)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Signs `target` out everywhere for `by`: the user's `session_version` is
+/// raised and every credential ends (`end_all_credentials` with nothing
+/// kept), as a change of the master password does, with
+/// `signed_out_everywhere` in the same transaction. The account stays as it
+/// is (an active one may sign in again at once). Returns what ended, for the
+/// caller to announce after the commit.
+pub fn sign_out_everywhere(
+    conn: &mut Connection,
+    target: i64,
+    by: &Actor,
+    now: i64,
+) -> Result<Ended, ActionError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_actor(&tx, by)?;
+    let user = self::target(&tx, by, target)?;
+    vole_kit::db::users::bump_session_version(&tx, user.user_id)?;
+    let ended = end_all_credentials(&tx, user.user_id, None, now)?;
+    log::record(&tx, user.user_id, EventKind::SignedOutEverywhere, by, now)?;
+    tx.commit()?;
+    Ok(ended)
+}
+
+/// The time of the last `account_disabled` event of `user_id`, if its log
+/// holds one.
+pub fn disabled_at(conn: &Connection, user_id: i64) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT MAX(at) FROM ferret_account_events WHERE user_id = ?1 AND kind = ?2",
+        params![user_id, EventKind::AccountDisabled.as_str()],
+        |r| r.get(0),
+    )
+}
+
+/// Whether the last good backup run, which started at `last_good_backup`,
+/// started after the disable at `disabled_at`: strictly after, since the time
+/// of a set is the start of its run in whole seconds, so a set started in the
+/// same second may hold the account as it was just before. `false` when
+/// either is unknown.
+pub fn backed_up_after(disabled_at: Option<i64>, last_good_backup: Option<i64>) -> bool {
+    matches!((disabled_at, last_good_backup), (Some(disabled), Some(good)) if good > disabled)
+}
+
+/// Deletes the account `target` for good for `by`: its kit user, and with it
+/// (the tables cascade) the account, its vault with every item, its unlock
+/// methods, its sessions, devices and tokens, its codes and its log. Nothing
+/// of another account is touched.
+///
+/// In one `BEGIN IMMEDIATE`, in this order, each refusal leaving everything
+/// as it was:
+/// * the actor may still act and the account passes [`target`];
+/// * the account is disabled ([`ActionError::NotDisabled`]), so its sessions
+///   and devices were ended by the disable;
+/// * `last_good_backup`, the start of the last good backup run, is strictly
+///   after the account's last `account_disabled` ([`backed_up_after`], else
+///   [`ActionError::NeedsBackup`], also when the log holds no such event), so
+///   the account as it was disabled is in a set and a mistake can be undone
+///   with a restore;
+/// * `typed_email`, normalized as a sign-in name is, is the account's e-mail
+///   ([`ActionError::EmailMismatch`]).
+///
+/// The one action with no event, since the log goes with the account: after
+/// the commit one line goes to the server's log with the actor, the
+/// administrator's id, the account's id and the time, never the e-mail.
+/// Renewing the pre-login policy is the caller's.
+pub fn delete(
+    conn: &mut Connection,
+    target: i64,
+    by: &Actor,
+    typed_email: &str,
+    last_good_backup: Option<i64>,
+    now: i64,
+) -> Result<(), ActionError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_actor(&tx, by)?;
+    let user = self::target(&tx, by, target)?.require_disabled()?;
+    if !backed_up_after(disabled_at(&tx, user.user_id)?, last_good_backup) {
+        return Err(ActionError::NeedsBackup);
+    }
+    let typed = normalize_login_name(typed_email).map_err(|_| ActionError::EmailMismatch)?;
+    if typed.as_str() != user.email {
+        return Err(ActionError::EmailMismatch);
+    }
+    if tx.execute("DELETE FROM users WHERE id = ?1", params![user.user_id])? != 1 {
+        return Err(ActionError::NotFound);
+    }
+    tx.commit()?;
+    let admin = match by {
+        Actor::Admin { user_id, .. } => *user_id,
+        _ => None,
+    };
+    tracing::info!(
+        actor = by.as_str(),
+        admin = ?admin,
+        user_id = user.user_id,
+        at = now,
+        "an account was deleted"
+    );
+    Ok(())
 }
 
 /// The active administrator with the lowest id.

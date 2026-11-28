@@ -68,12 +68,44 @@
         {%- else %}
         <a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ m::icon("key") }}<span>{{ tr("accounts.make_code") }}</span></a>
         {%- endif %}
+        <form method="post" action="/settings/accounts/{{ a.id }}/sign-out" data-confirm="{{ tr("accounts.sign_out_q") }}" data-confirm-message="{{ tr("accounts.sign_out_msg") }}" data-confirm-label="{{ tr("accounts.sign_out") }}">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ tr("accounts.sign_out") }}</button>
+        </form>
+        <form method="post" action="/settings/accounts/{{ a.id }}/disable" data-confirm="{{ tr("accounts.disable_q") }}" data-confirm-message="{{ tr("accounts.disable_msg") }}" data-confirm-label="{{ tr("accounts.disable") }}">
+          <button class="btn btn-danger btn-sm" type="submit">{{ tr("accounts.disable") }}</button>
+        </form>
+        {%- endif %}
+        {%- if a.actionable && !a.active %}
+        {%- if fresh %}
+        <form method="post" action="/settings/accounts/{{ a.id }}/enable">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ tr("accounts.enable") }}</button>
+        </form>
+        {%- else %}
+        <a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ tr("accounts.enable") }}</a>
+        {%- endif %}
         {%- endif %}
       </span>
+      {%- if a.actionable && !a.active %}
+      <div class="stack-sm" data-step="delete">
+        <p class="help">{{ tr("accounts.delete_kept") }}</p>
+        {%- if !a.delete_ready %}
+        <p class="help">{{ tr("accounts.delete_needs_backup") }} <a href="{{ backup_path }}">{{ tr("accounts.go_to_backup") }}</a></p>
+        {%- else if fresh %}
+        <form class="cluster" method="post" action="/settings/accounts/{{ a.id }}/delete" data-confirm="{{ tr("accounts.delete_q") }}" data-confirm-message="{{ tr("accounts.delete_msg") }}" data-confirm-label="{{ tr("accounts.delete") }}">
+          <label class="label" for="delete-email-{{ a.id }}">{{ tr("accounts.delete_email") }}</label>
+          <input id="delete-email-{{ a.id }}" name="email" type="email" autocomplete="off" spellcheck="false" required>
+          <button class="btn btn-danger btn-sm" type="submit">{{ tr("accounts.delete") }}</button>
+        </form>
+        {%- else %}
+        <a class="btn btn-danger btn-sm" href="{{ reauth_url }}">{{ tr("accounts.delete") }}</a>
+        {%- endif %}
+      </div>
+      {%- endif %}
     </li>
     {%- endfor %}
   </ul>
   <p class="section-foot">{{ tr("accounts.second_factor_help") }}</p>
+  <p class="section-foot">{{ tr("accounts.delete_steps") }}</p>
 </section>
 
 <section class="section" aria-labelledby="invites-title">

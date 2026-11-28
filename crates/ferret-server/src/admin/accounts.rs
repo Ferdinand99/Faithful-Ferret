@@ -1,7 +1,8 @@
 //! The Users page of the admin pages (`/settings/accounts`, administrators):
 //! every account with what an administrator may see of it, the pending
 //! invitations, and the actions of this page: make an invitation, send one
-//! again, revoke one, and make a one-time sign-in code for a user.
+//! again, revoke one, make a one-time sign-in code for a user, disable an
+//! account, enable it again, sign it out everywhere and delete it.
 //!
 //! It replaces the kit's own Users page (`/settings/users*`, closed by
 //! `admin::guard::close_kit_users_pages`): the kit's page has no account log,
@@ -14,13 +15,24 @@
 //!   the fragment) and a sign-in code are shown once, in the answer to the
 //!   post that made them, with `Cache-Control: no-store`. Neither goes into a
 //!   cookie, a redirect, a log line or the page that is read later.
-//! * Making or sending an invitation again and making a sign-in code give
-//!   access, so they need a fresh confirmation of the master password: the
-//!   kit's re-auth grant, given by a `reauth` hand-over from the vault origin
-//!   ("Confirm it's you" leads to `/vault/reauth?next=/settings/accounts`).
-//!   Revoking an invitation takes access away and needs none. A sign-in code
-//!   is a way into an account, so making one uses the grant up (as the kit's
-//!   own page does): the next code needs a new confirmation.
+//! * Making or sending an invitation again, making a sign-in code, enabling
+//!   an account and deleting one need a fresh confirmation of the master
+//!   password: the kit's re-auth grant, given by a `reauth` hand-over from the
+//!   vault origin ("Confirm it's you" leads to
+//!   `/vault/reauth?next=/settings/accounts`). Revoking an invitation,
+//!   disabling an account and signing it out everywhere take access away and
+//!   need none. A sign-in code is a way into an account and a deletion cannot
+//!   be undone on the page, so each uses the grant up (as the kit's own page
+//!   does for a code): the next one needs a new confirmation. Enabling gives
+//!   the administrator no way in, so it keeps the grant, as an invitation does.
+//! * A deletion takes two steps: the account is disabled first, and "Delete
+//!   for good" is offered only once a good backup run started after that
+//!   disable, with the account's e-mail typed in. The page says that the
+//!   account stays in the backup sets until they run out.
+//! * What a disable or a sign-out ended is announced right after the commit,
+//!   on the database thread, so the streams close even when the request went
+//!   away. The pre-login policy is renewed after the database is let go
+//!   (`login::refresh_policy_now` takes a lock of its own, then the database).
 //! * No action works on the administrator's own account or on another
 //!   administrator (`403`); the rules are `accounts::actions::target`, asked
 //!   again inside the write.
@@ -31,13 +43,14 @@
 //! (invitations).
 
 use askama::Template;
-use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::HeaderValue;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use axum::{Form, Router};
 use axum_extra::extract::cookie::SignedCookieJar;
+use serde::Deserialize;
 use vole_kit::auth::CurrentUser;
 use vole_kit::auth::reauth;
 use vole_kit::auth::session::SessionClaims;
@@ -53,6 +66,7 @@ use crate::accounts::list::{self, AccountRow};
 use crate::accounts::log::Actor;
 use crate::admin::codes::IssuedCode;
 use crate::admin::redirects::recover_location;
+use crate::auth::login;
 use crate::error::StoreError;
 use crate::product;
 use crate::state::FerretState;
@@ -76,6 +90,10 @@ pub fn routes() -> Router<FerretState> {
             post(resend_invite),
         )
         .route("/settings/accounts/{user}/sign-in-code", post(sign_in_code))
+        .route("/settings/accounts/{user}/disable", post(disable))
+        .route("/settings/accounts/{user}/enable", post(enable))
+        .route("/settings/accounts/{user}/sign-out", post(sign_out))
+        .route("/settings/accounts/{user}/delete", post(delete))
 }
 
 /// One account, as the page prints it.
@@ -96,12 +114,16 @@ struct Row {
     /// The page offers the actions on this account: not the administrator's
     /// own, not an administrator.
     actionable: bool,
+    /// The account is disabled and a good backup run started after the
+    /// disable: "Delete for good" may be offered.
+    delete_ready: bool,
 }
 
 impl Row {
-    fn of(row: AccountRow) -> Self {
+    fn of(row: AccountRow, delete_ready: bool) -> Self {
         Self {
             actionable: !row.is_self && !row.is_admin,
+            delete_ready,
             size: size_text(row.bytes),
             id: row.user_id,
             email: row.email,
@@ -150,6 +172,9 @@ struct Page {
     /// The sign-in code this post made (shown once).
     shown_code: Option<CodeView>,
     invites_path: &'static str,
+    /// Where a backup is made, for an account that waits for one before it
+    /// can be deleted.
+    backup_path: &'static str,
 }
 
 /// A size in bytes as the page writes it: whole bytes below a KB, then one
@@ -255,16 +280,29 @@ async fn render(
 ) -> ApiResult<Response> {
     let me = user.id;
     let at = now(state)?;
+    let last_good = state.backup.snapshot().last_good_at;
     let (accounts, pending) = state
         .vault_db
         .with_conn(move |conn| {
-            Ok::<_, StoreError>((
-                list::list(conn, me, at)?,
-                vole_kit::db::invites::list_pending(conn)?,
-            ))
+            let mut accounts = Vec::new();
+            for row in list::list(conn, me, at)? {
+                let ready = !row.active
+                    && actions::backed_up_after(
+                        actions::disabled_at(conn, row.user_id)?,
+                        last_good,
+                    );
+                accounts.push((row, ready));
+            }
+            Ok::<_, StoreError>((accounts, vole_kit::db::invites::list_pending(conn)?))
         })
         .await
         .map_err(internal)?;
+    // The words of a row are the request's language: made here, not on the
+    // database thread.
+    let accounts: Vec<Row> = accounts
+        .into_iter()
+        .map(|(row, ready)| Row::of(row, ready))
+        .collect();
     let fresh = is_fresh(state, &jar, user);
     let (ctx, jar) = PageCtx::build(
         state,
@@ -283,13 +321,14 @@ async fn render(
     };
     let page = Page {
         ctx,
-        accounts: accounts.into_iter().map(Row::of).collect(),
+        accounts,
         pending,
         fresh,
         reauth_url: reauth_url(),
         shown_invite,
         shown_code,
         invites_path: INVITES_PATH,
+        backup_path: crate::admin::panel::PATH,
     };
     let mut response = (jar, HtmlTemplate(page)).into_response();
     if secret {
@@ -412,6 +451,149 @@ async fn sign_in_code(
     // page, so the next code needs a new one.
     let jar = flash(reauth::clear(jar), "success", i18n::t("accounts.code_made"));
     render(&state, &user, jar, Some(shown)).await
+}
+
+/// `POST /settings/accounts/{user}/disable`: the account can no longer sign
+/// in, and every session, device and code of it ends at once. Protective: no
+/// confirmation needed.
+async fn disable(
+    State(state): State<FerretState>,
+    user: CurrentUser,
+    jar: SignedCookieJar,
+    Path(target): Path<i64>,
+) -> ApiResult<Response> {
+    user.require_admin()?;
+    let by = actor(&user);
+    let at = now(&state)?;
+    let events = state.events.clone();
+    let result = act(&state, move |conn| {
+        let ended = actions::disable(conn, target, &by, at)?;
+        events.announce_ended(&ended);
+        Ok(ended.len())
+    })
+    .await?;
+    match result {
+        Ok(ended) => {
+            tracing::info!(
+                admin = user.id,
+                user_id = target,
+                ended,
+                "an account was disabled on the Users page"
+            );
+            login::refresh_policy_now(&state).await;
+            Ok(back(jar, "success", "accounts.disabled_done"))
+        }
+        Err(ActionError::Disabled) => Ok(back(jar, "error", "accounts.err_already_disabled")),
+        Err(error) => refused(jar, error),
+    }
+}
+
+/// `POST /settings/accounts/{user}/enable`: the account may sign in again.
+/// It gives access back, so it needs a fresh confirmation; the confirmation
+/// is kept, since enabling gives the administrator no way into the account.
+async fn enable(
+    State(state): State<FerretState>,
+    user: CurrentUser,
+    jar: SignedCookieJar,
+    Path(target): Path<i64>,
+) -> ApiResult<Response> {
+    user.require_admin()?;
+    if !is_fresh(&state, &jar, &user) {
+        return Ok(back(jar, "error", "sec.confirm_its_you_help"));
+    }
+    let by = actor(&user);
+    let at = now(&state)?;
+    match act(&state, move |conn| actions::enable(conn, target, &by, at)).await? {
+        Ok(()) => {
+            tracing::info!(
+                admin = user.id,
+                user_id = target,
+                "an account was enabled on the Users page"
+            );
+            login::refresh_policy_now(&state).await;
+            Ok(back(jar, "success", "accounts.enabled_done"))
+        }
+        Err(ActionError::NotDisabled) => Ok(back(jar, "error", "accounts.err_already_active")),
+        Err(error) => refused(jar, error),
+    }
+}
+
+/// `POST /settings/accounts/{user}/sign-out`: every session, device and code
+/// of the account ends at once, and the account may sign in again.
+/// Protective: no confirmation needed.
+async fn sign_out(
+    State(state): State<FerretState>,
+    user: CurrentUser,
+    jar: SignedCookieJar,
+    Path(target): Path<i64>,
+) -> ApiResult<Response> {
+    user.require_admin()?;
+    let by = actor(&user);
+    let at = now(&state)?;
+    let events = state.events.clone();
+    let result = act(&state, move |conn| {
+        let ended = actions::sign_out_everywhere(conn, target, &by, at)?;
+        events.announce_ended(&ended);
+        Ok(ended.len())
+    })
+    .await?;
+    match result {
+        Ok(ended) => {
+            tracing::info!(
+                admin = user.id,
+                user_id = target,
+                ended,
+                "an account was signed out everywhere on the Users page"
+            );
+            // The accounts that count did not change, but the policy is
+            // renewed after each of these actions all the same (§ 11).
+            login::refresh_policy_now(&state).await;
+            Ok(back(jar, "success", "accounts.signed_out_done"))
+        }
+        Err(error) => refused(jar, error),
+    }
+}
+
+/// What "Delete for good" posts: the account's e-mail, typed in.
+#[derive(Deserialize)]
+struct DeleteForm {
+    #[serde(default)]
+    email: String,
+}
+
+/// `POST /settings/accounts/{user}/delete`: the second step of a deletion,
+/// for a disabled account with a good backup run started after the disable,
+/// with a fresh confirmation and the account's e-mail typed in. It cannot be
+/// undone on the page, so it uses the confirmation up; a refused one keeps it.
+async fn delete(
+    State(state): State<FerretState>,
+    user: CurrentUser,
+    jar: SignedCookieJar,
+    Path(target): Path<i64>,
+    Form(form): Form<DeleteForm>,
+) -> ApiResult<Response> {
+    user.require_admin()?;
+    if !is_fresh(&state, &jar, &user) {
+        return Ok(back(jar, "error", "sec.confirm_its_you_help"));
+    }
+    let by = actor(&user);
+    let at = now(&state)?;
+    let last_good = state.backup.snapshot().last_good_at;
+    let typed = form.email;
+    let result = act(&state, move |conn| {
+        actions::delete(conn, target, &by, &typed, last_good, at)
+    })
+    .await?;
+    match result {
+        Ok(()) => {
+            login::refresh_policy_now(&state).await;
+            Ok(back(reauth::clear(jar), "success", "accounts.deleted_done"))
+        }
+        Err(ActionError::NotDisabled) => Ok(back(jar, "error", "accounts.err_not_disabled")),
+        Err(ActionError::NeedsBackup) => Ok(back(jar, "error", "accounts.err_needs_backup")),
+        Err(ActionError::EmailMismatch) => Ok(back(jar, "error", "accounts.err_email_mismatch")),
+        Err(error) => refused(jar, error),
+    }
 }
 
 #[cfg(test)]

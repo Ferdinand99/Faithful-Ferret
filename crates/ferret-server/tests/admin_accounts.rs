@@ -5,21 +5,30 @@
 
 mod support;
 
-use axum::http::StatusCode;
+use std::time::Duration;
+
+use axum::http::{Method, StatusCode};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE_NO_PAD};
 use ferret_server::accounts::actions::{self, ActionError};
 use ferret_server::accounts::log::Actor;
-use ferret_server::auth::session::Origin;
-use ferret_server_auth::SessionScope;
+use ferret_server::auth::login;
+use ferret_server::auth::session::{Origin, lookup};
+use ferret_server::ids::{DeviceId, SidHash};
+use ferret_server::vault::notify::Revoked;
+use ferret_server_auth::{PreloginPolicy, SessionScope};
 use serde_json::json;
-use support::accounts::{add_account_to_app, insert_user};
+use support::accounts::{CLIENT_PASSWORD, add_account_to_app, client_account, insert_user};
+use support::device::{DeviceClient, login_start};
+use support::events::Stream;
 use support::handoff::{
     admin_user, begin, code_of, hand_over, mint, now, redeem, set_cookie, set_role, vault_session,
 };
 use support::session::{Issued, issue, seed, session_version};
 use support::{ADMIN_URL, Req, Res, TestApp, VAULT_URL, Which};
 use vole_kit::db::role::Role;
+
+const SECOND: Duration = Duration::from_secs(1);
 
 const PATH: &str = "/settings/accounts";
 const INVITES: &str = "/settings/accounts/invites";
@@ -710,10 +719,49 @@ async fn no_action_works_on_your_own_account_or_an_admin() {
         assert_eq!(pending_code(&app, target).await, 0, "{target}");
         assert!(events_of(&app, target).await.is_empty(), "{target}");
     }
+    // Nor any other action: disable, enable, sign out everywhere, delete.
+    for (target, status) in [
+        (admin, StatusCode::FORBIDDEN),
+        (other_admin, StatusCode::FORBIDDEN),
+        (bare, StatusCode::NOT_FOUND),
+        (9_999, StatusCode::NOT_FOUND),
+    ] {
+        let version = if target == 9_999 {
+            0
+        } else {
+            session_version(&app, target).await
+        };
+        for name in ["disable", "enable", "sign-out", "delete"] {
+            let path = format!("/settings/accounts/{target}/{name}");
+            let res = app
+                .call(
+                    Which::Admin,
+                    Req::post(&path)
+                        .header("origin", ADMIN_URL)
+                        .form(&[("email", "user2@example.com")])
+                        .build(),
+                )
+                .await;
+            assert_eq!(res.status, status, "{name} {target}: {}", res.text());
+        }
+        if target != 9_999 {
+            assert_eq!(session_version(&app, target).await, version, "{target}");
+            assert!(events_of(&app, target).await.is_empty(), "{target}");
+        }
+    }
+    let active: i64 = count(&app, "SELECT COUNT(*) FROM users WHERE active = 1").await;
+    let users: i64 = count(&app, "SELECT COUNT(*) FROM users").await;
+    assert_eq!((active, users), (4, 4), "nothing was disabled or deleted");
     // The page offers no action on those rows either.
     let page = get(&app, PATH).await.text();
     for target in [admin, other_admin] {
-        assert!(!row_of(&page, target).contains("sign-in-code"), "{target}");
+        let row = row_of(&page, target);
+        for name in ["sign-in-code", "disable", "enable", "sign-out", "delete"] {
+            assert!(!row.contains(&format!("/{name}\"")), "{target} {name}");
+        }
+    }
+    for name in ["disable", "sign-out"] {
+        assert!(row_of(&page, user).contains(&format!("/settings/accounts/{user}/{name}")));
     }
     assert!(row_of(&page, user).contains(&format!("/settings/accounts/{user}/sign-in-code")));
 
@@ -777,10 +825,42 @@ async fn a_viewer_never_reaches_the_page() {
             format!("{INVITES}/{id}/resend"),
             format!("{INVITES}/{id}/revoke"),
             format!("/settings/accounts/{user}/sign-in-code"),
+            format!("/settings/accounts/{user}/disable"),
+            format!("/settings/accounts/{user}/enable"),
+            format!("/settings/accounts/{user}/sign-out"),
+            format!("/settings/accounts/{user}/delete"),
         ] {
             let res = post(&app, &path).await;
             assert_eq!(res.status, StatusCode::FORBIDDEN, "{role} {path}");
         }
+    }
+    assert!(events_of(&app, user).await.is_empty());
+    let active: i64 = count(&app, "SELECT COUNT(*) FROM users WHERE active = 1").await;
+    assert_eq!(active, 2, "nothing was disabled or deleted");
+    // The actions ask for an active administrator by themselves too.
+    for name in ["disable", "sign-out", "enable", "delete"] {
+        let by = Actor::Admin {
+            user_id: Some(admin),
+            name: "user1@example.com".into(),
+        };
+        let at = now(&app);
+        let refused = app
+            .state
+            .vault_db
+            .with_conn(move |conn| {
+                Ok(match name {
+                    "disable" => actions::disable(conn, user, &by, at).map(|_| ()),
+                    "sign-out" => actions::sign_out_everywhere(conn, user, &by, at).map(|_| ()),
+                    "enable" => actions::enable(conn, user, &by, at),
+                    _ => actions::delete(conn, user, &by, "user7@example.com", Some(i64::MAX), at),
+                })
+            })
+            .await
+            .expect("the database");
+        assert!(
+            matches!(refused, Err(ActionError::NotAllowed)),
+            "{name}: {refused:?}"
+        );
     }
     assert_eq!(pending_invites(&app).await, 1);
     assert!(pending_of(&app, &token).await.is_some());
@@ -877,6 +957,996 @@ async fn the_page_and_its_forms_pass_the_kit_csrf_guard() {
     let res = post(&app, INVITES).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     assert_eq!(pending_invites(&app).await, 2);
+}
+
+// ------------------------------------- disable, enable, sign out, delete
+
+/// An app whose clock is the machine's (for the kit's re-auth grant) and that
+/// believes the test peer as a proxy (so device clients count as `https`).
+async fn real_time_app() -> TestApp {
+    let now = u64::try_from(vole_kit::auth::session::now_unix()).expect("a time");
+    support::device::device_app_builder()
+        .start(now)
+        .build()
+        .await
+}
+
+/// A form post with fields from a page of the admin origin.
+async fn post_form(app: &TestApp, path: &str, fields: &[(&str, &str)]) -> Res {
+    app.call(
+        Which::Admin,
+        Req::post(path)
+            .header("origin", ADMIN_URL)
+            .form(fields)
+            .build(),
+    )
+    .await
+}
+
+fn action(user: i64, name: &str) -> String {
+    format!("/settings/accounts/{user}/{name}")
+}
+
+/// The page the redirect of an action leads to, with its message.
+async fn followed(app: &TestApp, res: &Res) -> String {
+    assert_back(res);
+    get_in(app, res.header("location"), "en").await.text()
+}
+
+/// The administrator as the actions see it.
+fn admin_actor(admin: i64) -> Actor {
+    Actor::Admin {
+        user_id: Some(admin),
+        name: "user1@example.com".into(),
+    }
+}
+
+/// A device of `email` with key `key`, signed in with the client password.
+async fn device_of(app: &TestApp, email: &str, key: u8) -> DeviceClient {
+    let mut device = DeviceClient::new(key);
+    let res = device.sign_in(app, email, CLIENT_PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    device
+}
+
+/// A sync request of `device` with its access token.
+async fn device_sync(app: &TestApp, device: &DeviceClient) -> Res {
+    device
+        .send(app, device.token_req(app, Method::GET, "/api/sync/changes"))
+        .await
+}
+
+/// The open event stream of `device`, past its hello.
+async fn device_stream(app: &TestApp, device: &DeviceClient) -> Stream {
+    let stream = app
+        .open_stream(
+            device
+                .token_req(app, Method::GET, "/api/sync/events")
+                .build(),
+        )
+        .await;
+    said_hello(stream).await
+}
+
+/// `stream`, which must have opened, past its hello.
+async fn said_hello(mut stream: Stream) -> Stream {
+    if stream.status != StatusCode::OK {
+        let status = stream.status;
+        panic!("{status}: {}", stream.text().await);
+    }
+    stream.event("hello", SECOND).await;
+    stream
+}
+
+/// The open event stream of a browser session, past its hello.
+async fn browser_stream(app: &TestApp, issued: &Issued) -> Stream {
+    said_hello(app.events(&issued.jar).await).await
+}
+
+fn error_of(res: &Res) -> String {
+    res.json()["error"].as_str().unwrap_or("").to_string()
+}
+
+async fn ended(app: &TestApp, sid: SidHash) -> bool {
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(lookup(conn, &sid)?))
+        .await
+        .expect("a read")
+        .expect("the session")
+        .revoked_at
+        .is_some()
+}
+
+async fn device_revoked_at(app: &TestApp, device: &DeviceClient) -> Option<i64> {
+    let id = device.device_id.expect("signed in");
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT revoked_at FROM ferret_devices WHERE device_id = ?1",
+                [id.as_slice()],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("the device row")
+}
+
+async fn is_active(app: &TestApp, user: i64) -> bool {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(
+                conn.query_row("SELECT active FROM users WHERE id = ?1", [user], |r| {
+                    r.get(0)
+                })?,
+            )
+        })
+        .await
+        .expect("the user")
+}
+
+async fn user_exists(app: &TestApp, user: i64) -> bool {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(
+                conn.query_row("SELECT COUNT(*) FROM users WHERE id = ?1", [user], |r| {
+                    r.get::<_, i64>(0)
+                })? == 1,
+            )
+        })
+        .await
+        .expect("a count")
+}
+
+/// A pending sign-in code for `user`, made by `admin`.
+async fn give_code(app: &TestApp, user: i64, admin: i64) {
+    let hash = vole_kit::auth::sign_in_codes::hash(&vole_kit::auth::sign_in_codes::generate());
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            vole_kit::db::sign_in_codes::insert(conn, user, &hash, admin)?;
+            Ok(())
+        })
+        .await
+        .expect("a code");
+}
+
+fn heard(rx: &mut tokio::sync::broadcast::Receiver<Revoked>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(revoked) = rx.try_recv() {
+        out.push(format!("{revoked:?}"));
+    }
+    out.sort();
+    out
+}
+
+fn sorted(revoked: &[Revoked]) -> Vec<String> {
+    let mut out: Vec<String> = revoked.iter().map(|r| format!("{r:?}")).collect();
+    out.sort();
+    out
+}
+
+/// The time of the account's last `account_disabled`.
+async fn disabled_at(app: &TestApp, user: i64) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(move |conn| Ok(actions::disabled_at(conn, user)?))
+        .await
+        .expect("a read")
+        .expect("the account was disabled")
+}
+
+/// Disables `user` on the page and records a good backup run that started
+/// the second after.
+async fn disable_and_back_up(app: &TestApp, user: i64) {
+    let res = post(app, &action(user, "disable")).await;
+    assert_back(&res);
+    let at = disabled_at(app, user).await;
+    app.backup_status().record_success(at + 1, 1);
+}
+
+/// Drops the re-auth grant of the admin jar.
+fn forget_grant(app: &TestApp) {
+    let mut jar = app.jar(Which::Admin);
+    jar.remove(REAUTH_COOKIE);
+    app.set_jar(Which::Admin, jar);
+}
+
+#[tokio::test]
+async fn disabling_ends_sessions_devices_and_codes_at_once_and_closes_streams() {
+    let app = real_time_app().await;
+    let (admin, _vault) = admin_user(&app, 1).await;
+    let client = client_account(&app, 2).await;
+    let user = client.ids.user_id;
+    let device = device_of(&app, "client2@example.com", 2).await;
+    let browser = issue(&app, user, Origin::Vault, SessionScope::Full, 21).await;
+    let admin_side = issue(&app, user, Origin::Admin, SessionScope::Full, 22).await;
+    give_code(&app, user, admin.user_id).await;
+    // Another account, with a browser and a device of its own.
+    let bystander = client_account(&app, 3).await;
+    let their_device = device_of(&app, "client3@example.com", 3).await;
+    let their_browser = issue(
+        &app,
+        bystander.ids.user_id,
+        Origin::Vault,
+        SessionScope::Full,
+        31,
+    )
+    .await;
+    give_code(&app, bystander.ids.user_id, admin.user_id).await;
+
+    let mut browser_events = browser_stream(&app, &browser).await;
+    let mut device_events = device_stream(&app, &device).await;
+    let mut their_events = browser_stream(&app, &their_browser).await;
+    let version = session_version(&app, user).await;
+    let mut revocations = app.sync_events().subscribe_revocations();
+
+    // A protective action: no confirmation of the master password needed.
+    let page = followed(&app, &post(&app, &action(user, "disable")).await).await;
+    assert!(page.contains("The account is disabled."), "the message");
+
+    // Every stream of the account closes at once, and only those.
+    browser_events.end(SECOND).await;
+    device_events.end(SECOND).await;
+    their_events.quiet(Duration::from_millis(300)).await;
+    assert_eq!(
+        heard(&mut revocations),
+        sorted(&[
+            Revoked::Device(DeviceId(device.device_id.expect("signed in"))),
+            Revoked::Session(browser.sid),
+            Revoked::Session(admin_side.sid),
+        ])
+    );
+    // The device's next request is refused, its renewal too.
+    let res = device_sync(&app, &device).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(error_of(&res), "device_revoked");
+    assert!(device_revoked_at(&app, &device).await.is_some());
+    // Every session of both origins ended, and the code is gone.
+    assert!(ended(&app, browser.sid).await);
+    assert!(ended(&app, admin_side.sid).await);
+    assert_eq!(pending_code(&app, user).await, 0);
+    assert!(session_version(&app, user).await > version);
+    assert!(!is_active(&app, user).await);
+    assert_eq!(
+        events_of(&app, user).await,
+        vec![(
+            "account_disabled".to_string(),
+            "admin".to_string(),
+            "user1@example.com".to_string()
+        )]
+    );
+    // The page says so.
+    assert_eq!(column(row_of(&page, user), "status"), "Disabled");
+    // Nothing of the other account changed.
+    assert!(!ended(&app, their_browser.sid).await);
+    assert_eq!(
+        device_sync(&app, &their_device).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(pending_code(&app, bystander.ids.user_id).await, 1);
+    assert!(events_of(&app, bystander.ids.user_id).await.is_empty());
+    // Disabling it again changes nothing and says why.
+    let page = followed(&app, &post(&app, &action(user, "disable")).await).await;
+    assert!(page.contains("That account is disabled already."), "again");
+    assert_eq!(events_of(&app, user).await.len(), 1);
+}
+
+/// The answer to `login/start` for `email`, as a device client sends it.
+async fn login_start_raw(app: &TestApp, email: &str) -> Res {
+    let (ke1, _state) = ferret_core::opaque_login_start(
+        &mut ferret_core::OsRng,
+        &support::accounts::opaque_input(CLIENT_PASSWORD),
+    )
+    .expect("a first message");
+    app.call_raw(
+        Which::Vault,
+        Req::post("/api/auth/opaque/login/start")
+            .header("ferret-protocol", "1")
+            .header("x-forwarded-proto", "https")
+            .json(&json!({"email": email, "ke1": ferret_server::wire::b64url::encode(&ke1)}))
+            .build(),
+    )
+    .await
+}
+
+/// The headers of an answer, as name and value, sorted.
+fn header_list(res: &Res) -> Vec<(String, String)> {
+    let mut list: Vec<(String, String)> = res
+        .headers
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("?").to_string()))
+        .collect();
+    list.sort();
+    list
+}
+
+#[tokio::test]
+async fn a_disabled_account_answers_sign_in_like_an_unknown_one() {
+    let app = real_time_app().await;
+    admin_user(&app, 1).await;
+    let user = client_account(&app, 2).await.ids.user_id;
+    assert!(
+        login_start(&app, "client2@example.com", CLIENT_PASSWORD)
+            .await
+            .opened,
+        "before, the password opens the record"
+    );
+    assert_back(&post(&app, &action(user, "disable")).await);
+
+    // The answers of a disabled and an unknown name have the same status,
+    // headers, keys and length; the client cannot open either.
+    let disabled = login_start_raw(&app, "client2@example.com").await;
+    let unknown = login_start_raw(&app, "nobody@example.com").await;
+    for res in [&disabled, &unknown] {
+        assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+        let body = res.json();
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["ke2", "ksf_profile", "login_id", "sk_hint"]);
+    }
+    assert_eq!(disabled.body.len(), unknown.body.len());
+    assert_eq!(header_list(&disabled), header_list(&unknown));
+    assert!(
+        !login_start(&app, "client2@example.com", CLIENT_PASSWORD)
+            .await
+            .opened
+    );
+    // A whole sign-in ends as for an unknown name.
+    let mut device = DeviceClient::new(2);
+    let refused = device
+        .sign_in(&app, "client2@example.com", CLIENT_PASSWORD)
+        .await;
+    let mut other = DeviceClient::new(3);
+    let nobody = other
+        .sign_in(&app, "nobody@example.com", CLIENT_PASSWORD)
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNAUTHORIZED,
+        "{}",
+        refused.text()
+    );
+    assert_eq!(refused.status, nobody.status);
+    assert_eq!(refused.json(), nobody.json());
+}
+
+#[tokio::test]
+async fn enabling_needs_a_fresh_reauth_and_is_logged() {
+    let app = real_time_app().await;
+    let (_admin, vault) = admin_user(&app, 1).await;
+    let user = client_account(&app, 2).await.ids.user_id;
+    let device = device_of(&app, "client2@example.com", 2).await;
+    assert_back(&post(&app, &action(user, "disable")).await);
+    let revoked_at = device_revoked_at(&app, &device).await;
+    assert!(revoked_at.is_some());
+
+    // Without a confirmation the page leads to one, and the post is refused.
+    let page = get(&app, PATH).await.text();
+    let row = row_of(&page, user);
+    assert!(
+        !row.contains(&format!("action=\"{}\"", action(user, "enable"))),
+        "{row}"
+    );
+    assert!(
+        row.contains("href=\"/vault/reauth?next=%2Fsettings%2Faccounts\""),
+        "{row}"
+    );
+    let page = followed(&app, &post(&app, &action(user, "enable")).await).await;
+    assert!(page.contains("Confirm it’s you to make this change."));
+    assert!(!is_active(&app, user).await);
+    assert_eq!(events_of(&app, user).await.len(), 1);
+
+    confirm(&app, &vault).await;
+    let page = get(&app, PATH).await.text();
+    assert!(row_of(&page, user).contains(&format!("action=\"{}\"", action(user, "enable"))));
+    let page = followed(&app, &post(&app, &action(user, "enable")).await).await;
+    assert!(
+        page.contains("The account is enabled again."),
+        "the message"
+    );
+    assert!(is_active(&app, user).await);
+    assert_eq!(column(row_of(&page, user), "status"), "Active");
+    let admin = |kind: &str| {
+        (
+            kind.to_string(),
+            "admin".to_string(),
+            "user1@example.com".to_string(),
+        )
+    };
+    assert_eq!(
+        events_of(&app, user).await,
+        vec![admin("account_disabled"), admin("account_enabled")]
+    );
+    // A device the disable revoked stays revoked, and signs in again.
+    assert_eq!(device_revoked_at(&app, &device).await, revoked_at);
+    let res = device_sync(&app, &device).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(error_of(&res), "device_revoked");
+    let again = device_of(&app, "client2@example.com", 4).await;
+    assert_eq!(device_sync(&app, &again).await.status, StatusCode::OK);
+    // Enabling gives the administrator no way into the account, so the
+    // confirmation is kept; an account that is active is not enabled again.
+    assert!(app.jar(Which::Admin).get(REAUTH_COOKIE).is_some());
+    let page = followed(&app, &post(&app, &action(user, "enable")).await).await;
+    assert!(page.contains("That account is active already."));
+    assert_eq!(events_of(&app, user).await.len(), 2);
+}
+
+#[tokio::test]
+async fn sign_out_everywhere_ends_every_credential_and_is_logged() {
+    let app = real_time_app().await;
+    let (admin, _vault) = admin_user(&app, 1).await;
+    let user = client_account(&app, 2).await.ids.user_id;
+    let device = device_of(&app, "client2@example.com", 2).await;
+    let browser = issue(&app, user, Origin::Vault, SessionScope::Full, 21).await;
+    let admin_side = issue(&app, user, Origin::Admin, SessionScope::Full, 22).await;
+    give_code(&app, user, admin.user_id).await;
+    let bystander = client_account(&app, 3).await.ids.user_id;
+    let their_device = device_of(&app, "client3@example.com", 3).await;
+    let mut browser_events = browser_stream(&app, &browser).await;
+    let mut device_events = device_stream(&app, &device).await;
+    let version = session_version(&app, user).await;
+    let mut revocations = app.sync_events().subscribe_revocations();
+
+    // Protective: no confirmation needed.
+    let page = followed(&app, &post(&app, &action(user, "sign-out")).await).await;
+    assert!(page.contains("The account is signed out everywhere."));
+
+    browser_events.end(SECOND).await;
+    device_events.end(SECOND).await;
+    assert_eq!(
+        heard(&mut revocations),
+        sorted(&[
+            Revoked::Device(DeviceId(device.device_id.expect("signed in"))),
+            Revoked::Session(browser.sid),
+            Revoked::Session(admin_side.sid),
+        ])
+    );
+    let res = device_sync(&app, &device).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(error_of(&res), "device_revoked");
+    assert!(ended(&app, browser.sid).await);
+    assert!(ended(&app, admin_side.sid).await);
+    assert_eq!(pending_code(&app, user).await, 0);
+    assert!(session_version(&app, user).await > version);
+    assert_eq!(
+        events_of(&app, user).await,
+        vec![(
+            "signed_out_everywhere".to_string(),
+            "admin".to_string(),
+            "user1@example.com".to_string()
+        )]
+    );
+    // The account stays active and signs in again at once.
+    assert!(is_active(&app, user).await);
+    let again = device_of(&app, "client2@example.com", 4).await;
+    assert_eq!(device_sync(&app, &again).await.status, StatusCode::OK);
+    // Nothing of the other account changed.
+    assert_eq!(
+        device_sync(&app, &their_device).await.status,
+        StatusCode::OK
+    );
+    assert!(events_of(&app, bystander).await.is_empty());
+}
+
+/// "Delete for good" for `user` with `typed` as the e-mail.
+async fn delete_as(app: &TestApp, user: i64, typed: &str) -> Res {
+    post_form(app, &action(user, "delete"), &[("email", typed)]).await
+}
+
+#[tokio::test]
+async fn delete_needs_disable_a_later_good_backup_reauth_and_the_typed_email() {
+    let app = real_time_app().await;
+    let (admin, vault) = admin_user(&app, 1).await;
+    let user = add_account_to_app(&app, 7).await.user_id;
+    let email = "user7@example.com";
+    let by = admin_actor(admin.user_id);
+    let direct = |typed: &'static str, last_good: Option<i64>| {
+        let by = by.clone();
+        let at = now(&app);
+        app.state
+            .vault_db
+            .with_conn(move |conn| Ok(actions::delete(conn, user, &by, typed, last_good, at)))
+    };
+    confirm(&app, &vault).await;
+
+    // 1. The account is active.
+    app.backup_status().record_success(now(&app) + 60, 1);
+    let page = followed(&app, &delete_as(&app, user, email).await).await;
+    assert!(page.contains("Disable the account first."), "not disabled");
+    assert!(!row_of(&page, user).contains(&action(user, "delete")));
+    let result = direct("user7@example.com", Some(i64::MAX))
+        .await
+        .expect("the db");
+    assert!(
+        matches!(result, Err(ActionError::NotDisabled)),
+        "{result:?}"
+    );
+    assert!(user_exists(&app, user).await);
+
+    // 2. Disabled, but no good set started after the disable: one started in
+    // the same second does not count, nor one before, nor none.
+    assert_back(&post(&app, &action(user, "disable")).await);
+    let at = disabled_at(&app, user).await;
+    app.backup_status().record_success(at, 1);
+    let page = followed(&app, &delete_as(&app, user, email).await).await;
+    assert!(page.contains("Take a backup first"), "needs a backup");
+    let row = row_of(&page, user);
+    assert!(
+        !row.contains(&format!("action=\"{}\"", action(user, "delete"))),
+        "{row}"
+    );
+    assert!(row.contains("href=\"/settings/backup\""), "{row}");
+    for last_good in [None, Some(at - 1), Some(at)] {
+        let result = direct("user7@example.com", last_good)
+            .await
+            .expect("the db");
+        assert!(
+            matches!(result, Err(ActionError::NeedsBackup)),
+            "{last_good:?}: {result:?}"
+        );
+    }
+    assert!(user_exists(&app, user).await);
+
+    // 3. A good set after the disable, but no fresh confirmation.
+    app.backup_status().record_success(at + 1, 2);
+    forget_grant(&app);
+    let page = get(&app, PATH).await.text();
+    let row = row_of(&page, user);
+    assert!(
+        !row.contains(&format!("action=\"{}\"", action(user, "delete"))),
+        "{row}"
+    );
+    assert!(
+        row.contains("href=\"/vault/reauth?next=%2Fsettings%2Faccounts\""),
+        "{row}"
+    );
+    let page = followed(&app, &delete_as(&app, user, email).await).await;
+    assert!(page.contains("Confirm it’s you to make this change."));
+    assert!(user_exists(&app, user).await);
+
+    // 4. Confirmed, but the e-mail is wrong (or missing).
+    confirm(&app, &vault).await;
+    let page = get(&app, PATH).await.text();
+    let row = row_of(&page, user);
+    assert!(
+        row.contains(&format!("action=\"{}\"", action(user, "delete"))),
+        "{row}"
+    );
+    assert!(row.contains("name=\"email\""), "{row}");
+    assert!(
+        row.contains("in the backup sets until"),
+        "the text about the backups: {row}"
+    );
+    for typed in ["user8@example.com", "user7@example", ""] {
+        let page = followed(&app, &delete_as(&app, user, typed).await).await;
+        assert!(
+            page.contains("That is not the account’s e-mail."),
+            "{typed:?}"
+        );
+        assert!(user_exists(&app, user).await, "{typed:?}");
+    }
+    let result = direct("someone@example.com", Some(at + 1))
+        .await
+        .expect("the db");
+    assert!(
+        matches!(result, Err(ActionError::EmailMismatch)),
+        "{result:?}"
+    );
+    // A refused deletion keeps the confirmation.
+    assert!(app.jar(Which::Admin).get(REAUTH_COOKIE).is_some());
+    assert!(user_exists(&app, user).await);
+
+    // 5. Everything in place: deleted, and the confirmation is used up.
+    let res = delete_as(&app, user, email).await;
+    let removed = set_cookie(&res, REAUTH_COOKIE).expect("the grant is removed");
+    assert!(
+        removed.starts_with(&format!("{REAUTH_COOKIE}=;")) || removed.contains("Max-Age=0"),
+        "{removed}"
+    );
+    let page = followed(&app, &res).await;
+    assert!(
+        page.contains("The account and its vault are deleted."),
+        "the message"
+    );
+    assert!(!user_exists(&app, user).await);
+    assert!(!page.contains(&format!("id=\"account-{user}\"")));
+    assert!(!page.contains("user7@example.com"));
+    // Again: not there.
+    let res = delete_as(&app, user, email).await;
+    assert!(
+        res.status == StatusCode::NOT_FOUND || res.status == StatusCode::SEE_OTHER,
+        "{}",
+        res.status
+    );
+}
+
+/// Every row of every table of the database, as text, by table.
+///
+/// The sessions of `admin` are left out: every request of the admin pages
+/// moves their `last_seen`.
+async fn every_row(
+    app: &TestApp,
+    admin: i64,
+) -> std::collections::BTreeMap<String, Vec<Vec<String>>> {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let tables: Vec<String> = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let mut out = std::collections::BTreeMap::new();
+            for table in tables {
+                let filter = if table == "ferret_sessions" {
+                    format!("user_id <> {admin}")
+                } else {
+                    "1".to_string()
+                };
+                out.insert(table.clone(), rows_where(conn, &table, &filter)?);
+            }
+            Ok(out)
+        })
+        .await
+        .expect("the rows")
+}
+
+/// The rows of `table` that match `filter`, as text, sorted.
+fn rows_where(
+    conn: &rusqlite::Connection,
+    table: &str,
+    filter: &str,
+) -> rusqlite::Result<Vec<Vec<String>>> {
+    let mut statement = conn.prepare(&format!("SELECT * FROM \"{table}\" WHERE {filter}"))?;
+    let columns = statement.column_count();
+    let mut rows = statement
+        .query_map([], |row| {
+            (0..columns)
+                .map(|i| {
+                    Ok(match row.get_ref(i)? {
+                        rusqlite::types::ValueRef::Null => "NULL".to_string(),
+                        rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+                        rusqlite::types::ValueRef::Real(x) => x.to_string(),
+                        rusqlite::types::ValueRef::Text(t) => {
+                            format!("'{}'", String::from_utf8_lossy(t))
+                        }
+                        rusqlite::types::ValueRef::Blob(b) => format!("x{}", hex(b)),
+                    })
+                })
+                .collect()
+        })?
+        .collect::<Result<Vec<Vec<String>>, _>>()?;
+    rows.sort();
+    Ok(rows)
+}
+
+/// The rows of every table that belong to the kit user `user`: by its id, its
+/// account, its vault, its devices or its sessions, by table.
+async fn rows_of_user(
+    app: &TestApp,
+    user: i64,
+) -> std::collections::BTreeMap<String, Vec<Vec<String>>> {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let tables: Vec<String> = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let mut out = std::collections::BTreeMap::new();
+            for table in tables {
+                let columns: Vec<String> = conn
+                    .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+                    .query_map([], |r| r.get(0))?
+                    .collect::<Result<_, _>>()?;
+                let has = |name: &str| columns.iter().any(|c| c == name);
+                let mut ors = Vec::new();
+                if table == "users" {
+                    ors.push(format!("id = {user}"));
+                }
+                if has("user_id") {
+                    ors.push(format!("user_id = {user}"));
+                }
+                if has("account_id") {
+                    ors.push(format!(
+                        "account_id IN (SELECT account_id FROM ferret_accounts WHERE user_id = {user})"
+                    ));
+                }
+                if has("vault_id") {
+                    ors.push(format!(
+                        "vault_id IN (SELECT v.vault_id FROM ferret_vaults v
+                           JOIN ferret_accounts a ON a.account_id = v.account_id
+                           WHERE a.user_id = {user})"
+                    ));
+                }
+                if has("device_id") && table != "ferret_sessions" {
+                    ors.push(format!(
+                        "device_id IN (SELECT device_id FROM ferret_devices WHERE user_id = {user})"
+                    ));
+                }
+                if has("sid_hash") && table != "ferret_sessions" {
+                    ors.push(format!(
+                        "sid_hash IN (SELECT sid_hash FROM ferret_sessions WHERE user_id = {user})"
+                    ));
+                }
+                let rows = if ors.is_empty() {
+                    Vec::new()
+                } else {
+                    rows_where(conn, &table, &ors.join(" OR "))?
+                };
+                out.insert(table, rows);
+            }
+            Ok(out)
+        })
+        .await
+        .expect("the rows")
+}
+
+/// A disabled account with a backup after, a fresh confirmation, and its
+/// deletion on the page.
+async fn delete_on_the_page(app: &TestApp, vault: &Issued, user: i64, email: &str) {
+    disable_and_back_up(app, user).await;
+    confirm(app, vault).await;
+    let res = post_form(app, &action(user, "delete"), &[("email", email)]).await;
+    let page = followed(app, &res).await;
+    assert!(
+        page.contains("The account and its vault are deleted."),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn delete_removes_the_vault_and_everything_in_it() {
+    let app = real_time_app().await;
+    let (admin, vault) = admin_user(&app, 1).await;
+    let client = client_account(&app, 2).await;
+    let user = client.ids.user_id;
+    let _device = device_of(&app, "client2@example.com", 2).await;
+    issue(&app, user, Origin::Vault, SessionScope::Full, 21).await;
+    give_code(&app, user, admin.user_id).await;
+    let before = rows_of_user(&app, user).await;
+    for table in [
+        "users",
+        "ferret_accounts",
+        "ferret_vaults",
+        "ferret_unlock_methods",
+        "ferret_items",
+        "ferret_checkpoints",
+        "ferret_sessions",
+        "ferret_devices",
+        "ferret_refresh",
+        "ferret_access",
+        "sign_in_codes",
+    ] {
+        assert!(!before[table].is_empty(), "the account has rows in {table}");
+    }
+
+    delete_on_the_page(&app, &vault, user, "client2@example.com").await;
+
+    // Nothing of the account is left in any table: its log neither.
+    for (table, rows) in rows_of_user(&app, user).await {
+        assert!(rows.is_empty(), "{table} keeps {rows:?}");
+    }
+    assert!(events_of(&app, user).await.is_empty());
+    // It can no longer sign in, and the name answers like an unknown one.
+    assert!(
+        !login_start(&app, "client2@example.com", CLIENT_PASSWORD)
+            .await
+            .opened
+    );
+}
+
+#[tokio::test]
+async fn delete_never_touches_another_account() {
+    let app = real_time_app().await;
+    let (admin, vault) = admin_user(&app, 1).await;
+    let gone = client_account(&app, 2).await.ids.user_id;
+    let kept = client_account(&app, 3).await.ids.user_id;
+    for (email, key) in [("client2@example.com", 2), ("client3@example.com", 3)] {
+        device_of(&app, email, key).await;
+    }
+    let kept_device = device_of(&app, "client3@example.com", 4).await;
+    let kept_browser = issue(&app, kept, Origin::Vault, SessionScope::Full, 31).await;
+    give_code(&app, kept, admin.user_id).await;
+    let mut kept_events = browser_stream(&app, &kept_browser).await;
+    // Disabled and backed up first: from here on only the deletion changes
+    // the database.
+    disable_and_back_up(&app, gone).await;
+    confirm(&app, &vault).await;
+    let before = every_row(&app, admin.user_id).await;
+    let of_gone = rows_of_user(&app, gone).await;
+
+    let res = post_form(
+        &app,
+        &action(gone, "delete"),
+        &[("email", "client2@example.com")],
+    )
+    .await;
+    let page = followed(&app, &res).await;
+    assert!(page.contains("The account and its vault are deleted."));
+
+    // Every other row is exactly as it was: only the rows of the deleted
+    // account went.
+    let after = every_row(&app, admin.user_id).await;
+    for (table, rows) in &before {
+        let mut expected = rows.clone();
+        for row in &of_gone[table] {
+            let at = expected
+                .iter()
+                .position(|r| r == row)
+                .expect("a row of the account");
+            expected.remove(at);
+        }
+        assert_eq!(&after[table], &expected, "{table}");
+    }
+    // The other account goes on: its device, its browser and its stream.
+    assert_eq!(device_sync(&app, &kept_device).await.status, StatusCode::OK);
+    assert!(!ended(&app, kept_browser.sid).await);
+    kept_events.quiet(Duration::from_millis(300)).await;
+    assert_eq!(pending_code(&app, kept).await, 1);
+    assert!(row_of(&page, kept).contains("client3@example.com"));
+}
+
+/// What an action could change of an account: whether it is active, its
+/// `session_version`, its events, its live sessions and devices, and its
+/// pending sign-in codes.
+#[derive(Debug, PartialEq, Eq)]
+struct AccountState {
+    active: bool,
+    version: i64,
+    events: Vec<(String, String, String)>,
+    live: usize,
+    codes: i64,
+}
+
+async fn account_state(app: &TestApp, user: i64) -> AccountState {
+    let live = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            let live = |table: &str| {
+                rows_where(
+                    conn,
+                    table,
+                    &format!("user_id = {user} AND revoked_at IS NULL"),
+                )
+                .map(|rows| rows.len())
+            };
+            Ok(live("ferret_sessions")? + live("ferret_devices")?)
+        })
+        .await
+        .expect("a read");
+    AccountState {
+        active: is_active(app, user).await,
+        version: session_version(app, user).await,
+        events: events_of(app, user).await,
+        live,
+        codes: pending_code(app, user).await,
+    }
+}
+
+#[tokio::test]
+async fn every_action_and_its_event_commit_together() {
+    let app = real_time_app().await;
+    let (admin, _vault) = admin_user(&app, 1).await;
+    let user = client_account(&app, 2).await.ids.user_id;
+    let device = device_of(&app, "client2@example.com", 2).await;
+    issue(&app, user, Origin::Vault, SessionScope::Full, 21).await;
+    give_code(&app, user, admin.user_id).await;
+    let by = admin_actor(admin.user_id);
+    let at = now(&app);
+
+    // The log refuses every new event, on the connection the action runs on.
+    let run = |which: &'static str| {
+        let by = by.clone();
+        app.state.vault_db.with_conn(move |conn| {
+            conn.execute_batch(
+                "CREATE TEMP TRIGGER no_events BEFORE INSERT ON ferret_account_events
+                 BEGIN SELECT RAISE(ABORT, 'the log is full'); END;",
+            )?;
+            let result = match which {
+                "disable" => actions::disable(conn, user, &by, at).map(|_| ()),
+                "enable" => actions::enable(conn, user, &by, at),
+                _ => actions::sign_out_everywhere(conn, user, &by, at).map(|_| ()),
+            };
+            conn.execute_batch("DROP TRIGGER temp.no_events")?;
+            Ok(result)
+        })
+    };
+    for (which, active) in [("disable", true), ("sign-out", true), ("enable", false)] {
+        // The starting point, outside the trigger: active or disabled.
+        app.state
+            .vault_db
+            .with_conn(move |conn| {
+                conn.execute(
+                    "UPDATE users SET active = ?2 WHERE id = ?1",
+                    rusqlite::params![user, active],
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("the start");
+        let before = account_state(&app, user).await;
+        let result = run(which).await.expect("the database");
+        assert!(
+            matches!(result, Err(ActionError::Store(_))),
+            "{which}: {result:?}"
+        );
+        assert_eq!(account_state(&app, user).await, before, "{which}");
+    }
+    // The device was never revoked and the code is still there.
+    assert!(device_revoked_at(&app, &device).await.is_none());
+    assert_eq!(pending_code(&app, user).await, 1);
+    // Deletion has no event (the log goes with the account); it is refused
+    // for an account that is not disabled, and nothing changes.
+    let by = admin_actor(admin.user_id);
+    let refused = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute("UPDATE users SET active = 1 WHERE id = ?1", [user])?;
+            Ok(actions::delete(
+                conn,
+                user,
+                &by,
+                "client2@example.com",
+                Some(i64::MAX),
+                at,
+            ))
+        })
+        .await
+        .expect("the database");
+    assert!(
+        matches!(refused, Err(ActionError::NotDisabled)),
+        "{refused:?}"
+    );
+    assert!(user_exists(&app, user).await);
+}
+
+#[tokio::test]
+async fn the_prelogin_policy_follows_a_disabled_enabled_or_deleted_account_at_once() {
+    let app = real_time_app().await;
+    // Two accounts: the administrator's without a secret key, the user's with
+    // one, so half of the accounts have one.
+    let (_admin, vault) = admin_user(&app, 1).await;
+    let user = add_account_to_app(&app, 7).await.user_id;
+    login::refresh_once(&app.state.vault_db, &app.state.prelogin, app.clock.as_ref()).await;
+    let policy = |app: &TestApp| app.state.prelogin.read().expect("the policy").clone();
+    let half = PreloginPolicy::new(&[(1, 1000)], 500).expect("a policy");
+    let none = PreloginPolicy::new(&[(1, 1000)], 0).expect("a policy");
+    assert_eq!(policy(&app), half);
+
+    // No background round runs here: each answer renewed the policy.
+    assert_back(&post(&app, &action(user, "disable")).await);
+    assert_eq!(policy(&app), none, "after the disable");
+    confirm(&app, &vault).await;
+    assert_back(&post(&app, &action(user, "enable")).await);
+    assert_eq!(policy(&app), half, "after the enable");
+
+    // A deletion renews it too: the account is disabled first, so its share
+    // is gone already; a policy left stale is put right by the deletion.
+    disable_and_back_up(&app, user).await;
+    assert_eq!(policy(&app), none);
+    *app.state.prelogin.write().expect("the policy") = half.clone();
+    confirm(&app, &vault).await;
+    let res = post_form(
+        &app,
+        &action(user, "delete"),
+        &[("email", "user7@example.com")],
+    )
+    .await;
+    assert_back(&res);
+    assert!(!user_exists(&app, user).await);
+    assert_eq!(policy(&app), none, "after the deletion");
 }
 
 // ------------------------------------------------------------- the words
