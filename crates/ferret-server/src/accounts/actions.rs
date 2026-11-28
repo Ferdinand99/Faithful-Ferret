@@ -20,6 +20,11 @@
 //!   kit's `insert` does not count), "send again" as a revoke and a new one in
 //!   one transaction. Each asks, in its write, that the actor is still an
 //!   active administrator.
+//! * [`disable`], [`enable`], [`sign_out_everywhere`] and [`delete`] are
+//!   for an administrator on the Users page only: the server command makes
+//!   sign-in codes and nothing else, so it is refused here, and with an
+//!   administrator acting [`target`] never lets another administrator (or
+//!   the administrator's own account) be touched.
 //! * [`disable`], [`enable`] and [`sign_out_everywhere`] change the account
 //!   and write its event in one `BEGIN IMMEDIATE`, which first asks the actor
 //!   and [`target`] again; an event that cannot be written undoes the change.
@@ -28,8 +33,8 @@
 //! * [`delete`] removes a disabled account for good, once a good backup set
 //!   was made after its last `account_disabled`. It is the one action with no
 //!   event: the account's log goes with it (the tables cascade), so it writes
-//!   one line to the server's log instead, with the actor's and the account's
-//!   ids and the time, never the e-mail.
+//!   one line to the server's log instead, with the administrator's and the
+//!   account's ids and the time, never the e-mail.
 //!
 //! Spec: Fase 1 § 11 ("The acting account and the target", "Every action on
 //! another account writes its event in the same transaction as the change",
@@ -362,14 +367,16 @@ pub fn revoke_invite(conn: &Connection, id: i64, by: &Actor) -> Result<bool, Act
     Ok(revoked)
 }
 
-/// `Ok` when `by` may act now, asked in the caller's transaction: an
-/// administrator who is still an active administrator, or the server
-/// command. Anyone else is [`ActionError::NotAllowed`].
-fn require_actor(conn: &Connection, by: &Actor) -> Result<(), ActionError> {
-    match by {
-        Actor::ServerCommand => Ok(()),
-        _ => require_active_admin(conn, admin_of(by)?),
-    }
+/// The administrator `by`, if it is one with a known account who is still an
+/// active administrator now (asked in the caller's transaction); anyone else,
+/// the server command too, is [`ActionError::NotAllowed`]. The actions of the
+/// Users page take only this actor: the server command makes sign-in codes
+/// and nothing else (§ 11), and with an administrator acting, [`target`]
+/// refuses the administrator's own account and every other administrator.
+fn require_page_admin(conn: &Connection, by: &Actor) -> Result<i64, ActionError> {
+    let admin = admin_of(by)?;
+    require_active_admin(conn, admin)?;
+    Ok(admin)
 }
 
 /// Disables `target` for `by`: the kit's `active` goes to 0, the user's
@@ -384,7 +391,8 @@ fn require_actor(conn: &Connection, by: &Actor) -> Result<(), ActionError> {
 /// This mirrors the kit's `db::users::set_active(.., false)`, which writes
 /// the same two columns and revokes the codes, but in a transaction of its
 /// own that could not hold the event. The kit's "last administrator" rule is
-/// not needed: [`target`] never lets an administrator be disabled here.
+/// not needed: only an administrator may act ([`require_page_admin`]), and
+/// for one [`target`] never lets an administrator be disabled.
 pub fn disable(
     conn: &mut Connection,
     target: i64,
@@ -392,7 +400,7 @@ pub fn disable(
     now: i64,
 ) -> Result<Ended, ActionError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    require_actor(&tx, by)?;
+    require_page_admin(&tx, by)?;
     let user = self::target(&tx, by, target)?.require_active()?;
     tx.execute(
         "UPDATE users SET active = 0, session_version = session_version + 1 WHERE id = ?1",
@@ -414,7 +422,7 @@ pub fn disable(
 /// pre-login policy is the caller's.
 pub fn enable(conn: &mut Connection, target: i64, by: &Actor, now: i64) -> Result<(), ActionError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    require_actor(&tx, by)?;
+    require_page_admin(&tx, by)?;
     let user = self::target(&tx, by, target)?.require_disabled()?;
     tx.execute(
         "UPDATE users SET active = 1 WHERE id = ?1",
@@ -439,7 +447,7 @@ pub fn sign_out_everywhere(
     now: i64,
 ) -> Result<Ended, ActionError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    require_actor(&tx, by)?;
+    require_page_admin(&tx, by)?;
     let user = self::target(&tx, by, target)?;
     vole_kit::db::users::bump_session_version(&tx, user.user_id)?;
     let ended = end_all_credentials(&tx, user.user_id, None, now)?;
@@ -474,7 +482,8 @@ pub fn backed_up_after(disabled_at: Option<i64>, last_good_backup: Option<i64>) 
 ///
 /// In one `BEGIN IMMEDIATE`, in this order, each refusal leaving everything
 /// as it was:
-/// * the actor may still act and the account passes [`target`];
+/// * the actor is still an active administrator ([`require_page_admin`]) and
+///   the account passes [`target`];
 /// * the account is disabled ([`ActionError::NotDisabled`]), so its sessions
 ///   and devices were ended by the disable;
 /// * `last_good_backup`, the start of the last good backup run, is strictly
@@ -486,8 +495,8 @@ pub fn backed_up_after(disabled_at: Option<i64>, last_good_backup: Option<i64>) 
 ///   ([`ActionError::EmailMismatch`]).
 ///
 /// The one action with no event, since the log goes with the account: after
-/// the commit one line goes to the server's log with the actor, the
-/// administrator's id, the account's id and the time, never the e-mail.
+/// the commit one line goes to the server's log with the administrator's id,
+/// the account's id and the time, never the e-mail.
 /// Renewing the pre-login policy is the caller's.
 pub fn delete(
     conn: &mut Connection,
@@ -498,7 +507,7 @@ pub fn delete(
     now: i64,
 ) -> Result<(), ActionError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    require_actor(&tx, by)?;
+    let admin = require_page_admin(&tx, by)?;
     let user = self::target(&tx, by, target)?.require_disabled()?;
     if !backed_up_after(disabled_at(&tx, user.user_id)?, last_good_backup) {
         return Err(ActionError::NeedsBackup);
@@ -511,13 +520,8 @@ pub fn delete(
         return Err(ActionError::NotFound);
     }
     tx.commit()?;
-    let admin = match by {
-        Actor::Admin { user_id, .. } => *user_id,
-        _ => None,
-    };
     tracing::info!(
-        actor = by.as_str(),
-        admin = ?admin,
+        admin = admin,
         user_id = user.user_id,
         at = now,
         "an account was deleted"

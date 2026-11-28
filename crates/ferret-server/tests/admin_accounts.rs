@@ -1606,7 +1606,12 @@ fn rows_where(
     table: &str,
     filter: &str,
 ) -> rusqlite::Result<Vec<Vec<String>>> {
-    let mut statement = conn.prepare(&format!("SELECT * FROM \"{table}\" WHERE {filter}"))?;
+    rows_of_query(conn, &format!("SELECT * FROM \"{table}\" WHERE {filter}"))
+}
+
+/// The rows `query` gives, as text, sorted.
+fn rows_of_query(conn: &rusqlite::Connection, query: &str) -> rusqlite::Result<Vec<Vec<String>>> {
+    let mut statement = conn.prepare(query)?;
     let columns = statement.column_count();
     let mut rows = statement
         .query_map([], |row| {
@@ -1678,6 +1683,11 @@ async fn rows_of_user(
                         "sid_hash IN (SELECT sid_hash FROM ferret_sessions WHERE user_id = {user})"
                     ));
                 }
+                if has("token_id") {
+                    ors.push(format!(
+                        "token_id IN (SELECT id FROM api_tokens WHERE user_id = {user})"
+                    ));
+                }
                 let rows = if ors.is_empty() {
                     Vec::new()
                 } else {
@@ -1691,17 +1701,140 @@ async fn rows_of_user(
         .expect("the rows")
 }
 
-/// A disabled account with a backup after, a fresh confirmation, and its
-/// deletion on the page.
-async fn delete_on_the_page(app: &TestApp, vault: &Issued, user: i64, email: &str) {
-    disable_and_back_up(app, user).await;
-    confirm(app, vault).await;
-    let res = post_form(app, &action(user, "delete"), &[("email", email)]).await;
-    let page = followed(app, &res).await;
-    assert!(
-        page.contains("The account and its vault are deleted."),
-        "{page}"
+/// The kit's own tables that hold rows of a user.
+const KIT_USER_TABLES: [&str; 7] = [
+    "api_tokens",
+    "api_token_scopes",
+    "passkeys",
+    "passkey_challenges",
+    "push_devices",
+    "push_registrations",
+    "user_emails",
+];
+
+/// One row for `user` in each of [`KIT_USER_TABLES`] (`n` keeps the unique
+/// columns apart): an API token and its scope, a passkey and a pending
+/// passkey challenge, a push device on that token and a push registration,
+/// the address for codes; and a sealed TOTP secret, recovery codes and a
+/// language on the user row itself.
+async fn fill_kit_rows(app: &TestApp, user: i64, n: u8) {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let tag = format!("{n:02x}");
+            conn.execute(
+                "INSERT INTO api_tokens (user_id, name, prefix, token_hash, scope)
+                 VALUES (?1, 'cli', ?2, ?3, 'write')",
+                rusqlite::params![user, format!("ff_{tag}"), format!("{tag:0>64}")],
+            )?;
+            let token = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO api_token_scopes (token_id, scope) VALUES (?1, 'vault:read')",
+                [token],
+            )?;
+            conn.execute(
+                "INSERT INTO passkeys (user_id, credential_id, public_key, alg, user_handle, name)
+                 VALUES (?1, ?2, ?3, -7, ?4, 'Security key')",
+                rusqlite::params![user, vec![n; 16], vec![0xa0 ^ n; 77], vec![0x50 ^ n; 32]],
+            )?;
+            conn.execute(
+                "INSERT INTO passkey_challenges (challenge, purpose, user_id, expires_at)
+                 VALUES (?1, 'register', ?2, 4102444800)",
+                rusqlite::params![format!("challenge-{tag}"), user],
+            )?;
+            conn.execute(
+                "INSERT INTO push_devices (user_id, token_id, handle_sealed, handle_hash)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![user, token, format!("sealed-{tag}"), format!("{tag:f>64}")],
+            )?;
+            conn.execute(
+                "INSERT INTO push_registrations (user_id) VALUES (?1)",
+                [user],
+            )?;
+            conn.execute(
+                "INSERT INTO user_emails (user_id, email) VALUES (?1, ?2)",
+                rusqlite::params![user, format!("codes-{tag}@example.com")],
+            )?;
+            conn.execute(
+                "UPDATE users SET totp_secret = ?2, recovery_codes = '[\"h1\",\"h2\"]',
+                   language = 'nb' WHERE id = ?1",
+                rusqlite::params![user, format!("sealed-totp-{tag}")],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("the kit's rows");
+}
+
+/// An invitation made by `by` and used by `used_by` (still open when
+/// `None`); returns its id.
+async fn used_invite(app: &TestApp, by: i64, used_by: Option<i64>) -> i64 {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO invites (token_hash, role, created_by, expires_at, used_at, used_by)
+                 VALUES (randomblob(32), 'viewer', ?1, datetime('now', '+7 days'),
+                         CASE WHEN ?2 IS NULL THEN NULL ELSE datetime('now') END, ?2)",
+                rusqlite::params![by, used_by],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .await
+        .expect("an invitation")
+}
+
+/// Every row of every table as it must be after `gone` is deleted, read
+/// before the deletion: every row but those of `gone`, and the invitation
+/// `gone` used with `used_by` set to NULL (the kit's `ON DELETE SET NULL`).
+async fn expected_after_delete(
+    app: &TestApp,
+    admin: i64,
+    gone: i64,
+) -> std::collections::BTreeMap<String, Vec<Vec<String>>> {
+    let mut expected = every_row(app, admin).await;
+    let of_gone = rows_of_user(app, gone).await;
+    for (table, rows) in &mut expected {
+        for row in &of_gone[table] {
+            let at = rows
+                .iter()
+                .position(|r| r == row)
+                .expect("a row of the account");
+            rows.remove(at);
+        }
+    }
+    let invites = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(rows_of_query(
+                conn,
+                &format!(
+                    "SELECT id, token_hash, role, display_name, created_by, created_at,
+                            expires_at, used_at,
+                            CASE WHEN used_by = {gone} THEN NULL ELSE used_by END, revoked_at
+                     FROM invites"
+                ),
+            )?)
+        })
+        .await
+        .expect("the invitations");
+    expected.insert("invites".to_string(), invites);
+    expected
+}
+
+/// `after` is `expected`, table by table.
+fn assert_tables(
+    after: &std::collections::BTreeMap<String, Vec<Vec<String>>>,
+    expected: &std::collections::BTreeMap<String, Vec<Vec<String>>>,
+) {
+    assert_eq!(
+        after.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>()
     );
+    for (table, rows) in expected {
+        assert_eq!(&after[table], rows, "{table}");
+    }
 }
 
 #[tokio::test]
@@ -1713,7 +1846,13 @@ async fn delete_removes_the_vault_and_everything_in_it() {
     let _device = device_of(&app, "client2@example.com", 2).await;
     issue(&app, user, Origin::Vault, SessionScope::Full, 21).await;
     give_code(&app, user, admin.user_id).await;
+    fill_kit_rows(&app, user, 2).await;
+    // The account came in through an invitation of the administrator.
+    let invite = used_invite(&app, admin.user_id, Some(user)).await;
     let before = rows_of_user(&app, user).await;
+    for table in KIT_USER_TABLES {
+        assert_eq!(before[table].len(), 1, "the account has a row in {table}");
+    }
     for table in [
         "users",
         "ferret_accounts",
@@ -1730,12 +1869,38 @@ async fn delete_removes_the_vault_and_everything_in_it() {
         assert!(!before[table].is_empty(), "the account has rows in {table}");
     }
 
-    delete_on_the_page(&app, &vault, user, "client2@example.com").await;
+    disable_and_back_up(&app, user).await;
+    confirm(&app, &vault).await;
+    let expected = expected_after_delete(&app, admin.user_id, user).await;
+    let res = post_form(
+        &app,
+        &action(user, "delete"),
+        &[("email", "client2@example.com")],
+    )
+    .await;
+    let page = followed(&app, &res).await;
+    assert!(page.contains("The account and its vault are deleted."));
 
-    // Nothing of the account is left in any table: its log neither.
+    // Nothing of the account is left in any table (its log, its kit rows and
+    // the rows that hang off them neither), and nothing else changed: the
+    // invitation it used is kept, with no account named as its user.
     for (table, rows) in rows_of_user(&app, user).await {
         assert!(rows.is_empty(), "{table} keeps {rows:?}");
     }
+    assert_tables(&every_row(&app, admin.user_id).await, &expected);
+    let used_by: Option<i64> = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(
+                conn.query_row("SELECT used_by FROM invites WHERE id = ?1", [invite], |r| {
+                    r.get(0)
+                })?,
+            )
+        })
+        .await
+        .expect("the invitation is kept");
+    assert_eq!(used_by, None);
     assert!(events_of(&app, user).await.is_empty());
     // It can no longer sign in, and the name answers like an unknown one.
     assert!(
@@ -1757,13 +1922,31 @@ async fn delete_never_touches_another_account() {
     let kept_device = device_of(&app, "client3@example.com", 4).await;
     let kept_browser = issue(&app, kept, Origin::Vault, SessionScope::Full, 31).await;
     give_code(&app, kept, admin.user_id).await;
+    // Both accounts have a row in every kit table that holds a user's, both
+    // came in through an invitation of the administrator, another invitation
+    // is open, and the server has a setting.
+    fill_kit_rows(&app, gone, 2).await;
+    fill_kit_rows(&app, kept, 3).await;
+    used_invite(&app, admin.user_id, Some(gone)).await;
+    let kept_invite = used_invite(&app, admin.user_id, Some(kept)).await;
+    used_invite(&app, admin.user_id, None).await;
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('test.kept', 'yes')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("a setting");
     let mut kept_events = browser_stream(&app, &kept_browser).await;
     // Disabled and backed up first: from here on only the deletion changes
     // the database.
     disable_and_back_up(&app, gone).await;
     confirm(&app, &vault).await;
-    let before = every_row(&app, admin.user_id).await;
-    let of_gone = rows_of_user(&app, gone).await;
+    let expected = expected_after_delete(&app, admin.user_id, gone).await;
 
     let res = post_form(
         &app,
@@ -1774,20 +1957,31 @@ async fn delete_never_touches_another_account() {
     let page = followed(&app, &res).await;
     assert!(page.contains("The account and its vault are deleted."));
 
-    // Every other row is exactly as it was: only the rows of the deleted
-    // account went.
-    let after = every_row(&app, admin.user_id).await;
-    for (table, rows) in &before {
-        let mut expected = rows.clone();
-        for row in &of_gone[table] {
-            let at = expected
-                .iter()
-                .position(|r| r == row)
-                .expect("a row of the account");
-            expected.remove(at);
-        }
-        assert_eq!(&after[table], &expected, "{table}");
+    // Every other row is exactly as it was, the other account's kit rows and
+    // its invitation too: only the rows of the deleted account went, and the
+    // invitation it used names no user any more.
+    assert_tables(&every_row(&app, admin.user_id).await, &expected);
+    let kept_rows = rows_of_user(&app, kept).await;
+    for table in KIT_USER_TABLES {
+        assert_eq!(
+            kept_rows[table].len(),
+            1,
+            "the other account keeps its {table}"
+        );
     }
+    let used_by: Option<i64> = app
+        .state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT used_by FROM invites WHERE id = ?1",
+                [kept_invite],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("the invitation");
+    assert_eq!(used_by, Some(kept));
     // The other account goes on: its device, its browser and its stream.
     assert_eq!(device_sync(&app, &kept_device).await.status, StatusCode::OK);
     assert!(!ended(&app, kept_browser.sid).await);
@@ -1910,6 +2104,100 @@ async fn every_action_and_its_event_commit_together() {
         "{refused:?}"
     );
     assert!(user_exists(&app, user).await);
+}
+
+/// One action of the Users page with the server command as the actor, on
+/// `target`, set up so that an administrator would succeed: disabled, with a
+/// backup after the disable, for enable and delete.
+async fn as_server_command(
+    app: &TestApp,
+    name: &'static str,
+    target: i64,
+    email: &'static str,
+) -> Result<(), ActionError> {
+    let at = now(app);
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            if name == "enable" || name == "delete" {
+                conn.execute("UPDATE users SET active = 0 WHERE id = ?1", [target])?;
+                conn.execute(
+                    "INSERT INTO ferret_account_events (user_id, at, kind, actor)
+                     VALUES (?1, ?2, 'account_disabled', 'server_command')",
+                    rusqlite::params![target, at - 10],
+                )?;
+            }
+            let by = Actor::ServerCommand;
+            Ok(match name {
+                "disable" => actions::disable(conn, target, &by, at).map(|_| ()),
+                "enable" => actions::enable(conn, target, &by, at),
+                "sign-out" => actions::sign_out_everywhere(conn, target, &by, at).map(|_| ()),
+                _ => actions::delete(conn, target, &by, email, Some(at), at),
+            })
+        })
+        .await
+        .expect("the database")
+}
+
+/// The server command is refused `name`, on an administrator (the last
+/// active one besides the page's, and a disabled one) and on a user, and
+/// nothing of either changes.
+async fn the_server_command_is_refused(name: &'static str) {
+    let app = TestApp::new_at_real_time().await;
+    let (admin, _vault) = admin_user(&app, 1).await;
+    let other_admin = seed(&app, 2).await.user_id;
+    set_role(&app, other_admin, "admin").await;
+    let user = add_account_to_app(&app, 7).await.user_id;
+    for (target, email) in [
+        (admin.user_id, "user1@example.com"),
+        (other_admin, "user2@example.com"),
+        (user, "user7@example.com"),
+    ] {
+        let version = session_version(&app, target).await;
+        let active = is_active(&app, target).await;
+        let events = events_of(&app, target).await;
+        let result = as_server_command(&app, name, target, email).await;
+        assert!(
+            matches!(result, Err(ActionError::NotAllowed)),
+            "{name} {target}: {result:?}"
+        );
+        assert!(user_exists(&app, target).await, "{name} {target}");
+        assert_eq!(
+            session_version(&app, target).await,
+            version,
+            "{name} {target}"
+        );
+        if name == "disable" || name == "sign-out" {
+            assert_eq!(is_active(&app, target).await, active, "{name} {target}");
+            assert_eq!(events_of(&app, target).await, events, "{name} {target}");
+        } else {
+            assert!(
+                !is_active(&app, target).await,
+                "{name} {target}: still disabled"
+            );
+            assert_eq!(events_of(&app, target).await.len(), events.len() + 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_server_command_cannot_disable_an_account() {
+    the_server_command_is_refused("disable").await;
+}
+
+#[tokio::test]
+async fn the_server_command_cannot_enable_an_account() {
+    the_server_command_is_refused("enable").await;
+}
+
+#[tokio::test]
+async fn the_server_command_cannot_sign_an_account_out_everywhere() {
+    the_server_command_is_refused("sign-out").await;
+}
+
+#[tokio::test]
+async fn the_server_command_cannot_delete_an_account() {
+    the_server_command_is_refused("delete").await;
 }
 
 #[tokio::test]
