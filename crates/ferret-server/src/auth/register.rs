@@ -44,8 +44,12 @@
 //! the same answer for every reason); the start is counted against that
 //! invitation, and the eleventh within an hour is `429 throttled`; an e-mail
 //! that has an account is `409 email_taken` (the deliberate deviation of § 4.2:
-//! only the holder of a valid invitation learns it, at that rate). The row
-//! keeps the SHA-256 of the token (`invite_hash`), never the token.
+//! only the holder of a valid invitation learns it, at that rate), and so is
+//! an e-mail that a registration of another invitation is still waiting with:
+//! one invitee never removes another's waiting row (a new start of the same
+//! invitation replaces its own earlier row, as the first administrator's
+//! does). The row keeps the SHA-256 of the token (`invite_hash`), never the
+//! token.
 //!
 //! # `finish`
 //!
@@ -372,7 +376,8 @@ enum Stored {
     InviteInvalid,
     /// The invitation made its starts of the hour; wait this many seconds.
     Throttled(u32),
-    /// The e-mail has an account (told only with a valid invitation).
+    /// The e-mail has an account, or a waiting row of another invitation (told
+    /// only with a valid invitation).
     EmailTaken,
 }
 
@@ -384,7 +389,9 @@ enum Stored {
 /// already. With one, in this order: no user yet, or an invitation that
 /// [`invites::pending`] does not find, is `InviteInvalid`; the start is
 /// counted in `starts` at `clock` (`Throttled` past the cap); an e-mail with an
-/// account is `EmailTaken`.
+/// account, or with a waiting row of another invitation, is `EmailTaken`. So
+/// the earlier row of the same login name that is removed is always one of
+/// the same invitation (or, without one, of the first administrator's setup).
 fn store_pending(
     conn: &mut Connection,
     registration_id: [u8; 16],
@@ -409,6 +416,17 @@ fn store_pending(
                 return Ok(Stored::Throttled(wait.secs()));
             }
             if users::username_taken(&tx, &pending.email)? {
+                return Ok(Stored::EmailTaken);
+            }
+            // A waiting row of this e-mail that another invitation made is
+            // that invitee's: the removal below would otherwise end it.
+            let held: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM ferret_registrations
+                   WHERE email = ?1 AND expires_at > ?2 AND invite_hash IS NOT ?3)",
+                params![pending.email, now, hash.as_slice()],
+                |r| r.get(0),
+            )?;
+            if held {
                 return Ok(Stored::EmailTaken);
             }
         }

@@ -701,6 +701,63 @@ async fn finishing_an_invited_registration_leaves_other_waiting_rows() {
 }
 
 #[tokio::test]
+async fn one_invitee_cannot_wipe_another_invitees_waiting_registration() {
+    let (app, admin) = with_admin().await;
+    let first = invite(&app, admin).await;
+    let second = invite(&app, admin).await;
+    let email = "shared@example.test";
+    let one = registrant("first")
+        .started(&app, email, Some(&first), false)
+        .await;
+
+    // Another invitation with the same e-mail, in any case of letters, finds
+    // the waiting row taken and leaves it alone.
+    for typed in [email, "Shared@Example.TEST"] {
+        let res = registrant("second").start(&app, typed, Some(&second)).await;
+        assert_refused(&res, StatusCode::CONFLICT, "email_taken");
+    }
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM ferret_registrations").await,
+        1
+    );
+
+    // The same invitation may start again: its own earlier row is replaced,
+    // and only the newest start can be finished.
+    let again = registrant("first again")
+        .started(&app, email, Some(&first), false)
+        .await;
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM ferret_registrations").await,
+        1
+    );
+    let res = one.send_raw(&app).await;
+    assert_eq!(
+        (res.status, error_of(&res).as_str()),
+        (StatusCode::UNAUTHORIZED, "denied"),
+        "{}",
+        res.text()
+    );
+    let res = again.send_raw(&app).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    assert!(user_of(&app, email).await.is_some());
+    assert!(
+        is_pending(&app, &second).await,
+        "the other invitation is unused"
+    );
+
+    // A waiting row that has run out holds nothing back.
+    let third = invite(&app, admin).await;
+    let fourth = invite(&app, admin).await;
+    let late = "late@example.test";
+    let _stale = registrant("third")
+        .started(&app, late, Some(&third), false)
+        .await;
+    app.clock.advance(601);
+    let res = registrant("fourth").start(&app, late, Some(&fourth)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+#[tokio::test]
 async fn invite_check_answers_expiry_and_inviter_and_is_throttled_per_address() {
     let (app, admin) = with_admin().await;
     let token = invite(&app, admin).await;
