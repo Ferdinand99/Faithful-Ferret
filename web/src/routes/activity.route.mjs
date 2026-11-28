@@ -23,7 +23,8 @@ export default {
     return vault.page(activityView({
       t: ctx.i18n.t,
       locale: ctx.i18n.lang,
-      load: (before) => loadEvents(api, before === undefined ? {} : { before }),
+      // The log of the unlocked account only: the session of the browser may be another account's by now.
+      load: (before) => loadEvents(api, { ...(before === undefined ? {} : { before }), ...(open === null ? {} : { accountId: open.accountId }) }),
       onShown: async (events) => {
         if (open === null || typeof store?.activitySeen?.save !== "function") return;
         await markSeen({ save: async (mark) => store.activitySeen.save(await store.open(), session.serverUrl, open.accountId, mark) }, events);

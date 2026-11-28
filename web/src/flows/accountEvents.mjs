@@ -14,9 +14,16 @@
 // `server_restored` that is newer than the mark (by its id or its time), and when the newest id
 // is below the mark with no such restore in sight.
 //
+// The answer names no account: whose log it is follows from the session of the browser profile,
+// and another tab that signs in as another account changes that session under a tab that is open.
+// So a page of the log is used only when the session is the unlocked account's both before and
+// after it was read (`accountId`); otherwise it is refused as `unauthorized`, and nothing of it is
+// shown or kept.
+//
 // Nothing here is secret: an event is an id, a time, a kind, an actor and an administrator's
 // e-mail. No code and no token is ever part of it.
 import { ApiError } from "../api.mjs";
+import { hex16 } from "../b64.mjs";
 import { checkStep, MAX_EVENTS_PAGE } from "../wire.mjs";
 
 /** The address of the account log. */
@@ -33,6 +40,9 @@ export const NOTICE_ACTORS = Object.freeze(["admin", "server_command", "server"]
 /** The events of one page when the caller names no limit (the server's own default). */
 const DEFAULT_PAGE = 50;
 
+/** The session info of the browser. */
+const SESSION_PATH = "/api/auth/session";
+
 /**
  * One event of the log, as the server sends it (`account_events_res`).
  * @typedef {{ id: number, at: number, kind: string, actor: "admin" | "server_command" | "server" | "account", actor_name: string }} AccountEvent
@@ -44,17 +54,32 @@ const DEFAULT_PAGE = 50;
 const positive = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
 /**
+ * The session of the browser is a full session of `accountId`, or `unauthorized`.
+ * @param {{ get(path: string, options?: { shape?: string }): Promise<any> }} api
+ * @param {string} accountId
+ */
+async function sessionIs(api, accountId) {
+  const info = await api.get(SESSION_PATH, { shape: "session_res" });
+  if (info?.account_id !== accountId) throw new ApiError(401, "unauthorized");
+}
+
+/**
  * One page of the log: the newest events, or those below `before` (the oldest id shown so far).
  * The answer is checked against the wire shape and must be newest first, every id below `before`.
+ * With `accountId` (the unlocked account), the session of the browser must be that account's before and after the page
+ * is read (see the top of this file); otherwise it is `unauthorized`.
  * @param {{ get(path: string, options?: { shape?: string }): Promise<any> }} api
- * @param {{ before?: number, limit?: number }} [options]
+ * @param {{ before?: number, limit?: number, accountId?: string }} [options]
  * @returns {Promise<{ events: AccountEvent[], more: boolean }>}
  */
-export async function loadEvents(api, { before, limit = DEFAULT_PAGE } = {}) {
+export async function loadEvents(api, { before, limit = DEFAULT_PAGE, accountId } = {}) {
   if (before !== undefined && !positive(before)) throw new TypeError("before is the id of an event");
   if (!positive(limit) || limit > MAX_EVENTS_PAGE) throw new TypeError("a page of the account log has 1 to 100 events");
+  if (accountId !== undefined && !hex16.is(accountId)) throw new TypeError("accountId is 32 hexadecimal characters");
   const path = before === undefined ? `${EVENTS_PATH}?limit=${limit}` : `${EVENTS_PATH}?limit=${limit}&before=${before}`;
+  if (accountId !== undefined) await sessionIs(api, accountId);
   const answer = await api.get(path, { shape: "account_events_res" });
+  if (accountId !== undefined) await sessionIs(api, accountId);
   checkStep("account_events_res", answer);
   /** @type {AccountEvent[]} */
   const events = answer.events;
@@ -115,12 +140,13 @@ export function reconcileSeen(events, stored) {
 
 /**
  * The events of the notice at an unlock: the newest page of the log against the mark of this browser. A mark that
- * starts (or starts again) is kept; the notice never moves it otherwise.
- * @param {{ api: Parameters<typeof loadEvents>[0], seen: SeenStore }} options
+ * starts (or starts again) is kept; the notice never moves it otherwise. With `accountId`, the log must be that
+ * account's (see `loadEvents`).
+ * @param {{ api: Parameters<typeof loadEvents>[0], seen: SeenStore, accountId?: string }} options
  * @returns {Promise<AccountEvent[]>}
  */
-export async function noticeEvents({ api, seen }) {
-  const { events } = await loadEvents(api, { limit: MAX_EVENTS_PAGE });
+export async function noticeEvents({ api, seen, accountId }) {
+  const { events } = await loadEvents(api, accountId === undefined ? { limit: MAX_EVENTS_PAGE } : { limit: MAX_EVENTS_PAGE, accountId });
   const { lastSeenId, save } = reconcileSeen(events, await seen.load());
   if (save !== null) await seen.save(save);
   return unseenAdminEvents(events, lastSeenId);

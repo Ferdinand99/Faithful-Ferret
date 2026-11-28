@@ -41,11 +41,20 @@ async function seenStore(accountId = ACCOUNT, serverUrl = SERVER) {
   return { store, seen };
 }
 
-/** An API client whose log is `log` (newest first); it answers pages as the server does. */
-function logApi(log) {
+/** The session answer of a full vault session of `accountId`. @param {string} accountId */
+const sessionOf = (accountId) => ({ account_id: accountId, email: "ada@example.test", scope: "full", origin: "vault" });
+
+/**
+ * An API client whose log is `log` (newest first); it answers pages as the server does. The session it answers with is
+ * the one of `accounts()` (called for each ask of the session; by default always `ACCOUNT`).
+ */
+function logApi(log, accounts = () => ACCOUNT) {
   const urls = [];
   const fetchImpl = async (url) => {
     urls.push(url);
+    if (new URL(url, "https://vault.example").pathname === "/api/auth/session") {
+      return new Response(JSON.stringify(sessionOf(accounts())), { status: 200, headers: { "content-type": "application/json" } });
+    }
     const query = new URL(url, "https://vault.example").searchParams;
     const before = query.has("before") ? Number(query.get("before")) : Infinity;
     const limit = Number(query.get("limit") ?? 50);
@@ -248,7 +257,7 @@ test("visiting_activity_clears_the_notice", async () => {
       assert.equal(find(again, "account-notice"), null, "cleared");
       // Another account in the same browser has its own mark and its own notice.
       await activitySeen.save(store, SERVER, "cd".repeat(16), { id: 3, at: 1 });
-      const b = rig({ store, api: logApi(log).api, accountId: "cd".repeat(16) });
+      const b = rig({ store, api: logApi(log, () => "cd".repeat(16)).api, accountId: "cd".repeat(16) });
       try {
         const listB = await listRoute.load(b.ctx("/items"));
         await settle();
@@ -291,6 +300,61 @@ test("visiting_activity_clears_the_notice", async () => {
     release([event(3, "sign_in_code_issued")]);
     await settle();
     assert.equal(find(late.root, "account-notice"), null);
+  });
+});
+
+test("the_log_of_another_account_is_never_shown_or_marked", async () => {
+  // The answer of the log names no account: the session of the browser profile decides whose log it is. Another tab
+  // that signs in as another account changes that session under a tab that is open, so the log is used only when the
+  // session is the unlocked account's both before and after it was read.
+  const other = "cd".repeat(16);
+  const log = { events: [event(4, "account_created")] };
+  const pathOf = (/** @type {string} */ url) => new URL(url, "https://vault.example").pathname;
+  const isUnauthorized = (/** @type {any} */ error) => error.status === 401 && error.code === "unauthorized";
+
+  // The session is the other account's from the start: the log is not even asked for.
+  const { seen } = await seenStore();
+  const theirs = logApi(log, () => other);
+  await assert.rejects(loadEvents(theirs.api, { accountId: ACCOUNT }), isUnauthorized);
+  assert.deepEqual(theirs.urls.map(pathOf), ["/api/auth/session"]);
+  await assert.rejects(noticeEvents({ api: theirs.api, seen, accountId: ACCOUNT }), isUnauthorized);
+  assert.equal(await seen.load(), null, "no mark from another account's log");
+
+  // The session turns into the other account's while the log is read: the page that came is not used.
+  const turns = [ACCOUNT, other];
+  const turning = logApi(log, () => turns.shift() ?? other);
+  await assert.rejects(loadEvents(turning.api, { accountId: ACCOUNT }), isUnauthorized);
+  assert.deepEqual(turning.urls.map(pathOf), ["/api/auth/session", "/api/account/events", "/api/auth/session"]);
+  const turnsAgain = [ACCOUNT, other];
+  await assert.rejects(noticeEvents({ api: logApi(log, () => turnsAgain.shift() ?? other).api, seen, accountId: ACCOUNT }), isUnauthorized);
+  assert.equal(await seen.load(), null);
+
+  // The same account before and after: the log is the account's.
+  const ours = logApi(log);
+  assert.deepEqual((await loadEvents(ours.api, { accountId: ACCOUNT })).events.map((e) => e.id), [4]);
+  await assert.rejects(loadEvents(ours.api, { accountId: "not an id" }), TypeError);
+
+  // Through the routes, in a tab of this account whose browser now holds the other account's session: "Activity" says
+  // the session has ended, lists nothing and keeps no mark, and the list shows no notice.
+  await withDom(async () => {
+    const { store } = await freshStore();
+    const r = rig({ store, api: logApi(log, () => other).api });
+    try {
+      const page = await activityRoute.load(r.ctx("/activity"));
+      await settle();
+      const error = find(page, "activity-error");
+      assert.ok(error && !error.hidden, "the page says why");
+      assert.match(textOf(error), /activity.error.unauthorized/);
+      assert.equal(find(page, "activity-row"), null);
+      assert.equal(find(page, "activity-empty"), null);
+      assert.equal(await activitySeen.load(store, SERVER, ACCOUNT), null);
+      const list = await listRoute.load(r.ctx("/items"));
+      await settle();
+      assert.equal(find(list, "account-notice"), null);
+      assert.equal(await activitySeen.load(store, SERVER, ACCOUNT), null);
+    } finally {
+      r.done();
+    }
   });
 });
 

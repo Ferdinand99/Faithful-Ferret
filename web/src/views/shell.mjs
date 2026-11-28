@@ -703,7 +703,7 @@ function accountNoticeOf(services, session, open) {
     load: async () => tools.load(await store.open(), session.serverUrl, open.accountId),
     save: async (/** @type {import("../store/activitySeen.mjs").SeenMark} */ mark) => tools.save(await store.open(), session.serverUrl, open.accountId, mark),
   };
-  return { check: () => noticeOnce(open, () => noticeEvents({ api, seen })), dismiss: () => clearNotice(open) };
+  return { check: () => noticeOnce(open, () => noticeEvents({ api, seen, accountId: open.accountId })), dismiss: () => clearNotice(open) };
 }
 
 /** A card with a message, for a screen that cannot be shown. @param {Translate} t @param {string} key */
