@@ -52,6 +52,7 @@ const EXPECTED_LIST = [
   "flows/setupQr.mjs",
   "flows/signin.mjs",
   "i18n.mjs",
+  "store/activitySeen.mjs",
   "store/cache.mjs",
   "store/exportReminder.mjs",
   "store/forget.mjs",
