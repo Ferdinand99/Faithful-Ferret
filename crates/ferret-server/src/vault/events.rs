@@ -37,7 +37,7 @@
 //!   cookie), and a page cannot add a token header without a pre-flight that
 //!   Ferret never allows.
 //!
-//! Places ([`EventStreams`]): 2 per (vault, device), 40 per vault and 256 on
+//! Places ([`EventStreams`]): 2 per (vault, device), 40 per vault and 1 024 on
 //! the server. A new stream beyond a limit is refused with `429 throttled` and
 //! `Retry-After: 30`, rather than the oldest stream being cut: a client that
 //! reconnects in a loop cannot push out a stream that works. The place is free

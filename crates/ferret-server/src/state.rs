@@ -316,7 +316,7 @@ pub async fn build_state(
         events: SyncEvents::new(CAPACITY),
         limits,
         write_gate: WriteGate::new(8, 64),
-        streams: Arc::new(EventStreams::new(2, 40, 256)),
+        streams: Arc::new(EventStreams::new(2, 40, 1024)),
         challenges: Challenges::new(),
         import_windows: ImportWindows::new(),
         backup: BackupStatus::persistent(&cfg.backup_config()?.dir),

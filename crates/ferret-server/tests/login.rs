@@ -1452,6 +1452,128 @@ async fn response_length_and_median_delay_known_vs_unknown() {
     );
 }
 
+/// What every answer to `login/start` must share: its length without the
+/// hint, its headers but the length, and its fields.
+type Shape = (usize, Vec<(String, String)>, Vec<String>);
+
+#[tokio::test]
+async fn known_and_unknown_names_answer_alike_with_three_accounts() {
+    let app = app().await;
+    // One account with a secret key, one without, and one that is disabled.
+    seed(&app, 1, "sara@example.com").await;
+    seed(&app, 2, "noah@example.com").await;
+    let disabled = seed(&app, 3, "dora@example.com").await;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(
+                "UPDATE ferret_accounts SET sk_hint = 0 WHERE account_id = ?1",
+                [account_ids(0, 2).account_id.as_bytes().as_slice()],
+            )?;
+            conn.execute("UPDATE users SET active = 0 WHERE id = ?1", [disabled])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    refresh_once(
+        &app.state.vault_db,
+        &app.state.prelogin,
+        app.state.clock.as_ref(),
+    )
+    .await;
+    // The made-up answers follow the two accounts that count: half with a
+    // secret key. The disabled one is not counted.
+    let policy = app.state.prelogin.read().unwrap().clone();
+    assert_eq!(policy, PreloginPolicy::new(&[(1, 1000)], 500).unwrap());
+
+    let (ke1, _s) = opaque_login_start(&mut OsRng, &input(PASSWORD)).unwrap();
+    let names = [
+        "sara@example.com",
+        "noah@example.com",
+        "dora@example.com",
+        "ghost@example.com",
+    ];
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); names.len() + 1];
+    let mut first: Option<Shape> = None;
+    let mut hints: Vec<Vec<bool>> = vec![Vec::new(); names.len()];
+    for round in 0..200 {
+        // A name nobody holds, new in each round, besides the fixed ones.
+        let fresh = format!("nobody-{round}@example.com");
+        // The order turns each round, so a slow moment of the host is spread.
+        for step in 0..=names.len() {
+            let which = (step + round) % (names.len() + 1);
+            let email = names.get(which).copied().unwrap_or(fresh.as_str());
+            let mut jar = Jar::default();
+            let began = Instant::now();
+            let res = send(
+                &app,
+                &mut jar,
+                vault_post(
+                    "/api/auth/opaque/login/start",
+                    &start_body(email, &ke1, None),
+                ),
+            )
+            .await;
+            times[which].push(began.elapsed().as_secs_f64());
+            assert_eq!(res.status, StatusCode::OK, "{email} in round {round}");
+            let body = res.json();
+            let mut keys: Vec<String> = body.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            // Every answer: the same length in bytes (but for the hint itself,
+            // `true` or `false`, which the answer says anyway), the same
+            // headers (names and values) and the same fields.
+            let hint_len = body["sk_hint"].to_string().len();
+            let headers: Vec<(String, String)> = header_list(&res)
+                .into_iter()
+                .filter(|(name, _)| name != "content-length")
+                .collect();
+            let shape = (res.body.len() - hint_len, headers, keys);
+            match &first {
+                None => first = Some(shape),
+                Some(want) => assert_eq!(&shape, want, "{email} in round {round}"),
+            }
+            assert!(jar.names().is_empty(), "a cookie for {email}");
+            if let Some(list) = hints.get_mut(which) {
+                list.push(body["sk_hint"].as_bool().unwrap());
+            }
+        }
+    }
+    // What each fixed name says never changes, and the disabled name says
+    // what the made-up answer for it says.
+    for (name, list) in names.iter().zip(&hints) {
+        assert!(list.windows(2).all(|w| w[0] == w[1]), "{name}");
+    }
+    assert!(hints[0][0], "the account with a secret key says so");
+    assert!(!hints[1][0], "the account without one says so");
+    let made_up = |email: &str| {
+        let name = normalize_login_name(email).unwrap();
+        fake_prelogin(&app.state.secrets.prelogin, &name, &policy).sk_hint
+    };
+    assert_eq!(hints[2][0], made_up("dora@example.com"));
+    assert_eq!(hints[3][0], made_up("ghost@example.com"));
+
+    // The time: the quartiles of every known name are near those of the
+    // unknown names (the fixed one and the new ones together).
+    let mut unknown: Vec<f64> = times[3].iter().chain(&times[4]).copied().collect();
+    let quartiles = |list: &mut Vec<f64>| {
+        list.sort_by(f64::total_cmp);
+        let at = |q: usize| list[list.len() * q / 4];
+        [at(1), at(2), at(3)]
+    };
+    let base = quartiles(&mut unknown);
+    for (n, name) in names.iter().enumerate().take(3) {
+        let got = quartiles(&mut times[n]);
+        for (q, (k, u)) in got.iter().zip(base).enumerate() {
+            let slack = k.max(u) * 0.5 + 0.002;
+            assert!(
+                (k - u).abs() < slack,
+                "{name}: quartile {} known {k:.6}s, unknown {u:.6}s",
+                q + 1
+            );
+        }
+    }
+}
+
 // -------------------------------------------------------------------- e2e
 
 #[tokio::test]
