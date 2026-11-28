@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.12.1...v0.13.0) (2026-11-28)
+
+
+### Features
+
+* several accounts, link invitations and admin over users ([#340](https://github.com/Ferdinand99/Faithful-Ferret/issues/340)) ([7725648](https://github.com/Ferdinand99/Faithful-Ferret/commit/772564896218cfdbbb4800d474d76238790cf53a))
+
 ## [0.12.1](https://github.com/Ferdinand99/Faithful-Ferret/compare/v0.12.0...v0.12.1) (2026-11-27)
 
 
