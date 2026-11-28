@@ -3,7 +3,14 @@
 // or is pasted into the field. After the form the emergency sheet is shown;
 // the account is uploaded only when the recovery key and the secret key have
 // been typed back and checked (Spec: Fase 1 § 6.1).
-import { AccountError } from "../crypto/errors.mjs";
+//
+// With an invitation (`#invite=` in the fragment) the page is "Join Ferret on
+// <host>": it checks the link first and asks for nothing while it does, so a
+// dead link is said before anyone chooses a master password. A good link shows
+// who made it and when it runs out, then the same form, sheet and checks as for
+// the first administrator. An invited account is not an administrator, so the
+// done page has no way to the admin pages.
+import { AccountError, codeOf } from "../crypto/errors.mjs";
 import { ADMIN_LANDING } from "../flows/adminUrl.mjs";
 import { el, mount } from "../dom.mjs";
 import { busyState, choice, describeError, field, setText, trustNotice } from "./form.mjs";
@@ -15,6 +22,12 @@ import { sheetView } from "./sheet.mjs";
  * @property {any} session the crypto session (`services.crypto`)
  * @property {string | null} setupToken the token the address carried, if any
  * @property {() => void} [spentToken] called once the token has been used
+ * @property {string | null} [invite] the token of the invitation link the address carried, if any
+ * @property {(invite: string) => Promise<{ ok: true, expiresAt: number, invitedBy: string } | { ok: false, code: string }>} [checkInvite]
+ *   asks the server whether the link still works (`flows/invite.mjs`)
+ * @property {() => void} [spentInvite] called once the account the invitation made exists
+ * @property {string} [host] the host of this vault, for the heading of the join page
+ * @property {string} [locale] the language of the page, for the expiry of the link
  * @property {string | null} adminUrl
  * @property {(path: string) => void} go
  * @property {{ goToAdmin: (options: any) => Promise<void> }} handoff
@@ -24,6 +37,8 @@ import { sheetView } from "./sheet.mjs";
 /** @param {SetupDeps} deps */
 export function setupView(deps) {
   const { t, session, adminUrl, go, handoff } = deps;
+  const invite = typeof deps.invite === "string" && deps.invite !== "" ? deps.invite : null;
+  const joining = invite !== null;
   const root = el("section", { class: "auth-card account", "data-role": "setup-page" });
   const status = el("p", { class: "status", role: "status", "data-role": "status" });
   const errorBox = el("p", { class: "error", role: "alert", "data-role": "error" });
@@ -39,8 +54,8 @@ export function setupView(deps) {
   const remember = choice(t, { id: "remember", role: "remember", label: "account.remember.label", checked: true });
   const rememberNote = el("small", { class: "help" }, t("account.remember.note"));
   const rememberRow = el("div", { class: "remember", "data-role": "remember-row" }, remember.row, rememberNote);
-  const token = deps.setupToken ? null : field(t, { id: "setup-token", role: "setup-token", label: "account.setup.token", autocomplete: "off", required: false, secret: true });
-  const tokenNote = deps.setupToken ? el("p", { class: "help", "data-role": "token-received" }, t("account.setup.token_received")) : null;
+  const token = deps.setupToken || joining ? null : field(t, { id: "setup-token", role: "setup-token", label: "account.setup.token", autocomplete: "off", required: false, secret: true });
+  const tokenNote = deps.setupToken && !joining ? el("p", { class: "help", "data-role": "token-received" }, t("account.setup.token_received")) : null;
   const submit = el("button", { type: "submit", class: "btn btn-primary btn-block", "data-role": "submit" }, t("account.setup.submit"));
   const form = el("form", { class: "stack", "data-role": "setup-form" });
 
@@ -85,7 +100,8 @@ export function setupView(deps) {
       );
       return;
     }
-    deps.spentToken?.();
+    if (joining) deps.spentInvite?.();
+    else deps.spentToken?.();
     showDone();
   }
 
@@ -111,8 +127,9 @@ export function setupView(deps) {
   function showDone() {
     const open = el("button", { type: "button", class: "btn btn-primary", "data-role": "open-vault" }, t("account.setup.done_open"));
     open.addEventListener("click", () => go("/"));
+    // Only the first administrator is one; an account made with an invitation is not.
     const admin =
-      adminUrl === null
+      adminUrl === null || joining
         ? null
         : el("button", { type: "button", class: "btn btn-secondary", "data-role": "admin" }, t("account.signedin.admin"));
     admin?.addEventListener("click", () => {
@@ -131,12 +148,13 @@ export function setupView(deps) {
     const typedRepeat = repeat.input.value;
     password.input.value = "";
     repeat.input.value = "";
-    const typedToken = deps.setupToken ?? (token ? token.input.value.trim() : "");
+    const typedToken = joining ? "" : deps.setupToken ?? (token ? token.input.value.trim() : "");
     const useSecretKey = useSk.input.checked === true;
     const args = {
       email: email.input.value,
       password: typedPassword,
       setupToken: typedToken === "" ? null : typedToken,
+      invite,
       useSecretKey,
       rememberSk: useSecretKey ? remember.input.checked === true : false,
     };
@@ -146,7 +164,11 @@ export function setupView(deps) {
       const flow = await session.register(args);
       showSheet(flow, useSecretKey);
     })()
-      .catch(showError)
+      .catch((error) => {
+        // The link died between the check and the start (used elsewhere, withdrawn, run out).
+        if (joining && codeOf(error) === "invite_invalid") showDead("invite_invalid");
+        else showError(error);
+      })
       .finally(() => {
         busy.set(false);
         running = false;
@@ -154,15 +176,64 @@ export function setupView(deps) {
   });
 
   mount(form, email.row, password.row, repeat.row, useSk.row, noSkWarning, rememberRow, ...(token ? [token.row] : []), ...(tokenNote ? [tokenNote] : []), submit);
-  mount(
-    root,
-    el("h1", null, t("account.setup.heading")),
-    el("p", null, t("account.setup.intro")),
-    form,
-    status,
-    errorBox,
-    el("p", null, el("a", { href: "#/login" }, t("account.setup.login_link"))),
-    trust,
-  );
+  const loginLink = el("p", null, el("a", { href: "#/login" }, t("account.setup.login_link")));
+  if (!joining) {
+    mount(root, el("h1", null, t("account.setup.heading")), el("p", null, t("account.setup.intro")), form, status, errorBox, loginLink, trust);
+    return root;
+  }
+
+  // ------------------------------------------------------------- joining
+
+  const heading = el("h1", { "data-role": "join-heading" }, t("account.join.heading", { host: deps.host ?? "" }));
+
+  /** When the link runs out, in the language of the page. @param {number} seconds */
+  function whenText(seconds) {
+    const at = new Date(seconds * 1000);
+    try {
+      return new Intl.DateTimeFormat(deps.locale, { dateStyle: "long", timeStyle: "short" }).format(at);
+    } catch {
+      return at.toISOString().slice(0, 16).replace("T", " ");
+    }
+  }
+
+  /** The link does not work, or could not be checked: say so, and ask for nothing. @param {string} code */
+  function showDead(code) {
+    const dead = el("p", { class: "error", role: "alert", "data-role": "invite-dead" }, describeError(t, { code }));
+    // A dead link stays dead; only a check that could not be made is worth another try.
+    const retry =
+      code === "invite_invalid"
+        ? null
+        : el("button", { type: "button", class: "btn btn-primary", "data-role": "invite-retry" }, t("account.setup.retry"));
+    retry?.addEventListener("click", () => void checkLink());
+    if (retry) mount(root, heading, dead, el("div", { class: "actions" }, retry), loginLink, trust);
+    else mount(root, heading, dead, loginLink, trust);
+  }
+
+  async function checkLink() {
+    if (invite === null) return;
+    mount(root, heading, el("p", { class: "status", role: "status", "data-role": "invite-checking" }, t("account.join.checking")), trust);
+    const check = deps.checkInvite ?? (async () => ({ ok: false, code: "unknown" }));
+    /** @type {{ ok: true, expiresAt: number, invitedBy: string } | { ok: false, code: string }} */
+    const answer = await check(invite).catch(() => ({ ok: false, code: "unknown" }));
+    if (!answer.ok) {
+      showDead(answer.code);
+      return;
+    }
+    const who = answer.invitedBy === "" ? t("account.join.invited_unknown") : t("account.join.invited_by", { name: answer.invitedBy });
+    mount(
+      root,
+      heading,
+      el("p", { "data-role": "invited-by" }, who),
+      el("p", { "data-role": "invite-expires" }, t("account.join.expires", { when: whenText(answer.expiresAt) })),
+      el("p", null, t("account.join.intro")),
+      form,
+      status,
+      errorBox,
+      loginLink,
+      trust,
+    );
+  }
+
+  void checkLink();
   return root;
 }

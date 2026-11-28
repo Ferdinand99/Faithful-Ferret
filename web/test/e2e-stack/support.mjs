@@ -432,15 +432,16 @@ export async function signInOn(page, options = {}) {
  * was not signed out shows "Unlock" there once its session has ended: the
  * remembered e-mail and the password, with a full sign-in behind it.
  * @param {import("@playwright/test").Page} page
- * @param {{ remember?: boolean, expectList?: boolean }} [options]
+ * @param {{ remember?: boolean, expectList?: boolean, account?: { email: string, password: string, secretKey: string } }} [options]
+ *   `account`: whose e-mail, password and secret key are typed (the run's administrator when not given)
  */
-export async function signInHere(page, { remember = true, expectList = true } = {}) {
+export async function signInHere(page, { remember = true, expectList = true, account = secrets } = {}) {
   const credentials = page.locator('[data-role="credentials"]');
   const unlock = page.locator('[data-role="unlock"][data-mode="remembered"]');
   await expect(credentials.or(unlock)).toBeVisible({ timeout: 20_000 });
   if (await unlock.isVisible()) {
-    await expect(unlock.locator('[data-role="remembered-email"]')).toHaveValue(secrets.email);
-    await unlock.locator('[data-role="password"]').fill(secrets.password);
+    await expect(unlock.locator('[data-role="remembered-email"]')).toHaveValue(account.email);
+    await unlock.locator('[data-role="password"]').fill(account.password);
     await untilStartAccepted(
       page.context(),
       async () => {
@@ -452,22 +453,22 @@ export async function signInHere(page, { remember = true, expectList = true } = 
     if (expectList) await arriveAtList(page);
     return;
   }
-  await page.locator('[data-role="email"]').fill(secrets.email);
+  await page.locator('[data-role="email"]').fill(account.email);
   await page.locator('[data-role="email"]').blur();
-  await page.locator('[data-role="password"]').fill(secrets.password);
+  await page.locator('[data-role="password"]').fill(account.password);
   const question = page.locator('[data-role="sk-question"]');
   // The question is shown when this browser has never seen the account.
   await expect.poll(async () => (await question.isVisible()) || (await page.locator('[data-role="sk-remembered"]').isVisible()) || (await page.locator('[data-role="sk-code"]').isVisible()), { timeout: 15_000 }).toBe(true);
   if (await question.isVisible()) {
     await page.locator('[data-role="sk-yes"]').check();
-    await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+    await page.locator('[data-role="sk-code"]').fill(account.secretKey);
     const keep = page.locator('[data-role="remember"]');
     if (await keep.isVisible()) {
       if (remember) await keep.check();
       else await keep.uncheck();
     }
   } else if (await page.locator('[data-role="sk-code"]').isVisible()) {
-    await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+    await page.locator('[data-role="sk-code"]').fill(account.secretKey);
   }
   // The server's limit counts the starts of earlier phases too, which this process does not know of: see untilStartAccepted.
   await untilStartAccepted(

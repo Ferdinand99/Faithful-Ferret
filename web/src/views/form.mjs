@@ -86,9 +86,9 @@ export function busyState({ root, status, controls, t, key = "account.busy" }) {
 
 /** The codes the pages have a text for (`account.error.<code>`). */
 export const KNOWN_ERRORS = Object.freeze([
-  "admin_unconfigured", "bad_response", "checksum", "decrypt", "denied", "email_required", "epoch_mismatch",
+  "admin_only", "admin_unconfigured", "bad_response", "checksum", "decrypt", "denied", "email_required", "email_taken", "epoch_mismatch",
   "forbidden", "forbidden_origin", "handoff_invalid", "ids_changed", "input_forbidden_character", "input_not_utf8",
-  "input_too_long", "input_too_short", "insecure_transport", "kdf_profile_downgrade", "kdf_profile_unknown",
+  "input_too_long", "input_too_short", "insecure_transport", "invite_invalid", "kdf_profile_downgrade", "kdf_profile_unknown",
   "malformed_code", "method_list_changed", "method_list_missing", "method_list_unknown", "methods_invalid", "network",
   "non_canonical", "not_confirmed", "password_mismatch", "password_required", "pin_save_failed", "pinned_account_id", "pinned_account_mismatch",
   "pinned_auth_key", "pinned_epoch_ahead", "pinned_epoch_downgrade", "pinned_floor_downgrade", "pinned_floor_missing", "pinned_identity_changed",

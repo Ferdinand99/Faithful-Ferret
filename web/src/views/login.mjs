@@ -50,7 +50,7 @@ import { unlockView } from "./unlock.mjs";
  * @property {typeof forgetServer} [forget] the flow behind that button (the real one by default)
  * @property {(path: string) => void} go
  * @property {{ completeHandoff: (options: any) => Promise<void>, goToAdmin: (options: any) => Promise<void> }} handoff
- * @property {{ accountId: string, email: string } | null} info the vault session found when the page was opened
+ * @property {{ accountId: string, email: string, admin?: boolean } | null} info the vault session found when the page was opened (`admin`: an administrator, offered the admin pages)
  * @property {boolean} [reauth] the page is `/vault/reauth`
  * @property {import("./unlock.mjs").FindRestoreNote} [restoreNote] finds the local note about an accepted restore; asked only after a refusal about an older unlock method, and it only picks the text
  * @property {import("./unlock.mjs").ClearRestoreNote} [clearRestoreNote] removes that note after a successful sign-in or unlock
@@ -199,7 +199,13 @@ export function loginView(deps) {
     if (request === null) throw new AccountError("handoff_invalid");
     if (adminUrl === null) throw new AccountError("admin_unconfigured");
     if (request.purpose === "reauth" && !session.freshReauth()) throw new AccountError("reauth_not_fresh");
-    await handoff.completeHandoff({ api, challenge: request.challenge, next: request.next, purpose: request.purpose, adminUrl });
+    try {
+      await handoff.completeHandoff({ api, challenge: request.challenge, next: request.next, purpose: request.purpose, adminUrl });
+    } catch (error) {
+      // The server hands a session over to administrators only (an invited account is not one).
+      if (codeOf(error) === "forbidden") throw new AccountError("admin_only");
+      throw error;
+    }
   }
 
   /** @param {() => Promise<void>} work @param {any[]} controls @param {HTMLElement} form */
@@ -421,7 +427,8 @@ export function loginView(deps) {
     const buttons = [];
     if (open) buttons.push(action("account.signedin.open", "open-vault", async () => go("/")));
     if (entry.handoff !== null) buttons.push(action("account.signedin.continue_admin", "continue-admin", continueHandoff));
-    else if (adminUrl !== null) {
+    else if (adminUrl !== null && info?.admin === true) {
+      // Only for an administrator: the server refuses to hand anyone else over.
       buttons.push(action("account.signedin.admin", "admin", () => handoff.goToAdmin({ adminUrl, next: ADMIN_LANDING, purpose: "login" })));
     }
     if (open) {
