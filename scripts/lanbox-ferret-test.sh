@@ -84,10 +84,12 @@
 #                                          runs the published image of the tag (FERRET_IMAGE_REPO, default
 #                                          ghcr.io/ferdinand99/faithful-ferret) by digest, refused unless its revision is
 #                                          the commit of the tag and its version, cargo features and WebAssembly package are
-#                                          a release's; its signature is checked with cosign when cosign is installed here,
-#                                          or in a container of FERRET_COSIGN_IMAGE (an image of cosign 3, as the release
-#                                          workflow signs with, pinned by digest), and the run says openly when it was not
-#                                          checked. In Chromium: the first half of the scenarios
+#                                          a release's; its signature is checked with cosign 3 or newer (the release
+#                                          workflow signs with cosign 3, and cosign 2 finds no signature): the cosign
+#                                          installed here when it is 3 or newer, else a container of FERRET_COSIGN_IMAGE
+#                                          (pinned by digest, and refused unless it is cosign 3 or newer); an older cosign
+#                                          here with no such image is refused, and so is no cosign at all unless
+#                                          FERRET_UPGRADE_NO_COSIGN=1 says openly that the signature is not checked. In Chromium: the first half of the scenarios
 #                                          (web/test/e2e-stack/phase-upgrade-before.spec.mjs: an account with everything in
 #                                          it), a backup set made by the release, the app's image swapped for a release build
 #                                          of this checkout (the cargo features of a release, no test feature, the locked
@@ -1187,6 +1189,36 @@ upgrade_left() { # output, name
   printf '%s\n' "$1" | awk -v n="$2" '$0 == n { getline; print; exit }'
 }
 
+# The major version of cosign in the output of `cosign version` on stdin (the text form `GitVersion: v3.0.2` or the
+# JSON form `"gitVersion": "v3.0.2"`), or nothing.
+upgrade_cosign_major() {
+  sed -n -e 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' \
+    -e 's/.*"gitVersion"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' | head -n 1 || true
+}
+
+# Which cosign checks the signature of the release image, decided before anything is pulled. The release workflow signs
+# with cosign 3, and cosign 2 finds no signature on those images, so it must be cosign 3 or newer, as
+# `scripts/ferret-home.sh up` requires: the cosign here when it is, else a container of FERRET_COSIGN_IMAGE (pinned by
+# digest; its version is checked before it verifies). An older cosign here with no such image is refused, and so is no
+# cosign at all unless FERRET_UPGRADE_NO_COSIGN=1 says openly that the signature is not checked.
+upgrade_cosign=""
+upgrade_require_cosign() {
+  local major=""
+  if command -v cosign > /dev/null 2>&1; then major="$( (cosign version 2>&1 || true) | upgrade_cosign_major)"; fi
+  if [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -ge 3 ]; then
+    upgrade_cosign=local
+  elif [ -n "${FERRET_COSIGN_IMAGE:-}" ]; then
+    [[ "$FERRET_COSIGN_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || upgrade_refuse "FERRET_COSIGN_IMAGE must be pinned by digest (…@sha256:<64 hex>)"
+    upgrade_cosign=image
+  elif command -v cosign > /dev/null 2>&1; then
+    upgrade_refuse "the cosign here is ${major:-of a version that cannot be read}, but cosign 3 or newer is needed to check the signature (the release images are signed with cosign 3, and cosign 2 finds no signature on them); install cosign 3, or set FERRET_COSIGN_IMAGE to an image of cosign 3 pinned by digest"
+  elif [ "${FERRET_UPGRADE_NO_COSIGN:-}" = 1 ]; then
+    upgrade_cosign=none
+  else
+    upgrade_refuse "no cosign here and no FERRET_COSIGN_IMAGE, so the signature of the release image cannot be checked; install cosign 3, set FERRET_COSIGN_IMAGE to an image of cosign 3 pinned by digest, or say so openly with FERRET_UPGRADE_NO_COSIGN=1"
+  fi
+}
+
 # The release image of the tag, pulled and checked; sets upgrade_release to its digest reference.
 upgrade_release_image() { # tag, commit of the tag
   local tag="$1" commit="$2" version="${1#v}" ref info cosign_state=verified
@@ -1196,22 +1228,31 @@ upgrade_release_image() { # tag, commit of the tag
   dk pull -q "$ref" > /dev/null || upgrade_refuse "could not pull $ref"
   upgrade_release="$(dk image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep -E "^${upgrade_repo//./\\.}@sha256:[0-9a-f]{64}$" | head -n 1 || true)"
   [ -n "$upgrade_release" ] || upgrade_refuse "the pulled image has no digest of $upgrade_repo"
-  if command -v cosign > /dev/null 2>&1; then
-    cosign verify "$upgrade_release" --certificate-identity-regexp "$identity" \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
-      || upgrade_refuse "the signature of $upgrade_release is not good"
-  elif [ -n "${FERRET_COSIGN_IMAGE:-}" ]; then
-    [[ "$FERRET_COSIGN_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || upgrade_refuse "FERRET_COSIGN_IMAGE must be pinned by digest (…@sha256:<64 hex>)"
-    dk run --rm --name "$e2e_project-cosign" --label "$e2e_label" "${e2e_dev_labels[@]}" --network bridge \
-      --read-only --cap-drop ALL --security-opt no-new-privileges:true --memory 256m --tmpfs /tmp:size=64m -e HOME=/tmp \
-      "$FERRET_COSIGN_IMAGE" verify "$upgrade_release" --certificate-identity-regexp "$identity" \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
-      || upgrade_refuse "the signature of $upgrade_release is not good"
-  else
-    cosign_state=SKIPPED
-    echo "upgrade-drill: WARNING: the signature of the release image was NOT checked (no cosign here and no FERRET_COSIGN_IMAGE);" >&2
-    echo "upgrade-drill: the checks below read labels of a tag that anyone with write access to the registry can move." >&2
-  fi
+  case "$upgrade_cosign" in
+    local)
+      cosign verify "$upgrade_release" --certificate-identity-regexp "$identity" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
+        || upgrade_refuse "the signature of $upgrade_release is not good"
+      ;;
+    image)
+      local image_major
+      image_major="$( (dk run --rm --name "$e2e_project-cosign" --label "$e2e_label" "${e2e_dev_labels[@]}" --network none \
+        --read-only --cap-drop ALL --security-opt no-new-privileges:true --memory 256m --tmpfs /tmp:size=64m -e HOME=/tmp \
+        "$FERRET_COSIGN_IMAGE" version 2>&1 || true) | upgrade_cosign_major)"
+      [[ "$image_major" =~ ^[0-9]+$ ]] || upgrade_refuse "cannot read the version of cosign in FERRET_COSIGN_IMAGE; cosign 3 or newer is needed to check the signature"
+      [ "$image_major" -ge 3 ] || upgrade_refuse "FERRET_COSIGN_IMAGE is cosign $image_major, but cosign 3 or newer is needed: the release images are signed with cosign 3, and cosign 2 finds no signature on them"
+      dk run --rm --name "$e2e_project-cosign" --label "$e2e_label" "${e2e_dev_labels[@]}" --network bridge \
+        --read-only --cap-drop ALL --security-opt no-new-privileges:true --memory 256m --tmpfs /tmp:size=64m -e HOME=/tmp \
+        "$FERRET_COSIGN_IMAGE" verify "$upgrade_release" --certificate-identity-regexp "$identity" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \
+        || upgrade_refuse "the signature of $upgrade_release is not good"
+      ;;
+    *)
+      cosign_state=SKIPPED
+      echo "upgrade-drill: WARNING: the signature of the release image was NOT checked (FERRET_UPGRADE_NO_COSIGN=1);" >&2
+      echo "upgrade-drill: the checks below read labels of a tag that anyone with write access to the registry can move." >&2
+      ;;
+  esac
   [ "$(dk image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$upgrade_release")" = "$commit" ] \
     || upgrade_refuse "the revision of $upgrade_release is not the commit of $tag ($commit)"
   [ "$(dk image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$upgrade_release")" = "$version" ] \
@@ -1250,9 +1291,10 @@ upgrade_running_image() { dk inspect -f '{{.Image}}' "$e2e_app"; }
 
 # The swap: the candidate takes the place of the release on the same data volume, with the same settings.
 upgrade_swap() {
-  dk tag "$upgrade_candidate" "$e2e_image"
+  dk tag "$upgrade_candidate" "$e2e_image" || { echo "could not tag the candidate as the stack's image" >&2; return 1; }
   FERRET_E2E_SETUP_TOKEN="$upgrade_token" FERRET_E2E_PUSH_TOKEN="$upgrade_push" \
-    dce up -d --no-build --no-deps --force-recreate --wait "$e2e_app_service" >&2
+    dce up -d --no-build --no-deps --force-recreate --wait "$e2e_app_service" >&2 \
+    || { echo "the app did not come up healthy on the candidate" >&2; return 1; }
   [ "$(upgrade_running_image)" = "$(dk image inspect -f '{{.Id}}' "$upgrade_candidate")" ] || { echo "the app does not run the candidate" >&2; return 1; }
   echo "the app runs the candidate on the data of the release" >&2
   # The set the release made, checked by the new build (in a container of its own: the app keeps its address).
@@ -1262,19 +1304,27 @@ upgrade_swap() {
     "$upgrade_candidate" backup verify "/backups/$upgrade_set" >&2
 }
 
-# One step the first half asks for while its browser and device stay open.
+# One step the first half asks for while its browser and device stay open. Bash ignores `set -e` in every subshell
+# of a command that runs under `if`, `||` or `&&`, so the step and the first half are called as commands of their
+# own, between `set +e` and `set -e`: the subshells below then stop at the first command that fails, and the step
+# reports it (a failing `up --wait` of the swap included).
 upgrade_step() { # step
   local out rc=0
   case "$1" in
     backup)
-      out="$( (set -e; e2e_backup) 2>&1)" || rc=$?
+      out="$( (set -e; e2e_backup) 2>&1)"
+      rc=$?
       printf '%s\n' "$out" >&2
       [ "$rc" = 0 ] || return "$rc"
       upgrade_set="$(printf '%s\n' "$out" | sed -n 's/.*backup set \([A-Za-z0-9._-]*\) made.*/\1/p' | head -n 1)"
       [ -n "$upgrade_set" ] || { echo "the backup named no set" >&2; return 1; }
       printf '%s' "$upgrade_set" | dk exec -i "$e2e_playwright" sh -c "cat > /tmp/host-out-backup" > /dev/null
       ;;
-    upgrade) (set -e; upgrade_swap) || return 1 ;;
+    upgrade)
+      (set -e; upgrade_swap)
+      rc=$?
+      return "$rc"
+      ;;
     *) echo "the tests asked for a step the drill does not know: $1" >&2; return 1 ;;
   esac
 }
@@ -1283,7 +1333,7 @@ upgrade_step() { # step
 # /tmp/host-request-<step> and waits for /tmp/host-done-<step> or /tmp/host-failed-<step> (web/test/e2e-stack/support.mjs).
 upgrade_before_out=""
 upgrade_before() { # state left by the phase goes to upgrade_before_out
-  local out pid rc=0 request step
+  local out pid rc=0 request step step_rc
   out="$(mktemp)"
   (FERRET_E2E_PHASE=upgrade-before e2e_wasm_stack=release e2e_run --project=chromium phase-upgrade-before > "$out") &
   pid=$!
@@ -1298,7 +1348,11 @@ upgrade_before() { # state left by the phase goes to upgrade_before_out
       step="${request#/tmp/host-request-}"
       dk exec "$e2e_playwright" rm -f "$request" > /dev/null 2>&1 || true
       echo "== host step for the tests: $step" >&2
-      if upgrade_step "$step"; then
+      set +e
+      upgrade_step "$step"
+      step_rc=$?
+      set -e
+      if [ "$step_rc" = 0 ]; then
         dk exec "$e2e_playwright" touch "/tmp/host-done-$step" > /dev/null 2>&1 || true
       else
         echo "upgrade-drill: the host step $step failed" >&2
@@ -1332,6 +1386,7 @@ upgrade_drill() { # release tag
     lock) export FERRET_WASM_SOURCE=lock FERRET_WASM_COMMIT="" ;;
     *) upgrade_refuse "the candidate is a release build, with the locked WebAssembly package (FERRET_WASM_SOURCE=lock)" ;;
   esac
+  upgrade_require_cosign
   local commit state rc=0 after
   commit="$(git rev-parse --verify -q "refs/tags/${upgrade_tag}^{commit}")" || upgrade_refuse "$upgrade_tag is not a tag of this checkout (fetch the tags)"
   trap upgrade_cleanup EXIT
@@ -1352,7 +1407,10 @@ upgrade_drill() { # release tag
   echo "the app runs $upgrade_release; open files allowed in it: $(dk exec "$e2e_app" sh -c 'ulimit -n')" >&2
 
   echo "== the first half on the release, the backup and the swap (phase-upgrade-before)" >&2
-  upgrade_before || rc=$?
+  set +e
+  upgrade_before
+  rc=$?
+  set -e
   state="$(upgrade_left "$upgrade_before_out" state)"
   if [ "$rc" != 0 ] || [ -z "$(upgrade_left "$upgrade_before_out" upgrade-before)" ] || [ -z "$state" ]; then
     upgrade_refuse "the first half failed or did not run (exit $rc); the stack is left as it is for a look"

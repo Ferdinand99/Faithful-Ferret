@@ -37,6 +37,13 @@ services:
     # starts it, and its check of the trusted proxy address runs first.
     restart: "no"
     mem_limit: 512m
+    # Every event stream is an open connection, and the server holds up to 1 024 of them. A container
+    # starts with a soft limit of 1 024 open files on many engines, which the streams alone would use
+    # up next to the database and the listeners; 4096 leaves room for both (as on the home stack).
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 4096
     labels:
       owner: ferret-test
     # The entrypoint starts as root only to give /data to uid 1000 (chown) and
