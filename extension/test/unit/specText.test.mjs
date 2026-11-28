@@ -489,6 +489,9 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "a row of an invitation that is no longer pending, also one that \"Send again\" revoked, holds nothing and is replaced",
     "share one table of at most 64 rows, and the oldest goes first when it is full",
     "a reload or a tab the browser brings back says that the link is lost and must be opened again, with no field and no request to the server",
+    // The answer for a token of another form.
+    "a token of another form is refused as a body, `400 bad_request`",
+    "a token that is not 43 characters of base62 is refused as a body (`400 bad_request`)",
   ]) assert.ok(signIn.includes(rule), rule);
 
   // § 4.5: no key pair per user yet.
@@ -510,6 +513,7 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
   assert.ok(api.includes("the server needs a limit of open files well above 1 024: the compose file of the stack for real data sets 4096"));
   const limits = section("### 8.8 Known limits of the first sync release");
   assert.equal(limits.includes("revisit it when more users can register"), false, "the old wording is gone");
+  assert.equal(limits.includes("With one vault this is acceptable"), false, "the retention bullet no longer assumes one vault");
   for (const rule of [
     "**Several accounts** *(known limits of delivery 1, written down 2026-11-27)*",
     "**People behind one public address share its limits.**",
@@ -524,6 +528,12 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "**Few accounts give coarse shares in pre-login.**",
     "**The answer of the account log names no account**",
     "and in their encrypted copies off the machine",
+    // As fixed after the final review: the retention job with several vaults, an open tab whose profile signs in as
+    // another account, and the invitation link in the browser's own history.
+    "one failing vault makes the job look at every vault on the server every ten minutes, not only the failing one",
+    "stops its sync and locks the moment it sees that: every request of its sync engine is made only while `GET /api/auth/session` names the unlocked account, before and after the request",
+    "what it wrote stays in its outbox and goes to its own vault after the next sign-in of its account",
+    "a page cannot remove an address from the browser's own history list and address-bar suggestions",
   ]) assert.ok(limits.includes(rule), rule);
 
   // § 11: the Users page, the logging rule and its two exceptions.
@@ -545,5 +555,8 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "Making a sign-in code uses it up, as the kit's own page does, so one confirmation never makes codes for every account",
     "making or sending an invitation and enabling an account keep it",
     "the ids are SQLite row ids without `AUTOINCREMENT`, so after a restore they can go backwards",
+    // A reload of the page that shows a new link makes nothing.
+    "answers `303` to the Users page with a random slot id in the address, never the link",
+    "so a reload of the page shows the link no more and makes no second invitation",
   ]) assert.ok(server.includes(rule), rule);
 });

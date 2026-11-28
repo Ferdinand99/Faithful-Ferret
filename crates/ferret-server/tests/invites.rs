@@ -1131,14 +1131,17 @@ async fn the_invitation_token_never_reaches_the_log() {
                 .await,
         );
     }
-    // One letter short: refused as a body, and the answer does not echo it.
+    // One letter short: refused as a body (`400 bad_request`, § 4.2), and the
+    // answer does not echo it.
     let short = &good[..42];
-    answers.push(check(&app, short).await);
-    answers.push(
-        registrant("canary")
-            .start(&app, "short@example.test", Some(short))
-            .await,
-    );
+    let checked = check(&app, short).await;
+    assert_refused(&checked, StatusCode::BAD_REQUEST, "bad_request");
+    answers.push(checked);
+    let started = registrant("canary")
+        .start(&app, "short@example.test", Some(short))
+        .await;
+    assert_refused(&started, StatusCode::BAD_REQUEST, "bad_request");
+    answers.push(started);
     let registered = registrant("canary")
         .started(&app, "canary@example.test", Some(&good), false)
         .await;
