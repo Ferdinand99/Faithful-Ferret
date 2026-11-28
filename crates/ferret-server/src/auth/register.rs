@@ -45,10 +45,11 @@
 //! invitation, and the eleventh within an hour is `429 throttled`; an e-mail
 //! that has an account is `409 email_taken` (the deliberate deviation of § 4.2:
 //! only the holder of a valid invitation learns it, at that rate), and so is
-//! an e-mail that a registration of another invitation is still waiting with:
-//! one invitee never removes another's waiting row (a new start of the same
-//! invitation replaces its own earlier row, as the first administrator's
-//! does). The row keeps the SHA-256 of the token (`invite_hash`), never the
+//! an e-mail that a registration of another invitation, still pending, is
+//! waiting with: one invitee never removes another's waiting row (a new start
+//! of the same invitation replaces its own earlier row, as the first
+//! administrator's does, and a row of an invitation that was revoked, also by
+//! "send again", used or ran out holds nothing). The row keeps the SHA-256 of the token (`invite_hash`), never the
 //! token.
 //!
 //! # `finish`
@@ -389,7 +390,8 @@ enum Stored {
 /// already. With one, in this order: no user yet, or an invitation that
 /// [`invites::pending`] does not find, is `InviteInvalid`; the start is
 /// counted in `starts` at `clock` (`Throttled` past the cap); an e-mail with an
-/// account, or with a waiting row of another invitation, is `EmailTaken`. So
+/// account, or with a waiting row of another pending invitation
+/// ([`held_by_another_invitation`]), is `EmailTaken`. So
 /// the earlier row of the same login name that is removed is always one of
 /// the same invitation (or, without one, of the first administrator's setup).
 fn store_pending(
@@ -418,15 +420,7 @@ fn store_pending(
             if users::username_taken(&tx, &pending.email)? {
                 return Ok(Stored::EmailTaken);
             }
-            // A waiting row of this e-mail that another invitation made is
-            // that invitee's: the removal below would otherwise end it.
-            let held: bool = tx.query_row(
-                "SELECT EXISTS (SELECT 1 FROM ferret_registrations
-                   WHERE email = ?1 AND expires_at > ?2 AND invite_hash IS NOT ?3)",
-                params![pending.email, now, hash.as_slice()],
-                |r| r.get(0),
-            )?;
-            if held {
+            if held_by_another_invitation(&tx, &pending.email, now, hash)? {
                 return Ok(Stored::EmailTaken);
             }
         }
@@ -456,6 +450,44 @@ fn store_pending(
     )?;
     tx.commit()?;
     Ok(Stored::Done)
+}
+
+/// Whether a waiting row of `email` that has not expired at `now` belongs to
+/// another invitation than `own` that is still pending: that row is the other
+/// invitee's, and removing it (the `DELETE` of `store_pending`) would end
+/// that registration.
+///
+/// A row of an invitation that is no longer pending (revoked, also by "send
+/// again", used or run out) holds nothing: its `finish` would be refused
+/// anyway, so the new start may replace it. A row without an invitation (the
+/// first administrator's) holds nothing either: with a user on the server it
+/// can never be finished. So a hold lasts only while its invitation is
+/// pending (at most the invitation's life, and it ends at once when the
+/// administrator revokes it), and each row for at most [`PENDING_TTL_SECS`].
+fn held_by_another_invitation(
+    tx: &Connection,
+    email: &str,
+    now: i64,
+    own: &[u8; 32],
+) -> Result<bool, StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT invite_hash FROM ferret_registrations
+         WHERE email = ?1 AND expires_at > ?2 AND invite_hash IS NOT NULL AND invite_hash IS NOT ?3",
+    )?;
+    let others = stmt
+        .query_map(params![email, now, own.as_slice()], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for other in others {
+        let Ok(hash) = <[u8; 32]>::try_from(other.as_slice()) else {
+            continue;
+        };
+        if invites::pending(tx, &hash)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// A fresh 16-byte id from the operating system's generator.

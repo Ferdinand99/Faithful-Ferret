@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use axum::http::{Method, StatusCode};
 use ferret_core::testing::opaque::{TestKsf, login_finish_with};
 use ferret_core::{OPAQUE_CONTEXT, OsRng, PinState, opaque_login_start};
-use ferret_server::accounts::actions::issue_sign_in_code;
+use ferret_server::accounts::actions::{issue_sign_in_code, resend_invite};
 use ferret_server::accounts::invites::{INVITED_ROLE, InviteStarts, STARTS_PER_INVITE};
 use ferret_server::accounts::log::Actor;
 use ferret_server::auth::login;
@@ -754,6 +754,153 @@ async fn one_invitee_cannot_wipe_another_invitees_waiting_registration() {
         .await;
     app.clock.advance(601);
     let res = registrant("fourth").start(&app, late, Some(&fourth)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+/// The id of the pending invitation of `token`.
+async fn invite_id(app: &TestApp, token: &str) -> i64 {
+    let hash = vole_kit::auth::invites::hash(token);
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(vole_kit::db::invites::find_pending(conn, &hash)?
+                .expect("pending")
+                .id)
+        })
+        .await
+        .expect("an invitation")
+}
+
+/// "Send again" on the Users page for the invitation of `token`, by `admin`:
+/// the new token.
+async fn send_again(app: &TestApp, admin: i64, token: &str) -> String {
+    let id = invite_id(app, token).await;
+    let by = Actor::Admin {
+        user_id: Some(admin),
+        name: ADMIN_EMAIL.to_string(),
+    };
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(resend_invite(conn, id, &by)
+                .expect("sent again")
+                .to_string())
+        })
+        .await
+        .expect("a new link")
+}
+
+#[tokio::test]
+async fn send_again_lets_the_invitee_start_again_with_the_same_email() {
+    let (app, admin) = with_admin().await;
+    let old = invite(&app, admin).await;
+    let email = "again@example.test";
+    let first = registrant("old link")
+        .started(&app, email, Some(&old), false)
+        .await;
+
+    // The administrator sends the link again: the old one is revoked, and its
+    // waiting row holds the e-mail no longer.
+    let new = send_again(&app, admin, &old).await;
+    assert!(!is_pending(&app, &old).await);
+    let second = registrant("new link")
+        .started(&app, email, Some(&new), false)
+        .await;
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM ferret_registrations").await,
+        1,
+        "the new start replaced the old link's row"
+    );
+    let res = first.send_raw(&app).await;
+    assert_eq!(
+        (res.status, error_of(&res).as_str()),
+        (StatusCode::UNAUTHORIZED, "denied"),
+        "{}",
+        res.text()
+    );
+    let res = second.send_raw(&app).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+}
+
+#[tokio::test]
+async fn a_revoked_used_or_expired_invitation_holds_no_email() {
+    let (app, admin) = with_admin().await;
+    // Revoked: another invitation may take the e-mail at once.
+    let revoked = invite(&app, admin).await;
+    let _gone = registrant("revoked")
+        .started(&app, "one@example.test", Some(&revoked), false)
+        .await;
+    revoke(&app, &revoked).await;
+    let other = invite(&app, admin).await;
+    let res = registrant("after revoke")
+        .start(&app, "one@example.test", Some(&other))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    // Run out (the kit's wall clock): the same.
+    let expired = invite(&app, admin).await;
+    let _late = registrant("expired")
+        .started(&app, "two@example.test", Some(&expired), false)
+        .await;
+    expire(&app, &expired).await;
+    let other = invite(&app, admin).await;
+    let res = registrant("after expiry")
+        .start(&app, "two@example.test", Some(&other))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    // Used by another account: the same.
+    let used = invite(&app, admin).await;
+    let _spent = registrant("used")
+        .started(&app, "three@example.test", Some(&used), false)
+        .await;
+    let someone = add_account_to_app(&app, 7).await.user_id;
+    use_up(&app, &used, someone).await;
+    let other = invite(&app, admin).await;
+    let res = registrant("after use")
+        .start(&app, "three@example.test", Some(&other))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+#[tokio::test]
+async fn a_pending_holder_holds_an_email_only_while_its_invitation_is_pending() {
+    let (app, admin) = with_admin().await;
+    let holder = invite(&app, admin).await;
+    let other = invite(&app, admin).await;
+    let email = "held@example.test";
+    let _row = registrant("holder")
+        .started(&app, email, Some(&holder), false)
+        .await;
+    let blocked = |seed: &'static str| {
+        let app = &app;
+        let other = other.clone();
+        async move { registrant(seed).start(app, email, Some(&other)).await }
+    };
+    assert_refused(
+        &blocked("blocked 1").await,
+        StatusCode::CONFLICT,
+        "email_taken",
+    );
+
+    // The holder starts again before its row runs out: a new row of the same
+    // invitation, and the hold goes on (each start counts against the
+    // holder's ten starts an hour).
+    app.clock.advance(540);
+    let _again = registrant("holder again")
+        .started(&app, email, Some(&holder), false)
+        .await;
+    app.clock.advance(540);
+    assert_refused(
+        &blocked("blocked 2").await,
+        StatusCode::CONFLICT,
+        "email_taken",
+    );
+
+    // What ends the hold is the end of the holder's invitation: here the
+    // administrator revokes it, and the other invitation may start at once.
+    revoke(&app, &holder).await;
+    let res = blocked("free").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
 }
 
