@@ -24,6 +24,7 @@ use vole_kit::db::role::Role;
 const PATH: &str = "/settings/accounts";
 const INVITES: &str = "/settings/accounts/invites";
 const SID_COOKIE: &str = "__Host-ferret_sid";
+const REAUTH_COOKIE: &str = "__Host-ferret_reauth";
 
 // ---------------------------------------------------------------- helpers
 
@@ -608,6 +609,45 @@ async fn a_sign_in_code_needs_a_fresh_reauth_and_is_logged_for_the_user() {
     assert!(shown_code(&later).is_none());
     assert!(!later.contains(code.as_str()));
     assert!(column(row_of(&later, user), "code").contains("Sign-in code until"));
+}
+
+#[tokio::test]
+async fn a_sign_in_code_uses_the_confirmation_up() {
+    let (app, _admin, vault) = confirmed_admin().await;
+    let first = add_account_to_app(&app, 7).await.user_id;
+    let second = add_account_to_app(&app, 8).await.user_id;
+    let res = post(&app, &format!("/settings/accounts/{first}/sign-in-code")).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert!(shown_code(&res.text()).is_some());
+    // The answer removes the grant, and the page it shows asks again.
+    let removed = set_cookie(&res, REAUTH_COOKIE).expect("the grant is removed");
+    assert!(
+        removed.starts_with(&format!("{REAUTH_COOKIE}=;")) || removed.contains("Max-Age=0"),
+        "{removed}"
+    );
+    assert!(app.jar(Which::Admin).get(REAUTH_COOKIE).is_none());
+    assert!(
+        res.text()
+            .contains("href=\"/vault/reauth?next=%2Fsettings%2Faccounts\"")
+    );
+
+    // A second code, for another account, needs a new confirmation.
+    let res = post(&app, &format!("/settings/accounts/{second}/sign-in-code")).await;
+    assert_back(&res);
+    assert_eq!(pending_code(&app, second).await, 0);
+    assert!(events_of(&app, second).await.is_empty());
+    // A new confirmation makes it.
+    confirm(&app, &vault).await;
+    let res = post(&app, &format!("/settings/accounts/{second}/sign-in-code")).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(pending_code(&app, second).await, 1);
+    // That code used the new confirmation up too; an invitation, once
+    // confirmed again, keeps it (two in a row): only a code spends it.
+    let res = post(&app, INVITES).await;
+    assert_back(&res);
+    confirm(&app, &vault).await;
+    assert_eq!(post(&app, INVITES).await.status, StatusCode::OK);
+    assert_eq!(post(&app, INVITES).await.status, StatusCode::OK);
 }
 
 #[tokio::test]

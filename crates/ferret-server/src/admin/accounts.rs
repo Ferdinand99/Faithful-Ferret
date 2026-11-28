@@ -18,7 +18,9 @@
 //!   access, so they need a fresh confirmation of the master password: the
 //!   kit's re-auth grant, given by a `reauth` hand-over from the vault origin
 //!   ("Confirm it's you" leads to `/vault/reauth?next=/settings/accounts`).
-//!   Revoking an invitation takes access away and needs none.
+//!   Revoking an invitation takes access away and needs none. A sign-in code
+//!   is a way into an account, so making one uses the grant up (as the kit's
+//!   own page does): the next code needs a new confirmation.
 //! * No action works on the administrator's own account or on another
 //!   administrator (`403`); the rules are `accounts::actions::target`, asked
 //!   again inside the write.
@@ -406,7 +408,9 @@ async fn sign_in_code(
         code,
         recover: recover_location(&state.origins),
     });
-    let jar = flash(jar, "success", i18n::t("accounts.code_made"));
+    // A way into an account: the confirmation is used up, as on the kit's own
+    // page, so the next code needs a new one.
+    let jar = flash(reauth::clear(jar), "success", i18n::t("accounts.code_made"));
     render(&state, &user, jar, Some(shown)).await
 }
 
