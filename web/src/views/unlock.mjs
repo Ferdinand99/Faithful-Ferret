@@ -445,15 +445,23 @@ export function unlockView({ session, t, go, email, accountId, skRequired, passk
  *   restoreNote?: FindRestoreNote,
  *   clearRestoreNote?: ClearRestoreNote,
  *   locale?: string,
+ *   notice?: string,
  * }} options
+ *   `notice`: a text shown above the screen, whatever it turns out to be (the vault was locked because the browser's
+ *   session is another account's now)
  */
-export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale }) {
+export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRestoreNote, locale, notice }) {
+  const noticeNode = typeof notice === "string" && notice !== ""
+    ? el("p", { class: "banner banner-error", role: "alert", "data-role": "session-other-account" }, notice)
+    : null;
+  /** @param {HTMLElement} node */
+  const show = (node) => (noticeNode === null ? mount(box, node) : mount(box, noticeNode, node));
   const box = el("div", { class: "unlock-host vault-ui", "data-role": "unlock-host" },
-    el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading"))));
+    ...[noticeNode, el("section", { class: "auth-card", role: "status", "data-role": "unlock-loading" }, el("p", null, t("vault.loading")))].filter((node) => node !== null));
   prepareUnlock(session, { passkey: false }).then(
     (found) => {
       if (found.signedIn === false && found.remembered !== true) {
-        mount(box, el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" },
+        show(el("section", { class: "auth-card unlock vault-ui", "data-role": "unlock" },
           el("h1", null, t("vault.unlock.heading")),
           el("p", { role: "alert" }, t("account.error.session_ended")),
           el("p", null, el("a", { href: "#/login" }, t("vault.unlock.sign_in")))));
@@ -465,7 +473,7 @@ export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRes
         remembered: found.signedIn === false,
         onUnlocked, restoreNote, clearRestoreNote, locale,
       });
-      mount(box, view);
+      show(view);
       // The page is drawn first; the button comes when the three reads of the offer are done (a failed read is no offer).
       if (found.signedIn === true && typeof session.preparePasskeyUnlock === "function") {
         Promise.resolve().then(() => session.preparePasskeyUnlock?.()).then(
@@ -475,7 +483,7 @@ export function unlockScreen({ session, t, go, onUnlocked, restoreNote, clearRes
       }
     },
     (error) => {
-      mount(box, el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },
+      show(el("section", { class: "auth-card", role: "alert", "data-role": "unlock-error" },
         el("p", null, unlockErrorText(t, error))));
     },
   );

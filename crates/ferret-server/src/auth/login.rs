@@ -113,6 +113,7 @@ use serde::de::DeserializeOwned;
 use vole_kit::auth::reauth;
 use vole_kit::db::{sign_in_codes, users};
 
+use crate::accounts::log::{self, Actor, EventKind};
 use crate::auth::device_login;
 use crate::auth::session::{
     ADMIN_ABSOLUTE_SECS, ADMIN_IDLE_SECS, Origin, REAUTH_SECS, RESET_SESSION_ABSOLUTE_SECS,
@@ -640,8 +641,16 @@ pub fn spawn_refresh_every(
     });
 }
 
-/// One round of the background work. A failure keeps the policy as it was.
-pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: &dyn Clock) {
+/// One renewal at a time, in the whole process: each reads the accounts and
+/// the stored buckets and may write the buckets, so two that overlapped could
+/// leave an older policy in place after a newer one. Renewals are rare and
+/// short, so one lock for every server in the process costs nothing.
+static RENEWAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Renews the policy in `policy` from the accounts in the database. A failure
+/// keeps the policy as it was.
+async fn renew_policy(db: &VaultDb, policy: &RwLock<PreloginPolicy>) {
+    let _one_at_a_time = RENEWAL.lock().await;
     match db
         .with_conn(|conn| Ok(try_load_prelogin_policy(conn)))
         .await
@@ -652,6 +661,22 @@ pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: 
         Ok(Err(error)) => tracing::warn!(%error, "the pre-login policy was not renewed"),
         Err(error) => tracing::warn!(%error, "the pre-login policy was not renewed"),
     }
+}
+
+/// Renews the pre-login policy now, as one round of [`refresh_once`] does but
+/// without its clean-up of old sessions. Called after a change to the
+/// accounts has committed (a new account, a disable, an enable, a deletion),
+/// so the made-up answers follow the accounts at once and not at the next
+/// round. A failure keeps the policy as it was and is logged.
+///
+/// Spec: Fase 1 § 4.2 ("Pre-login with several accounts").
+pub async fn refresh_policy_now(state: &FerretState) {
+    renew_policy(&state.vault_db, &state.prelogin).await;
+}
+
+/// One round of the background work. A failure keeps the policy as it was.
+pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: &dyn Clock) {
+    renew_policy(db, policy).await;
     let Ok(now) = i64::try_from(clock.now_unix()) else {
         return;
     };
@@ -1132,6 +1157,7 @@ async fn login_finish_route(
                     device,
                     device_name: &device_name,
                     now,
+                    event: None,
                 },
                 Some((proven.account, verified.record)),
             )
@@ -1182,6 +1208,9 @@ enum Opened {
     /// The account's record is not the one the proof was checked against: a
     /// new master password or a recovery committed after the library read it.
     RecordChanged,
+    /// The event of the session could not be written to the account log, so
+    /// the transaction was rolled back and no session exists.
+    NotLogged,
 }
 
 /// Opens a session for `user_id` on `origin` with `scope`, after a proof (an
@@ -1206,6 +1235,10 @@ enum Opened {
 /// After the commit, the ended session is announced (`session_revoked`), so
 /// its event stream closes at once.
 ///
+/// With `event`, that event is written to the user's account log (actor
+/// `account`) in the same transaction; if it cannot be written, the
+/// transaction is rolled back and the answer is `401 denied`, with no session.
+///
 /// This form checks no OPAQUE record: it is only for a session that no
 /// OPAQUE proof backs (a redeemed sign-in code). A session issued after
 /// `login_finish` must go through `open_session_proven` with the account and
@@ -1226,6 +1259,7 @@ pub(crate) async fn open_session(
     device: DeviceId,
     device_name: &str,
     now: i64,
+    event: Option<EventKind>,
 ) -> Result<(SignedCookieJar, SidHash), ApiError> {
     let new = NewSession {
         user_id,
@@ -1235,6 +1269,7 @@ pub(crate) async fn open_session(
         device,
         device_name,
         now,
+        event,
     };
     open_session_proven(state, jar, &new, None).await
 }
@@ -1248,6 +1283,8 @@ struct NewSession<'a> {
     device: DeviceId,
     device_name: &'a str,
     now: i64,
+    /// The event to write to the account log with the session.
+    event: Option<EventKind>,
 }
 
 /// [`open_session`] after an OPAQUE proof: `proven` is the account and the
@@ -1261,13 +1298,14 @@ async fn open_session_proven(
 ) -> Result<(SignedCookieJar, SidHash), ApiError> {
     let presented = presented_sid(&jar);
     let device_name = new.device_name.to_string();
-    let (user_id, origin, scope, session_version, device, now) = (
+    let (user_id, origin, scope, session_version, device, now, event) = (
         new.user_id,
         new.origin,
         new.scope,
         new.session_version,
         new.device,
         new.now,
+        new.event,
     );
     let opened = state
         .vault_db
@@ -1283,6 +1321,7 @@ async fn open_session_proven(
                     device_name: &device_name,
                     now,
                     proven,
+                    event,
                 },
                 presented,
             )
@@ -1312,6 +1351,9 @@ async fn open_session_proven(
         Opened::RecordChanged => {
             return Err(auth_refusal(AuthError::Denied(DenyReason::RecordChanged)));
         }
+        Opened::NotLogged => {
+            return Err(auth_refusal(AuthError::Denied(DenyReason::StateInvalid)));
+        }
     };
     let secure = match origin {
         Origin::Vault => state.origins.vault_is_https(),
@@ -1335,6 +1377,8 @@ struct NewRow<'a> {
     /// The account and the record of an OPAQUE proof, checked against the
     /// account's record in the transaction.
     proven: Option<(AccountId, RecordBinding)>,
+    /// The event to write to the account log in the transaction.
+    event: Option<EventKind>,
 }
 
 /// The database side of [`open_session`], in one write transaction.
@@ -1391,6 +1435,18 @@ fn open_session_tx(
         new.scope,
     );
     insert_session(&tx, &session)?;
+    // The event commits with the session or not at all: on a failure the
+    // transaction is dropped (rolled back) and no session exists.
+    if let Some(kind) = new.event
+        && let Err(error) = log::record(&tx, new.user_id, kind, &Actor::Account, new.now)
+    {
+        tracing::error!(
+            user_id = new.user_id,
+            %error,
+            "the account log could not be written: no session was opened"
+        );
+        return Ok(Opened::NotLogged);
+    }
     // The browser's cookies are replaced by the new ones, so the row they
     // named would be left live and unreachable; it ends here, for any user.
     let mut ended = None;

@@ -292,6 +292,39 @@ const deviceList = withInner((v) => {
   list(deviceRow)(v);
 }, deviceRow, true);
 
+/** The length of an invitation token: the kit's token, 43 characters of base62. */
+export const INVITE_CHARS = 43;
+/** The most events in one page of the account log. */
+export const MAX_EVENTS_PAGE = 100;
+/** The most characters of an administrator's e-mail in the account log and in the check of an invitation. */
+const MAX_ACTOR_NAME = 254;
+
+/** An invitation token: exactly 43 characters of base62 (0-9, A-Z, a-z). @type {Check} */
+const inviteToken = (v) => {
+  str(v);
+  if (!/^[0-9A-Za-z]{43}$/.test(v)) refuse("an invitation token is 43 characters of base62");
+};
+/** An administrator's e-mail, or `""`: at most 254 characters (code points, as the server counts). @type {Check} */
+const actorName = (v) => {
+  str(v);
+  if ([...v].length > MAX_ACTOR_NAME) refuse("a name has at most 254 characters");
+};
+/** The kind of an event: 1 to 64 characters of a-z and `_`; the set is open (a later kind is "another event"). @type {Check} */
+const eventKind = (v) => {
+  str(v);
+  if (!/^[a-z_]{1,64}$/.test(v)) refuse("an event kind is 1 to 64 characters of a-z and _");
+};
+/** One event of the account log. @type {Spec} */
+const accountEvent = [
+  ["id", int()], ["at", int()], ["kind", eventKind],
+  ["actor", oneOf("admin", "server_command", "server", "account")], ["actor_name", actorName],
+];
+/** A page of the account log: at most {@link MAX_EVENTS_PAGE} events, checked when it is read. @type {Check} */
+const eventList = withInner((v) => {
+  if (Array.isArray(v) && v.length > MAX_EVENTS_PAGE) refuse("a page of the account log has at most 100 events");
+  list(accountEvent)(v);
+}, accountEvent, true);
+
 /** One operation of a batch: a put request with the item id in the body. @type {Spec} */
 const batchOp = [
   ["id", id], ["base_rev", int()], ["blob", b, true], ["tag", b32, true], ["deleted", bool, true],
@@ -420,6 +453,14 @@ export const SHAPES = Object.freeze({
   token_revoke_req: [["refresh_token", token]],
   devices_res: [["devices", deviceList], ["more", int(U32), true]],
   revoke_all_res: [["revoked", int(U32)]],
+  // Several accounts. A later account registers with an invitation instead of the setup token (never both), and
+  // checks the link before it chooses a master password; each account reads its own log.
+  register_start_req_invite: [
+    ["invite", inviteToken], ["email", str], ["request", bytes(32, "malformed_registration_request")],
+  ],
+  invite_check_req: [["invite", inviteToken]],
+  invite_check_res: [["expires_at", int()], ["invited_by", actorName]],
+  account_events_res: [["events", eventList], ["more", bool]],
 });
 
 /**
@@ -542,6 +583,7 @@ export const ERROR_STATUS = Object.freeze({
   restore_epoch_changed: 409, reauth_required: 403, second_factor_required: 403, write_conflict: 409,
   import_window_open: 409, import_window_invalid: 409,
   dpop_invalid: 401, token_expired: 401, token_reused: 401, device_revoked: 401,
+  invite_invalid: 403, email_taken: 409,
 });
 
 /**

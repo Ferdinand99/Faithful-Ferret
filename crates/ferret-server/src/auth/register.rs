@@ -1,14 +1,19 @@
 //! Registration: `POST /api/auth/opaque/register/{start,finish}` (vault
 //! listener only). Spec: Fase 1 § 4.2 ("Registrering") and § 6.1.
 //!
-//! In this version only the first administrator registers: the kit's setup
-//! token opens the door, and a server that has a user refuses a `start` with
-//! `409 registration_closed`. A `finish` whose waiting row is gone (expired,
-//! already used, or removed when the first administrator was made) is
-//! `401 denied`, the same answer as for an id that never existed: `finish` has
-//! no setup token, so a 409 there would tell anyone with a made-up id whether
-//! the server is set up. Only a `finish` that still holds its row when the
-//! first administrator already exists gets the 409.
+//! Two kinds of new account register here. The first administrator comes
+//! with the kit's setup token, and a server that has a user refuses a `start`
+//! without an invitation with `409 registration_closed`; that path, its
+//! answers and its wire forms are as they were before invitations. Every later
+//! account comes with an invitation (`invite`, `accounts::invites`) and gets
+//! the role `viewer`. A body with both is `400 bad_request`.
+//!
+//! A `finish` whose waiting row is gone (expired, already used, or removed when
+//! the first administrator was made) is `401 denied`, the same answer as for an
+//! id that never existed: `finish` has no setup token, so a 409 there would tell
+//! anyone with a made-up id whether the server is set up. Only a `finish` of the
+//! first administrator that still holds its row when a user already exists gets
+//! the 409.
 //!
 //! # `start`
 //!
@@ -31,6 +36,22 @@
 //!    in `ferret_registrations` (ten minutes, one per login name), so a request
 //!    the throttle refused leaves nothing behind.
 //!
+//! With an invitation, step 2 checks no setup token (the invitation token's
+//! form is checked when the body is read: 43 characters of base62), and the
+//! row is made in one `BEGIN IMMEDIATE` transaction that checks, in this order:
+//! a server with no user refuses every invitation (`403 invite_invalid`); the
+//! invitation must be pending and of the role `viewer` (`403 invite_invalid`,
+//! the same answer for every reason); the start is counted against that
+//! invitation, and the eleventh within an hour is `429 throttled`; an e-mail
+//! that has an account is `409 email_taken` (the deliberate deviation of § 4.2:
+//! only the holder of a valid invitation learns it, at that rate), and so is
+//! an e-mail that a registration of another invitation, still pending, is
+//! waiting with: one invitee never removes another's waiting row (a new start
+//! of the same invitation replaces its own earlier row, as the first
+//! administrator's does, and a row of an invitation that was revoked, also by
+//! "send again", used or ran out holds nothing). The row keeps the SHA-256 of
+//! the token (`invite_hash`), never the token.
+//!
 //! # `finish`
 //!
 //! 1. The row is taken atomically: a registration id is good for one try, and
@@ -47,6 +68,17 @@
 //!    registrations that were still waiting are removed in the same
 //!    transaction: no further registration is possible, and the rows hold login
 //!    names.
+//!
+//! With an invitation, step 3 is instead: one transaction makes the kit user
+//! (role `viewer`, the kit's external password marker), spends the invitation
+//! with the kit's `consume` (a revoked, used or expired one is
+//! `403 invite_invalid` and nothing is written), writes the account, its vault
+//! and the session, and the event `account_created` in the new account's log
+//! (actor `admin`, the e-mail of the administrator who made the invitation, or
+//! `""` when that account is gone). An e-mail that got an account between the
+//! two steps is `409 email_taken`. The other waiting rows stay. After either
+//! kind of account the pre-login policy is renewed at once
+//! (`login::refresh_policy_now`).
 //!
 //! # `reregister/start`
 //!
@@ -107,6 +139,9 @@ use vole_kit::auth::session::{SessionClaims, required_setup_token};
 use vole_kit::auth::{reauth, username_problem};
 use vole_kit::db::{settings, users};
 
+use crate::accounts::invites::{self, INVITED_ROLE, InviteStarts};
+use crate::accounts::log::{self, Actor, EventKind};
+use crate::auth::login::refresh_policy_now;
 use crate::auth::session::{Origin, insert_session, new_session, session_cookies};
 use crate::auth::throttle::caller_from;
 use crate::error::{ApiError, StoreError};
@@ -322,6 +357,9 @@ pub(crate) struct Pending {
     pub(crate) vault_id: [u8; 16],
     /// The normalized login name.
     pub(crate) email: String,
+    /// The SHA-256 of the invitation token, for an invited registration;
+    /// `None` for the first administrator.
+    pub(crate) invite_hash: Option<[u8; 32]>,
 }
 
 impl fmt::Debug for Pending {
@@ -333,23 +371,59 @@ impl fmt::Debug for Pending {
 /// What making the row came to.
 enum Stored {
     Done,
+    /// No invitation, and the server has a user.
     Closed,
+    /// The invitation does not count (or the server has no user yet).
+    InviteInvalid,
+    /// The invitation made its starts of the hour; wait this many seconds.
+    Throttled(u32),
+    /// The e-mail has an account, or a waiting row of another invitation (told
+    /// only with a valid invitation).
+    EmailTaken,
 }
 
 /// Makes the row of a registration. Rows that expired are removed first, then
 /// any earlier row of the same login name, then the oldest rows beyond the
-/// limit. Refused (`Closed`) when the server has a user already.
+/// limit.
+///
+/// Without an invitation it is refused (`Closed`) when the server has a user
+/// already. With one, in this order: no user yet, or an invitation that
+/// [`invites::pending`] does not find, is `InviteInvalid`; the start is
+/// counted in `starts` at `clock` (`Throttled` past the cap); an e-mail with an
+/// account, or with a waiting row of another pending invitation
+/// ([`held_by_another_invitation`]), is `EmailTaken`. So
+/// the earlier row of the same login name that is removed is always one of
+/// the same invitation (or, without one, of the first administrator's setup).
 fn store_pending(
     conn: &mut Connection,
     registration_id: [u8; 16],
     pending: &Pending,
-    now: i64,
+    (now, clock): (i64, u64),
     expires_at: i64,
+    starts: &InviteStarts,
 ) -> Result<Stored, StoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let has_users: bool = tx.query_row("SELECT EXISTS (SELECT 1 FROM users)", [], |r| r.get(0))?;
-    if has_users {
-        return Ok(Stored::Closed);
+    match &pending.invite_hash {
+        None if has_users => return Ok(Stored::Closed),
+        None => {}
+        Some(_) if !has_users => return Ok(Stored::InviteInvalid),
+        Some(hash) => {
+            if invites::pending(&tx, hash)?.is_none() {
+                return Ok(Stored::InviteInvalid);
+            }
+            // Only an invitation that was found is counted: a made-up token
+            // never enters the count.
+            if let Err(wait) = starts.admit(hash, clock) {
+                return Ok(Stored::Throttled(wait.secs()));
+            }
+            if users::username_taken(&tx, &pending.email)? {
+                return Ok(Stored::EmailTaken);
+            }
+            if held_by_another_invitation(&tx, &pending.email, now, hash)? {
+                return Ok(Stored::EmailTaken);
+            }
+        }
     }
     tx.execute(
         "DELETE FROM ferret_registrations WHERE expires_at <= ?1 OR email = ?2",
@@ -362,18 +436,58 @@ fn store_pending(
         params![MAX_PENDING.saturating_sub(1)],
     )?;
     tx.execute(
-        "INSERT INTO ferret_registrations (registration_id, account_id, vault_id, email, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO ferret_registrations
+           (registration_id, account_id, vault_id, email, expires_at, invite_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             registration_id.as_slice(),
             pending.account_id.as_slice(),
             pending.vault_id.as_slice(),
             pending.email,
             expires_at,
+            pending.invite_hash.as_ref().map(<[u8; 32]>::as_slice),
         ],
     )?;
     tx.commit()?;
     Ok(Stored::Done)
+}
+
+/// Whether a waiting row of `email` that has not expired at `now` belongs to
+/// another invitation than `own` that is still pending: that row is the other
+/// invitee's, and removing it (the `DELETE` of `store_pending`) would end
+/// that registration.
+///
+/// A row of an invitation that is no longer pending (revoked, also by "send
+/// again", used or run out) holds nothing: its `finish` would be refused
+/// anyway, so the new start may replace it. A row without an invitation (the
+/// first administrator's) holds nothing either: with a user on the server it
+/// can never be finished. So a hold lasts only while its invitation is
+/// pending (at most the invitation's life, and it ends at once when the
+/// administrator revokes it), and each row for at most [`PENDING_TTL_SECS`].
+fn held_by_another_invitation(
+    tx: &Connection,
+    email: &str,
+    now: i64,
+    own: &[u8; 32],
+) -> Result<bool, StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT invite_hash FROM ferret_registrations
+         WHERE email = ?1 AND expires_at > ?2 AND invite_hash IS NOT NULL AND invite_hash IS NOT ?3",
+    )?;
+    let others = stmt
+        .query_map(params![email, now, own.as_slice()], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for other in others {
+        let Ok(hash) = <[u8; 32]>::try_from(other.as_slice()) else {
+            continue;
+        };
+        if invites::pending(tx, &hash)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// A fresh 16-byte id from the operating system's generator.
@@ -397,8 +511,20 @@ async fn register_start(
     let headers = request.headers().clone();
     require_transport(&state, &headers, peer)?;
     let ApiJson(req) = ApiJson::<RegisterStartReq>::from_request(request, &state).await?;
+    // An invitation or the setup token, never both.
+    if req.setup_token.is_some() && req.invite.is_some() {
+        return Err(ApiError::coded("bad_request"));
+    }
     let email = login_name(&req.email)?;
-    check_token(&state, &headers, peer, req.setup_token.as_deref())?;
+    // Only the hash of an invitation token is kept; the token is zeroed with
+    // the request.
+    let invite_hash = req
+        .invite
+        .as_ref()
+        .map(|token| vole_kit::auth::invites::hash(token.as_str()));
+    if invite_hash.is_none() {
+        check_token(&state, &headers, peer, req.setup_token.as_deref())?;
+    }
     let (now, signed_now) = now_of(&state)?;
     let expires_at = now
         .checked_add(PENDING_TTL_SECS)
@@ -426,15 +552,28 @@ async fn register_start(
         account_id,
         vault_id,
         email,
+        invite_hash,
     };
+    let starts = state.invite_starts.clone();
     let stored = state
         .vault_db
         .with_conn(move |conn| {
-            store_pending(conn, registration_id, &pending, signed_now, expires_at)
+            store_pending(
+                conn,
+                registration_id,
+                &pending,
+                (signed_now, now),
+                expires_at,
+                &starts,
+            )
         })
         .await?;
-    if matches!(stored, Stored::Closed) {
-        return Err(ApiError::coded("registration_closed"));
+    match stored {
+        Stored::Done => {}
+        Stored::Closed => return Err(ApiError::coded("registration_closed")),
+        Stored::InviteInvalid => return Err(ApiError::coded("invite_invalid")),
+        Stored::Throttled(wait) => return Err(ApiError::throttled(wait)),
+        Stored::EmailTaken => return Err(ApiError::coded("email_taken")),
     }
     Ok((
         [(CACHE_CONTROL, HeaderValue::from_static("no-store"))],
@@ -450,6 +589,10 @@ async fn register_start(
 
 // ------------------------------------------------------------------ finish
 
+/// A waiting row as [`take_pending`] reads it: the account id, the vault id,
+/// the login name, the expiry and the hash of the invitation.
+type PendingRow = (Vec<u8>, Vec<u8>, String, i64, Option<Vec<u8>>);
+
 /// Takes the row of a registration, once. The row is gone afterwards whatever
 /// comes next, and an expired row is gone without being returned.
 fn take_pending(
@@ -457,15 +600,15 @@ fn take_pending(
     registration_id: &[u8; 16],
     now: i64,
 ) -> Result<Option<Pending>, StoreError> {
-    let row: Option<(Vec<u8>, Vec<u8>, String, i64)> = conn
+    let row: Option<PendingRow> = conn
         .query_row(
             "DELETE FROM ferret_registrations WHERE registration_id = ?1
-             RETURNING account_id, vault_id, email, expires_at",
+             RETURNING account_id, vault_id, email, expires_at, invite_hash",
             params![registration_id.as_slice()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()?;
-    let Some((account_id, vault_id, email, expires_at)) = row else {
+    let Some((account_id, vault_id, email, expires_at, invite_hash)) = row else {
         return Ok(None);
     };
     if now >= expires_at {
@@ -474,10 +617,16 @@ fn take_pending(
     let fixed = |bytes: Vec<u8>| {
         <[u8; 16]>::try_from(bytes).map_err(|_| StoreError::Invalid("a registration id"))
     };
+    let invite_hash = invite_hash
+        .map(|bytes| {
+            <[u8; 32]>::try_from(bytes).map_err(|_| StoreError::Invalid("an invitation hash"))
+        })
+        .transpose()?;
     Ok(Some(Pending {
         account_id: fixed(account_id)?,
         vault_id: fixed(vault_id)?,
         email,
+        invite_hash,
     }))
 }
 
@@ -648,15 +797,36 @@ enum Created {
     Done {
         secret: SessionSecret,
         claims: SessionClaims,
+        /// The kit user, when the account came from an invitation.
+        invited: Option<i64>,
     },
+    /// The first administrator's row, and the server has a user.
     Closed,
+    /// The invitation does not count any more.
+    InviteInvalid,
+    /// The e-mail got an account between the two steps.
+    EmailTaken,
+}
+
+/// Writes the account of `pending`: the first administrator's
+/// ([`write_first_admin`]), or an invited one's ([`write_invited_account`]).
+fn write_account(
+    conn: &mut Connection,
+    pending: &Pending,
+    account: ValidatedNewAccount,
+    now: i64,
+) -> Result<Created, StoreError> {
+    match pending.invite_hash {
+        None => write_first_admin(conn, pending, account, now),
+        Some(hash) => write_invited_account(conn, pending, &hash, account, now),
+    }
 }
 
 /// Writes the kit user, the site settings, the account with its vault, and the
 /// session, in one transaction, and removes every waiting registration row.
 /// Nothing is written if the server has a user
 /// already or if any step fails.
-fn write_account(
+fn write_first_admin(
     conn: &mut Connection,
     pending: &Pending,
     account: ValidatedNewAccount,
@@ -671,13 +841,84 @@ fn write_account(
     tx.execute("DELETE FROM ferret_registrations", [])?;
     settings::set(&tx, settings::SITE_NAME, SITE_NAME)?;
     settings::set(&tx, settings::TIMEZONE, TIMEZONE)?;
+    let (secret, claims) = write_rows(&tx, pending, account, user_id, now)?;
+    tx.commit()?;
+    Ok(Created::Done {
+        secret,
+        claims,
+        invited: None,
+    })
+}
+
+/// Writes an invited account in one transaction: the kit user (role
+/// [`INVITED_ROLE`], the external password marker), the spent invitation, the
+/// account with its vault, the session and `account_created` in the account's
+/// log. Nothing is written when the server has no user, the invitation is not
+/// pending any more (`InviteInvalid`: revoked, used or run out since `start`;
+/// of two finishes of one invitation only one spends it) or the e-mail has an
+/// account (`EmailTaken`). The other waiting rows stay.
+fn write_invited_account(
+    conn: &mut Connection,
+    pending: &Pending,
+    hash: &[u8; 32],
+    account: ValidatedNewAccount,
+    now: i64,
+) -> Result<Created, StoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let has_users: bool = tx.query_row("SELECT EXISTS (SELECT 1 FROM users)", [], |r| r.get(0))?;
+    let invite = if has_users {
+        invites::pending(&tx, hash)?
+    } else {
+        None
+    };
+    let Some(invite) = invite else {
+        return Ok(Created::InviteInvalid);
+    };
+    if users::username_taken(&tx, &pending.email)? {
+        return Ok(Created::EmailTaken);
+    }
+    let user_id = users::insert_user_full(&tx, &pending.email, EXTERNAL_HASH, INVITED_ROLE, "")?;
+    // One statement: of two finishes that race for one invitation, only one
+    // spends it. Dropping the transaction undoes the user.
+    if !vole_kit::db::invites::consume(&tx, hash, user_id)? {
+        return Ok(Created::InviteInvalid);
+    }
+    let (secret, claims) = write_rows(&tx, pending, account, user_id, now)?;
+    log::record(
+        &tx,
+        user_id,
+        EventKind::AccountCreated,
+        &Actor::Admin {
+            user_id: invite.invited_by_id,
+            name: invite.invited_by,
+        },
+        now,
+    )?;
+    tx.commit()?;
+    Ok(Created::Done {
+        secret,
+        claims,
+        invited: Some(user_id),
+    })
+}
+
+/// The rows of a new account for kit user `user_id`, in the caller's
+/// transaction: the account with its vault, wraps, manifest and checkpoint,
+/// and the full vault session of the device that registered.
+fn write_rows(
+    tx: &rusqlite::Transaction<'_>,
+    pending: &Pending,
+    account: ValidatedNewAccount,
+    user_id: i64,
+    now: i64,
+) -> Result<(SessionSecret, SessionClaims), StoreError> {
     let version: i64 = tx.query_row(
         "SELECT session_version FROM users WHERE id = ?1",
         params![user_id],
         |r| r.get(0),
     )?;
     create_account(
-        &tx,
+        tx,
         &NewAccountRows {
             account_id: AccountId::from_bytes(pending.account_id),
             user_id,
@@ -702,9 +943,8 @@ fn write_account(
         &account.device_name,
         SessionScope::Full,
     );
-    insert_session(&tx, &session)?;
-    tx.commit()?;
-    Ok(Created::Done { secret, claims })
+    insert_session(tx, &session)?;
+    Ok((secret, claims))
 }
 
 /// The answer to `finish`: the cookies of the new session and a `201`.
@@ -744,9 +984,22 @@ async fn register_finish_step(
         .vault_db
         .with_conn(move |conn| write_account(conn, &pending, account, signed_now))
         .await?;
-    let Created::Done { secret, claims } = created else {
-        return Err(ApiError::coded("registration_closed"));
+    let (secret, claims, invited) = match created {
+        Created::Done {
+            secret,
+            claims,
+            invited,
+        } => (secret, claims, invited),
+        Created::Closed => return Err(ApiError::coded("registration_closed")),
+        Created::InviteInvalid => return Err(ApiError::coded("invite_invalid")),
+        Created::EmailTaken => return Err(ApiError::coded("email_taken")),
     };
+    if let Some(user_id) = invited {
+        tracing::info!(user_id, "an account was made from an invitation");
+    }
+    // A new account changes the shares the made-up answers of unknown names
+    // follow: they are computed again now, not at the next round.
+    refresh_policy_now(&state).await;
 
     let secure = state.origins.vault_is_https();
     let jar = SignedCookieJar::from_headers(&headers, state.core.session_key.clone());

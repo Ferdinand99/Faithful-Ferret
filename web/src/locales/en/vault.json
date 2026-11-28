@@ -130,6 +130,7 @@
   "vault.unlock.heading": "Unlock your vault",
   "vault.unlock.not_you": "Not you? Sign out",
   "vault.unlock.other": "Sign in with another account",
+  "vault.unlock.other_account": "This browser is now signed in to another account (in another tab or window), so this vault was locked. Nothing more was sent from here: what you saved is kept on this device and goes to your vault when you sign in to your account again.",
   "vault.unlock.passkey.busy": "Waiting for your passkey…",
   "vault.unlock.passkey.button": "Unlock with a passkey",
   "vault.unlock.passkey.help": "Your browser asks you to prove that it is you, with a fingerprint, a face or a PIN. The master password and your recovery key still work.",

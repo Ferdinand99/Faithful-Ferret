@@ -805,6 +805,57 @@ fn the_total_cap_holds() {
     assert_eq!(streams.open(), 0);
 }
 
+#[tokio::test]
+async fn a_server_holds_1024_streams_and_one_account_never_more_than_40() {
+    // The places of the server as it starts, not a table made by the test.
+    let app = TestApp::new().await;
+    let streams = app.state.streams.clone();
+    let device = |n: u8| ferret_server::ids::DeviceId([n; 16]);
+    let vault = |n: u8| VaultId::from_bytes([n; 16]);
+
+    // 26 accounts with 40 devices each ask for 1 040 places: the server holds
+    // 1 024 of them, and the last 16 are refused.
+    let mut held = Vec::new();
+    let mut refused = 0;
+    for v in 0..26u8 {
+        for d in 0..40u8 {
+            match streams.acquire(&vault(v), &device(d)) {
+                Some(slot) => held.push(slot),
+                None => refused += 1,
+            }
+        }
+    }
+    assert_eq!(held.len(), 1024);
+    assert_eq!(refused, 16);
+    assert_eq!(streams.open(), 1024);
+    drop(held);
+    assert_eq!(streams.open(), 0);
+
+    // One account alone, with room on the server: 40 devices, and not one
+    // more, however many devices it has.
+    let mut held = Vec::new();
+    for d in 0..60u8 {
+        if let Some(slot) = streams.acquire(&vault(1), &device(d)) {
+            held.push(slot);
+        }
+    }
+    assert_eq!(held.len(), 40);
+    // Two per device: another account's device takes two, and no third.
+    for _ in 0..2 {
+        held.push(
+            streams
+                .acquire(&vault(2), &device(0))
+                .expect("another account"),
+        );
+    }
+    assert!(streams.acquire(&vault(2), &device(0)).is_none());
+    // The full account does not hold the others back.
+    for v in 3..30u8 {
+        held.push(streams.acquire(&vault(v), &device(0)).expect("a place"));
+    }
+    assert_eq!(streams.open(), 40 + 2 + 27);
+}
+
 #[test]
 fn the_limits_are_per_device_per_vault_and_in_all() {
     let streams = EventStreams::new(2, 3, 4);

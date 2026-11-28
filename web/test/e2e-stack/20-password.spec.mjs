@@ -35,8 +35,10 @@ test("a_password_change_signs_out_the_other_browser_and_the_new_password_works_e
   // Nothing is sent for what the page can see is wrong.
   const sent = /** @type {string[]} */ ([]);
   a.page.on("request", (request) => {
-    // The sign-in, the password and the keys; not the traffic of the sync, which goes on in the background.
+    // The sign-in, the password and the keys; not the traffic of the sync, which goes on in the background (its feed, and
+    // the read of the session before and after each of its requests).
     const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path === "/api/auth/session") return;
     if (path.startsWith("/api/auth/") || path.startsWith("/api/vault/")) sent.push(path);
   });
   await a.page.locator('[data-role="current-password"]').fill(oldPassword);

@@ -17,9 +17,11 @@ use ferret_server_auth::{Clock, InMemoryChallengeStore, PreloginPolicy, Throttle
 use rusqlite::Connection;
 use vole_kit::state::Core;
 
+use crate::accounts::invites::InviteStarts;
+use crate::admin::shown_once::ShownOnce;
 use crate::auth::secrets::{Secrets, load_secrets};
 use crate::auth::state_store::SqliteLoginStateStore;
-use crate::auth::throttle::{ChallengeLimit, KitThrottle};
+use crate::auth::throttle::{ChallengeLimit, InviteCheckLimit, KitThrottle};
 use crate::auth::tokens::DeviceAuth;
 use crate::auth::{dpop, handoff, login, refresh, state_store};
 use crate::config::{Config, Origins};
@@ -148,6 +150,14 @@ pub struct FerretState {
     /// The device tokens: the cache of used DPoP `jti` values, the
     /// successors of the grace period and the vault origin of `htu`.
     pub device_auth: DeviceAuth,
+    /// The count of registration starts per invitation (Spec: Fase 1 § 4.2,
+    /// the cap on `email_taken`).
+    pub invite_starts: Arc<InviteStarts>,
+    /// The limit per address of `POST /api/auth/invite/check`.
+    pub invite_checks: Arc<InviteCheckLimit>,
+    /// The invitation links that wait for the page that shows them once,
+    /// after the redirect of the post that made them.
+    pub shown_once: Arc<ShownOnce>,
 }
 
 impl FromRef<FerretState> for Core {
@@ -310,10 +320,18 @@ pub async fn build_state(
         events: SyncEvents::new(CAPACITY),
         limits,
         write_gate: WriteGate::new(8, 64),
-        streams: Arc::new(EventStreams::new(2, 40, 256)),
+        streams: Arc::new(EventStreams::new(2, 40, 1024)),
         challenges: Challenges::new(),
         import_windows: ImportWindows::new(),
         backup: BackupStatus::persistent(&cfg.backup_config()?.dir),
         device_auth,
+        invite_starts: Arc::new(InviteStarts::new(INVITE_START_KEYS)),
+        invite_checks: Arc::new(InviteCheckLimit::new()),
+        shown_once: Arc::new(ShownOnce::new()),
     })
 }
+
+/// The most invitations whose starts are counted at once. At most 50 are
+/// pending at a time; this leaves room for those that were spent, revoked or
+/// made again within the hour.
+const INVITE_START_KEYS: usize = 1_024;

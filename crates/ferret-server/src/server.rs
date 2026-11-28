@@ -86,6 +86,7 @@ pub fn admin_router(state: FerretState) -> Router {
         .with_state(state.clone())
         // Inside the kit's CSRF layer, so a refused request is refused first.
         .layer(from_fn(admin::guard::block_unsupported_kit_routes))
+        .layer(from_fn(admin::guard::close_kit_users_pages))
         .layer(from_fn_with_state(core.clone(), guard::csrf_guard))
         // Outside the CSRF layer: the kit's sign-in code page is a redirect to
         // the vault origin's recovery page for every request, a form post too.

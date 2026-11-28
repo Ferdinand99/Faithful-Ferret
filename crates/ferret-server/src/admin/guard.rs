@@ -7,13 +7,19 @@
 //! `/auth/handoff*`, `/api/auth/handoff/redeem` and `/api/auth/{logout,session}`
 //! (the last two check the session themselves).
 //!
-//! Two more layers sit here because the kit has no switch for what they do:
+//! Three more layers sit here because the kit has no switch for what they do:
 //!
 //! * [`block_unsupported_kit_routes`] answers 404 for the kit's passkey sign-in
 //!   and second-factor sign-in, which would make a kit session without the
 //!   password check, and for the kit's two-factor settings. A sign-in on the
 //!   vault origin refuses an account with a second factor, so a user who turned
 //!   it on here would lose the vault and the admin pages both.
+//! * [`close_kit_users_pages`] closes the kit's Users page and its actions
+//!   (`/settings/users*`): Ferret has its own (`admin::accounts`), with the
+//!   account log, Ferret's columns and the rules of `accounts::actions`. A read
+//!   of `/settings/users` goes to `/settings/accounts`; everything else under
+//!   it is 404, so none of the kit's user actions (a role, a disable, a
+//!   delete, a sign-in code without the account log) can run.
 //! * [`end_session_on_logout`] ends the session row when the kit's sign-out
 //!   runs, so the session is over on the server and not only in the browser. It
 //!   also sends the browser on to the signed-out page instead of `/login`, so a
@@ -86,6 +92,32 @@ pub async fn block_unsupported_kit_routes(request: Request, next: Next) -> Respo
         return vole_kit::http::error::not_found().await.into_response();
     }
     next.run(request).await
+}
+
+/// The kit's Users page and every route under it.
+const KIT_USERS: &str = "/settings/users";
+
+/// Whether `path` is the kit's Users page or one of its routes.
+fn is_kit_users(path: &str) -> bool {
+    path == KIT_USERS
+        || path
+            .strip_prefix(KIT_USERS)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Sends a read of the kit's Users page (`GET` or `HEAD /settings/users`) to
+/// Ferret's (`303 /settings/accounts`) and answers 404 for every other request
+/// under `/settings/users`, whoever asks and with whatever method.
+pub async fn close_kit_users_pages(request: Request, next: Next) -> Response {
+    let path = request.uri().path();
+    if !is_kit_users(path) {
+        return next.run(request).await;
+    }
+    let read = matches!(*request.method(), Method::GET | Method::HEAD);
+    if read && path == KIT_USERS {
+        return Redirect::to(crate::admin::accounts::PATH).into_response();
+    }
+    vole_kit::http::error::not_found().await.into_response()
 }
 
 /// On the kit's `POST /logout`: ends the admin session row that the request
@@ -171,6 +203,28 @@ mod tests {
             "/logout",
         ] {
             assert!(!is_unsupported(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_kit_users_pages_are_the_whole_tree_and_nothing_beside_it() {
+        for path in [
+            "/settings/users",
+            "/settings/users/",
+            "/settings/users/3",
+            "/settings/users/3/disable",
+            "/settings/users/3/sign-in-code/revoke",
+        ] {
+            assert!(is_kit_users(path), "{path}");
+        }
+        for path in [
+            "/settings/usersx",
+            "/settings/user",
+            "/settings/accounts",
+            "/settings/accounts/3/sign-in-code",
+            "/settings",
+        ] {
+            assert!(!is_kit_users(path), "{path}");
         }
     }
 }

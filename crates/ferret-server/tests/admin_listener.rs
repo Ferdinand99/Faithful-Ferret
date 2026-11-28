@@ -38,7 +38,11 @@ async fn kit_cookie_alone_cannot_open_an_admin_page() {
     let app = TestApp::new_at_real_time().await;
     let (_user, vault) = admin_user(&app, 1).await;
     let admin = app.jar(Which::Admin);
-    let pages = ["/settings/general", "/settings/users", "/settings/security"];
+    let pages = [
+        "/settings/general",
+        "/settings/accounts",
+        "/settings/security",
+    ];
 
     // With both cookies the pages open (a positive control).
     for path in pages {
@@ -101,12 +105,16 @@ async fn admin_guard_wraps_only_the_kit_router() {
     seed(&app, 1).await;
 
     // The kit's pages: a read goes to the sign-in, anything else is the one 401.
-    for path in ["/settings/general", "/settings/users", "/settings/security"] {
+    for path in [
+        "/settings/general",
+        "/settings/accounts",
+        "/settings/security",
+    ] {
         let res = get(&app, path).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
         assert!(res.header("location").starts_with("/login?next="), "{path}");
     }
-    let res = post(&app, "/settings/users/1/disable").await;
+    let res = post(&app, "/settings/accounts/invites").await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
     assert_eq!(res.json(), json!({ "error": "unauthorized" }));
 
@@ -554,11 +562,12 @@ async fn kit_two_factor_settings_pages_return_404_on_the_admin_origin() {
         .await
         .expect("count");
     assert_eq!(enabled, 0);
-    // The rest of the security page is as it was, and a user's two-factor can
-    // still be reset by an administrator.
+    // The rest of the security page is as it was. (The kit's Users page,
+    // where an administrator reset a user's two-factor, is closed: Ferret has
+    // its own, and no account can turn two-factor on.)
     assert_eq!(get(&app, "/settings/security").await.status, StatusCode::OK);
     let res = post(&app, "/settings/users/1/2fa/reset").await;
-    assert_ne!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
 }
 
 #[tokio::test]
@@ -678,6 +687,7 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
         "/settings",
         "/settings/general",
         "/settings/users",
+        "/settings/accounts",
         "/settings/security",
         "/auth/handoff",
         "/vault/login",
@@ -741,7 +751,11 @@ async fn admin_listener_has_no_password_field_no_wasm_and_no_opaque_endpoints() 
         }
     }
     assert!(seen.len() > 10, "{seen:?}");
-    for page in ["/settings/general", "/settings/users", "/settings/security"] {
+    for page in [
+        "/settings/general",
+        "/settings/accounts",
+        "/settings/security",
+    ] {
         assert!(
             ok_pages.contains(page),
             "{page} was not crawled: {ok_pages:?}"

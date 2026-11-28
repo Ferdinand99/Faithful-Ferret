@@ -1,0 +1,141 @@
+{% extends "kit/settings_layout.html" %}
+{% import "kit/macros.html" as m %}
+
+{% block settings_content %}
+{% call m::page_header(tr("accounts.title"), tr("accounts.sub")) %}
+  {%- if fresh %}
+  <form method="post" action="{{ invites_path }}">
+    <button type="submit" class="btn btn-primary">{{ m::icon("plus") }}<span>{{ tr("accounts.invite") }}</span></button>
+  </form>
+  {%- else %}
+  <a class="btn btn-primary" href="{{ reauth_url }}">{{ m::icon("plus") }}<span>{{ tr("accounts.invite") }}</span></a>
+  {%- endif %}
+{% endcall %}
+
+{%- if !fresh %}
+{{ m::callout("info", tr("accounts.confirm_help"), tr("sec.confirm_its_you")) }}
+<p><a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ tr("sec.confirm_its_you") }}</a></p>
+{%- endif %}
+
+{%- if let Some(link) = shown_invite %}
+<section class="section" aria-labelledby="invite-made-title">
+  {% call m::section_head(tr("accounts.invite_made"), "", "invite-made-title") %}{% endcall %}
+  {{ m::callout("warning", tr("accounts.invite_copy_now"), tr("sec.shown_once")) }}
+  <div class="card stack-sm">
+    {{ m::copy_field("created-invite", link.as_str()) }}
+    <p class="help">{{ tr("accounts.invite_help") }}</p>
+  </div>
+</section>
+{%- endif %}
+
+{%- if let Some(made) = shown_code %}
+<section class="section" aria-labelledby="code-made-title">
+  {% call m::section_head(tr("accounts.code_made"), "", "code-made-title") %}{% endcall %}
+  {{ m::callout("warning", tr("accounts.code_copy_now"), tr("sec.shown_once")) }}
+  <div class="card stack-sm">
+    {{ m::copy_field("created-sign-in-code", made.code.code()) }}
+    <p class="help">{{ tr1("accounts.code_help", "email", made.email) }}</p>
+    <p class="help"><code>{{ made.recover }}</code></p>
+    <p class="help">{{ tr("accounts.code_until") }} {{ m::time_ago(made.code.expires_at()) }}</p>
+  </div>
+</section>
+{%- endif %}
+
+<section class="section" aria-labelledby="accounts-title">
+  {% call m::section_head(tr("accounts.people"), tr("accounts.people_sub"), "accounts-title") %}{% endcall %}
+  <ul class="list" role="list">
+    {%- for a in accounts %}
+    <li class="list-row" id="account-{{ a.id }}">
+      <span class="list-main">
+        <span class="list-title">{{ a.email }}{% if a.is_self %} <span class="muted">{{ tr("users.you") }}</span>{% endif %}</span>
+        <span class="list-sub">{{ tr("accounts.created") }} {{ m::time_ago(a.created_at) }} · {% match a.last_login_at %}{% when Some(at) %}{{ tr("accounts.last_login") }} {{ m::time_ago(at) }}{% when None %}{{ tr("accounts.never_signed_in") }}{% endmatch %}</span>
+        <span class="list-sub">
+          <span>{{ tr("accounts.devices") }}: <span data-col="devices">{{ a.devices }}</span></span> ·
+          <span>{{ tr("accounts.items") }}: <span data-col="items">{{ a.items }}</span></span> ·
+          <span>{{ tr("accounts.space") }}: <span data-col="space">{{ a.size }}</span></span> ·
+          <span>{{ tr("accounts.second_factor") }}: <span data-col="totp">{% if a.totp %}{{ tr("accounts.on") }}{% else %}{{ tr("accounts.off") }}{% endif %}</span></span>
+        </span>
+      </span>
+      <span class="list-trail cluster">
+        <span class="pill{% if a.active %} status-up{% else %} status-paused{% endif %}" data-col="status">{% if a.active %}{{ tr("accounts.active") }}{% else %}{{ tr("accounts.disabled") }}{% endif %}</span>
+        {%- if let Some(until) = a.code_until %}<span class="badge" data-col="code" data-tip="{{ until }} UTC">{{ tr("accounts.code_pending") }} {{ m::time_ago(until) }}</span>{% endif %}
+        {%- if a.is_admin %}<span class="badge badge-brand">{{ tr("accounts.admin") }}</span>{% endif %}
+        {%- if a.actionable && a.active %}
+        {%- if fresh %}
+        <form method="post" action="/settings/accounts/{{ a.id }}/sign-in-code">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ m::icon("key") }}<span>{{ tr("accounts.make_code") }}</span></button>
+        </form>
+        {%- else %}
+        <a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ m::icon("key") }}<span>{{ tr("accounts.make_code") }}</span></a>
+        {%- endif %}
+        <form method="post" action="/settings/accounts/{{ a.id }}/sign-out" data-confirm="{{ tr("accounts.sign_out_q") }}" data-confirm-message="{{ tr("accounts.sign_out_msg") }}" data-confirm-label="{{ tr("accounts.sign_out") }}">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ tr("accounts.sign_out") }}</button>
+        </form>
+        <form method="post" action="/settings/accounts/{{ a.id }}/disable" data-confirm="{{ tr("accounts.disable_q") }}" data-confirm-message="{{ tr("accounts.disable_msg") }}" data-confirm-label="{{ tr("accounts.disable") }}">
+          <button class="btn btn-danger btn-sm" type="submit">{{ tr("accounts.disable") }}</button>
+        </form>
+        {%- endif %}
+        {%- if a.actionable && !a.active %}
+        {%- if fresh %}
+        <form method="post" action="/settings/accounts/{{ a.id }}/enable">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ tr("accounts.enable") }}</button>
+        </form>
+        {%- else %}
+        <a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ tr("accounts.enable") }}</a>
+        {%- endif %}
+        {%- endif %}
+      </span>
+      {%- if a.actionable && !a.active %}
+      <div class="stack-sm" data-step="delete">
+        <p class="help">{{ tr("accounts.delete_kept") }}</p>
+        {%- if !a.delete_ready %}
+        <p class="help">{{ tr("accounts.delete_needs_backup") }} <a href="{{ backup_path }}">{{ tr("accounts.go_to_backup") }}</a></p>
+        {%- else if fresh %}
+        <form class="cluster" method="post" action="/settings/accounts/{{ a.id }}/delete" data-confirm="{{ tr("accounts.delete_q") }}" data-confirm-message="{{ tr("accounts.delete_msg") }}" data-confirm-label="{{ tr("accounts.delete") }}">
+          <label class="label" for="delete-email-{{ a.id }}">{{ tr("accounts.delete_email") }}</label>
+          <input id="delete-email-{{ a.id }}" name="email" type="email" autocomplete="off" spellcheck="false" required>
+          <button class="btn btn-danger btn-sm" type="submit">{{ tr("accounts.delete") }}</button>
+        </form>
+        {%- else %}
+        <a class="btn btn-danger btn-sm" href="{{ reauth_url }}">{{ tr("accounts.delete") }}</a>
+        {%- endif %}
+      </div>
+      {%- endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+  <p class="section-foot">{{ tr("accounts.second_factor_help") }}</p>
+  <p class="section-foot">{{ tr("accounts.delete_steps") }}</p>
+</section>
+
+<section class="section" aria-labelledby="invites-title">
+  {% call m::section_head(tr("accounts.pending"), tr("accounts.pending_sub"), "invites-title") %}{% endcall %}
+  {%- if pending.is_empty() %}
+  <p class="help">{{ tr("accounts.no_pending") }}</p>
+  {%- else %}
+  <ul class="list" role="list">
+    {%- for inv in pending %}
+    <li class="list-row" id="invite-{{ inv.id }}">
+      <span class="list-main">
+        <span class="list-title">{{ tr("accounts.invitation") }}</span>
+        <span class="list-sub">{{ tr("accounts.made") }} {{ m::time_ago(inv.created_at) }}{% if let Some(by) = inv.created_by_name %} · {{ by }}{% endif %} · {{ tr("accounts.expires") }} {{ m::time_ago(inv.expires_at) }}</span>
+      </span>
+      <span class="list-trail cluster">
+        {%- if fresh %}
+        <form method="post" action="/settings/accounts/invites/{{ inv.id }}/resend">
+          <button class="btn btn-secondary btn-sm" type="submit">{{ tr("accounts.resend") }}</button>
+        </form>
+        {%- else %}
+        <a class="btn btn-secondary btn-sm" href="{{ reauth_url }}">{{ tr("accounts.resend") }}</a>
+        {%- endif %}
+        <form method="post" action="/settings/accounts/invites/{{ inv.id }}/revoke" data-confirm="{{ tr("accounts.revoke_q") }}" data-confirm-message="{{ tr("accounts.revoke_msg") }}" data-confirm-label="{{ tr("accounts.revoke") }}">
+          <button class="btn btn-danger btn-sm" type="submit">{{ tr("accounts.revoke") }}</button>
+        </form>
+      </span>
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  <p class="section-foot">{{ tr("accounts.pending_foot") }}</p>
+</section>
+{% endblock %}

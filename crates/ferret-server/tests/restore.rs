@@ -44,6 +44,7 @@ use sha2::{Digest as _, Sha256};
 use support::accounts::{TestAccount, add_account_to_app, id16};
 use support::backup::{capture_log, cfg, copy_set, make};
 use support::session::issue;
+use support::upgrade::{BUILD_AT_U3, database_at_0_12};
 use support::{ADMIN_URL, Jar, PEER, Res, START, TestApp, VAULT_URL, Which};
 use tower::ServiceExt as _;
 
@@ -459,6 +460,8 @@ async fn restore_puts_the_set_back_and_moves_the_current_data_aside() {
             vaults: 1,
             sessions_ended: 0,
             devices_revoked: 0,
+            invites_revoked: 0,
+            accounts_logged: 1,
             moved_aside: scene.aside(),
             seen_epoch_unknown: false,
         }
@@ -665,6 +668,271 @@ async fn restore_migrates_an_older_set_before_the_bump() {
 
     // And the server starts on it.
     let state = start_on(scene.data()).await.expect("the server starts");
+    drop(state);
+}
+
+// ---------------------------------------------------------------- a set of 0.12.x
+
+/// Every row of `table` in a database as text, in a fixed order, with the
+/// columns named in `skip` left out.
+fn rows_of(conn: &Connection, table: &str, skip: &[&str]) -> Vec<String> {
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+        .expect("prepare")
+        .query_map([table], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("a column"))
+        .filter(|c: &String| !skip.contains(&c.as_str()))
+        .collect();
+    assert!(!columns.is_empty(), "{table} has columns");
+    let list = columns
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut stmt = conn
+        .prepare(&format!("SELECT {list} FROM \"{table}\" ORDER BY 1"))
+        .expect("prepare");
+    stmt.query_map([], |row| {
+        let mut cells = Vec::new();
+        for i in 0..columns.len() {
+            cells.push(format!("{:?}", row.get_ref(i)?));
+        }
+        Ok(cells.join("|"))
+    })
+    .expect("query")
+    .map(|r| r.expect("a row"))
+    .collect()
+}
+
+/// The names of the migrations a 0.12.x server ran ([`BUILD_AT_U3`]), sorted.
+fn migrations_of_0_12() -> Vec<String> {
+    let mut names: Vec<String> = BUILD_AT_U3
+        .core
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .chain((BUILD_AT_U3.migrations)().into_iter().map(|(name, _)| name))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The tables of a 0.12.x set that a restore leaves as they are; each has rows
+/// in [`database_at_0_12`].
+const KEPT_BY_A_RESTORE: [&str; 15] = [
+    "ferret_accounts",
+    "ferret_items",
+    "ferret_checkpoints",
+    "ferret_unlock_methods",
+    "ferret_unlock_policy",
+    "user_emails",
+    "api_tokens",
+    "api_token_scopes",
+    "passkeys",
+    "passkey_challenges",
+    "push_devices",
+    "push_events",
+    "push_registrations",
+    "settings",
+    "ferret_meta",
+];
+
+/// A backup set as a 0.12.x server leaves it, in a folder of its own: the
+/// scene's set with its database replaced by [`database_at_0_12`] (made with
+/// [`BUILD_AT_U3`]), the server's own rows of `ferret_meta` (the fingerprint
+/// of its set-up among them) taken from the scene's set so that the secret
+/// files match, and the manifest written again from what the folder holds, as
+/// 0.12.1 wrote it.
+fn set_at_0_12(scene: &Scene) -> (Dir, PathBuf, TestAccount) {
+    let (dir, set_dir) = copy_of_backup(scene, "at-0-12");
+    let (conn, account) = database_at_0_12();
+    let db = set_dir.join(DB_FILE);
+    let db_text = db.to_str().expect("a path").to_string();
+    conn.execute("ATTACH DATABASE ?1 AS scene", [&db_text])
+        .expect("attach the scene's set");
+    conn.execute_batch(
+        "INSERT OR REPLACE INTO main.ferret_meta SELECT * FROM scene.ferret_meta; \
+         DETACH DATABASE scene;",
+    )
+    .expect("the server's own rows");
+    std::fs::remove_file(&db).expect("remove the scene's database");
+    conn.execute("VACUUM INTO ?1", [&db_text])
+        .expect("the 0.12.x database into the set");
+    drop(conn);
+    reseal(&set_dir);
+    let path = set_dir.join(MANIFEST_FILE);
+    let mut manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(&path).expect("a manifest")).expect("parses");
+    let copy = peek(&db);
+    manifest.vaults = copy
+        .prepare("SELECT lower(hex(vault_id)), seq, restore_epoch FROM ferret_vaults")
+        .expect("prepare")
+        .query_map([], |row| {
+            Ok(ferret_server::backup::ManifestVault {
+                vault_id: row.get(0)?,
+                seq: u64::try_from(row.get::<_, i64>(1)?).expect("a seq"),
+                restore_epoch: u64::try_from(row.get::<_, i64>(2)?).expect("an epoch"),
+            })
+        })
+        .expect("query")
+        .map(|r| r.expect("a vault"))
+        .collect();
+    drop(copy);
+    manifest.server_version = "0.12.1".to_string();
+    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("json")).expect("write");
+    (dir, set_dir, account)
+}
+
+#[tokio::test]
+async fn a_0_12_backup_set_restores_into_this_build() {
+    let scene = new_scene().await;
+    let (_old, old, a) = set_at_0_12(&scene);
+
+    // A good set of 0.12.x: the migrations of that release and not one more.
+    let manifest = set::verify(&old, &set::build_migrations()).expect("a 0.12.x set is good");
+    let mut listed = manifest.migrations.clone();
+    listed.sort();
+    assert_eq!(listed, migrations_of_0_12());
+    assert!(
+        !listed
+            .iter()
+            .any(|n| n == "0010_accounts.sql" || n == "kit/0007_invites.sql")
+    );
+    let set_db = peek(&old.join(DB_FILE));
+    let before: BTreeMap<&str, Vec<String>> = KEPT_BY_A_RESTORE
+        .iter()
+        .map(|table| (*table, rows_of(&set_db, table, &[])))
+        .collect();
+    let users_before = rows_of(&set_db, "users", &["session_version"]);
+    let version_before: i64 = set_db
+        .query_row(
+            "SELECT session_version FROM users WHERE id = ?1",
+            [a.user_id],
+            |r| r.get(0),
+        )
+        .expect("a version");
+    drop(set_db);
+    for (table, rows) in &before {
+        assert!(!rows.is_empty(), "{table} has rows in the 0.12.x set");
+    }
+
+    // Migrated in the staging folder, put in place, bumped and swept.
+    let report = restore_scene(&scene, &old).expect("a restore");
+    assert_eq!(
+        report,
+        RestoreReport {
+            restore_epoch: u64::try_from(NOW).unwrap(),
+            vaults: 1,
+            // The vault session, the admin session and the pending one: the
+            // reset session had ended.
+            sessions_ended: 3,
+            devices_revoked: 1,
+            // 0.12.x had no invitations.
+            invites_revoked: 0,
+            accounts_logged: 1,
+            moved_aside: scene.aside(),
+            seen_epoch_unknown: false,
+        }
+    );
+    assert!(!scene.staging().exists(), "nothing is left in staging");
+    let db = scene.data().join(DB_FILE);
+    let conn = peek(&db);
+    let applied: Vec<String> = conn
+        .prepare("SELECT name FROM schema_migrations")
+        .expect("prepare")
+        .query_map([], |row| row.get(0))
+        .expect("query")
+        .map(|r| r.expect("a name"))
+        .collect();
+    for name in set::build_migrations() {
+        assert!(applied.iter().any(|a| a == name), "{name} is applied");
+    }
+    let verdict: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .expect("a check");
+    assert_eq!(verdict, "ok");
+
+    // Everything is there: every row of every table a restore does not touch
+    // is as the 0.12.x set had it, and the user is the administrator it was in
+    // every column but the session version (one up: every session ended).
+    for (table, rows) in &before {
+        assert_eq!(
+            &rows_of(&conn, table, &[]),
+            rows,
+            "{table} after the restore"
+        );
+    }
+    assert_eq!(rows_of(&conn, "users", &["session_version"]), users_before);
+    let (role, version): (String, i64) = conn
+        .query_row(
+            "SELECT role, session_version FROM users WHERE id = ?1",
+            [a.user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("the user");
+    assert_eq!((role.as_str(), version), ("admin", version_before + 1));
+    // What a restore ends, it ends: the sessions, the code, the device tokens
+    // and the one-time rows. The restore is in the account's log, and the new
+    // table of invitations is there and empty.
+    for (sql, want) in [
+        (
+            "SELECT COUNT(*) FROM ferret_sessions WHERE revoked_at IS NULL",
+            0,
+        ),
+        ("SELECT COUNT(*) FROM ferret_sessions", 4),
+        (
+            "SELECT COUNT(*) FROM sign_in_codes WHERE revoked_at IS NULL",
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM ferret_devices WHERE revoked_at IS NULL",
+            0,
+        ),
+        ("SELECT COUNT(*) FROM ferret_refresh", 0),
+        ("SELECT COUNT(*) FROM ferret_access", 0),
+        ("SELECT COUNT(*) FROM ferret_handoffs", 0),
+        ("SELECT COUNT(*) FROM ferret_login_states", 0),
+        ("SELECT COUNT(*) FROM ferret_registrations", 0),
+        ("SELECT COUNT(*) FROM invites", 0),
+        (
+            "SELECT COUNT(*) FROM ferret_account_events \
+             WHERE kind = 'server_restored' AND actor = 'server'",
+            1,
+        ),
+    ] {
+        let got: i64 = conn.query_row(sql, [], |r| r.get(0)).expect(sql);
+        assert_eq!(got, want, "{sql}");
+    }
+    drop(conn);
+    assert_eq!(epochs(&db), [u64::try_from(NOW).unwrap()]);
+
+    // And this build serves it: the items, the three unlock methods (the
+    // passkey among them) and the PIN rule of 0.12.x.
+    let state = start_on(scene.data()).await.expect("the server starts");
+    let jar = sign_in(&state, a.user_id).await;
+    let items = vault_get(&state, &jar, "/api/sync/items").await;
+    assert_eq!(items.status, StatusCode::OK, "{}", items.text());
+    assert_eq!(
+        items.json()["restore_epoch"].as_u64(),
+        Some(report.restore_epoch)
+    );
+    let methods = vault_get(&state, &jar, "/api/vault/unlock-methods").await;
+    assert_eq!(methods.status, StatusCode::OK, "{}", methods.text());
+    let methods = methods.json();
+    let kinds: Vec<u64> = methods["methods"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|m| m["method_type"].as_u64().expect("a type"))
+        .collect();
+    assert_eq!(kinds.len(), 3, "{methods}");
+    assert!(kinds.contains(&3), "the passkey method: {methods}");
+    let rule = state
+        .vault_db
+        .with_conn(|conn| ferret_server::vault::policy::read(conn))
+        .await
+        .expect("the rule");
+    assert!(rule.pin_allowed && !rule.pin_after_restart && rule.pin_min_length == 8);
     drop(state);
 }
 
@@ -1179,7 +1447,7 @@ async fn restore_epoch_bump_uses_the_same_rule() {
     assert_eq!(
         said,
         format!(
-            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked, 0 devices signed out",
+            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked, 0 invitations revoked, 0 devices signed out; the restore is in the log of 1 account",
             at_least + 1
         )
     );
@@ -1283,6 +1551,230 @@ async fn every_session_and_pending_code_ends_and_a_session_revoked_after_the_bac
     let jar = sign_in(&state, user).await;
     let res = vault_get(&state, &jar, "/api/sync/items").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+// ---------------------------------------------------------------- invitations and the log
+
+/// An invitation made by `by` in the app's database, as the Users page makes
+/// one; returns its id.
+async fn invite(app: &TestApp, by: i64, n: u8) -> i64 {
+    let hash = vole_kit::auth::invites::hash(&format!("invitation token number {n}"));
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(vole_kit::db::invites::insert(
+                conn,
+                &hash,
+                vole_kit::db::role::Role::Viewer,
+                "",
+                by,
+            )?)
+        })
+        .await
+        .expect("an invitation")
+}
+
+/// Runs `sql` with `id` on the app's database.
+async fn exec(app: &TestApp, sql: &'static str, id: i64) {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(sql, [id])?;
+            Ok(())
+        })
+        .await
+        .expect("the statement");
+}
+
+/// The invitations of a database: `(id, used, revoked)`.
+fn invitations(db: &Path) -> Vec<(i64, bool, bool)> {
+    let conn = peek(db);
+    let mut stmt = conn
+        .prepare("SELECT id, used_at IS NOT NULL, revoked_at IS NOT NULL FROM invites ORDER BY id")
+        .expect("prepare");
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect()
+}
+
+/// The log of a database: `(user_id, kind, actor, actor_name, at)`, oldest
+/// first.
+fn account_log(db: &Path) -> Vec<(i64, String, String, String, i64)> {
+    let conn = peek(db);
+    let mut stmt = conn
+        .prepare(
+            "SELECT user_id, kind, actor, actor_name, at FROM ferret_account_events ORDER BY id",
+        )
+        .expect("prepare");
+    stmt.query_map([], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+    })
+    .expect("query")
+    .map(|r| r.expect("row"))
+    .collect()
+}
+
+fn restored(user: i64) -> (i64, String, String, String, i64) {
+    (
+        user,
+        "server_restored".into(),
+        "server".into(),
+        String::new(),
+        NOW,
+    )
+}
+
+/// A server with two accounts and four invitations in its backup (two
+/// pending, one used, one revoked), and after the backup a revocation of one
+/// of the pending ones, a new invitation and an event in the log.
+struct InviteScene {
+    _app: TestApp,
+    users: [i64; 2],
+    backup: PathBuf,
+    data: Dir,
+    /// The pending invitation that was revoked after the backup, and the one
+    /// still pending.
+    pending: [i64; 2],
+}
+
+async fn invite_scene() -> InviteScene {
+    let app = TestApp::new().await;
+    let first = add_account_to_app(&app, 1).await;
+    let second = add_account_to_app(&app, 2).await;
+    exec(
+        &app,
+        "UPDATE users SET role = 'admin' WHERE id = ?1",
+        first.user_id,
+    )
+    .await;
+    let revoked_later = invite(&app, first.user_id, 1).await;
+    let still_pending = invite(&app, first.user_id, 2).await;
+    let used = invite(&app, first.user_id, 3).await;
+    exec(
+        &app,
+        "UPDATE invites SET used_at = datetime('now') WHERE id = ?1",
+        used,
+    )
+    .await;
+    let revoked = invite(&app, first.user_id, 4).await;
+    exec(
+        &app,
+        "UPDATE invites SET revoked_at = datetime('now') WHERE id = ?1",
+        revoked,
+    )
+    .await;
+    let cfg = cfg(&app);
+    let one = make(&app, &cfg, T1).await.expect("the backup");
+
+    exec(
+        &app,
+        "UPDATE invites SET revoked_at = datetime('now') WHERE id = ?1",
+        revoked_later,
+    )
+    .await;
+    invite(&app, first.user_id, 5).await;
+    let user = second.user_id;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            ferret_server::accounts::log::record(
+                conn,
+                user,
+                ferret_server::accounts::log::EventKind::AccountDisabled,
+                &ferret_server::accounts::log::Actor::Server,
+                T1 + 1,
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("an event after the backup");
+    let two = make(&app, &cfg, T2).await.expect("the later set");
+    let data = Dir::new("invites");
+    copy_data(&cfg.dir.join(&two.name), data.path());
+    InviteScene {
+        users: [first.user_id, second.user_id],
+        backup: cfg.dir.join(&one.name),
+        data,
+        pending: [revoked_later, still_pending],
+        _app: app,
+    }
+}
+
+#[tokio::test]
+async fn a_restore_revokes_pending_invitations_and_logs_it_for_every_account() {
+    let scene = invite_scene().await;
+    let report = restore::restore(scene.data.path(), &scene.backup, None, NOW).expect("a restore");
+    assert_eq!(report.invites_revoked, 2, "the two pending in the set");
+    assert_eq!(report.accounts_logged, 2);
+
+    let db = scene.data.path().join(DB_FILE);
+    // The set's four invitations, and none pending: the one that was revoked
+    // after the backup does not come back to life, nor the one still pending.
+    let rows = invitations(&db);
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert!(
+        rows.iter().all(|&(_, used, revoked)| used || revoked),
+        "{rows:?}"
+    );
+    for id in scene.pending {
+        assert!(rows.contains(&(id, false, true)), "{id}: {rows:?}");
+    }
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND revoked_at IS NULL"
+        ),
+        0
+    );
+    // One `server_restored` for each account, by the server; the event written
+    // after the set was taken is gone with the data that was there.
+    assert_eq!(
+        account_log(&db),
+        [restored(scene.users[0]), restored(scene.users[1])]
+    );
+}
+
+#[tokio::test]
+async fn the_sweep_reports_invitations_and_log_lines() {
+    // The sweep itself counts both, in the caller's transaction.
+    let scene = invite_scene().await;
+    let copy = Dir::new("sweep-copy");
+    copy_data(&scene.backup, copy.path());
+    let mut conn = Connection::open(copy.path().join(DB_FILE)).expect("open");
+    let tx = conn.transaction().expect("a transaction");
+    let swept =
+        ferret_server::auth::session::end_everything_after_restore(&tx, NOW).expect("the sweep");
+    tx.commit().expect("commit");
+    drop(conn);
+    assert_eq!((swept.invites, swept.logged), (2, 2), "{swept:?}");
+
+    // `backup restore` says both numbers.
+    let said = cli::run(Command::BackupRestore {
+        data_dir: scene.data.path().to_path_buf(),
+        from: scene.backup.clone(),
+        confirmed: true,
+        at_least: None,
+    })
+    .expect("a restore");
+    assert!(
+        said.contains(", 2 invitations revoked, the restore is in the log of 2 accounts, "),
+        "{said}"
+    );
+    // `restore-epoch bump` too, on a copy that still holds pending ones.
+    let bumped = Dir::new("sweep-bump");
+    copy_data(&scene.backup, bumped.path());
+    let said = cli::run(Command::RestoreEpochBump {
+        data_dir: bumped.path().to_path_buf(),
+        confirmed: true,
+        at_least: None,
+    })
+    .expect("a bump");
+    assert!(
+        said.contains(", 2 invitations revoked, ")
+            && said.ends_with("; the restore is in the log of 2 accounts"),
+        "{said}"
+    );
 }
 
 #[tokio::test]

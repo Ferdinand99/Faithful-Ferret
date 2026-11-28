@@ -83,6 +83,8 @@ if (env.FERRET_TRUSTED_PROXIES !== "172.17.0.2") fail("FERRET_TRUSTED_PROXIES mu
 if (env.FERRET_SETUP_TOKEN !== "check") fail("FERRET_SETUP_TOKEN must come from docker/.env");
 const mem = Number(s.mem_limit);
 if (!(mem > 0)) fail("a memory limit is required");
+const nofile = s.ulimits?.nofile;
+if (!(Number(nofile?.soft) >= 4096 && Number(nofile?.hard) >= Number(nofile?.soft))) fail("ulimits nofile, soft at least 4096 and hard at least soft (the server holds up to 1 024 event streams), got " + JSON.stringify(nofile ?? null));
 '
 
 # The end-to-end stack, and that it shares nothing with the owner's stack.
@@ -262,6 +264,55 @@ for bad in 'FERRET_E2E_SUFFIX=Bad' 'FERRET_E2E_SUFFIX=waytoolongsuffix' 'FERRET_
     exit 1
   fi
 done
+# The upgrade drill refuses a tag that is not a release tag, the stack of the suffix e2e and a candidate with a WebAssembly
+# package from the tree, each with its own message and before it calls docker.
+for bad in main v0.12 'v0.12.1;x' ''; do
+  if drill_out="$(FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill "$bad" 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill accepted the tag '$bad'" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -q '^upgrade-drill: the tag must be a release tag' || { echo "check-ferret-test-stack: upgrade-drill '$bad': $drill_out" >&2; exit 1; }
+done
+for bad in 'FERRET_E2E_SUFFIX=e2e:never runs on the stack of the suffix e2e' 'FERRET_WASM_SOURCE=tree:the candidate is a release build'; do
+  if drill_out="$(env "${bad%%:*}" FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill v0.12.1 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill ran with ${bad%%:*}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -qF "${bad#*:}" || { echo "check-ferret-test-stack: upgrade-drill with ${bad%%:*}: $drill_out" >&2; exit 1; }
+done
+# The drill checks the signature with cosign 3 or newer, decided before anything is pulled: an older cosign here (a stand-in
+# that says it is 2.4.1, or one whose version cannot be read) is refused, and so is a FERRET_COSIGN_IMAGE that is not
+# pinned by digest; with no cosign at all and no image it refuses unless FERRET_UPGRADE_NO_COSIGN=1.
+cosign_stub="$(mktemp -d)"
+cat > "$cosign_stub/cosign" <<'STUB'
+#!/bin/sh
+[ "$1" = version ] && cat "$(dirname "$0")/version.txt"
+exit 0
+STUB
+chmod +x "$cosign_stub/cosign"
+for stub in 'GitVersion:    v2.4.1|cosign 3 or newer is needed to check the signature' \
+  '{"gitVersion": "v2.6.0"}|cosign 3 or newer is needed to check the signature' \
+  'nothing to read|of a version that cannot be read'; do
+  printf '%s\n' "${stub%%|*}" > "$cosign_stub/version.txt"
+  if drill_out="$(PATH="$cosign_stub:$PATH" FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill v0.12.1 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill ran with a cosign that says ${stub%%|*}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -qF "${stub#*|}" || { echo "check-ferret-test-stack: upgrade-drill with a cosign that says ${stub%%|*}: $drill_out" >&2; exit 1; }
+done
+if drill_out="$(PATH="$cosign_stub:$PATH" FERRET_COSIGN_IMAGE=cosign:v3 FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill v0.12.1 2>&1)"; then
+  echo "check-ferret-test-stack: upgrade-drill took a cosign image that is not pinned by digest" >&2
+  exit 1
+fi
+printf '%s\n' "$drill_out" | grep -qF "FERRET_COSIGN_IMAGE must be pinned by digest" || { echo "check-ferret-test-stack: upgrade-drill with an unpinned cosign image: $drill_out" >&2; exit 1; }
+rm -rf "$cosign_stub"
+if ! command -v cosign > /dev/null 2>&1; then
+  if drill_out="$(env -u FERRET_COSIGN_IMAGE -u FERRET_UPGRADE_NO_COSIGN FERRET_DOCKER_ARGS="--context stub" bash scripts/lanbox-ferret-test.sh upgrade-drill v0.12.1 2>&1)"; then
+    echo "check-ferret-test-stack: upgrade-drill ran with no cosign" >&2
+    exit 1
+  fi
+  printf '%s\n' "$drill_out" | grep -qF "say so openly with FERRET_UPGRADE_NO_COSIGN=1" || { echo "check-ferret-test-stack: upgrade-drill with no cosign: $drill_out" >&2; exit 1; }
+fi
 labels_out="$(DEV_RUN=check-run DEV_TITLE='A "title" $x' bash -c '
   FERRET_DOCKER_ARGS="--context stub"
   source scripts/lanbox-ferret-test.sh

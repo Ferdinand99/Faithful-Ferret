@@ -416,7 +416,7 @@ test("reauth_purpose_handoff_is_only_started_right_after_a_fresh_reauth", async 
 test("the_signed_in_panel_offers_lock_sign_out_forget_and_the_admin_pages", async () => {
   await withDom(async () => {
     const session = fakeSession({ current: {} });
-    const { deps, went, toAdmin } = loginDeps({ session, info: { accountId: "ab".repeat(16), email: EMAIL } });
+    const { deps, went, toAdmin } = loginDeps({ session, info: { accountId: "ab".repeat(16), email: EMAIL, admin: true } });
     const panel = loginView(deps);
     for (const role of ["open-vault", "admin", "lock", "sign-out", "forget-sk"]) assert.ok(byRole(panel, role), role);
     assert.equal(byRole(panel, "continue-admin"), null);
@@ -620,7 +620,7 @@ test("the_hand_over_buttons_pick_up_the_admin_address_from_the_meta_tag_of_the_p
       const load = async (content) => {
         document.querySelector = (selector) => (selector === 'meta[name="ferret-admin-url"]' && content !== null ? meta(content) : null);
         const session = fakeSession({ current: {} });
-        session.info = async () => ({ accountId: "a", email: EMAIL });
+        session.info = async () => ({ accountId: "a", email: EMAIL, admin: true });
         return route.load({ i18n: i18n(), services: { crypto: session, api: {} }, go() {} });
       };
       // The tag the server writes gives the buttons their address.
@@ -705,7 +705,7 @@ test("the_code_fields_turn_off_spellcheck_autocorrect_and_autocapitalize", async
 
 test("the_admin_buttons_show_whenever_the_user_is_signed_in_locked_or_not", async () => {
   await withDom(async () => {
-    const info = { accountId: "a", email: EMAIL };
+    const info = { accountId: "a", email: EMAIL, admin: true };
     // Signed in at the server but the vault is locked: the password form, and the admin button, since the session is enough.
     const locked = loginDeps({ info });
     const lockedPage = loginView(locked.deps);
@@ -715,6 +715,16 @@ test("the_admin_buttons_show_whenever_the_user_is_signed_in_locked_or_not", asyn
     await fire(byRole(lockedPage, "admin"), "click");
     await settle();
     assert.equal(locked.toAdmin.length, 1);
+
+    // An account that is not an administrator (an invited one) is not offered the admin pages, locked or open:
+    // the server would refuse the hand-over.
+    for (const current of [null, {}]) {
+      for (const notAdmin of [{ accountId: "a", email: EMAIL, admin: false }, { accountId: "a", email: EMAIL }]) {
+        const page = loginView(loginDeps({ info: notAdmin, session: fakeSession({ current }) }).deps);
+        assert.equal(byRole(page, "admin"), null, `current=${current}`);
+        assert.ok(byRole(page, "sign-out"));
+      }
+    }
 
     // With a hand-over request, the click to continue is there too, locked or open.
     const entry = readEntry({ pathname: "/vault/login", search: `?handoff=1&challenge=${CHALLENGE}`, hash: "" });
@@ -819,5 +829,28 @@ test("a_handed_over_refusal_about_an_older_method_keeps_the_restore_text", async
     assert.equal(error.hidden, false);
     assert.ok(textOf(error).includes("The server was restored from before you last changed an unlock method"), textOf(error));
     assert.equal(textOf(error).includes(i18n().t("account.error.method_list_changed")), false, "not the plain warning");
+  });
+});
+
+test("a_hand_over_refused_because_the_account_is_not_an_administrator_says_so", async () => {
+  await withDom(async () => {
+    // The admin pages sent a person here whose account is not an administrator (an invited one): the server refuses
+    // the code with 403 forbidden, and the page says why instead of a general refusal.
+    const entry = readEntry({ pathname: "/vault/login", search: `?handoff=1&challenge=${CHALLENGE}`, hash: "" });
+    const { deps } = loginDeps({
+      entry,
+      info: { accountId: "a", email: EMAIL, admin: false },
+      session: fakeSession({ current: {} }),
+      handoff: {
+        completeHandoff: async () => {
+          throw coded("forbidden");
+        },
+        goToAdmin: async () => {},
+      },
+    });
+    const page = loginView(deps);
+    await fire(byRole(page, "continue-admin"), "click");
+    await until(() => byRole(page, "error")?.hidden === false);
+    assert.equal(textOf(byRole(page, "error")).trim(), i18n().t("account.error.admin_only"));
   });
 });

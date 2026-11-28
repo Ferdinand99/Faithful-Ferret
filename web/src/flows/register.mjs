@@ -1,5 +1,7 @@
-// Registration of the first administrator (spec Fase 1 § 4.2 "Registration",
-// § 6.1 "Confirmation at setup"). The order of the calls:
+// Registration of an account (spec Fase 1 § 4.2 "Registration", § 6.1
+// "Confirmation at setup"): the first administrator with the setup token, and
+// every later account with an invitation (`invite`), never both. Both take the
+// same path; only the body of `register/start` differs. The order of the calls:
 //
 //   check_master_password    core: the creation floor (12 characters with a secret key, 15 without)
 //   register_start           core: the first OPAQUE message, with a new secret key
@@ -17,7 +19,7 @@
 import { b64u, hex16 } from "../b64.mjs";
 import { checkpointToWire, num, rowToWire, withPassword, wrapToWire } from "../crypto/convert.mjs";
 import { AccountError } from "../crypto/errors.mjs";
-import { encodeWire } from "../wire.mjs";
+import { encodeWire, INVITE_CHARS } from "../wire.mjs";
 import { saveSecretKey } from "./deviceSecret.mjs";
 import { DEVICE_NAME } from "./signin.mjs";
 
@@ -43,14 +45,23 @@ function randomId(env, avoid = []) {
  * @property {() => Promise<void>} abort
  */
 
+/** The token of an invitation link: the kit's 43 characters of base62. */
+const INVITE = new RegExp(`^[0-9A-Za-z]{${INVITE_CHARS}}$`);
+
 /**
- * Registers the first administrator up to the point where the sheet is shown.
+ * Registers an account up to the point where the sheet is shown: the first
+ * administrator with `setupToken`, a later account with `invite`. Giving both
+ * throws before anything is asked of the core or the server.
  * @param {Env} env
- * @param {{ email: string, password: string, setupToken?: string | null, useSecretKey?: boolean, rememberSk?: boolean }} args
+ * @param {{ email: string, password: string, setupToken?: string | null, invite?: string | null, useSecretKey?: boolean, rememberSk?: boolean }} args
  * @returns {Promise<Registration>}
  */
 export async function register(env, args) {
   const { client, api, store, server } = env;
+  const token = typeof args.setupToken === "string" && args.setupToken !== "" ? args.setupToken : null;
+  const invite = typeof args.invite === "string" && args.invite !== "" ? args.invite : null;
+  if (token !== null && invite !== null) throw new TypeError("register: an invitation or a setup token, never both");
+  if (invite !== null && !INVITE.test(invite)) throw new AccountError("invite_invalid");
   const email = typeof args.email === "string" ? args.email.trim() : "";
   if (email === "") throw new AccountError("email_required");
   const useSecretKey = args.useSecretKey !== false;
@@ -70,16 +81,14 @@ export async function register(env, args) {
     const request = await withPassword(args.password, (mp) =>
       client.vault.register_start(mp, useSecretKey ? { kind: "generate" } : { kind: "none" }),
     );
-    const token = typeof args.setupToken === "string" && args.setupToken !== "" ? args.setupToken : null;
-    start = await api.post(
-      "/api/auth/opaque/register/start",
-      encodeWire("register_start_req", {
+    const body = invite !== null
+      ? encodeWire("register_start_req_invite", { invite, email, request: b64u.encode(request) })
+      : encodeWire("register_start_req", {
         ...(token === null ? {} : { setup_token: token }),
         email,
         request: b64u.encode(request),
-      }),
-      { shape: "register_start_res" },
-    );
+      });
+    start = await api.post("/api/auth/opaque/register/start", body, { shape: "register_start_res" });
     await client.vault.register_finish(b64u.decode(start.response), start.ksf_profile);
     const passwordId = randomId(env);
     const ids = {

@@ -451,3 +451,112 @@ test("the_passkey_rules_are_in_the_spec", () => {
   assert.ok(appendixB.includes("`rp_name` and `user_display_name` are optional, at most 1 KiB each"));
   assert.ok(spec.includes("**Changes for the passkey provider in the extension (2026-11-25).**"));
 });
+
+test("the_several_accounts_rules_are_in_the_spec", () => {
+  // § 0 and § 1: the change log of delivery 1 and the terms.
+  assert.ok(spec.includes("**Changes for several accounts (delivery 1, 2026-11-27).**"));
+  assert.ok(spec.includes("*Brought in line with the build (2026-11-28).*"));
+  const terms = section("## 1. Scope and terms");
+  assert.equal(terms.includes("One vault per user in v1 (no sharing)."), false, "the old wording is gone");
+  for (const rule of [
+    "| **Invitation** | A one-time link that an administrator makes for one new account (§ 11): `<vault origin>/vault/setup#invite=<token>`.",
+    "| **Account log** |",
+    "Nothing is shared between accounts in delivery 1",
+  ]) assert.ok(terms.includes(rule), rule);
+
+  // § 2.3 and § 2.5: root and the log, and what the server sees of the accounts.
+  assert.ok(section("### 2.3 Outside the threat model (documented limitations)").includes("**L10 Root on the server and the account log**"));
+  const metadata = section("### 2.5 Metadata the server sees");
+  for (const rule of [
+    "who invited whom (an invitation's `created_by` and `used_by`)",
+    "Anything in a vault: no item, name, URL, username, password, note or key of any account.",
+    "Delivery 2 (sharing) adds what the server learns about who shares with whom",
+  ]) assert.ok(metadata.includes(rule), rule);
+
+  // § 4.2: registration with an invitation, the check, the deviation and pre-login.
+  const signIn = section("### 4.2 Sign-in to the server: OPAQUE (E11, reverses the maintainer's decision from 2026-10-27)");
+  for (const rule of [
+    "`invite` **or** `setup_token`, never both (`400 bad_request`).",
+    "no users yet and an `invite` → `403 invite_invalid`; users and no `invite` → `409 registration_closed` (as before)",
+    "Only an invitation that was found pending is counted, so a made-up token never enters the count.",
+    "No account is made without a spent invitation.",
+    "**`POST /api/auth/invite/check {invite}`**",
+    "**A deliberate deviation: `email_taken`.**",
+    "**Pre-login with several accounts**",
+    "can learn that the number of accounts changed, not which account",
+    // As built: another pending invitation's waiting row holds its e-mail, and the waiting rows share one cap.
+    "a waiting registration of the same e-mail that another invitation made, and that invitation is still pending → `409 email_taken` too",
+    "a row of an invitation that is no longer pending, also one that \"Send again\" revoked, holds nothing and is replaced",
+    "share one table of at most 64 rows, and the oldest goes first when it is full",
+    "a reload or a tab the browser brings back says that the link is lost and must be opened again, with no field and no request to the server",
+    // The answer for a token of another form.
+    "a token of another form is refused as a body, `400 bad_request`",
+    "a token that is not 43 characters of base62 is refused as a body (`400 bad_request`)",
+  ]) assert.ok(signIn.includes(rule), rule);
+
+  // § 4.5: no key pair per user yet.
+  assert.ok(section("### 4.5 Derivations from VK and signing keys").includes("Delivery 1 makes none and adds no construction."));
+
+  // § 6.3: every code is in the log, and what is and is not one transaction.
+  const recovery = section("### 6.3 Recovery flow (new device, forgotten MP)");
+  for (const rule of [
+    "**Every code is in the account log**",
+    "The kit's `insert` commits in a transaction of its own, so the code and its event cannot share one: if the event cannot be written, the code is revoked again (`revoke_for_user`) and the action fails",
+    "A redeemed code is written (`sign_in_code_redeemed`, actor `account`) in the same transaction as the reset session (`open_session_tx`).",
+    "the code stays spent",
+  ]) assert.ok(recovery.includes(rule), rule);
+  assert.equal(recovery.includes("the kit does not let an administrator make a code for their own account there"), false, "the old wording is gone");
+
+  // § 8.2 and § 8.8: the stream limit and the known limits.
+  const api = section("### 8.2 API (behind an access token, or a session cookie for the web vault)");
+  assert.ok(api.includes("At most 2 streams per device, 40 per vault and 1 024 on the server"));
+  assert.ok(api.includes("the server needs a limit of open files well above 1 024: the compose file of the stack for real data sets 4096"));
+  const limits = section("### 8.8 Known limits of the first sync release");
+  assert.equal(limits.includes("revisit it when more users can register"), false, "the old wording is gone");
+  assert.equal(limits.includes("With one vault this is acceptable"), false, "the retention bullet no longer assumes one vault");
+  for (const rule of [
+    "**Several accounts** *(known limits of delivery 1, written down 2026-11-27)*",
+    "**People behind one public address share its limits.**",
+    "the cache of used `jti` values (65 536 in all, § 7.6) and the 1 024 event streams are shared by every account",
+    "**One account per extension profile.**",
+    "**Two accounts in one browser**",
+    "**A restore brings the accounts back as the set holds them.**",
+    "The administrator therefore checks the Users page after every restore and disables again what should stay disabled.",
+    "**A waiting registration holds its e-mail**",
+    "**The waiting registrations share one cap**",
+    "At most 64 registrations wait at once, for every invitation together, and the oldest goes first when the table is full.",
+    "**Few accounts give coarse shares in pre-login.**",
+    "**The answer of the account log names no account**",
+    "and in their encrypted copies off the machine",
+    // As fixed after the final review: the retention job with several vaults, an open tab whose profile signs in as
+    // another account, and the invitation link in the browser's own history.
+    "one failing vault makes the job look at every vault on the server every ten minutes, not only the failing one",
+    "stops its sync and locks the moment it sees that: every request of its sync engine is made only while `GET /api/auth/session` names the unlocked account, before and after the request",
+    "what it wrote stays in its outbox and goes to its own vault after the next sign-in of its account",
+    "a page cannot remove an address from the browser's own history list and address-bar suggestions",
+  ]) assert.ok(limits.includes(rule), rule);
+
+  // § 11: the Users page, the logging rule and its two exceptions.
+  const server = section("## 11. Server and vole-kit – limits");
+  for (const rule of [
+    "- **Several accounts** *(delivery 1, 2026-11-27)*.",
+    "No action of the Users page works on the administrator's own account or on another administrator (`403`)",
+    "**What an administrator cannot do:**",
+    "Every route takes the acting account, its vault and its user from the session, the token or the code, never from the request.",
+    "**Every action on another account writes its event in the same transaction as the change,** or it does not happen. There are two exceptions.",
+    "(2) **A deletion:** the account's log is deleted with the account (the table cascades), so no event can outlive it.",
+    "a good backup set exists whose run started after the account's last `account_disabled` event (strictly after",
+    "On the admin listener `GET /settings/users` answers `303` to `/settings/accounts`, and every other path under `/settings/users` answers `404`",
+    "refuses an account that is not an administrator (`403 forbidden`)",
+    "also revokes every pending invitation, so a restore never wakes a link that the administrator had revoked",
+    "The administrator makes new links after a restore and checks the Users page: the accounts come back as the set holds them",
+    // As built: a deleted account's invitation names no account, and which actions use up the confirmation.
+    "After that account is deleted, the row keeps no account: the kit's table sets `used_by` to NULL",
+    "Making a sign-in code uses it up, as the kit's own page does, so one confirmation never makes codes for every account",
+    "making or sending an invitation and enabling an account keep it",
+    "the ids are SQLite row ids without `AUTOINCREMENT`, so after a restore they can go backwards",
+    // A reload of the page that shows a new link makes nothing.
+    "answers `303` to the Users page with a random slot id in the address, never the link",
+    "so a reload of the page shows the link no more and makes no second invitation",
+  ]) assert.ok(server.includes(rule), rule);
+});

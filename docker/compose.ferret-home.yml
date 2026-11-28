@@ -65,8 +65,8 @@
 #    after the check.
 #
 # What the host that runs `scripts/ferret-home.sh up` needs: Docker 28 or newer (`up` checks),
-# docker buildx, compose v2, git with the release tags, node, and cosign (or --no-cosign, which
-# is recorded). The release image package must be public in the registry, or the host must be
+# docker buildx, compose v2, git with the release tags, node, and cosign 3 or newer (or --no-cosign,
+# which is recorded). The release image package must be public in the registry, or the host must be
 # logged in to it. The subnet below must be free. A nightly snapshot of the copy folder on the
 # target needs a file system that has snapshots (ZFS, btrfs); an XFS array cannot. A job on
 # the target that COPIES (not moves) the files into a folder the copy user cannot write also
@@ -81,6 +81,13 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     pids_limit: 256
+    # Every event stream is an open connection, and the server holds up to 1 024 of them. A container
+    # starts with a soft limit of 1 024 open files on many engines, which the streams alone would use
+    # up next to the database and the listeners; 4096 leaves room for both.
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 4096
     logging:
       driver: local
       options:

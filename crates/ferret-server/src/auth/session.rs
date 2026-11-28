@@ -21,8 +21,9 @@
 //! password, a recovery, a redeemed sign-in code or "revoke all devices"),
 //! [`end_device_sessions`] ends the sessions of one browser, and
 //! [`end_everything_after_restore`] ends every session, every pending sign-in
-//! step and every device token of every user after the database was restored
-//! from a backup. All run in the caller's transaction.
+//! step, every pending invitation and every device token of every user after
+//! the database was restored from a backup, and writes `server_restored` to the
+//! log of every account. All run in the caller's transaction.
 
 use axum_extra::extract::cookie::{Cookie, SameSite, SignedCookieJar};
 use ferret_core::SecureRng;
@@ -32,6 +33,7 @@ use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, params};
 use vole_kit::auth::reauth;
 use vole_kit::auth::session::{self as kit_session, SessionClaims};
 
+use crate::accounts::log;
 use crate::auth::{devices, tokens};
 use crate::ids::{DeviceId, SessionSecret, SidHash};
 use crate::product;
@@ -557,8 +559,12 @@ pub struct RestoreSweep {
     pub registrations: usize,
     /// Pending sign-in codes that were revoked.
     pub sign_in_codes: usize,
+    /// Pending invitations that were revoked.
+    pub invites: usize,
     /// Users whose `session_version` was raised.
     pub users: usize,
+    /// Events `server_restored` written to the account log (one per account).
+    pub logged: usize,
     /// Devices with tokens that were revoked.
     pub devices: usize,
     /// Token rows (access and refresh) that were deleted.
@@ -568,19 +574,21 @@ pub struct RestoreSweep {
 /// After the database was restored from a backup, in the caller's
 /// transaction: ends every session of every user on both origins, removes
 /// every hand-over code, pending sign-in state and pending registration,
-/// revokes every sign-in code that is neither used nor revoked (an expired
-/// one too, whatever the clock says), and raises every user's
-/// `session_version`, so a cookie of the kit's (a session or a re-auth grant)
-/// made before the restore is no good either. Every device token is deleted
-/// and every device with tokens revoked
-/// (`tokens::invalidate_all_after_restore`), in the same transaction.
+/// revokes every sign-in code and every invitation that is neither used nor
+/// revoked (an expired one too, whatever the clock says), and raises every
+/// user's `session_version`, so a cookie of the kit's (a session or a re-auth
+/// grant) made before the restore is no good either. Every device token is
+/// deleted and every device with tokens revoked
+/// (`tokens::invalidate_all_after_restore`), and every account gets the event
+/// `server_restored` (actor `server`) in its log, in the same transaction.
 ///
-/// A backup holds the sessions, codes and token hashes that were live when it
-/// was taken. Without this, a session that was ended, a code that was used or
-/// a token that was renewed or revoked since would come back to life with the
-/// restore.
+/// A backup holds the sessions, codes, invitations and token hashes that were
+/// live when it was taken. Without this, a session that was ended, a code
+/// that was used, an invitation that was revoked or a token that was renewed
+/// or revoked since would come back to life with the restore.
 ///
-/// Spec: Fase 1 § 11 (backups) and § 7.6.
+/// Spec: Fase 1 § 11 (backups, "Several accounts": backup and restore) and
+/// § 7.6.
 pub fn end_everything_after_restore(
     tx: &Transaction<'_>,
     now: i64,
@@ -597,15 +605,23 @@ pub fn end_everything_after_restore(
          WHERE used_at IS NULL AND revoked_at IS NULL",
         [],
     )?;
+    let invites = tx.execute(
+        "UPDATE invites SET revoked_at = datetime('now')
+         WHERE used_at IS NULL AND revoked_at IS NULL",
+        [],
+    )?;
     let users = tx.execute("UPDATE users SET session_version = session_version + 1", [])?;
     let (devices, tokens) = tokens::invalidate_all_after_restore(tx, now)?;
+    let logged = log::record_restored_for_all(tx, now)?;
     Ok(RestoreSweep {
         sessions,
         handoffs,
         login_states,
         registrations,
         sign_in_codes,
+        invites,
         users,
+        logged,
         devices,
         tokens,
     })

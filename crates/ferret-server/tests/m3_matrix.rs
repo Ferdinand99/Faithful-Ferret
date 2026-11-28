@@ -1724,9 +1724,12 @@ fn every_route_that_writes_the_unlock_methods_or_ends_sessions_has_a_row_in_the_
     );
 
     // The code that ends every session of a user. "Revoke all" on the page of
-    // devices (`auth/devices.rs`) has its rows in `tests/devices.rs`.
+    // devices (`auth/devices.rs`) has its rows in `tests/devices.rs`; a
+    // disable and "sign out everywhere" of the Users page
+    // (`accounts/actions.rs`) have theirs in `tests/admin_accounts.rs`.
     let enders = files_holding(&src, "end_all_credentials(");
     let expected: BTreeSet<String> = [
+        "accounts/actions.rs",
         "auth/devices.rs",
         "auth/redeem.rs",
         "auth/session.rs",

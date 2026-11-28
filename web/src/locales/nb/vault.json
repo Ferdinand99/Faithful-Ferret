@@ -130,6 +130,7 @@
   "vault.unlock.heading": "Lås opp hvelvet",
   "vault.unlock.not_you": "Ikke deg? Logg ut",
   "vault.unlock.other": "Logg inn med en annen konto",
+  "vault.unlock.other_account": "Denne nettleseren er nå logget inn med en annen konto (i en annen fane eller et annet vindu), så hvelvet her ble låst. Ingenting mer ble sendt herfra: det du lagret, ligger trygt på denne enheten og sendes til hvelvet ditt når du logger inn på kontoen din igjen.",
   "vault.unlock.passkey.busy": "Venter på passkeyen din…",
   "vault.unlock.passkey.button": "Lås opp med en passkey",
   "vault.unlock.passkey.help": "Nettleseren ber deg bevise at det er deg, med fingeravtrykk, ansikt eller PIN-kode. Hovedpassordet og gjenopprettingsnøkkelen virker fortsatt.",

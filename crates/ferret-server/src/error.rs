@@ -193,6 +193,11 @@ impl ApiError {
 /// The four codes of a device's tokens are 401: `dpop_invalid` (the DPoP proof
 /// is missing or wrong, for every reason alike), `token_expired`,
 /// `token_reused` and `device_revoked` (Spec: Fase 1 § 7.6).
+///
+/// The two codes of several accounts (Spec: Fase 1 § 4.2): `invite_invalid` is
+/// 403 for every reason an invitation does not count (unknown, used, revoked,
+/// run out, or another role), and `email_taken` is 409, the answer only the
+/// holder of a valid invitation gets.
 pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("unauthorized", StatusCode::UNAUTHORIZED),
     ("denied", StatusCode::UNAUTHORIZED),
@@ -237,6 +242,8 @@ pub const CODE_STATUS: &[(&str, StatusCode)] = &[
     ("token_expired", StatusCode::UNAUTHORIZED),
     ("token_reused", StatusCode::UNAUTHORIZED),
     ("device_revoked", StatusCode::UNAUTHORIZED),
+    ("invite_invalid", StatusCode::FORBIDDEN),
+    ("email_taken", StatusCode::CONFLICT),
 ];
 
 /// The status of `code`. A code that is not in the table is a bug of the

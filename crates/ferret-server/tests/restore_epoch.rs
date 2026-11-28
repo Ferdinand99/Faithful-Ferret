@@ -397,7 +397,8 @@ async fn cli_bump_on_a_copy_of_the_database_raises_the_epoch_and_starts_no_liste
     assert_eq!(
         ran.stdout.trim(),
         "restore epoch is now 4000000000 (2 vaults raised); 0 sessions ended, 0 sign-in codes \
-         revoked, 0 devices signed out"
+         revoked, 0 invitations revoked, 0 devices signed out; the restore is in the log of 2 \
+         accounts"
     );
     assert_eq!(epochs(&copy.db()), [4_000_000_000, 4_000_000_000]);
 
@@ -601,9 +602,10 @@ async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy()
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
     let epoch = said_epoch(&ran.stdout, "1 vault raised");
     assert!(
-        ran.stdout
-            .trim()
-            .ends_with("; 2 sessions ended, 1 sign-in code revoked, 0 devices signed out"),
+        ran.stdout.trim().ends_with(
+            "; 2 sessions ended, 1 sign-in code revoked, 0 invitations revoked, 0 devices \
+                 signed out; the restore is in the log of 1 account"
+        ),
         "{}",
         ran.stdout
     );
@@ -694,7 +696,7 @@ async fn cli_bump_after_a_copy_by_hand_ends_every_session_and_code_of_the_copy()
         assert_eq!(
             ran.stdout.trim(),
             format!(
-                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked, 0 devices signed out"
+                "restore epoch is now {said} (1 vault raised); {ended} ended, 0 sign-in codes revoked, 0 invitations revoked, 0 devices signed out; the restore is in the log of 1 account"
             )
         );
     }
@@ -734,7 +736,7 @@ async fn cli_bump_signs_every_device_out_and_says_how_many() {
     let ran = ferret(&args, &[]);
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
     assert!(
-        ran.stdout.trim().ends_with(", 2 devices signed out"),
+        ran.stdout.trim().contains(", 2 devices signed out; "),
         "{}",
         ran.stdout
     );
@@ -750,10 +752,101 @@ async fn cli_bump_signs_every_device_out_and_says_how_many() {
     let ran = ferret(&args, &[]);
     assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
     assert!(
-        ran.stdout.trim().ends_with(", 0 devices signed out"),
+        ran.stdout.trim().contains(", 0 devices signed out; "),
         "{}",
         ran.stdout
     );
+}
+
+/// The bump of a copy by hand revokes every pending invitation of the copy
+/// and writes `server_restored` to the log of every account, as `backup
+/// restore` does. Spec: Fase 1 § 8.6 and § 11 (backup and restore).
+#[tokio::test]
+async fn restore_epoch_bump_does_the_same() {
+    let app = TestApp::new().await;
+    let first = add_account_to_app(&app, 1).await;
+    let second = add_account_to_app(&app, 2).await;
+    let by = first.user_id;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            for n in 0..3_u8 {
+                let hash = vole_kit::auth::invites::hash(&format!("an invitation {n}"));
+                let id = vole_kit::db::invites::insert(
+                    conn,
+                    &hash,
+                    vole_kit::db::role::Role::Viewer,
+                    "",
+                    by,
+                )?;
+                if n == 2 {
+                    conn.execute(
+                        "UPDATE invites SET used_at = datetime('now') WHERE id = ?1",
+                        [id],
+                    )?;
+                }
+            }
+            Ok(())
+        })
+        .await
+        .expect("the invitations");
+    let copy = copy_of_the_data_directory(&app).await;
+    let pending = "SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND revoked_at IS NULL";
+    assert_eq!(one(&copy, pending), 2);
+
+    let before = wall_clock();
+    let ran = ferret(
+        &[
+            "restore-epoch",
+            "bump",
+            "--yes",
+            "--data-dir",
+            copy.path().to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(ran.ok, "{} {}", ran.stdout, ran.stderr);
+    assert!(
+        ran.stdout.contains(", 2 invitations revoked, ")
+            && ran
+                .stdout
+                .trim()
+                .ends_with("; the restore is in the log of 2 accounts"),
+        "{}",
+        ran.stdout
+    );
+    assert_eq!(one(&copy, pending), 0);
+    assert_eq!(
+        one(
+            &copy,
+            "SELECT COUNT(*) FROM invites WHERE used_at IS NOT NULL AND revoked_at IS NULL"
+        ),
+        1,
+        "the used one is left as it was"
+    );
+    // One event per account, by the server, at the time of the bump.
+    let conn = copy.db();
+    let mut stmt = conn
+        .prepare(
+            "SELECT user_id, kind, actor, actor_name, at FROM ferret_account_events ORDER BY id",
+        )
+        .expect("prepare");
+    let events: Vec<(i64, String, String, String, i64)> = stmt
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert_eq!(events.len(), 2, "{events:?}");
+    for ((user, kind, actor, name, at), want) in events.iter().zip([first.user_id, second.user_id])
+    {
+        assert_eq!(
+            (*user, kind.as_str(), actor.as_str(), name.as_str()),
+            (want, "server_restored", "server", "")
+        );
+        assert!(*at >= before && *at <= wall_clock(), "{at}");
+    }
 }
 
 /// No public way raises the restore epoch without the sweep: the rule alone is

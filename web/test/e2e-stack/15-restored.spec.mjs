@@ -173,11 +173,14 @@ test("a_write_saved_during_a_restore_is_refused_and_the_banner_appears", async (
   const rev = await serverRev(b.context, id);
 
   // B is open and cannot read: it does not hear that the server is restored. It can still write, but its session ended
-  // with the restore, so the server refuses the write before it looks at anything else. (A write with a session made after
+  // with the restore, so the write is refused before the server looks at anything else. The web vault asks for its session
+  // right before each write (design § 8.8, "Two accounts in one browser"), so the 401 is that check's, and the write itself
+  // is never sent; a server that is asked the write anyway refuses it with the same 401. (A write with a session made after
   // the restore and a restore number from before it is refused with 409 restore_epoch_changed; the server's tests cover it.)
   await b.page.route(/\/api\/sync\/(events|changes|checkpoint)|\/api\/sync\/items\?/, (route) => route.abort("failed"));
   await hostStep("restore");
-  const refused = b.page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/sync/items/"));
+  const refused = b.page.waitForResponse((r) => (r.request().method() === "PUT" && r.url().includes("/api/sync/items/"))
+    || (r.request().method() === "GET" && new URL(r.url()).pathname === "/api/auth/session" && r.status() === 401));
   await editItem(b.page, target, { name: `${target}-saved-during-restore`, username: "after" });
   const answer = await refused;
   expect(answer.status(), "the session from before the restore is over").toBe(401);

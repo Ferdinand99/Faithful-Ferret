@@ -20,7 +20,7 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use support::handoff::{
     admin_user, begin, code_of, dump, grant_reauth, hand_over, mint, now, redeem, set_cookie,
-    vault_session,
+    set_role, vault_session,
 };
 use support::session::{hex, seed};
 use support::{ADMIN_URL, Jar, Req, TestApp, VAULT_URL, Which};
@@ -73,6 +73,8 @@ type SessionSummary = (String, Option<Vec<u8>>, Option<i64>, i64);
 async fn signed_in() -> (TestApp, support::session::Seeded, support::session::Issued) {
     let app = TestApp::new().await;
     let user = seed(&app, 1).await;
+    // Only an administrator is handed over to the admin pages.
+    set_role(&app, user.user_id, "admin").await;
     let vault = vault_session(&app, user.user_id, 1).await;
     (app, user, vault)
 }
@@ -348,6 +350,7 @@ async fn crafted_link_with_a_foreign_code_leaves_the_admin_session_unchanged() {
     // The attacker has an account too. Their browser begins a hand-over and
     // mints a code with their own challenge; the victim never sees any of it.
     let attacker = seed(&app, 2).await;
+    set_role(&app, attacker.user_id, "admin").await;
     app.clear_jar(Which::Admin);
     let theirs = begin(&app, "next=%2F").await;
     vault_session(&app, attacker.user_id, 2).await;
@@ -403,6 +406,7 @@ async fn login_redeem_is_refused_while_an_admin_session_for_another_user_exists(
     // (vault cookies replaced) and starts a hand-over; the admin cookies of the
     // first user are still in the browser.
     let second = seed(&app, 2).await;
+    set_role(&app, second.user_id, "admin").await;
     vault_session(&app, second.user_id, 2).await;
     let begun = begin(&app, "next=%2F").await;
     let code = code_of(&mint(&app, "login", "/", &begun.challenge).await);
@@ -549,6 +553,7 @@ async fn reauth_redeem_for_a_different_user_is_denied() {
 
     // User 1 confirms their password on the vault origin and hands over.
     let first = seed(&app, 1).await;
+    set_role(&app, first.user_id, "admin").await;
     let vault1 = vault_session(&app, first.user_id, 1).await;
     let begun = begin(&app, "next=%2Fsettings&purpose=reauth").await;
     grant_reauth(&app, &vault1, 1);
@@ -742,6 +747,7 @@ async fn vault_logout_ends_every_admin_session_handed_over_from_it() {
     assert_ne!(first_admin.get(SID_COOKIE), second_admin.get(SID_COOKIE));
     // And an admin session of another user, which has nothing to do with it.
     let other = seed(&app, 2).await;
+    set_role(&app, other.user_id, "admin").await;
     let other_vault = vault_session(&app, other.user_id, 2).await;
     app.clear_jar(Which::Admin);
     assert_eq!(hand_over(&app, "/", "login").await.status, StatusCode::OK);
@@ -1399,6 +1405,7 @@ async fn an_error_reading_the_presented_admin_session_is_an_error_and_uses_nothi
     // User 2 has an admin session in this browser; user 1 hands over.
     let (_second, _vault2) = admin_user(&app, 2).await;
     let first = seed(&app, 1).await;
+    set_role(&app, first.user_id, "admin").await;
     vault_session(&app, first.user_id, 1).await;
     let begun = begin(&app, "next=%2F").await;
     let code = code_of(&mint(&app, "login", "/", &begun.challenge).await);

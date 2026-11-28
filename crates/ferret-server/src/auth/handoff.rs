@@ -30,10 +30,16 @@
 //! must be the same user's, and gets the kit's re-auth grant. The vault side
 //! uses up its own grant when it mints the code.
 //!
+//! Only an administrator is handed over: `mint` refuses a session of any
+//! other user with `403 forbidden`, and `redeem` does the same for a user who
+//! stopped being one in between (the code is spent all the same). With
+//! several accounts on a server, an ordinary user never gets an admin session
+//! (Spec: Fase 1 § 11).
+//!
 //! # Limits that follow from this
 //!
-//! * Every refusal of `redeem` is the same answer, `handoff_invalid`, whatever
-//!   failed, so a caller learns nothing about which check it hit.
+//! * Every other refusal of `redeem` is the same answer, `handoff_invalid`,
+//!   whatever failed, so a caller learns nothing about which check it hit.
 //! * The hand-over goes from the vault to the admin origin only: `mint` is a
 //!   route of the vault listener and `redeem` one of the admin listener, and
 //!   the session extractors refuse a session of the other origin.
@@ -153,11 +159,21 @@ fn same_hash(a: &[u8; 32], b: &[u8; 32]) -> bool {
 // -------------------------------------------------------------------- mint
 
 /// `POST /api/auth/handoff` (vault listener): makes a code for the vault
-/// session of the request. The session must be a full one; for a `reauth` code
+/// session of the request. The session must be a full one of an
+/// administrator (else `403 forbidden`); for a `reauth` code
 /// the kit's re-auth grant of this request must be fresh, and it is used up.
 async fn mint(State(state): State<FerretState>, request: Request) -> Result<Response, ApiError> {
     let (mut parts, body) = request.into_parts();
     let session = VaultSession::from_request_parts(&mut parts, &state).await?;
+    // Only an administrator gets into the admin pages (Spec: Fase 1 § 11).
+    let user_id = session.user_id;
+    let admin = state
+        .vault_db
+        .with_conn(move |conn| Ok(is_admin(conn, user_id)?))
+        .await?;
+    if !admin {
+        return Err(ApiError::coded("forbidden"));
+    }
     let headers = parts.headers.clone();
     let ApiJson(req) =
         ApiJson::<HandoffReq>::from_request(Request::from_parts(parts, body), &state).await?;
@@ -210,6 +226,18 @@ async fn mint(State(state): State<FerretState>, request: Request) -> Result<Resp
         body.into_response()
     };
     Ok(no_store(response))
+}
+
+/// Whether `user_id` is an administrator (the kit's role).
+fn is_admin(conn: &Connection, user_id: i64) -> rusqlite::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT role = 'admin' FROM users WHERE id = ?1",
+            params![user_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .optional()?
+        .unwrap_or(false))
 }
 
 /// A row to insert into `ferret_handoffs`.
@@ -333,6 +361,9 @@ enum Refusal {
     OtherAdminSession,
     /// A `reauth` code, and no admin session of the same user is open.
     NoAdminSession,
+    /// The user is not an administrator (any more): the one refusal with an
+    /// answer of its own, `403 forbidden`.
+    NotAdmin,
 }
 
 /// The admin session the request presented, if it was a valid one.
@@ -364,15 +395,20 @@ fn open_admin_session(
     {
         return Ok(Err(Refusal::ParentInvalid));
     }
-    let user: Option<(i64, bool)> = tx
+    let user: Option<(i64, bool, bool)> = tx
         .query_row(
-            "SELECT session_version, active FROM users WHERE id = ?1",
+            "SELECT session_version, active, role = 'admin' FROM users WHERE id = ?1",
             params![taken.user_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     let version = match user {
-        Some((version, true)) if version == taken.session_version => version,
+        Some((version, true, admin)) if version == taken.session_version => {
+            if !admin {
+                return Ok(Err(Refusal::NotAdmin));
+            }
+            version
+        }
         _ => return Ok(Err(Refusal::ParentInvalid)),
     };
     // An admin session of another user is never replaced by this one.
@@ -467,6 +503,12 @@ async fn redeem(State(state): State<FerretState>, request: Request) -> Result<Re
         .await?
     {
         Ok(granted) => granted,
+        Err(Refusal::NotAdmin) => {
+            tracing::info!("hand-over refused: the user is not an administrator");
+            let verifier =
+                CookieJar::from_headers(&headers).remove(removal(product::HANDOFF_COOKIE));
+            return Ok((verifier, ApiError::coded("forbidden")).into_response());
+        }
         Err(reason) => {
             tracing::info!(?reason, "hand-over refused");
             return Ok(invalid());

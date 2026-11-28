@@ -42,7 +42,11 @@ fn menu_links(page: &str) -> Vec<String> {
 
 /// The pages of the admin area that exist in this build, in the menu's order.
 fn pages() -> Vec<&'static str> {
-    let mut pages = vec!["/settings/backup", "/settings/users", "/settings/general"];
+    let mut pages = vec![
+        "/settings/backup",
+        "/settings/accounts",
+        "/settings/general",
+    ];
     if cfg!(feature = "quick-unlock") {
         pages.push("/settings/unlock");
     }
@@ -170,7 +174,11 @@ async fn a_user_who_is_not_an_administrator_sees_no_admin_entry() {
     let app = TestApp::new_at_real_time().await;
     let (user, _) = admin_user(&app, 1).await;
     let admin_only = {
-        let mut only = vec!["/settings/backup", "/settings/users", "/settings/general"];
+        let mut only = vec![
+            "/settings/backup",
+            "/settings/accounts",
+            "/settings/general",
+        ];
         if cfg!(feature = "quick-unlock") {
             only.push("/settings/unlock");
         }

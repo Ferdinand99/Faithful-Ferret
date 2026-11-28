@@ -8,11 +8,13 @@
 // locks is registered in a wipe scope, and the shell runs the scope before it
 // puts the unlock screen in place of everything else.
 import { el, mount } from "../dom.mjs";
+import { clearNotice, noticeEvents, noticeOnce } from "../flows/accountEvents.mjs";
 import { ADMIN_LANDING, configuredAdminUrl } from "../flows/adminUrl.mjs";
 import { goToAdmin } from "../flows/handoff.mjs";
 import { restoreNoteTools } from "../flows/restoreNote.mjs";
 import { autoLockFor } from "../lock.mjs";
 import { MANIFEST_ID } from "../sync/engine.mjs";
+import { accountNoticeView } from "./accountNotice.mjs";
 import { createWipeScope, describeError, formatMoment, listenWhileShown } from "./common.mjs";
 import { menuRoutes } from "./account.mjs";
 import { menuPathOf } from "./listModel.mjs";
@@ -48,6 +50,8 @@ import { clearFolderLinks, tokenFor } from "./folderLinks.mjs";
  * @property {readonly string[]} [accountPaths] the addresses of the pages the account page lists (routes that say `menu: "account"`); the account link is marked on them and on `/account`
  * @property {StandbySource} [standby] where the tab is told that another tab took the vault; without it the frame never shows the standby notice
  * @property {ExportReminder | null} [reminder] the reminder to take a new encrypted export; without it the frame never shows one
+ * @property {string} [locale] the language of the page, for the times in the frame
+ * @property {AccountNotice | null} [accountNotice] the events of the account log to tell at this unlock; without it the frame never shows the notice
  * @property {readonly any[]} [routes] the routes of the page; the side menu lists those that say `sidebar`
  * @property {string | null} [email] the signed-in account, for the foot of the side menu
  * @property {{ check(): Promise<boolean>, go(): void | Promise<void> }} [admin] the way to the admin pages; the switch shows only when `check` answers true
@@ -63,6 +67,11 @@ import { clearFolderLinks, tokenFor } from "./folderLinks.mjs";
  * @typedef {object} ExportReminder
  * @property {() => Promise<{ due: boolean, lastExportAt: number | null }>} check whether the reminder is due now
  * @property {() => Promise<void>} snooze keeps it away for a while ("Remind me later")
+ *
+ * @typedef {object} AccountNotice
+ * @property {() => Promise<readonly import("../flows/accountEvents.mjs").AccountEvent[]>} check what an administrator, the server
+ *   command or the server did since this browser last showed "Activity" (newest first)
+ * @property {() => void} [dismiss] "Dismiss": no notice for the rest of this unlock (the mark does not move)
  *
  * @typedef {object} StandbySource
  * @property {(fn: (standby: boolean) => void) => () => void} onStandby
@@ -134,7 +143,7 @@ function trackLock(session, screen) {
  * takes the whole frame.
  * @param {ShellOptions} options
  */
-export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders, win = /** @type {any} */ (globalThis).window }) {
+export function shellView({ t, engine, session, content, lock, touch, scope, onLocked, live, standby, accountPaths = [], router = { go() {} }, reminder, accountNotice, locale, routes = [], email = null, admin, signOut, prefs = createUiPrefs(), theme = createThemeChoice(), folders, win = /** @type {any} */ (globalThis).window }) {
   const root = el("div", { class: "vault-ui vault-shell", "data-role": "shell" });
   const status = el("span", { class: "pill sync-status", role: "status", "data-role": "sync-status" }, el("span", { class: "pill-text" }, t("sync.state.syncing")));
   const banners = el("div", { class: "banners", "data-role": "banners" });
@@ -360,6 +369,26 @@ export function shellView({ t, engine, session, content, lock, touch, scope, onL
     })();
   }
 
+  // The notice of what was done to the account since this browser last showed "Activity" (spec Fase 1 § 11): one notice,
+  // with the way to that page. A check that cannot be made shows none, and the page it leads to never shows it.
+  if (accountNotice) {
+    let alive = true;
+    scope.add(() => {
+      alive = false;
+    });
+    void (async () => {
+      try {
+        const events = await accountNotice.check();
+        const onActivity = String(win?.location?.hash ?? "").replace(/^#/, "") === "/activity";
+        if (!alive || onActivity) return;
+        const node = accountNoticeView({ t, events, locale, onDismiss: () => accountNotice.dismiss?.() });
+        if (node !== null) banners.appendChild(node);
+      } catch {
+        // No answer: no notice.
+      }
+    })();
+  }
+
   // A frame built while the engine is stopped says so from the start.
   if (warnings !== null && engine.health().halted !== null) onState({ kind: "halted", code: engine.health().halted });
   // A state that the engine announced before this screen was built (a write that was refused while the page changed screens) is
@@ -473,8 +502,21 @@ export async function enterVault(ctx) {
     }
   };
   const noteTools = restoreNoteTools({ store: services.store, serverUrl: session.serverUrl });
-  const lockedScreen = () => unlockScreen({ session, t, go, onUnlocked, ...noteTools, locale: i18n.lang });
+  const lockedScreen = () => unlockScreen({
+    session, t, go, onUnlocked, ...noteTools, locale: i18n.lang,
+    ...(lockedForOther.has(session) ? { notice: t("vault.unlock.other_account") } : {}),
+  });
+  // The browser's session became another account's under this tab (another tab signed in as it): the sync service has
+  // stopped the engine, with the outbox kept, and the vault locks here, with a notice that says why.
+  if (typeof sync.onSessionOther === "function" && !otherWatched.has(sync)) {
+    otherWatched.add(sync);
+    sync.onSessionOther(() => {
+      lockedForOther.add(session);
+      void autoLock.lock();
+    });
+  }
   if (!open) return { locked: lockedScreen() };
+  lockedForOther.delete(session);
 
   // An open vault always has an idle lock, whatever else fails below (Spec: Fase 1 section 7.1).
   if (!autoLock.running()) autoLock.start();
@@ -521,8 +563,11 @@ export async function enterVault(ctx) {
     session,
     scope,
     touch,
-    /** @param {HTMLElement} content */
-    page: (content) => {
+    /**
+     * @param {HTMLElement} content
+     * @param {{ accountNotice?: boolean }} [options] `accountNotice: false` for the page the notice leads to
+     */
+    page: (content, options = {}) => {
       // A route that was still loading when the vault locked must not put a frame over the unlock screen.
       if (!session.current?.()) return lockedScreen();
       return shellView({ t, engine, session, content, lock: () => autoLock.lock(), touch, scope, onLocked: lockedScreen, live: services.liveSync, router: { go: ctx.go },
@@ -531,6 +576,8 @@ export async function enterVault(ctx) {
         signOut: typeof session.signOut === "function" ? () => signOutAndLeave(session, go) : undefined,
         accountPaths: menuRoutes(ctx.routes ?? []).map((route) => route.path),
         reminder: reminderOf(services.store, session.serverUrl, open.accountId),
+        accountNotice: options.accountNotice === false ? null : accountNoticeOf(services, session, open),
+        locale: i18n.lang,
         standby: typeof sync.onStandby === "function"
           ? { onStandby: (/** @type {any} */ fn) => sync.onStandby(fn), card: standbyCard, freeze: typeof sync.freezeUnsaved === "function" ? () => sync.freezeUnsaved() : undefined }
           : undefined,
@@ -538,6 +585,12 @@ export async function enterVault(ctx) {
     },
   };
 }
+
+/** The sessions whose vault was locked because the browser's session is another account's now (until the next unlock). @type {WeakSet<object>} */
+const lockedForOther = new WeakSet();
+
+/** The sync services whose `onSessionOther` is followed (once per page). @type {WeakSet<object>} */
+const otherWatched = new WeakSet();
 
 /** The unlocks whose pins were read back already (each unlock is a new `current()` object). @type {WeakSet<object>} */
 const pinsRead = new WeakSet();
@@ -650,6 +703,26 @@ function reminderOf(store, serverUrl, accountId) {
     check: async () => tools.status(await store.open(), serverUrl, accountId, Date.now()),
     snooze: async () => tools.snooze(await store.open(), serverUrl, accountId, Date.now()),
   };
+}
+
+/**
+ * The notice of the account log for this unlock, over the API and the store services; null where either is missing (a
+ * stand-in). It is asked once per unlock (`noticeOnce`), and the mark it reads is this browser's for this account.
+ * @param {any} services
+ * @param {any} session
+ * @param {{ accountId: string }} open the unlocked session's `current()`
+ * @returns {AccountNotice | null}
+ */
+function accountNoticeOf(services, session, open) {
+  const api = services?.api;
+  const store = services?.store;
+  const tools = store?.activitySeen;
+  if (typeof api?.get !== "function" || typeof store?.open !== "function" || !tools) return null;
+  const seen = {
+    load: async () => tools.load(await store.open(), session.serverUrl, open.accountId),
+    save: async (/** @type {import("../store/activitySeen.mjs").SeenMark} */ mark) => tools.save(await store.open(), session.serverUrl, open.accountId, mark),
+  };
+  return { check: () => noticeOnce(open, () => noticeEvents({ api, seen, accountId: open.accountId })), dismiss: () => clearNotice(open) };
 }
 
 /** A card with a message, for a screen that cannot be shown. @param {Translate} t @param {string} key */

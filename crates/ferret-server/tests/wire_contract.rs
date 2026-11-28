@@ -26,6 +26,10 @@ use ferret_server::wire::{
     DevicesRes, LoginFinishBody, MAX_DEVICE_LIST, MAX_DEVICES, PLATFORMS, PlatformJson,
     RevokeAllRes, TOKEN_CHARS, TokenJson, TokenRefreshReq, TokenRes, TokenRevokeReq, TokenTypeJson,
 };
+use ferret_server::wire::{
+    AccountEventJson, AccountEventsRes, ActorJson, INVITE_CHARS, InviteCheckReq, InviteCheckRes,
+    InviteToken, MAX_ACTOR_NAME, MAX_EVENTS_PAGE,
+};
 use ferret_server_auth::{AuthError, DenyReason, Malformed, SessionScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -58,13 +62,14 @@ const NOT_SHAPES: &[&str] = &[
     "dpop_jwk.json",
 ];
 
-/// The shape of a fixture file: the name before the first dot, and for a
-/// `<shape>.device.json` the device form `<shape>_device`.
+/// The shape of a fixture file: the name before the first dot, for a
+/// `<shape>.device.json` the device form `<shape>_device`, and for a
+/// `<shape>.invite.json` the form with an invitation `<shape>_invite`.
 fn shape_of(name: &str) -> String {
     let mut parts = name.split('.');
     let shape = parts.next().unwrap();
     match parts.next() {
-        Some("device") => format!("{shape}_device"),
+        Some(variant @ ("device" | "invite")) => format!("{shape}_{variant}"),
         _ => shape.to_string(),
     }
 }
@@ -147,6 +152,10 @@ fn round_trip(shape: &str, text: &str) -> Result<String, serde_json::Error> {
         "token_revoke_req" => through::<TokenRevokeReq>(text),
         "devices_res" => through::<DevicesRes>(text),
         "revoke_all_res" => through::<RevokeAllRes>(text),
+        "register_start_req_invite" => through::<RegisterStartReq>(text),
+        "invite_check_req" => through::<InviteCheckReq>(text),
+        "invite_check_res" => through::<InviteCheckRes>(text),
+        "account_events_res" => through::<AccountEventsRes>(text),
         other => panic!("no shape for the fixture kind {other}"),
     }
 }
@@ -207,6 +216,29 @@ const SHAPES: &[&str] = &[
     "token_revoke_req",
     "devices_res",
     "revoke_all_res",
+    "register_start_req_invite",
+    "invite_check_req",
+    "invite_check_res",
+    "account_events_res",
+];
+
+/// The shapes of several accounts: registration with an invitation, the check
+/// of a link, and the account log.
+const L1_SHAPES: &[&str] = &[
+    "register_start_req_invite",
+    "invite_check_req",
+    "invite_check_res",
+    "account_events_res",
+];
+
+/// The fixtures of several accounts.
+const L1_FIXTURES: &[&str] = &[
+    "account_events_res.empty.json",
+    "account_events_res.json",
+    "account_events_res.more.json",
+    "invite_check_req.json",
+    "invite_check_res.json",
+    "register_start_req.invite.json",
 ];
 
 /// The shapes of devices and their tokens.
@@ -312,6 +344,9 @@ fn optional_fields_have_a_fixture_with_and_without() {
     // Left out when empty, so the text above is what a client may send.
     assert!(json_of("register_start_req.json")["setup_token"].is_string());
     assert!(json_of("register_start_req.no_token.json")["setup_token"].is_null());
+    assert!(json_of("register_start_req.json")["invite"].is_null());
+    assert!(json_of("register_start_req.invite.json")["invite"].is_string());
+    assert!(json_of("register_start_req.invite.json")["setup_token"].is_null());
     assert!(json_of("login_start_req.json")["purpose"].is_null());
     assert_eq!(json_of("login_start_req.reauth.json")["purpose"], "reauth");
     assert!(json_of("login_finish_req.json")["purpose"].is_null());
@@ -1943,6 +1978,46 @@ fn invalid_cases_are_refused_the_same_way_in_rust_and_js() {
             "no case named {name}"
         );
     }
+
+    // The shapes of several accounts, the same way.
+    let l1: Vec<&Invalid> = cases
+        .iter()
+        .filter(|case| L1_SHAPES.contains(&case.shape.as_str()))
+        .collect();
+    assert!(l1.len() >= 80, "found only {} cases", l1.len());
+    for case in &l1 {
+        assert_refused(case);
+    }
+    for shape in L1_SHAPES {
+        assert!(l1.iter().any(|case| case.shape == *shape), "{shape}");
+    }
+    // An invitation of 42 and 44 characters and one with `-`; a kind with a
+    // capital letter; a page of more than 100 events.
+    for name in [
+        "register_start_req_invite invite 42 characters",
+        "register_start_req_invite invite 44 characters",
+        "register_start_req_invite invite with -",
+        "invite_check_req invite 42 characters",
+        "invite_check_req invite 44 characters",
+        "invite_check_req invite with -",
+        "account_events_res kind upper case",
+        "account_events_res kind 65 characters",
+        "account_events_res kind empty",
+        "account_events_res actor \"root\"",
+        "account_events_res actor_name 255 characters",
+        "account_events_res with 101 events",
+        "invite_check_res invited_by 255 characters",
+    ] {
+        assert!(
+            l1.iter().any(|case| case.name == name),
+            "no case named {name}"
+        );
+    }
+    assert!(
+        l1.iter()
+            .any(|case| case.shape == "register_start_req_invite"
+                && case.error == "malformed_registration_request")
+    );
 }
 
 #[test]
@@ -2943,12 +3018,20 @@ fn token_codes_are_401_on_both_sides() {
         assert_eq!(ApiError::coded(code).status.as_u16(), 401, "{code}");
         assert_eq!(golden[code], 401, "{code} in error_statuses.json");
     }
-    // They close the list, after the codes of the third milestone, so the
-    // older list is unchanged.
-    assert_eq!(&ERROR_CODES[ERROR_CODES.len() - 4..], new);
-    assert_eq!(&codes[codes.len() - 4..], new);
+    // They come after the codes of the third milestone, so the older list is
+    // unchanged; only the codes of several accounts follow them.
     let at = |code: &str| ERROR_CODES.iter().position(|c| *c == code).unwrap();
+    assert_eq!(
+        &ERROR_CODES[at("dpop_invalid")..at("dpop_invalid") + 4],
+        new
+    );
+    let golden_at = |code: &str| codes.iter().position(|c| c == code).unwrap();
+    assert_eq!(
+        &codes[golden_at("dpop_invalid")..golden_at("dpop_invalid") + 4],
+        new
+    );
     assert_eq!(at("import_window_invalid") + 1, at("dpop_invalid"));
+    assert_eq!(at("device_revoked") + 1, at("invite_invalid"));
     // A refusal of an operation in a batch may carry them with their status.
     for code in new {
         BatchResultJson::refused(code)
@@ -3184,4 +3267,298 @@ fn the_dpop_jwk_fixture_is_a_public_p256_key_and_its_thumbprint() {
     let jkt = fixture["jkt"].as_str().unwrap();
     assert_eq!(b64url::encode(&Sha256::digest(canonical.as_bytes())), jkt);
     assert_eq!(b64url::decode(jkt).unwrap().len(), 32);
+}
+
+// ---------------------------------------------------------- several accounts
+
+#[test]
+fn wire_contract_fixtures_cover_invite_and_event_shapes() {
+    // `web/test/unit/wire.test.mjs` reads the same files under the same names.
+    let all = fixtures();
+    let l1: Vec<&(String, String)> = all
+        .iter()
+        .filter(|(_, shape)| L1_SHAPES.contains(&shape.as_str()))
+        .collect();
+    assert_eq!(
+        l1.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        L1_FIXTURES
+    );
+    for (name, shape) in &l1 {
+        let text = read(name);
+        let text = text.trim_end_matches('\n');
+        assert_eq!(
+            round_trip(shape, text).unwrap_or_else(|e| panic!("{name}: {e}")),
+            text,
+            "{name} changes when it is read and written"
+        );
+        assert_eq!(check_step(shape, text), Ok(()), "{name}");
+        assert!(
+            !has_null(&serde_json::from_str::<Value>(text).unwrap()),
+            "{name}"
+        );
+    }
+    for shape in L1_SHAPES {
+        assert!(SHAPES.contains(shape), "{shape}");
+    }
+    assert_eq!(
+        (INVITE_CHARS, MAX_EVENTS_PAGE, MAX_ACTOR_NAME),
+        (43, 100, 254)
+    );
+    assert_eq!(INVITE_CHARS, vole_kit::auth::invites::TOKEN_LEN);
+
+    // Registration with an invitation: the shape of the first administrator
+    // with `invite` in place of `setup_token`, in the order the server writes.
+    assert_eq!(
+        shape_of("register_start_req.invite.json"),
+        "register_start_req_invite"
+    );
+    assert_eq!(
+        shape_of("register_start_req.no_token.json"),
+        "register_start_req"
+    );
+    let start: RegisterStartReq = parse("register_start_req.invite.json");
+    assert!(start.setup_token.is_none());
+    let token = start.invite.as_ref().expect("an invitation");
+    assert_eq!(token.as_str().len(), INVITE_CHARS);
+    assert!(vole_kit::auth::invites::is_well_formed(token.as_str()));
+    assert!(read("register_start_req.invite.json").starts_with(r#"{"invite":"#));
+    assert_eq!(
+        keys(&json_of("register_start_req.invite.json")),
+        BTreeSet::from(["invite", "email", "request"])
+    );
+    // The check of that link carries the same token, and its answer when it
+    // runs out and who made it.
+    let check: InviteCheckReq = parse("invite_check_req.json");
+    assert_eq!(check.invite.as_str(), token.as_str());
+    let answer: InviteCheckRes = parse("invite_check_res.json");
+    assert!(answer.expires_at > 0);
+    assert!(!answer.invited_by.is_empty());
+    assert!(answer.invited_by.chars().count() <= MAX_ACTOR_NAME);
+
+    // The log: newest first, every actor, and every kind of the first delivery;
+    // a name only for an administrator, and none for one whose account is gone.
+    let log: AccountEventsRes = parse("account_events_res.json");
+    assert!(!log.more);
+    assert!(log.events.windows(2).all(|w| w[0].id > w[1].id));
+    let kinds: BTreeSet<&str> = log.events.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        BTreeSet::from([
+            "account_created",
+            "sign_in_code_issued",
+            "sign_in_code_redeemed",
+            "account_disabled",
+            "account_enabled",
+            "signed_out_everywhere",
+            "server_restored",
+        ])
+    );
+    for actor in [
+        ActorJson::Admin,
+        ActorJson::ServerCommand,
+        ActorJson::Server,
+        ActorJson::Account,
+    ] {
+        assert!(log.events.iter().any(|e| e.actor == actor), "{actor:?}");
+    }
+    assert!(
+        log.events
+            .iter()
+            .filter(|e| e.actor != ActorJson::Admin)
+            .all(|e| e.actor_name.is_empty())
+    );
+    assert!(
+        log.events
+            .iter()
+            .any(|e| e.actor == ActorJson::Admin && e.actor_name.is_empty()),
+        "an administrator whose account is gone"
+    );
+    assert!(
+        read("account_events_res.json")
+            .starts_with(r#"{"events":[{"id":9,"at":1800003600,"kind":"server_restored","actor":"server","actor_name":""}"#)
+    );
+    for (actor, word) in [
+        (ActorJson::Admin, "admin"),
+        (ActorJson::ServerCommand, "server_command"),
+        (ActorJson::Server, "server"),
+        (ActorJson::Account, "account"),
+    ] {
+        assert_eq!(serde_json::to_value(actor).unwrap(), json!(word));
+    }
+    let empty: AccountEventsRes = parse("account_events_res.empty.json");
+    assert!(empty.events.is_empty() && !empty.more);
+    let full: AccountEventsRes = parse("account_events_res.more.json");
+    assert_eq!(full.events.len(), MAX_EVENTS_PAGE);
+    assert!(full.more);
+}
+
+#[test]
+fn the_first_admin_register_fixtures_are_unchanged_byte_for_byte() {
+    // The registration of the first administrator is byte for byte what it
+    // was: the files have the SHA-256 they had before invitations came.
+    for (name, sha256) in [
+        (
+            "register_start_req.json",
+            "98950a8e736fe08de4faaa190a8d3c63f87a1f2c164b4f4f08279fcede4bc20e",
+        ),
+        (
+            "register_start_req.no_token.json",
+            "06f9b016d30181c9c95dff527762d1798e69c382426207838e748da54e5e56d1",
+        ),
+        (
+            "register_start_res.json",
+            "db294fa8f5c5d57d4d5c7b1672c21691faa46bb0b660f2a0035a0c070ce535d1",
+        ),
+        (
+            "register_finish_req.json",
+            "c6c1d0325d08ebdcae1c2e6d982de7fe9603e9746fb1480b54389b52b6d52a20",
+        ),
+        (
+            "register_finish_req.minimal.json",
+            "4f5cf657a960d6f892b1a2d7af59cdb88f0cb6b1259463b7fcc4f4e68eb3c010",
+        ),
+        (
+            "register_finish_res.json",
+            "8953f07a8ef2e339f61e3417d63129e2c4489c894c735712c97b5b1c92af2d55",
+        ),
+    ] {
+        let bytes = fs::read(dir().join(name)).unwrap();
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(digest, sha256, "{name} changed");
+    }
+    // Each start still reads without an invitation, and is written back as it
+    // came: the new field is left out when empty.
+    for name in [
+        "register_start_req.json",
+        "register_start_req.no_token.json",
+    ] {
+        let start: RegisterStartReq = parse(name);
+        assert!(start.invite.is_none(), "{name}");
+        let text = read(name);
+        assert_eq!(
+            serde_json::to_string(&start).unwrap(),
+            text.trim_end_matches('\n'),
+            "{name}"
+        );
+        assert!(!text.contains("invite"), "{name}");
+    }
+}
+
+#[test]
+fn invite_codes_have_their_statuses_on_both_sides() {
+    let golden: serde_json::Map<String, Value> =
+        serde_json::from_str(&read("error_statuses.json")).unwrap();
+    let codes: Vec<String> = serde_json::from_str(&read("error_codes.json")).unwrap();
+    for (code, status) in [("invite_invalid", 403), ("email_taken", 409)] {
+        assert!(ERROR_CODES.contains(&code), "{code}");
+        assert_eq!(
+            ferret_server::error::status_of(code).as_u16(),
+            status,
+            "{code}"
+        );
+        assert_eq!(ApiError::coded(code).status.as_u16(), status, "{code}");
+        assert_eq!(golden[code], status, "{code} in error_statuses.json");
+    }
+    // They close the list, after the codes of devices, so the older list is
+    // unchanged.
+    let new = ["invite_invalid", "email_taken"];
+    assert_eq!(&ERROR_CODES[ERROR_CODES.len() - 2..], new);
+    assert_eq!(&codes[codes.len() - 2..], new);
+}
+
+#[test]
+fn invite_token_has_redacted_debug() {
+    let start: RegisterStartReq = parse("register_start_req.invite.json");
+    let check: InviteCheckReq = parse("invite_check_req.json");
+    let answer: InviteCheckRes = parse("invite_check_res.json");
+    let log: AccountEventsRes = parse("account_events_res.json");
+    let token = start.invite.as_ref().expect("an invitation");
+    let shown = [
+        (format!("{token:?}"), "InviteToken([redacted])"),
+        (format!("{start:?}"), "RegisterStartReq([redacted])"),
+        (format!("{check:?}"), "InviteCheckReq([redacted])"),
+        (format!("{answer:?}"), "InviteCheckRes([redacted])"),
+        (format!("{log:?}"), "AccountEventsRes([redacted])"),
+        (
+            format!("{:?}", log.events[1]),
+            "AccountEventJson([redacted])",
+        ),
+    ];
+    for (shown, expected) in &shown {
+        assert_eq!(shown, expected);
+    }
+    let all: String = shown.iter().map(|(text, _)| text.as_str()).collect();
+    assert!(!all.contains(token.as_str()));
+    assert!(!all.contains("ada@example.test"));
+    // The token is written back as the text it came as.
+    assert_eq!(
+        serde_json::to_string(token).unwrap(),
+        format!("\"{}\"", token.as_str())
+    );
+}
+
+#[test]
+fn invite_tokens_are_43_base62_characters() {
+    let good = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg";
+    assert_eq!(good.len(), INVITE_CHARS);
+    let read = |text: &Value| serde_json::from_value::<InviteToken>(text.clone());
+    assert_eq!(read(&json!(good)).unwrap().as_str(), good);
+    assert!(read(&json!(vole_kit::auth::invites::generate())).is_ok());
+    for bad in [
+        json!(&good[..42]),
+        json!(format!("{good}A")),
+        json!(format!("{}-", &good[..42])),
+        json!(format!("{}_", &good[..42])),
+        json!(format!("{}=", &good[..42])),
+        json!(format!("{}+", &good[..42])),
+        json!(format!("{} ", &good[..42])),
+        json!(format!("{}\u{e9}", &good[..41])),
+        json!(""),
+        json!(5),
+        Value::Null,
+        json!([good]),
+    ] {
+        let error = read(&bad).unwrap_err();
+        assert_eq!(refusal_code(&error.to_string()), "bad_request", "{bad}");
+    }
+}
+
+#[test]
+fn an_event_kind_is_1_to_64_of_a_to_z_and_underscore_and_a_name_at_most_254_characters() {
+    let event = |kind: &str, name: &str| {
+        serde_json::from_value::<AccountEventJson>(json!({
+            "id": 1, "at": 2, "kind": kind, "actor": "admin", "actor_name": name,
+        }))
+    };
+    assert!(event("account_created", "").is_ok());
+    assert!(event(&"k".repeat(64), "").is_ok(), "64 characters");
+    assert!(event("a_kind_of_a_later_delivery", "").is_ok());
+    for bad in [
+        "",
+        "Account_created",
+        "account-created",
+        "account created",
+        "kind2",
+        "\u{e5}",
+    ] {
+        assert!(event(bad, "").is_err(), "{bad:?}");
+    }
+    assert!(event(&"k".repeat(65), "").is_err(), "65 characters");
+    let clef = "\u{1d11e}";
+    assert!(
+        event("account_created", &clef.repeat(254)).is_ok(),
+        "characters, not bytes"
+    );
+    assert!(event("account_created", &"a".repeat(254)).is_ok());
+    assert!(event("account_created", &"a".repeat(255)).is_err());
+    assert!(event("account_created", &clef.repeat(255)).is_err());
+    let check = |name: &str| {
+        serde_json::from_value::<InviteCheckRes>(json!({"expires_at": 1, "invited_by": name}))
+    };
+    assert!(check("").is_ok(), "an invitation whose maker is gone");
+    assert!(check(&"a".repeat(254)).is_ok());
+    assert!(check(&"a".repeat(255)).is_err());
 }

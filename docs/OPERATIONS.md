@@ -37,7 +37,9 @@ one at once; it starts in about a minute.
   than twice the database, the run is marked failed and no older set is touched.
 * **Retention.** A set is kept while it is younger than `FERRET_BACKUP_KEEP_DAYS` (30 by default, 1 to 365), and the
   three newest verified sets are always kept, however old, by their creation time (the name only breaks a tie). A set
-  that was never finished is not listed and is removed after a day.
+  that was never finished is not listed and is removed after a day. A set holds every account as it was when the set
+  was made, so an account that is deleted later stays in the older sets (and in their encrypted copies) until they run
+  out under this rule.
 * **The Backup page** shows the state, the last good time, the last failure as a fixed code with a sentence, the number
   of sets, the last message to the monitor and the next run. It never shows a path, a set name or the monitor's address.
 * **The monitor.** After every checked set the server sends one push to an uptime monitor: set `FERRET_BACKUP_PUSH_URL`
@@ -127,13 +129,20 @@ offer to accept the older state.
 
    Without `--yes` it changes nothing. Before anything is written it checks the set (the files, the fingerprint, a
    newer migration than this build knows, a trigger or view that the schema does not have) and refuses a set that does
-   not pass; nothing has changed then. It prints the new restore epoch, how many sessions it ended, how many devices it signed out and the folder the old
-   files went to, for example `restored 1 vault: restore epoch is now 1763640000, 4 sessions ended, 2 devices signed out,
-   the files that were there are in <data>/pre-restore-<time>`. If it warns that the epoch of the data that was there could not be read, follow the warning: bump again with
+   not pass; nothing has changed then. It prints the new restore epoch, how many sessions it ended, how many devices it
+   signed out, how many pending invitations it revoked, how many accounts got the restore in their log, and the folder
+   the old files went to, for example `restored 1 vault: restore epoch is now 1763640000, 4 sessions ended, 2 devices
+   signed out, 1 invitation revoked, the restore is in the log of 2 accounts, the files that were there are in
+   <data>/pre-restore-<time>`. If it warns that the epoch of the data that was there could not be read, follow the warning: bump again with
    `--at-least` above any epoch clients may have seen, before you start the server.
 4. **Start the server** and ask the users to reload every open vault tab: a tab loaded before a deploy still runs the
    old scripts, and those refuse the answers of a newer server.
-5. **Delete the folder `pre-restore-<time>/`** in the data directory once you are satisfied. The command moves the old
+5. **Check the Users page** of the admin pages (below). The accounts are as the set had them: an account that was
+   disabled after the set was made is **active again**, and an account that was deleted after it is back with its
+   vault. Disable or delete them again. Every invitation that was open in the set is revoked by the restore (a link that
+   was revoked or used after the set was made must not come back to life), so make new links for anyone who has not
+   joined yet. Each account's Activity page in the web vault shows "Server restored from a backup".
+6. **Delete the folder `pre-restore-<time>/`** in the data directory once you are satisfied. The command moves the old
    database and the old secret files there and never deletes them; they hold everything the old server held.
 
 ### The marker, and what to do when a restore is cut off
@@ -198,14 +207,17 @@ Do it with the server stopped:
 
    It uses the same rule as the restore (`--at-least <n>` works too) and ends everything that the copy brought back, exactly
    like `ferret backup restore`: every session, hand-over, login state and pending registration, every pending sign-in code,
-   every device token (the devices are revoked and their tokens deleted), and a raised `session_version` for every user,
-   all in the same transaction as the bump. It prints the new epoch and what it ended, for example `restore epoch is now
-   1763640000 (1 vault raised); 4 sessions ended, 2 sign-in codes revoked, 3 devices signed out`. Without `--yes` it
-   changes nothing. After a restore by hand, a volume snapshot or a rollback (below), everyone therefore signs in again,
-   every device with tokens signs in again with the master password, and a sign-in code that was issued before has to be
-   issued again. A bump right
-   after `ferret backup restore` only logs everyone out once more, which is harmless.
-3. Start the server.
+   every pending invitation, every device token (the devices are revoked and their tokens deleted), and a raised
+   `session_version` for every user, all in the same transaction as the bump, which also writes the restore in the
+   log of every account. It prints the new epoch and what it ended, for example `restore epoch is now 1763640000 (1 vault
+   raised); 4 sessions ended, 2 sign-in codes revoked, 1 invitation revoked, 3 devices signed out; the restore is in the
+   log of 2 accounts`. Without `--yes` it changes nothing. After a restore by hand, a volume snapshot or a rollback
+   (below), everyone therefore signs in again, every device with tokens signs in again with the master password, and a
+   sign-in code or an invitation that was made before has to be made again. A bump right
+   after `ferret backup restore` only logs everyone out once more (and writes the restore in the logs a second time), which
+   is harmless.
+3. Start the server, and check the Users page as after a restore (step 5 above): the copy brought the accounts back as
+   they were when it was made.
 
 A bump needs a database that has every migration of the build you run. A backup that was made before the migrations of this
 build (for example before `0006`, which added `restore_seq`, or before `0007`; every backup of the first milestone is older than
@@ -222,8 +234,9 @@ the bump, for rehearsals. They are for those stacks only and are never run by a 
 When the administrator has forgotten the master password, OPAQUE cannot run, so the account is recovered with a
 one-time code, the recovery key and the pages of the emergency sheet (a new browser needs both pages).
 
-* **Make a code** on the Users page of the admin pages for another person (the kit refuses a code for your own account there, so
-  the only administrator uses the command), or, while the server runs, on its host:
+* **Make a code** on the Users page of the admin pages for another person ("Make a sign-in code" in the row of the
+  account; the page refuses a code for your own account and for another administrator, so the administrator uses the
+  command), or, while the server runs, on its host:
 
   ```
   docker compose exec -u 1000:1000 <service> ferret sign-in-code issue --email you@example.org --yes
@@ -231,6 +244,11 @@ one-time code, the recovery key and the pages of the emergency sheet (a new brow
 
   It prints the code and the time it is good until. Whoever has a shell on the server can do this, so such a person can
   reset the sign-in of an account, never open a vault.
+* **Every code is logged** in the log of the account it is for, right after it is made: from the Users page with the
+  administrator's e-mail, from the command as "server command". If that line cannot be written, the code is revoked
+  again and the page or the command says that no code was made. The person sees the line on the Activity page of the
+  web vault and a notice at the next unlock, and the redeemed code is logged too. The page shows a code once, on a page
+  that is not cached; give it to the person yourself.
 * **A code is good for 24 hours and once.** A newer code for the same user replaces it, every successful sign-in
   revokes it, and a restore of the server revokes every pending code.
 * **It is typed in one place only:** `https://vault.example.org/vault/#/recover`, with the e-mail address of the account.
@@ -245,15 +263,61 @@ one-time code, the recovery key and the pages of the emergency sheet (a new brow
   callers whose address cannot be read, share one count. If you are throttled, wait, or restart the server (the counts are in
   memory).
 
+## Accounts, invitations and the Users page
+
+The first account, the one made with the setup token, is the administrator. Registration is closed after it: every
+other account is made from an invitation. The **Users** page of the admin pages (`/settings/accounts`, administrators
+only; the kit's own `/settings/users` sends you there) lists the accounts, the open invitations and the pending sign-in
+codes. It shows the e-mail, when the account was made and last signed in, its devices (devices with a token and browsers
+with a live session), the number of items and the space they take, its status, and two-factor sign-in, which is always
+off (the master password and the secret key protect a vault here). It never shows what is in a vault, and nobody on the
+server can read or change a master password.
+
+* **An invitation** is a link, `https://vault.example.org/vault/setup#invite=<token>`, made with "Invite someone". The
+  token is in the part after `#`, so it never reaches a server log or a `Referer`; the database holds only its SHA-256.
+  The page shows the link once, on a page that is not cached: copy it and give it to the person yourself. Anyone who has
+  the link can make the account, so send it only to the person you mean. It works once, for 7 days, and at most 50 can be
+  open at once. "Send again" makes a new link and stops the old one; "Revoke" stops it at once, also for a person who is
+  in the middle of signing up with it. The person opens the link, sees who invited her, chooses a master password, gets
+  a secret key and the emergency sheet, and has an account and a vault of her own. An invited account is a normal user,
+  never an administrator.
+* **What needs your master password again.** Inviting someone, sending an invitation again, making a sign-in code,
+  enabling an account and deleting one give access, so the page asks you to confirm it is you (the master password on
+  the vault address) first. Revoking an invitation, disabling an account and signing it out everywhere only take access
+  away, so they do not. A confirmation holds for a few minutes, but making a sign-in code and deleting an account use it
+  up: the next code or deletion asks again, so one confirmation never makes codes for every account. No action works on
+  your own account or on another administrator.
+* **Sign-in code**: see [the one-time sign-in code](#the-one-time-sign-in-code) above.
+* **Disable** stops the account from signing in and ends every session, device and sign-in code of it at once. **Enable**
+  lets it sign in again; its devices sign in again with the master password. **Sign out everywhere** ends every session,
+  device and code of the account and leaves it active.
+* **Delete for good** is two steps, so that nothing is lost by mistake: disable the account first, then, once a good
+  backup set has been made after the account was disabled ("Take a backup now" on the Backup page), delete it with its
+  e-mail typed in and your master password. That removes the account, its vault with everything in it and its log.
+  **The account stays in the backup sets** that were made before the deletion, and in their encrypted copies, until
+  those run out under the retention rules (`FERRET_BACKUP_KEEP_DAYS` and `FERRET_COPY_KEEP_DAYS`, 30 days by default;
+  the three newest sets are kept in any case), and a restore of such a set brings it back. If the person asked for the
+  data to be gone, tell them it is gone from backups only when the last of those sets has run out.
+* **The log.** Every action on another account is written in that account's log, in the same transaction as the change
+  (a sign-in code right after it, see above), with the administrator's e-mail, and the person sees it on the
+  **Activity** page of the web vault. A deletion leaves no log (the log goes with the account); the server's own log has
+  one line with the administrator's and the account's ids and the time. No page and no route can change or delete a line
+  of the log.
+
 ## The stack for real data
 
 The stack never gets real data before the checks in the last section of this file are done, and nothing on it is started
 without an explicit yes: `scripts/ferret-home.sh up <release tag> --yes-ferret-home`. The script refuses unless the tag is
 a release of this checkout, the image of that release exists for this machine's architecture and for arm64, its
-signature verifies (`cosign`, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
+signature verifies (`cosign` 3 or newer, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
 commit of the tag, the image has no test features (a release has the cargo features `passkey-import` and `quick-unlock` and nothing else; the release before the passkey provider had `quick-unlock` alone, and the script still starts it), and the compose file passes its own check
 (`scripts/ferret-home.sh config`). It then runs the image by digest and writes the digest down. The header of the compose
 file has the full list of what the host needs (Docker 28 or newer, buildx, compose v2, git with the tags, node).
+
+**cosign 3 is required.** The release workflow signs the images with cosign 3, and cosign 2 answers "no signatures
+found" for them, so it would refuse a good image. The script reads the version of the `cosign` on the path before it
+pulls anything and refuses one older than 3, with a message that says so; install cosign 3 (`cosign version` shows
+`GitVersion: v3…`), or start openly without the check with `--no-cosign`.
 
 * **No ports but two, and those on loopback.** The server is published on `127.0.0.1:3041` (the vault) and
   `127.0.0.1:3040` (the admin pages) and nowhere else, never on `0.0.0.0` and never on an address of the LAN. The stack
@@ -343,7 +407,7 @@ proof of the key (DPoP, RFC 9449). The web vault is not a device: it keeps its c
   minutes also revokes a device that has no live refresh token left, deletes expired access tokens, and deletes used
   refresh tokens 30 days after their use.
 * **What signs every device out at once:** a change of master password, a recovery, a redeemed sign-in code, "revoke all
-  devices", the kit's "sign out everywhere", a disabled user, and a restore or a bump of the restore epoch (above).
+  devices", "Disable" and "Sign out everywhere" on the Users page, and a restore or a bump of the restore epoch (above).
 * **What a restart does.** The cache of used proof identifiers and the successors held for the 60 seconds of grace live in
   memory only. A restart empties them: a device whose renewal answer was lost and that retries after the restart signs in
   again with the master password. Nothing else is lost.
@@ -424,6 +488,26 @@ into a block: the server sends `Cache-Control: no-store, no-transform` and `X-Ac
 buffers anyway, the vault falls back to reading changes every five minutes, plus on focus, on unlock and after its own
 writes, so nothing breaks; changes from other devices only arrive more slowly.
 
+**Open files.** The server holds up to 1 024 streams at once (at most 2 for one device and 40 for one account, so it
+takes 26 accounts to fill it). Each stream is an open connection, and every connection is an open file of the process,
+next to the database, its journal and the listeners. Many container engines start a container with a soft limit of
+1 024 open files, which the streams alone can use up; new connections then fail. The compose file of the stack for real
+data (`docker/compose.ferret-home.yml`) gives the server 4096, and `scripts/ferret-home.sh config` refuses it without a
+limit of at least that. For a compose file of your own:
+
+```yaml
+services:
+  ferret-home-app:
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 4096
+```
+
+and for a server run by systemd without a container, `LimitNOFILE=4096` in the `[Service]` part of its unit. Check what
+the running server got with `<compose> exec <service> cat /proc/1/limits` (the line "Max open files"; the entrypoint
+hands process 1 over to the server), or `ulimit -n` in a shell of the same container.
+
 ## An import that outlives its session
 
 An import runs in an *import window* on the server: one per vault, bound to the device that opened it, open for at most 30
@@ -444,3 +528,5 @@ Do these in order, on the test instance first, and write down the result of each
 4. A restore has been rehearsed from the encrypted copy on the throwaway stack, and the freeze tests (the migrations, the
    stored formats) are green on the release you start.
 5. The first start is with an explicit yes, from a released image, by digest.
+6. The server may hold enough open files for its event streams: "Max open files" of the running server is 4096 or more
+   ([event streams behind a proxy](#event-streams-behind-a-proxy)).

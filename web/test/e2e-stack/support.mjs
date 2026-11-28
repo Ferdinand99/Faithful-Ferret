@@ -9,7 +9,7 @@
 // at its end when the policy was violated. The same traffic is searched for the
 // secrets of the run by `08-plaintext.spec.mjs`.
 import { expect, test as base } from "@playwright/test";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 export { expect };
@@ -110,6 +110,30 @@ const watched = [];
 /** The last network failures and page closes of the run, with their times (kept for the text of an uncaught error). */
 const trail = /** @type {string[]} */ ([]);
 const stamp = () => new Date().toISOString().slice(11, 23);
+
+/**
+ * WebKit reports a request of the page's API client that it did not complete (cancelled by a reload, a navigation or a
+ * closing page) as an uncaught page error: "Fetch API cannot load <url> due to access control checks.", sometimes with
+ * no `requestfailed` for it. It is not an error of the page: the API client turns every rejection of `fetch` into an
+ * `ApiError` (`web/src/api.mjs`, `exchange`), so the raw `TypeError` of a request under `/api/` of the vault can never
+ * be uncaught in the page's code. Only that text, only in WebKit, only for the vault's `/api/`, is left out (and noted
+ * in the trail); every other page error counts.
+ * @param {import("@playwright/test").Page} page
+ * @param {string} text
+ */
+function webkitCancelledApiLoad(page, text) {
+  if (page.context().browser()?.browserType().name() !== "webkit") return false;
+  const match = /^(?:TypeError: )?Fetch API cannot load (\S+(?: \S+)?) due to access control checks\.$/.exec(text);
+  if (!match) return false;
+  const host = new URL(vaultUrl).host;
+  const url = match[1].replace(/^(https?):\s*\/+/, "$1://");
+  try {
+    const parsed = new URL(url);
+    return parsed.host === host && parsed.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
 const testTitle = () => {
   try {
     return `in ${test.info().title}, `;
@@ -161,7 +185,13 @@ export async function watch(context) {
     findings.pages += 1;
     // An uncaught error says which test it came in, what the page was doing, and the last things that went wrong on the network
     // or closed before it, so that a failure of the whole-run check can be placed.
-    page.on("pageerror", (e) => findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`));
+    page.on("pageerror", (e) => {
+      if (webkitCancelledApiLoad(page, String(e))) {
+        trail.push(`${stamp()} WebKit reported an API request it did not complete as a page error: ${String(e)}`);
+        return;
+      }
+      findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`);
+    });
     page.on("requestfailed", (request) => trail.push(`${stamp()} ${request.method()} ${request.url()} failed: ${request.failure()?.errorText ?? "?"}`));
     page.on("close", () => trail.push(`${stamp()} page closed ${page.url()}`));
     page.on("console", (m) => {
@@ -432,15 +462,16 @@ export async function signInOn(page, options = {}) {
  * was not signed out shows "Unlock" there once its session has ended: the
  * remembered e-mail and the password, with a full sign-in behind it.
  * @param {import("@playwright/test").Page} page
- * @param {{ remember?: boolean, expectList?: boolean }} [options]
+ * @param {{ remember?: boolean, expectList?: boolean, account?: { email: string, password: string, secretKey: string } }} [options]
+ *   `account`: whose e-mail, password and secret key are typed (the run's administrator when not given)
  */
-export async function signInHere(page, { remember = true, expectList = true } = {}) {
+export async function signInHere(page, { remember = true, expectList = true, account = secrets } = {}) {
   const credentials = page.locator('[data-role="credentials"]');
   const unlock = page.locator('[data-role="unlock"][data-mode="remembered"]');
   await expect(credentials.or(unlock)).toBeVisible({ timeout: 20_000 });
   if (await unlock.isVisible()) {
-    await expect(unlock.locator('[data-role="remembered-email"]')).toHaveValue(secrets.email);
-    await unlock.locator('[data-role="password"]').fill(secrets.password);
+    await expect(unlock.locator('[data-role="remembered-email"]')).toHaveValue(account.email);
+    await unlock.locator('[data-role="password"]').fill(account.password);
     await untilStartAccepted(
       page.context(),
       async () => {
@@ -452,22 +483,22 @@ export async function signInHere(page, { remember = true, expectList = true } = 
     if (expectList) await arriveAtList(page);
     return;
   }
-  await page.locator('[data-role="email"]').fill(secrets.email);
+  await page.locator('[data-role="email"]').fill(account.email);
   await page.locator('[data-role="email"]').blur();
-  await page.locator('[data-role="password"]').fill(secrets.password);
+  await page.locator('[data-role="password"]').fill(account.password);
   const question = page.locator('[data-role="sk-question"]');
   // The question is shown when this browser has never seen the account.
   await expect.poll(async () => (await question.isVisible()) || (await page.locator('[data-role="sk-remembered"]').isVisible()) || (await page.locator('[data-role="sk-code"]').isVisible()), { timeout: 15_000 }).toBe(true);
   if (await question.isVisible()) {
     await page.locator('[data-role="sk-yes"]').check();
-    await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+    await page.locator('[data-role="sk-code"]').fill(account.secretKey);
     const keep = page.locator('[data-role="remember"]');
     if (await keep.isVisible()) {
       if (remember) await keep.check();
       else await keep.uncheck();
     }
   } else if (await page.locator('[data-role="sk-code"]').isVisible()) {
-    await page.locator('[data-role="sk-code"]').fill(secrets.secretKey);
+    await page.locator('[data-role="sk-code"]').fill(account.secretKey);
   }
   // The server's limit counts the starts of earlier phases too, which this process does not know of: see untilStartAccepted.
   await untilStartAccepted(
@@ -954,12 +985,12 @@ export function noViolations() {
 /** Whether the run has a host script that does the Docker steps for `hostStep`. */
 export const existsHost = () => existsSync("/tmp/host-ready");
 
-/** The phases that the gate script runs with a host. */
-const HOSTED_PHASES = ["m2-restore", "m3"];
+/** The phases that the gate script, or the upgrade drill of scripts/lanbox-ferret-test.sh, runs with a host. */
+const HOSTED_PHASES = ["m2-restore", "m3", "upgrade-before"];
 
 /**
- * Whether the host is there. In the phases that the gate script runs with a host (`m2-restore`, `m3`) the tests fail when it is
- * not, they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
+ * Whether the host is there. In the phases that run with a host (`m2-restore`, `m3`, `upgrade-before`) the tests fail when it
+ * is not, they do not skip: a skipped scenario must not read as a passed one. The file shows a moment after the runner starts.
  */
 export async function hostAvailable() {
   if (!HOSTED_PHASES.includes(process.env.FERRET_E2E_PHASE ?? "")) return existsHost();
@@ -975,8 +1006,9 @@ export async function hostAvailable() {
  * Asks the host script for something only the Docker host can do while the browsers stay open: `snapshot`, `restore`,
  * `clock-<seconds>`, and for the recovery scenarios `reset` (a new, empty server), `backup` (a backup set made while the
  * app is stopped), `restore-backup` (the newest set on empty data), `code-<e-mail>` (a one-time sign-in code, which is
- * returned) and `set-count` (how many backup sets the volume holds). The host script
- * (scripts/lanbox-ferret-e2e-gate.sh m2 or m3) watches for the request file in the runner container, does the step and answers
+ * returned) and `set-count` (how many backup sets the volume holds); the upgrade drill knows `backup` and `upgrade` (the
+ * server's image is swapped for the candidate on the same data). The host script (scripts/lanbox-ferret-e2e-gate.sh m2 or m3,
+ * or scripts/lanbox-ferret-test.sh upgrade-drill) watches for the request file in the runner container, does the step and answers
  * with a done file, or with a failed file when the step failed (the test then fails). The test is skipped when the run has no
  * host script, except in the phases that the gate script runs with one. Returns what the step printed for the test, or "".
  * @param {string} step
@@ -1145,4 +1177,26 @@ export async function freshRedeemWindow() {
   secrets.clockOffset += 3_700;
   remember();
   await hostStep(`clock-${secrets.clockOffset}`);
+}
+
+// ------------------------------------------------------- one-time passwords
+
+/**
+ * The code of RFC 4226 and RFC 6238 (SHA-1, 6 digits) for a Base32 secret at a time in seconds, written from the RFCs, so that
+ * the code a page shows is compared with something that shares no code with the core.
+ * @param {string} secret Base32, upper case, no padding
+ * @param {number} seconds
+ */
+export function totpReference(secret, seconds) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret) bits += alphabet.indexOf(ch).toString(2).padStart(5, "0");
+  const key = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) key.push(Number.parseInt(bits.slice(i, i + 8), 2));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(seconds / 30)));
+  const mac = createHmac("sha1", Buffer.from(key)).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  const number = ((mac[offset] & 0x7f) << 24) | (mac[offset + 1] << 16) | (mac[offset + 2] << 8) | mac[offset + 3];
+  return String(number % 1_000_000).padStart(6, "0");
 }

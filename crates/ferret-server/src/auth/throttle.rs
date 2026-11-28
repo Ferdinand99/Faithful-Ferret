@@ -19,7 +19,8 @@
 //! the library cannot key on: [`ChallengeLimit`], 30 per session per minute.
 //! So has the redeeming of a sign-in code, which the library never sees:
 //! [`RedeemLimit`], 10 per address per minute and 5 per typed e-mail address
-//! and address per hour.
+//! and address per hour. So has `invite/check`: [`InviteCheckLimit`], 10 per
+//! address per minute.
 //!
 //! An attempt counts when it is admitted, not when it ends, so requests that
 //! arrive together cannot all slip under the limit. A refused attempt is not
@@ -560,6 +561,99 @@ fn admit_key<K: Copy + Eq + Hash>(table: &mut Table<K>, key: K, max_keys: usize,
         while table.len() >= max_keys && table.evict_oldest() {}
     }
     table.count(key, now);
+}
+
+/// One limit on one kind of key: `max` attempts per key in a sliding window
+/// of `window` seconds, counted like [`KitThrottle`] (an attempt counts when
+/// it is admitted, a refused one does not, and a full table drops the key that
+/// was added first, never refusing for lack of room).
+pub(crate) struct WindowLimit<K> {
+    max: usize,
+    window: u64,
+    max_keys: usize,
+    table: Mutex<Table<K>>,
+}
+
+impl<K: Copy + Eq + Hash> WindowLimit<K> {
+    /// A limit of `max` per `window` seconds, with room for `max_keys` keys.
+    pub(crate) fn new(max: usize, window: u64, max_keys: usize) -> Self {
+        Self {
+            max,
+            window,
+            max_keys,
+            table: Mutex::new(Table::default()),
+        }
+    }
+
+    /// Counts an attempt for `key` at `now`, or says how long it must wait.
+    pub(crate) fn admit(&self, key: K, now: u64) -> Result<(), RetryAfter> {
+        // The same reasoning as `KitThrottle::lock`.
+        let mut table = self.table.lock().unwrap_or_else(PoisonError::into_inner);
+        table.sweep(now, KitThrottle::SWEEP_BUDGET, self.window);
+        if let Some(secs) = wait_for(&mut table, &key, self.max, self.window, now) {
+            return Err(RetryAfter::new(u32::try_from(secs).unwrap_or(u32::MAX)));
+        }
+        admit_key(&mut table, key, self.max_keys, now);
+        Ok(())
+    }
+
+    /// How many keys the limit holds.
+    pub(crate) fn tracked_keys(&self) -> usize {
+        self.table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+}
+
+/// The limit on `POST /api/auth/invite/check`:
+/// [`CHECKS_PER_ADDRESS`](crate::accounts::invites::CHECKS_PER_ADDRESS) checks
+/// per address in a sliding minute, for every token alike (a pending one, a
+/// dead one and one that never existed), so the limit says nothing about
+/// which tokens are real. The address is counted by the same rule as the
+/// library's keys (an IPv6 address by its /64), and callers whose address
+/// cannot be read share one bucket. At most
+/// [`InviteCheckLimit::DEFAULT_MAX_KEYS`] addresses are kept; a full table
+/// drops the one added first.
+///
+/// Spec: Fase 1 § 4.2 (`invite/check`) and § 11.
+pub struct InviteCheckLimit(WindowLimit<RedeemAddress>);
+
+impl InviteCheckLimit {
+    /// The most addresses the limit keeps counters for.
+    pub const DEFAULT_MAX_KEYS: usize = 100_000;
+
+    /// A limit with room for [`InviteCheckLimit::DEFAULT_MAX_KEYS`] addresses.
+    pub fn new() -> Self {
+        Self(WindowLimit::new(
+            crate::accounts::invites::CHECKS_PER_ADDRESS,
+            WINDOW_SECS,
+            Self::DEFAULT_MAX_KEYS,
+        ))
+    }
+
+    /// Counts a check by `caller` at `now` (Unix seconds), or says how long the
+    /// caller must wait.
+    pub fn admit(&self, caller: &Caller, now: u64) -> Result<(), RetryAfter> {
+        self.0.admit(caller.ip.map(counted_address), now)
+    }
+
+    /// How many addresses the limit holds counters for.
+    pub fn tracked_keys(&self) -> usize {
+        self.0.tracked_keys()
+    }
+}
+
+impl Default for InviteCheckLimit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for InviteCheckLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InviteCheckLimit([redacted])")
+    }
 }
 
 /// Who is calling: the address the proxy layer left in the request, else the

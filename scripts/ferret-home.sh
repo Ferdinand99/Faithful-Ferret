@@ -11,7 +11,7 @@
 #       Starts the stack with the image of a release. Refuses (and starts nothing) unless:
 #       the tag is a release tag of this checkout and this checkout is at it; the image
 #       of that release exists for this machine's architecture and for arm64; its
-#       signature is good (cosign, when it is installed; --no-cosign says so openly);
+#       signature is good (cosign 3 or newer, when it is installed; --no-cosign says so openly);
 #       the image's revision label is the commit of the tag; it has no test features (a release has the cargo features passkey-import and quick-unlock; the release before it had quick-unlock alone, older ones none);
 #       and the compose file passes `config`. The digest of the image is written down
 #       (docker/home-image, docker/home-releases.log) and the stack runs by digest.
@@ -32,7 +32,8 @@
 #       Removes what a drill that was cut short left behind (by label owner=ferret-drill).
 #
 # What the machine that runs `up` needs: Docker 28 or newer, docker buildx, compose v2, git with
-# the release tags, node, and cosign (or --no-cosign, which is recorded as cosign=SKIPPED). The
+# the release tags, node, and cosign 3 or newer (or --no-cosign, which is recorded as cosign=SKIPPED;
+# the release images are signed with cosign 3, and cosign 2 finds no signature on them). The
 # release image package must be public in the registry, or the machine must be logged in to it.
 # The safety rules for the proxy and for the path to the backup target are in the header of
 # docker/compose.ferret-home.yml; read them before the first start.
@@ -183,6 +184,9 @@ if (mode === "home" && !["0", "1"].includes(String(env.FERRET_LOG_PEERS))) fail(
 
 // The app.
 if (app.read_only !== true) fail("the app: read_only");
+// Up to 1 024 event streams, each an open connection: the soft limit of 1 024 open files that many engines give is too low.
+const nofile = app.ulimits?.nofile;
+if (mode === "home" && !(Number(nofile?.soft) >= 4096 && Number(nofile?.hard) >= Number(nofile?.soft))) fail("the app: ulimits nofile, soft at least 4096 and hard at least soft (the server holds up to 1 024 event streams), got " + JSON.stringify(nofile ?? null));
 if ([...(app.cap_add || [])].sort().join() !== "CHOWN,SETGID,SETUID") fail("the app: cap_add must be CHOWN, SETUID, SETGID only");
 if (app.restart !== "unless-stopped") fail("the app: restart must be unless-stopped (the restore marker stops a start in the middle of a restore)");
 if (app.network_mode) fail("the app: no network_mode");
@@ -308,6 +312,23 @@ preflight() {
   [ "$major" -ge 28 ] || refuse "Docker 28 or newer is required (older engines can let a neighbour on the network reach ports published on 127.0.0.1); this one is $server"
 }
 
+# The major version of the cosign on the path, read from `cosign version` (the line "GitVersion: v3.0.2",
+# or "gitVersion" in its JSON form). Prints nothing when it cannot be read.
+cosign_major() {
+  cosign version 2>&1 | sed -n -e 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' \
+    -e 's/.*"gitVersion"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9]*\)\..*/\1/p' | head -n 1 || true
+}
+
+# The signature check needs cosign 3 or newer: the release workflow signs with cosign 3, and cosign 2 answers
+# "no signatures found" for those images, so an older one would refuse a good image without saying why.
+require_cosign() {
+  local major
+  command -v cosign > /dev/null || refuse "cosign is not installed here, so the signature of the image cannot be checked; install cosign 3 or newer, or say so openly with --no-cosign"
+  major="$(cosign_major)"
+  [[ "$major" =~ ^[0-9]+$ ]] || refuse "cannot read the version of cosign here (cosign version); cosign 3 or newer is needed to check the signature of the image"
+  [ "$major" -ge 3 ] || refuse "cosign $major is installed here, but cosign 3 or newer is needed: the release images are signed with cosign 3, and cosign 2 finds no signature on them. Install cosign 3, or say so openly with --no-cosign"
+}
+
 up() {
   local tag="" yes=0 cosign_mode=verify arg
   for arg in "$@"; do
@@ -322,6 +343,7 @@ up() {
   [ "$yes" = 1 ] || refuse "this starts the stack for real data on this machine; run it again with --yes-ferret-home after an explicit yes"
   local version="${tag#v}" tag_commit head_commit
   preflight
+  [ "$cosign_mode" = skip ] || require_cosign
 
   tag_commit="$(git rev-parse --verify -q "refs/tags/${tag}^{commit}")" || refuse "$tag is not a tag of this checkout (fetch the tags)"
   head_commit="$(git rev-parse HEAD)"
@@ -344,7 +366,6 @@ up() {
   check_platforms "$digest_ref"
   local cosign_state=verified
   if [ "$cosign_mode" = verify ]; then
-    command -v cosign > /dev/null || refuse "cosign is not installed here, so the signature of the image cannot be checked; install it, or say so openly with --no-cosign"
     cosign verify "$digest_ref" \
       --certificate-identity-regexp "^https://github.com/${release_repo}/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+)$" \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null \

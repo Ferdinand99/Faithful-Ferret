@@ -17,6 +17,8 @@
 #   base_images_are_pinned_by_digest
 #   the_image_has_no_test_features_and_its_revision_is_the_release_tag
 #   up_refuses_a_branch_build
+#   up_needs_cosign_3_to_check_the_signature
+#   the_app_has_open_files_for_its_event_streams
 #   the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
 #   the_copy_container_is_never_on_the_app_network
 #   peer_log_is_off_by_default
@@ -268,6 +270,12 @@ STUB
 cat > "$up_stubs/cosign" <<'STUB'
 #!/usr/bin/env bash
 printf 'cosign %s\n' "$*" >> "$STUB_LOG"
+if [ "${1:-}" = version ]; then
+  # The text form of `cosign version`: a banner, then GitVersion. STUB_COSIGN_VERSION=- prints no version.
+  printf '  ______   ______\ncosign: A tool for Container Signing, Verification and Storage in an OCI registry.\n\n'
+  [ "${STUB_COSIGN_VERSION:-}" = - ] || printf 'GitVersion:    v%s\nGitCommit:     unknown\n' "${STUB_COSIGN_VERSION:-3.0.2}"
+  exit 0
+fi
 exit "${STUB_COSIGN_RC:-0}"
 STUB
 chmod +x "$up_stubs/docker" "$up_stubs/cosign"
@@ -388,6 +396,43 @@ up_refuses_a_branch_build() {
     skip "a missing cosign" "cosign is installed here"
   fi
   pass up_refuses_a_branch_build
+}
+
+up_needs_cosign_3_to_check_the_signature() {
+  local d="$tmp/cosign3"
+  up_world "$d"
+  # cosign 2 finds no signature on an image that cosign 3 signed: refused before anything is pulled, and it says why.
+  STUB_COSIGN_VERSION=2.4.1 up_run "$d" v9.9.9 --yes-ferret-home && fail "up checked the signature with cosign 2"
+  grep -q 'cosign 2 is installed here, but cosign 3 or newer is needed' "$d/err" || fail "up must say that cosign 3 is needed: $(cat "$d/err")"
+  grep -q 'no-cosign' "$d/err" || fail "up must name --no-cosign"
+  grep -qE 'docker .*pull' "$d/log" && fail "up pulled the image before it checked the version of cosign"
+  grep -q 'cosign verify' "$d/log" && fail "up asked cosign 2 to verify"
+  # A version that cannot be read is refused too.
+  STUB_COSIGN_VERSION=- up_run "$d" v9.9.9 --yes-ferret-home && fail "up checked the signature with a cosign of unknown version"
+  grep -q 'cannot read the version of cosign' "$d/err" || fail "up must say that it cannot read the version: $(cat "$d/err")"
+  # cosign 3 and later verify.
+  for v in 3.0.2 4.1.0; do
+    STUB_COSIGN_VERSION=$v up_run "$d" v9.9.9 --yes-ferret-home || fail "a good release was refused with cosign $v: $(cat "$d/err")"
+    grep -q 'cosign verify' "$d/log" || fail "cosign $v was not asked to verify"
+  done
+  # --no-cosign never asks cosign anything, so an old one does not stand in the way of an open skip.
+  STUB_COSIGN_VERSION=2.4.1 up_run "$d" v9.9.9 --yes-ferret-home --no-cosign || fail "--no-cosign was refused because of the cosign version: $(cat "$d/err")"
+  grep -q '^cosign ' "$d/log" && fail "--no-cosign still called cosign"
+  pass up_needs_cosign_3_to_check_the_signature
+}
+
+the_app_has_open_files_for_its_event_streams() {
+  # The server holds up to 1 024 event streams; a container's default soft limit of 1 024 open files is not enough.
+  printf '%s' "$home_json" | node -e '
+const c = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const n = c.services["ferret-home-app"].ulimits?.nofile;
+if (!(n && Number(n.soft) >= 4096 && Number(n.hard) >= 4096)) { console.error("nofile: " + JSON.stringify(n)); process.exit(1); }' \
+    || fail "the app must have ulimits nofile of at least 4096"
+  refused home "no open-file limit" "delete ${app}.ulimits" "ulimits nofile"
+  refused home "the default open-file limit" "${app}.ulimits = { nofile: { soft: 1024, hard: 1024 } }" "ulimits nofile"
+  refused home "a hard limit below the soft one" "${app}.ulimits = { nofile: { soft: 4096, hard: 2048 } }" "ulimits nofile"
+  accepted home "a higher open-file limit" "${app}.ulimits = { nofile: { soft: 8192, hard: 16384 } }"
+  pass the_app_has_open_files_for_its_event_streams
 }
 
 up_checks_the_machine_and_records_what_it_started() {
@@ -780,6 +825,8 @@ base_images_are_pinned_by_digest
 image_exists_for_arm64
 the_image_has_no_test_features_and_its_revision_is_the_release_tag
 up_refuses_a_branch_build
+up_needs_cosign_3_to_check_the_signature
+the_app_has_open_files_for_its_event_streams
 up_checks_the_machine_and_records_what_it_started
 the_copy_container_mounts_the_backups_read_only_and_has_no_private_key
 the_copy_container_is_never_on_the_app_network

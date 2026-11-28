@@ -228,3 +228,41 @@ test("the_password_is_encoded_for_the_worker_and_the_arrays_are_wiped", async ()
   const dump = await dumpDatabase(world.db.store);
   for (const secret of [PASSWORD, RK_CODE, SK_CODE]) assert.ok(!dump.includes(secret));
 });
+
+test("start_sends_invite_xor_setup_token", async () => {
+  const INVITE = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5hJ7kL9x";
+  // With an invitation: the body has `invite` first, no setup token, and the URL holds neither.
+  const invited = await scenario();
+  const flow = await invited.session.register({ email: EMAIL, password: PASSWORD, invite: INVITE });
+  const [first] = invited.requests;
+  assert.equal(first.url, "/api/auth/opaque/register/start");
+  assert.deepEqual(Object.keys(first.body), ["invite", "email", "request"]);
+  assert.equal(first.body.invite, INVITE);
+  assert.ok(!first.url.includes(INVITE));
+  // The rest of the setup is the same as for the first administrator: the sheet, both keys typed back, then the upload.
+  assert.equal(flow.sheet.access.secret_key_code, SK_CODE);
+  await flow.confirm(RK_CODE, SK_CODE);
+  await flow.finish();
+  assert.equal(uploaded(invited)[0].body.sk_bit, true);
+  assert.ok(!JSON.stringify(uploaded(invited)[0].body).includes(INVITE));
+
+  // With the setup token: the body is the one of today, with no `invite`.
+  const first2 = await scenario();
+  await start(first2);
+  assert.deepEqual(Object.keys(first2.requests[0].body), ["setup_token", "email", "request"]);
+  // With neither (a closed server answers registration_closed): no `invite`, no `setup_token`.
+  const neither = await scenario();
+  await neither.session.register({ email: EMAIL, password: PASSWORD });
+  assert.deepEqual(Object.keys(neither.requests[0].body), ["email", "request"]);
+
+  // Both: refused before anything is asked of the core or the server.
+  const both = await scenario();
+  await assert.rejects(both.session.register({ email: EMAIL, password: PASSWORD, invite: INVITE, setupToken: "setup-token-1" }));
+  assert.equal(both.requests.length, 0);
+  assert.equal(both.client.calls.length, 0);
+
+  // A malformed invitation never leaves the page.
+  const malformed = await scenario();
+  await assert.rejects(malformed.session.register({ email: EMAIL, password: PASSWORD, invite: `${INVITE.slice(1)}-` }));
+  assert.equal(malformed.requests.length, 0);
+});

@@ -18,6 +18,11 @@
 // Parts that follow the engine (the live-update client, the warning banner) do
 // not poll `current()`: they register with `onEngine`, which hands them each
 // engine once it has started and `null` once it has stopped.
+//
+// The engine's requests are bound to the account it runs for (`flows/sessionBound.mjs`): when the session of the
+// browser profile turns out to be another account's (another tab signed in as it), the engine is stopped at once,
+// with its outbox kept, and `onSessionOther` tells the page, which locks the tab.
+import { sessionBoundApi } from "../flows/sessionBound.mjs";
 import { deviceNameFor } from "../sync/deviceName.mjs";
 import { serverKey } from "../store/idb.mjs";
 import { createSyncEngine, SyncError } from "../sync/engine.mjs";
@@ -82,6 +87,10 @@ export default {
       if (!engine) throw new Error("the sync engine is not running");
       return engine;
     };
+    /** The session check of each engine (see `flows/sessionBound.mjs`). @type {WeakMap<object, () => Promise<void>>} */
+    const confirms = new WeakMap();
+    /** @type {Set<() => void>} */
+    const otherListeners = new Set();
 
     // ---- the owner lock (one engine per browser)
     /** The owner lock of the open account, or null when the page has none to ask for. @type {ReturnType<typeof createOwner> | null} */
@@ -245,11 +254,15 @@ export default {
      * @param {number} mine the generation of the start that asked
      */
     async function begin(scope, mine) {
-      const made = createSyncEngine({
-        api, client, store, scope,
+      /** @type {ReturnType<typeof createSyncEngine> | null} */
+      let made = null;
+      const bound = sessionBoundApi(api, scope.accountId, () => sessionOther(made));
+      made = createSyncEngine({
+        api: bound.api, client, store, scope,
         memory: memoryFor({ store, client, serverUrl, accountId: scope.accountId, locks }),
         deviceName: () => deviceNameFor(store, nav),
       });
+      confirms.set(made, bound.confirm);
       engine = made;
       try {
         await made.start();
@@ -267,6 +280,25 @@ export default {
       if (engine !== made) return null;
       announce(made);
       return made;
+    }
+
+    /**
+     * The session of the profile is another account's: the engine that found it is stopped (what waits in the outbox stays
+     * stored), the lock of the vault is let go, and the page is told, once per engine.
+     * @param {ReturnType<typeof createSyncEngine> | null} made
+     */
+    function sessionOther(made) {
+      if (made === null) return;
+      made.stop();
+      if (engine !== made) return; // an engine that was replaced already: nothing more to end
+      close();
+      for (const listener of [...otherListeners]) {
+        try {
+          listener();
+        } catch {
+          // A listener that throws must not stop the others.
+        }
+      }
     }
 
     /** The starts in a row. @type {Promise<unknown>} */
@@ -495,6 +527,27 @@ export default {
       },
       /** The running engine, or null (locked, or not started yet). */
       current: () => engine,
+      /**
+       * Checks that the session of the browser profile is still the account an engine runs for (the live channel asks
+       * after each connection). Rejects with `401 session_other_account` (and stops the engine) when it is another
+       * account's; an engine that is no longer running has nothing to check.
+       * @param {ReturnType<typeof createSyncEngine> | null} [which] the engine to check for (the running one when left out)
+       * @returns {Promise<void>}
+       */
+      confirmSession(which = engine) {
+        const confirm = which === null ? undefined : confirms.get(which);
+        return confirm === undefined ? Promise.resolve() : confirm();
+      },
+      /**
+       * Calls `listener` when an engine has been stopped because the session of the browser profile is another
+       * account's (another tab signed in as it). The page locks the tab. Returns the function that removes the listener.
+       * @param {() => void} listener
+       * @returns {() => void}
+       */
+      onSessionOther(listener) {
+        otherListeners.add(listener);
+        return () => void otherListeners.delete(listener);
+      },
       /** Drops the refused write of a blocked item (see the engine's `discard`). @param {string} id */
       discard: (id) => running().discard(id),
       /** Gives up an item that a full listing did not show, after the user has confirmed it. @param {string} id */

@@ -18,6 +18,7 @@ import {
   PASSWORD_WRAP_LEN, PROOF_LEN, readJson, readWire, RECOVERY_WRAP_LEN, REDEEM_SCOPE, SESSION_SCOPES, SHAPES, shape,
 } from "../../src/wire.mjs";
 import { ACCESS_TOKEN_SECS, MAX_DEVICE_LIST, MAX_DEVICES, PLATFORMS, TOKEN_CHARS } from "../../src/wire.mjs";
+import { INVITE_CHARS, MAX_EVENTS_PAGE } from "../../src/wire.mjs";
 
 const DIR = join(SERVER_HEADERS_JSON, "..");
 const NOT_SHAPES = [
@@ -31,10 +32,13 @@ const parseFile = (name) => JSON.parse(read(name));
 const decode = (text, code) => Buffer.from(b64u.decode(text, code));
 const id = (text) => void hex16.decode(text);
 
-/** The shape of a fixture: the name before the first dot; `<shape>.device.json` is `<shape>_device`. */
+/**
+ * The shape of a fixture: the name before the first dot; `<shape>.device.json` is `<shape>_device`
+ * and `<shape>.invite.json` is `<shape>_invite`.
+ */
 const kindOf = (name) => {
   const [kind, variant] = name.split(".");
-  return variant === "device" ? `${kind}_device` : kind;
+  return variant === "device" || variant === "invite" ? `${kind}_${variant}` : kind;
 };
 const fixtures = () =>
   readdirSync(DIR)
@@ -800,6 +804,34 @@ test("invalid_cases_are_refused_the_same_way_in_rust_and_js", () => {
   for (const code of ["malformed_registration_request", "malformed_registration_record"]) {
     assert.ok(m3.some((c) => c.error === code), code);
   }
+
+  // The shapes of several accounts, the same way.
+  const l1 = parseFile("invalid.json").filter((c) => L1_SHAPES.includes(c.shape));
+  assert.ok(l1.length >= 80, `found only ${l1.length} cases`);
+  for (const c of l1) {
+    const label = `${c.name} (${c.why})`;
+    assert.ok(codes.includes(c.error), label);
+    if (c.layer === "parse") {
+      assert.equal(refusalOf(() => readWire(c.shape, c.json)), c.error, label);
+    } else {
+      assert.equal(c.layer, "validate", label);
+      const value = readWire(c.shape, c.json); // reads without error
+      assert.equal(refusalOf(() => checkStep(c.shape, value)), c.error, label);
+    }
+  }
+  for (const kind of L1_SHAPES) assert.ok(l1.some((c) => c.shape === kind), kind);
+  // An invitation of 42 and 44 characters and one with `-`; a kind with a capital letter; a page of more than 100 events.
+  for (const name of [
+    "register_start_req_invite invite 42 characters", "register_start_req_invite invite 44 characters",
+    "register_start_req_invite invite with -", "invite_check_req invite 42 characters",
+    "invite_check_req invite 44 characters", "invite_check_req invite with -", "account_events_res kind upper case",
+    "account_events_res kind 65 characters", "account_events_res kind empty", 'account_events_res actor "root"',
+    "account_events_res actor_name 255 characters", "account_events_res with 101 events",
+    "invite_check_res invited_by 255 characters",
+  ]) {
+    assert.ok(l1.some((c) => c.name === name), name);
+  }
+  assert.ok(l1.some((c) => c.shape === "register_start_req_invite" && c.error === "malformed_registration_request"));
 });
 
 // ---------------------------------------------------- the third milestone
@@ -1045,6 +1077,13 @@ const M5A_SHAPES = [
   "login_finish_req_device", "login_finish_res_device", "token_refresh_req", "token_res", "token_revoke_req",
   "devices_res", "revoke_all_res",
 ];
+/** The shapes of several accounts: registration with an invitation, the check of a link, the account log. */
+const L1_SHAPES = ["register_start_req_invite", "invite_check_req", "invite_check_res", "account_events_res"];
+const L1_FIXTURES = [
+  "account_events_res.empty.json", "account_events_res.json", "account_events_res.more.json", "invite_check_req.json",
+  "invite_check_res.json", "register_start_req.invite.json",
+];
+
 const M5A_FIXTURES = [
   "devices_res.empty.json", "devices_res.json", "devices_res.more.json", "login_finish_req.device.json", "login_finish_res.device.json",
   "revoke_all_res.json", "token_refresh_req.json", "token_res.json", "token_revoke_req.json",
@@ -1096,9 +1135,11 @@ test("token_codes_are_401_on_both_sides", () => {
     assert.equal(STATUS_OF[code], 401, code);
     assert.equal(ERROR_STATUS[code], 401, code);
   }
-  // They close the list, after the codes of the third milestone.
-  assert.deepEqual(codes.slice(-4), added);
-  assert.equal(codes.indexOf("import_window_invalid") + 1, codes.indexOf("dpop_invalid"));
+  // They come after the codes of the third milestone; only the codes of several accounts follow them.
+  const at = codes.indexOf("dpop_invalid");
+  assert.deepEqual(codes.slice(at, at + 4), added);
+  assert.equal(codes.indexOf("import_window_invalid") + 1, at);
+  assert.equal(codes.indexOf("device_revoked") + 1, codes.indexOf("invite_invalid"));
   // A refused operation of a batch may carry them, with their status.
   for (const code of added) checkStep("batch_res", { results: [{ status: 401, error: code }] });
 });
@@ -1264,4 +1305,65 @@ test("an_answer_read_for_a_device_drops_unknown_fields_at_every_depth_and_nothin
   assert.throws(() => readWire("token_res", "{}", /** @type {any} */ ({ unknown: "keep" })), TypeError);
   // Requests are written strictly on every client.
   assert.throws(() => encodeWire("token_refresh_req", { refresh_token: "A".repeat(43), later: 1 }), WireError);
+});
+
+// ---------------------------------------------------- several accounts
+
+test("l1_fixtures_decode_and_reencode_identically", () => {
+  const all = fixtures();
+  assert.deepEqual(all.filter((name) => L1_SHAPES.includes(kindOf(name))), L1_FIXTURES);
+  for (const name of L1_FIXTURES) {
+    const kind = kindOf(name);
+    const text = read(name);
+    const value = readWire(kind, text);
+    assert.equal(`${JSON.stringify(value)}\n`, text, name);
+    assert.equal(`${encodeWire(kind, value)}\n`, text, name);
+    checkStep(kind, value);
+    assert.ok(!hasNull(value), name);
+  }
+  for (const kind of L1_SHAPES) assert.ok(kind in SHAPES, kind);
+  assert.equal(INVITE_CHARS, 43);
+  assert.equal(MAX_EVENTS_PAGE, 100);
+  // Registration with an invitation is its own shape; the first administrator's reads as before and refuses an
+  // invitation, and the invitation's refuses the setup token.
+  assert.equal(kindOf("register_start_req.invite.json"), "register_start_req_invite");
+  assert.equal(kindOf("register_start_req.no_token.json"), "register_start_req");
+  const start = readWire("register_start_req_invite", read("register_start_req.invite.json"));
+  assert.deepEqual(Object.keys(start), ["invite", "email", "request"]);
+  assert.match(start.invite, /^[0-9A-Za-z]{43}$/);
+  assert.equal(refusalOf(() => readWire("register_start_req", read("register_start_req.invite.json"))), "bad_request");
+  assert.equal(refusalOf(() => readWire("register_start_req_invite", read("register_start_req.json"))), "bad_request");
+  assert.equal(refusalOf(() => readWire("register_start_req_invite", read("register_start_req.no_token.json"))), "bad_request");
+  // The check of the same link, and its answer.
+  assert.equal(readWire("invite_check_req", read("invite_check_req.json")).invite, start.invite);
+  const answer = readWire("invite_check_res", read("invite_check_res.json"));
+  assert.ok(answer.expires_at > 0 && answer.invited_by.length > 0);
+  // The log: newest first, every actor, a name only for an administrator (and none when that account is gone).
+  const log = readWire("account_events_res", read("account_events_res.json"));
+  assert.equal(log.more, false);
+  assert.ok(log.events.every((e, i) => i === 0 || log.events[i - 1].id > e.id));
+  assert.deepEqual([...new Set(log.events.map((e) => e.actor))].sort(), ["account", "admin", "server", "server_command"]);
+  assert.ok(log.events.filter((e) => e.actor !== "admin").every((e) => e.actor_name === ""));
+  assert.ok(log.events.some((e) => e.actor === "admin" && e.actor_name === ""));
+  assert.deepEqual(Object.keys(log.events[0]), ["id", "at", "kind", "actor", "actor_name"]);
+  assert.equal(readWire("account_events_res", read("account_events_res.more.json")).events.length, MAX_EVENTS_PAGE);
+  // A kind of a later delivery reads too: the vault shows it as another event.
+  const later = { events: [{ ...log.events[0], kind: "k".repeat(64) }], more: false };
+  assert.equal(encodeWire("account_events_res", later), JSON.stringify(later));
+  // Names count characters, not bytes, as on the server.
+  const clef = "\u{1d11e}";
+  assert.equal(encodeWire("invite_check_res", { expires_at: 1, invited_by: clef.repeat(254) }).length > 0, true);
+  assert.equal(refusalOf(() => encodeWire("invite_check_res", { expires_at: 1, invited_by: clef.repeat(255) })), "bad_request");
+});
+
+test("invite_codes_have_their_statuses_on_both_sides", () => {
+  const statuses = parseFile("error_statuses.json");
+  const codes = errorCodes();
+  for (const [code, status] of [["invite_invalid", 403], ["email_taken", 409]]) {
+    assert.equal(statuses[code], status, code);
+    assert.equal(STATUS_OF[code], status, code);
+    assert.equal(ERROR_STATUS[code], status, code);
+  }
+  // They close the list, after the codes of devices.
+  assert.deepEqual(codes.slice(-2), ["invite_invalid", "email_taken"]);
 });

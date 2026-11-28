@@ -8,9 +8,10 @@
 // queued writes, the trash, the sync flags in the settings (`sync.flags.<account>.…`),
 // the note about an accepted restore (`restore.note.<server>.<account>`, one per
 // server, so it goes even when the other records are shared), the date of the last
-// export (`export.reminder.<server>.<account>`, likewise) and the device
-// secrets. What stays: this browser's device id, and everything
-// that belongs to another account or another server.
+// export (`export.reminder.<server>.<account>`, likewise), what "Activity" last
+// showed (`activity.seen.<server>.<account>`, likewise) and the device secrets.
+// What stays: this browser's device id, and everything that belongs to another
+// account or another server.
 //
 // Rows, the outbox, the trash and the sync flags are kept per account, not per
 // server (an account id is 16 random bytes that one server made). The same
@@ -23,6 +24,7 @@
 // Callers run `forgetServer` inside the Web Lock `ferret-sync-memory:<server>:<account>`,
 // like every other write of the sync state, so no tab is saving it meanwhile.
 import { hex16 } from "../b64.mjs";
+import { activitySeenKey } from "./activitySeen.mjs";
 import { exportReminderKey } from "./exportReminder.mjs";
 import { req, run, serverKey } from "./idb.mjs";
 import { restoreNoteKey } from "./restoreNote.mjs";
@@ -54,6 +56,7 @@ export async function forgetServer(store, serverUrl, accountId) {
   const ofFlags = store.keyRange.bound(flags, `${flags}\uffff`);
   const noteKey = restoreNoteKey(serverUrl, accountId);
   const reminderKey = exportReminderKey(serverUrl, accountId);
+  const seenKey = activitySeenKey(serverUrl, accountId);
 
   return run(store, FORGET_STORES, "readwrite", async ([pinned, syncState, rows, outbox, trash, settings, secrets]) => {
     /** @type {Record<string, number>} */
@@ -92,6 +95,11 @@ export async function forgetServer(store, serverUrl, accountId) {
     // So does the date of the last export (it drives the reminder to take another): it is about this server's vault.
     if ((await req(settings.getKey(reminderKey))) !== undefined) {
       await req(settings.delete(reminderKey));
+      removed.settings += 1;
+    }
+    // And what "Activity" last showed: the account log is this server's.
+    if ((await req(settings.getKey(seenKey))) !== undefined) {
+      await req(settings.delete(seenKey));
       removed.settings += 1;
     }
     // The outbox is keyed by a counter; its entries of the account are found by the scope index.

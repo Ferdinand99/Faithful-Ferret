@@ -12,6 +12,7 @@
 #   scripts/lanbox-ferret-e2e-gate.sh m2         the sync scenarios 10 to 17 in every browser
 #   scripts/lanbox-ferret-e2e-gate.sh m3         the recovery, export, import and backup scenarios 18 to 26 in every browser
 #   scripts/lanbox-ferret-e2e-gate.sh m5a        the device scenarios (27) in every browser, a fresh stack for each
+#   scripts/lanbox-ferret-e2e-gate.sh l1         the scenarios of several accounts (32 to 34) in every browser, a fresh stack for each
 #   scripts/lanbox-ferret-e2e-gate.sh --parallel [step]   (or all-parallel) the same, but one stack per browser, all at once
 #
 # With --parallel every browser runs the steps on a stack of its own, at the same time: its own suffix (the
@@ -47,6 +48,10 @@
 #     formats and a thousand items, 25 backup, wipe and restore, 26 two tabs. Afterwards the data
 #     directory, the backup sets and the server log are searched for the secrets of the run.
 #
+#  6. The scenarios of several accounts (step l1), in each browser on a fresh stack: 01-setup, then 32 an invitation
+#     and the join, 33 two accounts in one browser profile (and a passkey of the invited account, in Chromium), 34 what
+#     the administrator does to another account on the Users page and what that account sees.
+#
 # Env: FERRET_DOCKER_ARGS (default "--context lanbox"), FERRET_E2E_SUFFIX and FERRET_E2E_SUBNET (another stack name
 # and network, see scripts/lanbox-ferret-test.sh), FERRET_E2E_BROWSERS (default "chromium firefox webkit"),
 # DEV_RUN and DEV_TITLE (labels for the containers, see scripts/lanbox-ferret-test.sh).
@@ -66,6 +71,7 @@ m2_sync_specs=(10-conflict 11-live 12-offline 13-trash 14-evil)
 m3_specs=(18-sheet 19-new-device 20-password 21-recover 22-recovery-key 23-export-import 24-import-foreign 25-backup-restore 26-tabs)
 shots_dir=test-results/out/m2-shots
 m5a_specs=(01-setup 27-device)
+l1_specs=(01-setup 32-invite 33-two-accounts 34-admin-accounts)
 main_specs=(01-setup 02-signin 03-vault 03-folders 04-sync 05-lock 05-unlock 06-admin 06-admin-signout 07-transport 08-plaintext 09-csp 28-previous-passwords 29-unlock-methods 30-unlock-passkey 31-totp)
 failures=0
 vault_origin="$e2e_vault_url"
@@ -463,6 +469,21 @@ m5a_phase() {
   done
 }
 
+# ------------------------------------------------------------------------- l1
+
+# The scenarios of several accounts: an invitation and the join (32), two accounts in one browser profile (33), and
+# what the administrator does to another account on the Users page and what that account sees (34). Each browser gets
+# a fresh stack and its own first account (01-setup); the other accounts are invited in the run. The steps of the Users
+# page that need a fresh password check run in a Chromium of their own (web/test/e2e-stack/accounts.mjs says why).
+l1_phase() {
+  local browser
+  for browser in $browsers; do
+    say "scenarios of several accounts in $browser on a fresh stack"
+    e2e_up >&2
+    if run_phase l1 "$browser" "${l1_specs[@]}"; then ok "$browser: the scenarios of several accounts passed"; else bad "$browser: the scenarios of several accounts failed"; fi
+  done
+}
+
 # ------------------------------------------------------------------------ m3
 
 # The same search as search_data, in the backup sets of the stack: they hold a copy of the database and of the secret files, so
@@ -633,7 +654,7 @@ main_gate() {
   done
   if [ "$parallel" = 1 ]; then
     case "$step" in
-      all | browsers | m2 | m3 | m5a | restart | limits)
+      all | browsers | m2 | m3 | m5a | l1 | restart | limits)
         parallel_gate "$step"
         return
         ;;
@@ -650,6 +671,7 @@ main_gate() {
     m2) m2_phase ;;
     m3) m3_phase ;;
     m5a) m5a_phase ;;
+    l1) l1_phase ;;
     restart)
       first="$(printf '%s' "$browsers" | awk '{print $1}')"
       e2e_up >&2

@@ -150,20 +150,33 @@ export async function webVaultAccount(session, channel) {
     await page.waitVisible('[data-role="list"]', SLOW);
     return account;
   }
+  return webVaultSignIn(session, channel, known);
+}
+
+/**
+ * Signs in to the web vault in this browser (a profile that has not seen the account) with `account`.
+ * @template {{ email: string, password: string, secretKey: string }} A
+ * @param {import("./driver.mjs").Session} session
+ * @param {string} channel
+ * @param {A} account
+ * @returns {Promise<A>}
+ */
+export async function webVaultSignIn(session, channel, account) {
+  const page = helpers(session);
   await session.navigate(`${VAULT_URL}/vault/login`);
   await page.waitVisible('[data-role="credentials"]');
-  await page.type('[data-role="email"]', known.email);
+  await page.type('[data-role="email"]', account.email);
   await page.click('[data-role="password"]');
-  await page.type('[data-role="password"]', known.password);
+  await page.type('[data-role="password"]', account.password);
   await page.waitVisible('[data-role="sk-question"]');
   await page.click('[data-role="sk-yes"]');
-  await page.type('[data-role="sk-code"]', known.secretKey);
+  await page.type('[data-role="sk-code"]', account.secretKey);
   await pace();
   await page.click('[data-role="credentials"] [data-role="submit"]');
   await page.waitVisible('[data-role="list"]', SLOW).catch(async (error) => {
     throw new Error(`${channel}: the web vault sign-in did not open the list (${await page.text('[data-role="error"]')}): ${error}`);
   });
-  return known;
+  return account;
 }
 
 /**

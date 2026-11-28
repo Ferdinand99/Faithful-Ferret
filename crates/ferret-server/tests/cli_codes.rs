@@ -250,3 +250,96 @@ async fn cli_refuses_a_code_that_could_never_open_a_session() {
     assert!(!error.is_empty());
     assert!(code_rows(&app, admin.user_id).await.is_empty());
 }
+
+// ------------------------------------------------------------- the account log
+
+/// The events of `user`: `(kind, actor, actor_name)`.
+async fn events_of(app: &TestApp, user: i64) -> Vec<(String, String, String)> {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT kind, actor, actor_name FROM ferret_account_events
+                 WHERE user_id = ?1 ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map([user], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+        .expect("the events")
+}
+
+#[tokio::test]
+async fn cli_code_event_says_server_command() {
+    let app = app().await;
+    let admin = seed(&app, 1).await;
+    set_role(&app, admin.user_id, "admin").await;
+    let user = seed(&app, 2).await;
+
+    issue(&app, "user2@example.com", true).expect("a code");
+    let issued = (
+        "sign_in_code_issued".to_string(),
+        "server_command".to_string(),
+        String::new(),
+    );
+    assert_eq!(
+        events_of(&app, user.user_id).await,
+        std::slice::from_ref(&issued)
+    );
+    // The administrator's own log has nothing of it.
+    assert!(events_of(&app, admin.user_id).await.is_empty());
+
+    // The command is the way back for an administrator: it may make a code
+    // for one, and that is logged the same way.
+    issue(&app, "user1@example.com", true).expect("a code for the administrator");
+    assert_eq!(
+        events_of(&app, admin.user_id).await,
+        std::slice::from_ref(&issued)
+    );
+    // A refused command writes nothing.
+    issue(&app, "nobody@example.com", true).expect_err("no user");
+    issue(&app, "user2@example.com", false).expect_err("no --yes");
+    assert_eq!(events_of(&app, user.user_id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn cli_code_writes_an_event_and_a_failed_write_revokes_the_code() {
+    let app = app().await;
+    let admin = seed(&app, 1).await;
+    set_role(&app, admin.user_id, "admin").await;
+    let user = seed(&app, 2).await;
+
+    let first = codes_in(&issue(&app, "user2@example.com", true).expect("a code"))[0].clone();
+    assert_eq!(events_of(&app, user.user_id).await.len(), 1);
+
+    // The log refuses the next event: the command fails, prints no code, and
+    // the code it stored is revoked again, so none is left that the log does
+    // not show. The earlier code was replaced by the kit before that.
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER refuse_events BEFORE INSERT ON ferret_account_events
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("the trigger");
+    let error = issue(&app, "user2@example.com", true).expect_err("no event, no code");
+    assert!(codes_in(&error).is_empty(), "{error}");
+    assert!(error.contains("log"), "{error}");
+    let rows = code_rows(&app, user.user_id).await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter().all(|&(_, used, revoked, _)| !used && revoked),
+        "every code is revoked: {rows:?}"
+    );
+    assert_eq!(events_of(&app, user.user_id).await.len(), 1);
+    assert_eq!(
+        redeem(&app, "user2@example.com", &first).await,
+        StatusCode::UNAUTHORIZED
+    );
+}

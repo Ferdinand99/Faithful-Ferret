@@ -7,7 +7,7 @@ use ferret_server::product::{self, KIT};
 use support::handoff::admin_user;
 use support::{Req, TestApp, Which};
 use vole_kit::config::{CredentialMode, KitConfig};
-use vole_kit::db::migrate::{CORE, MigrationSet, SIGN_IN_CODES};
+use vole_kit::db::migrate::{CORE, INVITES, MigrationSet, SIGN_IN_CODES};
 
 #[test]
 fn kit_config_is_valid() {
@@ -62,12 +62,18 @@ fn the_kit_takes_no_password_and_the_optional_parts_are_off_except_sign_in_codes
 fn kit_config_accepts_sign_in_codes_with_its_migration() {
     product::install();
     // The feature is on, and the kit's migration for its tables is in the core
-    // set that this server runs, after everything that the kit's own core set
-    // holds.
+    // set that this server runs, right after everything that the kit's own core
+    // set holds; only the kit's invitations (a table Ferret's own pages use,
+    // with the kit's invitation pages off) come after it.
     assert!(KIT.features.sign_in_codes);
+    assert!(!KIT.features.invites);
     let core = KIT.migrations.core;
     assert!(core.iter().any(|(name, _)| *name == SIGN_IN_CODES.0));
-    assert_eq!(core.last().map(|(name, _)| *name), Some(SIGN_IN_CODES.0));
+    assert_eq!(
+        core.get(CORE.len()).map(|(name, _)| *name),
+        Some(SIGN_IN_CODES.0)
+    );
+    assert_eq!(core.last().map(|(name, _)| *name), Some(INVITES.0));
     assert_eq!(&core[..CORE.len()], CORE, "the kit's core set is all there");
     assert_eq!(vole_kit::config::check(&KIT), Ok(()));
 
