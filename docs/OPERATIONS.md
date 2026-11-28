@@ -284,7 +284,9 @@ server can read or change a master password.
 * **What needs your master password again.** Inviting someone, sending an invitation again, making a sign-in code,
   enabling an account and deleting one give access, so the page asks you to confirm it is you (the master password on
   the vault address) first. Revoking an invitation, disabling an account and signing it out everywhere only take access
-  away, so they do not. No action works on your own account or on another administrator.
+  away, so they do not. A confirmation holds for a few minutes, but making a sign-in code and deleting an account use it
+  up: the next code or deletion asks again, so one confirmation never makes codes for every account. No action works on
+  your own account or on another administrator.
 * **Sign-in code**: see [the one-time sign-in code](#the-one-time-sign-in-code) above.
 * **Disable** stops the account from signing in and ends every session, device and sign-in code of it at once. **Enable**
   lets it sign in again; its devices sign in again with the master password. **Sign out everywhere** ends every session,
@@ -307,10 +309,15 @@ server can read or change a master password.
 The stack never gets real data before the checks in the last section of this file are done, and nothing on it is started
 without an explicit yes: `scripts/ferret-home.sh up <release tag> --yes-ferret-home`. The script refuses unless the tag is
 a release of this checkout, the image of that release exists for this machine's architecture and for arm64, its
-signature verifies (`cosign`, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
+signature verifies (`cosign` 3 or newer, or `--no-cosign`, which is said openly and recorded), the image's revision label is the
 commit of the tag, the image has no test features (a release has the cargo features `passkey-import` and `quick-unlock` and nothing else; the release before the passkey provider had `quick-unlock` alone, and the script still starts it), and the compose file passes its own check
 (`scripts/ferret-home.sh config`). It then runs the image by digest and writes the digest down. The header of the compose
 file has the full list of what the host needs (Docker 28 or newer, buildx, compose v2, git with the tags, node).
+
+**cosign 3 is required.** The release workflow signs the images with cosign 3, and cosign 2 answers "no signatures
+found" for them, so it would refuse a good image. The script reads the version of the `cosign` on the path before it
+pulls anything and refuses one older than 3, with a message that says so; install cosign 3 (`cosign version` shows
+`GitVersion: v3…`), or start openly without the check with `--no-cosign`.
 
 * **No ports but two, and those on loopback.** The server is published on `127.0.0.1:3041` (the vault) and
   `127.0.0.1:3040` (the admin pages) and nowhere else, never on `0.0.0.0` and never on an address of the LAN. The stack
@@ -484,8 +491,9 @@ writes, so nothing breaks; changes from other devices only arrive more slowly.
 **Open files.** The server holds up to 1 024 streams at once (at most 2 for one device and 40 for one account, so it
 takes 26 accounts to fill it). Each stream is an open connection, and every connection is an open file of the process,
 next to the database, its journal and the listeners. Many container engines start a container with a soft limit of
-1 024 open files, which the streams alone can use up; new connections then fail. Give the container room, in the compose
-file of the stack:
+1 024 open files, which the streams alone can use up; new connections then fail. The compose file of the stack for real
+data (`docker/compose.ferret-home.yml`) gives the server 4096, and `scripts/ferret-home.sh config` refuses it without a
+limit of at least that. For a compose file of your own:
 
 ```yaml
 services:
