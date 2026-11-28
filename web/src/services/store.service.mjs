@@ -4,6 +4,7 @@
 // `pinnedForSignIn` only; the plain lookups by e-mail or account stay inside the
 // store, because a miss by e-mail alone looks like a first use. The one exception
 // is `pinHintForEmail`, an early guard for the core's `login_finish` (see below).
+import { activitySeen } from "../store/activitySeen.mjs";
 import { cache } from "../store/cache.mjs";
 import { exportReminder } from "../store/exportReminder.mjs";
 import { openStore } from "../store/idb.mjs";
@@ -62,6 +63,8 @@ export default {
       restoreNote: { save: saveRestoreNote, load: loadRestoreNote, delete: deleteRestoreNote },
       // The date of the last encrypted export and the reminder to take another (not secret; see store/exportReminder.mjs).
       exportReminder,
+      // What "Activity" last showed of the account log, for the notice at an unlock (not secret; see store/activitySeen.mjs).
+      activitySeen,
       forgetServer,
       pendingWrites,
       sharedAccount,

@@ -1,0 +1,35 @@
+/* The page "Activity": the account log, newest first. Colours and components come from base.css. */
+
+.activity-list {
+  list-style: none;
+  margin: var(--sp-4) 0;
+  padding: 0;
+}
+
+.activity-row {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-row:last-child {
+  border-bottom: 0;
+}
+
+.activity-who,
+.activity-when {
+  margin: 0;
+  /* An administrator's long e-mail breaks instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.activity-when {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* The notice in the banner strip of the vault frame leads to this page. */
+.vault-ui .banner [data-role="account-notice-link"] {
+  font-weight: 600;
+}
