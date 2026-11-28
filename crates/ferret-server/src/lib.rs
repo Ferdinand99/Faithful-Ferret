@@ -29,12 +29,15 @@
 //! * [`wire`]: the JSON shapes shared with the web vault.
 //! * [`cli`]: the commands of `ferret` that are not the server.
 //! * [`backup`]: the backup sets, their schedule and the restore.
+//! * [`accounts`]: several accounts on one server: the account log and the
+//!   actions on another account.
 //!
 //! Many modules are still stubs: each has its documentation and, where it has
 //! routes, a `routes()` that serves nothing yet.
 
 #![forbid(unsafe_code)]
 
+pub mod accounts;
 pub mod admin;
 pub mod auth;
 pub mod backup;

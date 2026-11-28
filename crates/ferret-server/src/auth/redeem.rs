@@ -39,8 +39,10 @@
 //!    the typed name.
 //! 5. `login::open_session` with the scope `account_reset`, the vault origin
 //!    and the `session_version` of the redeemed code: a new row (never fresh,
-//!    30 minutes at most) and its two cookies. The kit's password hash is not
-//!    touched: the master password is not the kit's.
+//!    30 minutes at most) and its two cookies, and in the same transaction the
+//!    event `sign_in_code_redeemed` (actor `account`) in the account log
+//!    (`accounts::log`, Spec: Fase 1 § 6.3, § 11). The kit's password hash is
+//!    not touched: the master password is not the kit's.
 //! 6. In one more write transaction `session::end_all_credentials` ends every
 //!    other session of the user on both origins, revokes every device of the
 //!    user with tokens (and any code the user still has), and after the commit
@@ -49,10 +51,11 @@
 //!
 //! The code is spent at step 4. When step 5 refuses (the kit's second factor
 //! is on, which this server cannot ask for yet; the user has no vault; the
-//! user changed in between), the user's sessions still end as in step 6, and
-//! the answer is the same `401 denied`: the code is gone and the user is signed
-//! out everywhere, which fails closed. No account can turn the kit's second
-//! factor on before the server asks for it.
+//! user changed in between; the event cannot be written to the account log,
+//! so neither the event nor the session is), the user's sessions still end as
+//! in step 6, and the answer is the same `401 denied`: the code is gone and
+//! the user is signed out everywhere, which fails closed. No account can turn
+//! the kit's second factor on before the server asks for it.
 //!
 //! What is typed is never logged here either: not the code, not the e-mail
 //! address.
@@ -73,6 +76,7 @@ use ferret_server_auth::{SessionScope, normalize_login_name};
 use rusqlite::TransactionBehavior;
 use vole_kit::auth::sign_in_codes;
 
+use crate::accounts::log::EventKind;
 use crate::auth::login::open_session;
 use crate::auth::session::{Origin, end_all_credentials};
 use crate::auth::throttle::{RedeemLimit, caller_from};
@@ -190,12 +194,14 @@ async fn redeem_route(
         recovery_device(),
         DEVICE_NAME,
         now_secs,
+        Some(EventKind::SignInCodeRedeemed),
     )
     .await;
     let (jar, sid) = match opened {
         Ok(opened) => opened,
         // A second factor that is on (403), or a user that changed or has no
-        // vault (401): the code is spent either way, and the answer is the one
+        // vault, or an event that could not be written to the account log
+        // (401): the code is spent either way, and the answer is the one
         // of every other refusal. The user was signed out by the redeem; the
         // rows end too, so their event streams close.
         Err(error)

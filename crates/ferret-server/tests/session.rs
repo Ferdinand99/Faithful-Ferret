@@ -1308,7 +1308,9 @@ async fn end_everything_after_restore_ends_every_session_and_purges_states() {
             login_states: 2,
             registrations: 2,
             sign_in_codes: 1,
+            invites: 0,
             users: 2,
+            logged: 2,
             devices: 0,
             tokens: 0,
         }

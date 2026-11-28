@@ -232,9 +232,10 @@ struct Raised {
 ///
 /// The same transaction ends everything the data that came back holds: every
 /// session, hand-over, pending sign-in state and registration, every sign-in
-/// code, every device with its tokens, and it raises every user's
-/// `session_version` ([`end_everything_after_restore`]). There is no way to raise
-/// the epoch without it.
+/// code and pending invitation, every device with its tokens, it raises every
+/// user's `session_version` and writes `server_restored` to the log of every
+/// account ([`end_everything_after_restore`]). There is no way to raise the
+/// epoch without it.
 ///
 /// An `at_least` or a `now` above the largest number a JSON integer can carry,
 /// or a vault that already holds that number, refuses the whole bump with

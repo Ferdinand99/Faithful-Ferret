@@ -13,17 +13,21 @@
 //! The command runs while the server runs, so it does not take the lock of
 //! the data directory: it opens the database beside the server (SQLite's own
 //! locking orders the writes) and writes one code with the kit's `insert`, in
-//! the kit's own transaction. It refuses while a restore is in progress, and
-//! it never makes a database.
+//! the kit's own transaction, and then its event in the account log
+//! (`sign_in_code_issued`, actor `server_command`); if the event cannot be
+//! written the code is revoked again and the command fails (Spec: Fase 1
+//! § 6.3, § 11). It refuses while a restore is in progress, and it never
+//! makes a database.
 
 use std::fmt;
 use std::path::Path;
 
 use ferret_server_auth::normalize_login_name;
 use rusqlite::{Connection, OptionalExtension as _, params};
-use vole_kit::auth::sign_in_codes;
 use zeroize::Zeroizing;
 
+use crate::accounts::actions::{self, ActionError};
+use crate::accounts::log::Actor;
 use crate::backup::restore;
 use crate::cli::open_migrated;
 use crate::error::StartError;
@@ -66,59 +70,58 @@ impl fmt::Debug for IssuedCode {
 }
 
 /// Makes a code for the user with `email` in the database of `data_dir`, with
-/// the kit's life of 24 hours (so it takes no time from the caller).
+/// the kit's life of 24 hours, through `accounts::actions::issue_sign_in_code`
+/// as [`Actor::ServerCommand`]: the event `sign_in_code_issued` is written to
+/// the account's log right after the code (and the code is revoked again if
+/// that fails), at `now`.
 ///
 /// The user must have a vault account, be active and have no kit second
 /// factor (a code cannot pass one yet), or the code could never give a
-/// session. The code is recorded as made by the active administrator with the
-/// lowest id. The user's earlier pending code, if any, is revoked.
-pub fn issue_sign_in_code(data_dir: &Path, email: &str) -> Result<IssuedCode, StartError> {
+/// session. Unlike the Users page, the command may make a code for an
+/// administrator. The code is recorded as made by the active administrator
+/// with the lowest id. The user's earlier pending code, if any, is revoked.
+pub fn issue_sign_in_code(
+    data_dir: &Path,
+    email: &str,
+    now: i64,
+) -> Result<IssuedCode, StartError> {
     restore::refuse_if_in_progress(data_dir)?;
     let name = normalize_login_name(email)
         .map_err(|_| StartError::from("that is not an e-mail address a user can have"))?;
     let mut conn = open_migrated(data_dir)?;
-    let user_id = user_for_code(&conn, name.as_str())?;
-    let created_by = lowest_active_admin(&conn)?;
-    let code = Zeroizing::new(sign_in_codes::generate());
-    let hash = sign_in_codes::hash(&code);
-    let expires_at = vole_kit::db::sign_in_codes::insert(&mut conn, user_id, &hash, created_by)?;
-    Ok(IssuedCode::new(code.to_string(), expires_at))
+    let user_id = user_named(&conn, name.as_str())?.ok_or(NO_USER)?;
+    actions::issue_sign_in_code(&mut conn, user_id, &Actor::ServerCommand, now).map_err(said)
 }
 
-/// The user a code may be made for: the one with this login name and a vault
-/// account, active and without the kit's second factor.
-fn user_for_code(conn: &Connection, name: &str) -> Result<i64, StartError> {
-    let found: Option<(i64, bool, bool)> = conn
-        .query_row(
-            "SELECT u.id, u.active, u.totp_enabled
-             FROM users u JOIN ferret_accounts a ON a.user_id = u.id
-             WHERE u.username = ?1",
-            params![name],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
-    match found {
-        None => Err("no user with a vault has that e-mail address".into()),
-        Some((_, false, _)) => Err("that user is disabled: enable the account first".into()),
-        Some((_, true, true)) => Err(
-            "that user has two-factor sign-in on, which a sign-in code cannot pass yet: \
-             reset it on the Users page first"
-                .into(),
-        ),
-        Some((user_id, true, false)) => Ok(user_id),
-    }
-}
+const NO_USER: &str = "no user with a vault has that e-mail address";
 
-/// The active administrator with the lowest id, who the code is recorded as
-/// made by.
-fn lowest_active_admin(conn: &Connection) -> Result<i64, StartError> {
+/// The kit user with this login name.
+fn user_named(conn: &Connection, name: &str) -> rusqlite::Result<Option<i64>> {
     conn.query_row(
-        "SELECT id FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1",
-        [],
+        "SELECT id FROM users WHERE username = ?1",
+        params![name],
         |r| r.get(0),
     )
-    .optional()?
-    .ok_or_else(|| "there is no active administrator".into())
+    .optional()
+}
+
+/// What the command says when no code was made.
+fn said(error: ActionError) -> StartError {
+    match error {
+        ActionError::NotFound => NO_USER.into(),
+        ActionError::Disabled => "that user is disabled: enable the account first".into(),
+        ActionError::SecondFactor => {
+            "that user has two-factor sign-in on, which a sign-in code cannot pass yet".into()
+        }
+        // The server command passes the rules of the target; what it can lack
+        // is an administrator to record the code under.
+        ActionError::NotAllowed => "there is no active administrator".into(),
+        ActionError::Store(error) => {
+            format!("the sign-in code could not be made and logged in the account log: {error}")
+                .into()
+        }
+        other => format!("no sign-in code was made: {other}").into(),
+    }
 }
 
 #[cfg(test)]

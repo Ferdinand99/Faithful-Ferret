@@ -719,6 +719,101 @@ async fn redeem_is_throttled_per_ip_and_per_typed_email_and_never_reveals_a_real
     );
 }
 
+// ------------------------------------------------------------- the account log
+
+/// The events of a user: `(kind, actor, actor_name, at)`.
+async fn events_of(app: &TestApp, user: i64) -> Vec<(String, String, String, i64)> {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT kind, actor, actor_name, at FROM ferret_account_events
+                 WHERE user_id = ?1 ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map([user], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+        .expect("the events")
+}
+
+/// Whether the code with this text was used.
+async fn used(app: &TestApp, code: &str) -> bool {
+    let hash = sign_in_codes::hash(code).to_vec();
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(conn.query_row(
+                "SELECT used_at IS NOT NULL FROM sign_in_codes WHERE code_hash = ?1",
+                [hash],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .expect("the code")
+}
+
+#[tokio::test]
+async fn redeeming_a_code_writes_one_event_in_the_same_transaction() {
+    let app = app().await;
+    let user = seed(&app, 1).await;
+    let other = seed(&app, 2).await;
+
+    // A redeemed code: one event, by the account, at the time of the session.
+    let code = code_for(&app, user.user_id).await;
+    let res = redeem(&app, &email(1), &code).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(
+        events_of(&app, user.user_id).await,
+        [(
+            "sign_in_code_redeemed".to_string(),
+            "account".to_string(),
+            String::new(),
+            now(&app)
+        )]
+    );
+    assert!(events_of(&app, other.user_id).await.is_empty());
+    // A refused one writes nothing.
+    assert_denied(&redeem(&app, &email(1), &code).await, "used");
+    let wrong = code_for(&app, other.user_id).await;
+    assert_denied(&redeem(&app, &email(1), &wrong).await, "another's code");
+    assert_eq!(events_of(&app, user.user_id).await.len(), 1);
+    assert!(events_of(&app, other.user_id).await.is_empty());
+
+    // An event that cannot be written: no session, the code stays spent and
+    // the user is signed out everywhere (it fails closed), the common answer.
+    let full = issue(&app, other.user_id, Origin::Vault, SessionScope::Full, 1).await;
+    let version = session_version(&app, other.user_id).await;
+    app.state
+        .vault_db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER refuse_events BEFORE INSERT ON ferret_account_events
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("the trigger");
+    let res = redeem(&app, &email(2), &wrong).await;
+    assert_denied(&res, "no event");
+    assert!(used(&app, &wrong).await, "the kit spent the code");
+    assert_eq!(pending(&app, other.user_id).await, 0);
+    assert_eq!(session_version(&app, other.user_id).await, version + 1);
+    let rows = sessions_of(&app, other.user_id).await;
+    assert_eq!(rows.len(), 1, "no reset session: {rows:?}");
+    assert_eq!(
+        (rows[0].1.as_str(), rows[0].4),
+        ("full", Some(now(&app))),
+        "the other session ended"
+    );
+    assert!(events_of(&app, other.user_id).await.is_empty());
+    let res = get_vault(&app, &full.jar, "/api/auth/session").await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+}
+
 // ------------------------------------------------------------- side effects
 
 #[tokio::test]

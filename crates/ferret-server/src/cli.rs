@@ -3,9 +3,11 @@
 //! * `ferret restore-epoch bump --yes [--at-least <n>] [--data-dir <dir>]` raises
 //!   the restore epoch of every vault in the database of the data directory, so
 //!   that every client that remembers a lower one sees that the server was
-//!   restored (Spec: Fase 1 § 8.6), and ends every session and pending
-//!   sign-in code the restored data holds and signs out every device with
-//!   tokens (Spec: Fase 1 § 7.6 and § 11). It prints how many devices that was.
+//!   restored (Spec: Fase 1 § 8.6), and ends every session, pending sign-in
+//!   code and pending invitation the restored data holds, signs out every
+//!   device with tokens and writes `server_restored` to the log of every
+//!   account (Spec: Fase 1 § 7.6 and § 11). It prints how many devices,
+//!   invitations and accounts that was.
 //! * `ferret backup create|list [--data-dir <dir>]` and `ferret backup verify
 //!   <set>`: make, list and check backup sets. They change nothing that exists,
 //!   so they need no `--yes`. `backup create` needs the server to be stopped
@@ -35,12 +37,13 @@
 //! * `restore-epoch bump` and `backup restore` raise the restore epoch with the
 //!   same rule: `max(stored + 1, now, --at-least)` ([`reconcile::bump`]), and in
 //!   the same transaction end every session, hand-over, pending sign-in state,
-//!   pending registration and pending sign-in code, delete every device token
-//!   and revoke every device that had tokens, and raise every user's
-//!   `session_version` (`end_everything_after_restore`, run by
-//!   `reconcile::bump_in`): whatever way the old data came back, nothing that
-//!   was live in it is live after the bump. Both commands say how many devices
-//!   they signed out.
+//!   pending registration, pending sign-in code and pending invitation, delete
+//!   every device token and revoke every device that had tokens, raise every
+//!   user's `session_version` and write `server_restored` to the log of every
+//!   account (`end_everything_after_restore`, run by `reconcile::bump_in`):
+//!   whatever way the old data came back, nothing that was live in it is live
+//!   after the bump. Both commands say how many devices they signed out, how
+//!   many invitations they revoked and how many accounts got the event.
 //!
 //! No listener is started and no URL setting is read.
 //!
@@ -314,7 +317,8 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
                 .map_err(|error| restore_failed(&data_dir, error))?;
             let mut said = format!(
                 "restored {} vault{}: restore epoch is now {}, {} session{} ended, {} device{} signed \
-                 out, the files that were there are in {}",
+                 out, {} invitation{} revoked, the restore is in the log of {} account{}, the \
+                 files that were there are in {}",
                 report.vaults,
                 plural(report.vaults),
                 report.restore_epoch,
@@ -322,6 +326,10 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
                 plural(report.sessions_ended),
                 report.devices_revoked,
                 plural(report.devices_revoked),
+                report.invites_revoked,
+                plural(report.invites_revoked),
+                report.accounts_logged,
+                plural(report.accounts_logged),
                 report.moved_aside.display()
             );
             if report.seen_epoch_unknown {
@@ -352,7 +360,7 @@ pub fn run(cmd: Command) -> Result<String, StartError> {
             confirmed,
         } => {
             require_yes("sign-in-code issue makes a code in the database", confirmed)?;
-            let issued = codes::issue_sign_in_code(&data_dir, &email)?;
+            let issued = codes::issue_sign_in_code(&data_dir, &email, now_unix()?)?;
             Ok(format!(
                 "sign-in code for {email}: {}\ngood for one use until {} UTC; a newer code \
                  replaces it",
@@ -477,14 +485,17 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
     tx.commit()?;
     let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
     let swept = bumped.swept;
-    let (sessions, codes, devices) = (
+    let (sessions, codes, invites, devices, logged) = (
         count(swept.sessions),
         count(swept.sign_in_codes),
+        count(swept.invites),
         count(swept.devices),
+        count(swept.logged),
     );
     Ok(format!(
         "restore epoch is now {} ({} vault{} raised); {} session{} ended, {} sign-in code{} \
-         revoked, {} device{} signed out",
+         revoked, {} invitation{} revoked, {} device{} signed out; the restore is in the log of \
+         {} account{}",
         bumped.restore_epoch,
         bumped.vaults,
         plural(bumped.vaults),
@@ -492,8 +503,12 @@ fn bump_under_lock(data_dir: &Path, at_least: Option<u64>) -> Result<String, Sta
         plural(sessions),
         codes,
         plural(codes),
+        invites,
+        plural(invites),
         devices,
-        plural(devices)
+        plural(devices),
+        logged,
+        plural(logged)
     ))
 }
 

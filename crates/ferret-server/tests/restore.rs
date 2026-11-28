@@ -459,6 +459,8 @@ async fn restore_puts_the_set_back_and_moves_the_current_data_aside() {
             vaults: 1,
             sessions_ended: 0,
             devices_revoked: 0,
+            invites_revoked: 0,
+            accounts_logged: 1,
             moved_aside: scene.aside(),
             seen_epoch_unknown: false,
         }
@@ -1179,7 +1181,7 @@ async fn restore_epoch_bump_uses_the_same_rule() {
     assert_eq!(
         said,
         format!(
-            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked, 0 devices signed out",
+            "restore epoch is now {} (1 vault raised); 0 sessions ended, 0 sign-in codes revoked, 0 invitations revoked, 0 devices signed out; the restore is in the log of 1 account",
             at_least + 1
         )
     );
@@ -1283,6 +1285,230 @@ async fn every_session_and_pending_code_ends_and_a_session_revoked_after_the_bac
     let jar = sign_in(&state, user).await;
     let res = vault_get(&state, &jar, "/api/sync/items").await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+}
+
+// ---------------------------------------------------------------- invitations and the log
+
+/// An invitation made by `by` in the app's database, as the Users page makes
+/// one; returns its id.
+async fn invite(app: &TestApp, by: i64, n: u8) -> i64 {
+    let hash = vole_kit::auth::invites::hash(&format!("invitation token number {n}"));
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            Ok(vole_kit::db::invites::insert(
+                conn,
+                &hash,
+                vole_kit::db::role::Role::Viewer,
+                "",
+                by,
+            )?)
+        })
+        .await
+        .expect("an invitation")
+}
+
+/// Runs `sql` with `id` on the app's database.
+async fn exec(app: &TestApp, sql: &'static str, id: i64) {
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            conn.execute(sql, [id])?;
+            Ok(())
+        })
+        .await
+        .expect("the statement");
+}
+
+/// The invitations of a database: `(id, used, revoked)`.
+fn invitations(db: &Path) -> Vec<(i64, bool, bool)> {
+    let conn = peek(db);
+    let mut stmt = conn
+        .prepare("SELECT id, used_at IS NOT NULL, revoked_at IS NOT NULL FROM invites ORDER BY id")
+        .expect("prepare");
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect()
+}
+
+/// The log of a database: `(user_id, kind, actor, actor_name, at)`, oldest
+/// first.
+fn account_log(db: &Path) -> Vec<(i64, String, String, String, i64)> {
+    let conn = peek(db);
+    let mut stmt = conn
+        .prepare(
+            "SELECT user_id, kind, actor, actor_name, at FROM ferret_account_events ORDER BY id",
+        )
+        .expect("prepare");
+    stmt.query_map([], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+    })
+    .expect("query")
+    .map(|r| r.expect("row"))
+    .collect()
+}
+
+fn restored(user: i64) -> (i64, String, String, String, i64) {
+    (
+        user,
+        "server_restored".into(),
+        "server".into(),
+        String::new(),
+        NOW,
+    )
+}
+
+/// A server with two accounts and four invitations in its backup (two
+/// pending, one used, one revoked), and after the backup a revocation of one
+/// of the pending ones, a new invitation and an event in the log.
+struct InviteScene {
+    _app: TestApp,
+    users: [i64; 2],
+    backup: PathBuf,
+    data: Dir,
+    /// The pending invitation that was revoked after the backup, and the one
+    /// still pending.
+    pending: [i64; 2],
+}
+
+async fn invite_scene() -> InviteScene {
+    let app = TestApp::new().await;
+    let first = add_account_to_app(&app, 1).await;
+    let second = add_account_to_app(&app, 2).await;
+    exec(
+        &app,
+        "UPDATE users SET role = 'admin' WHERE id = ?1",
+        first.user_id,
+    )
+    .await;
+    let revoked_later = invite(&app, first.user_id, 1).await;
+    let still_pending = invite(&app, first.user_id, 2).await;
+    let used = invite(&app, first.user_id, 3).await;
+    exec(
+        &app,
+        "UPDATE invites SET used_at = datetime('now') WHERE id = ?1",
+        used,
+    )
+    .await;
+    let revoked = invite(&app, first.user_id, 4).await;
+    exec(
+        &app,
+        "UPDATE invites SET revoked_at = datetime('now') WHERE id = ?1",
+        revoked,
+    )
+    .await;
+    let cfg = cfg(&app);
+    let one = make(&app, &cfg, T1).await.expect("the backup");
+
+    exec(
+        &app,
+        "UPDATE invites SET revoked_at = datetime('now') WHERE id = ?1",
+        revoked_later,
+    )
+    .await;
+    invite(&app, first.user_id, 5).await;
+    let user = second.user_id;
+    app.state
+        .vault_db
+        .with_conn(move |conn| {
+            ferret_server::accounts::log::record(
+                conn,
+                user,
+                ferret_server::accounts::log::EventKind::AccountDisabled,
+                &ferret_server::accounts::log::Actor::Server,
+                T1 + 1,
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("an event after the backup");
+    let two = make(&app, &cfg, T2).await.expect("the later set");
+    let data = Dir::new("invites");
+    copy_data(&cfg.dir.join(&two.name), data.path());
+    InviteScene {
+        users: [first.user_id, second.user_id],
+        backup: cfg.dir.join(&one.name),
+        data,
+        pending: [revoked_later, still_pending],
+        _app: app,
+    }
+}
+
+#[tokio::test]
+async fn a_restore_revokes_pending_invitations_and_logs_it_for_every_account() {
+    let scene = invite_scene().await;
+    let report = restore::restore(scene.data.path(), &scene.backup, None, NOW).expect("a restore");
+    assert_eq!(report.invites_revoked, 2, "the two pending in the set");
+    assert_eq!(report.accounts_logged, 2);
+
+    let db = scene.data.path().join(DB_FILE);
+    // The set's four invitations, and none pending: the one that was revoked
+    // after the backup does not come back to life, nor the one still pending.
+    let rows = invitations(&db);
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert!(
+        rows.iter().all(|&(_, used, revoked)| used || revoked),
+        "{rows:?}"
+    );
+    for id in scene.pending {
+        assert!(rows.contains(&(id, false, true)), "{id}: {rows:?}");
+    }
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND revoked_at IS NULL"
+        ),
+        0
+    );
+    // One `server_restored` for each account, by the server; the event written
+    // after the set was taken is gone with the data that was there.
+    assert_eq!(
+        account_log(&db),
+        [restored(scene.users[0]), restored(scene.users[1])]
+    );
+}
+
+#[tokio::test]
+async fn the_sweep_reports_invitations_and_log_lines() {
+    // The sweep itself counts both, in the caller's transaction.
+    let scene = invite_scene().await;
+    let copy = Dir::new("sweep-copy");
+    copy_data(&scene.backup, copy.path());
+    let mut conn = Connection::open(copy.path().join(DB_FILE)).expect("open");
+    let tx = conn.transaction().expect("a transaction");
+    let swept =
+        ferret_server::auth::session::end_everything_after_restore(&tx, NOW).expect("the sweep");
+    tx.commit().expect("commit");
+    drop(conn);
+    assert_eq!((swept.invites, swept.logged), (2, 2), "{swept:?}");
+
+    // `backup restore` says both numbers.
+    let said = cli::run(Command::BackupRestore {
+        data_dir: scene.data.path().to_path_buf(),
+        from: scene.backup.clone(),
+        confirmed: true,
+        at_least: None,
+    })
+    .expect("a restore");
+    assert!(
+        said.contains(", 2 invitations revoked, the restore is in the log of 2 accounts, "),
+        "{said}"
+    );
+    // `restore-epoch bump` too, on a copy that still holds pending ones.
+    let bumped = Dir::new("sweep-bump");
+    copy_data(&scene.backup, bumped.path());
+    let said = cli::run(Command::RestoreEpochBump {
+        data_dir: bumped.path().to_path_buf(),
+        confirmed: true,
+        at_least: None,
+    })
+    .expect("a bump");
+    assert!(
+        said.contains(", 2 invitations revoked, ")
+            && said.ends_with("; the restore is in the log of 2 accounts"),
+        "{said}"
+    );
 }
 
 #[tokio::test]

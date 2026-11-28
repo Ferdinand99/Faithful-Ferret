@@ -20,11 +20,13 @@
 //!    checked), given the migrations of this build and compared with the schema
 //!    this build makes, and then one transaction raises the restore epoch
 //!    ([`reconcile::bump`]'s rule, above the epoch of the data that is there)
-//!    and ends every session, hand-over, sign-in state, pending registration
-//!    and sign-in code, deletes every device token and revokes every device
-//!    that had tokens (they sign in again), and raises every user's session
-//!    version (`reconcile::bump_in` does both). The report and the command's
-//!    output say how many sessions and how many devices were ended.
+//!    and ends every session, hand-over, sign-in state, pending registration,
+//!    sign-in code and invitation, deletes every device token and revokes
+//!    every device that had tokens (they sign in again), raises every user's
+//!    session version and writes `server_restored` to the log of every
+//!    account (`reconcile::bump_in` does both). The report and the command's
+//!    output say how many sessions, devices and invitations were ended and how
+//!    many accounts got the event.
 //! 4. The database of the data directory with its `-wal`, `-shm` and
 //!    `-journal`, and the three secret files, are moved with `rename` into
 //!    `<data>/pre-restore-<time>/`. The command never deletes them.
@@ -182,6 +184,10 @@ pub struct RestoreReport {
     pub sessions_ended: u64,
     /// How many devices with tokens were revoked (they sign in again).
     pub devices_revoked: u64,
+    /// How many pending invitations were revoked.
+    pub invites_revoked: u64,
+    /// How many accounts got `server_restored` in their log.
+    pub accounts_logged: u64,
     /// Where the files that were in the data directory before went.
     pub moved_aside: PathBuf,
     /// Whether the restore epoch of the data that was in the data directory
@@ -366,6 +372,11 @@ struct Done {
     vaults: u64,
     sessions_ended: u64,
     devices_revoked: u64,
+    // A marker written by a build before several accounts lacks these two.
+    #[serde(default)]
+    invites_revoked: u64,
+    #[serde(default)]
+    accounts_logged: u64,
 }
 
 impl Marker {
@@ -690,6 +701,8 @@ impl Run<'_> {
             restore_epoch = done.restore_epoch,
             sessions_ended = done.sessions_ended,
             devices_revoked = done.devices_revoked,
+            invites_revoked = done.invites_revoked,
+            accounts_logged = done.accounts_logged,
             "restore finished"
         );
         Ok(RestoreReport {
@@ -697,6 +710,8 @@ impl Run<'_> {
             vaults: done.vaults,
             sessions_ended: done.sessions_ended,
             devices_revoked: done.devices_revoked,
+            invites_revoked: done.invites_revoked,
+            accounts_logged: done.accounts_logged,
             moved_aside: self.aside(),
             seen_epoch_unknown: self.marker.seen_epoch_unknown,
         })
@@ -948,6 +963,8 @@ fn bump(db: &Path, at_least: Option<u64>, now: i64) -> Result<Done, BackupError>
         vaults: bumped.vaults,
         sessions_ended: u64::try_from(bumped.swept.sessions).unwrap_or(u64::MAX),
         devices_revoked: u64::try_from(bumped.swept.devices).unwrap_or(u64::MAX),
+        invites_revoked: u64::try_from(bumped.swept.invites).unwrap_or(u64::MAX),
+        accounts_logged: u64::try_from(bumped.swept.logged).unwrap_or(u64::MAX),
     })
 }
 
