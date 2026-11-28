@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/api.mjs";
-import { SESSION_OTHER_ACCOUNT, SESSION_PATH, sessionBoundApi } from "../../src/flows/sessionBound.mjs";
+import { REUSE_MS, SESSION_OTHER_ACCOUNT, SESSION_PATH, sessionBoundApi } from "../../src/flows/sessionBound.mjs";
 import syncService from "../../src/services/sync.service.mjs";
 import { createLiveChannel } from "../../src/sync/events.mjs";
 import { outbox } from "../../src/store/outbox.mjs";
@@ -42,8 +42,9 @@ function loggingApi() {
 
 test("every_request_is_made_between_two_checks_of_the_session", async () => {
   const { api, log } = loggingApi();
-  const bound = sessionBoundApi(api, ACCOUNT, () => assert.fail("the session is the account's"));
+  const bound = sessionBoundApi(api, ACCOUNT, () => assert.fail("the session is the account's"), { now: () => 0 });
   assert.deepEqual(await bound.api.get("/api/sync/changes?since=0"), { path: "/api/sync/changes?since=0" });
+  // A check that has ended is never the check before the next request, however recent.
   await bound.api.put("/api/sync/items/x");
   await bound.api.post("/api/sync/batch");
   assert.deepEqual(log, [
@@ -52,6 +53,41 @@ test("every_request_is_made_between_two_checks_of_the_session", async () => {
     `GET ${SESSION_PATH}`, "POST /api/sync/batch", `GET ${SESSION_PATH}`,
   ]);
   assert.equal(bound.other(), false);
+});
+
+test("requests_that_start_together_share_the_check_before_them_never_the_one_after", async () => {
+  const { api, log } = loggingApi();
+  let clock = 0;
+  const bound = sessionBoundApi(api, ACCOUNT, () => assert.fail("the session is the account's"), { now: () => clock });
+  await Promise.all([bound.api.put("/api/sync/items/a"), bound.api.put("/api/sync/items/b")]);
+  assert.deepEqual(log.filter((line) => line === `GET ${SESSION_PATH}`).length, 3, "one shared check before, one after each");
+  assert.deepEqual(log.slice(0, 3), [`GET ${SESSION_PATH}`, "PUT /api/sync/items/a", "PUT /api/sync/items/b"]);
+  // A check on its way that is older than REUSE_MS is not joined.
+  log.length = 0;
+  let release = () => {};
+  let asked = 0;
+  const get = api.get;
+  api.get = async (path) => {
+    if (path === SESSION_PATH && (asked += 1) === 1) await new Promise((resolve) => (release = () => resolve(undefined)));
+    return get(path);
+  };
+  const first = bound.api.put("/api/sync/items/c");
+  clock += REUSE_MS + 1;
+  const second = bound.api.put("/api/sync/items/d");
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([first, second]);
+  assert.equal(log.filter((line) => line === `GET ${SESSION_PATH}`).length, 4, "two checks before, one after each");
+});
+
+test("a_check_that_failed_is_never_reused", async () => {
+  const { api, session, log } = loggingApi();
+  const bound = sessionBoundApi(api, ACCOUNT, () => assert.fail("not another account"), { now: () => 0 });
+  session.account = null;
+  await assert.rejects(bound.api.get("/api/sync/changes?since=0"), { status: 401 });
+  session.account = ACCOUNT;
+  await bound.api.get("/api/sync/changes?since=0");
+  assert.deepEqual(log, [`GET ${SESSION_PATH}`, `GET ${SESSION_PATH}`, "GET /api/sync/changes?since=0", `GET ${SESSION_PATH}`]);
 });
 
 test("a_session_of_another_account_sends_nothing_and_says_so_once", async () => {
