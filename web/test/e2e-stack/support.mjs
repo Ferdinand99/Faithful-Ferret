@@ -110,6 +110,20 @@ const watched = [];
 /** The last network failures and page closes of the run, with their times (kept for the text of an uncaught error). */
 const trail = /** @type {string[]} */ ([]);
 const stamp = () => new Date().toISOString().slice(11, 23);
+
+/**
+ * WebKit reports a request of the page's API client that a navigation or a closing page cancelled as an uncaught page
+ * error ("Fetch API cannot load <url> due to access control checks."), although the client catches the rejection (it
+ * becomes `ApiError(0, "network")`). Such an error is only that when the browser has just said that this very request was
+ * cancelled; anything else stays an uncaught error of the page.
+ * @param {string} text
+ */
+function cancelledApiLoad(text) {
+  const match = /^(?:TypeError: )?Fetch API cannot load (\S+(?: \S+)?) due to access control checks\.$/.exec(text);
+  if (!match) return false;
+  const path = match[1].replace(/^https?:\s*\/+[^/]+/, "");
+  return path.startsWith("/api/") && trail.slice(-3).some((line) => line.endsWith(`${path} failed: Load request cancelled`));
+}
 const testTitle = () => {
   try {
     return `in ${test.info().title}, `;
@@ -161,7 +175,13 @@ export async function watch(context) {
     findings.pages += 1;
     // An uncaught error says which test it came in, what the page was doing, and the last things that went wrong on the network
     // or closed before it, so that a failure of the whole-run check can be placed.
-    page.on("pageerror", (e) => findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`));
+    page.on("pageerror", (e) => {
+      if (cancelledApiLoad(String(e))) {
+        trail.push(`${stamp()} WebKit reported the cancelled request as a page error: ${String(e)}`);
+        return;
+      }
+      findings.pageErrors.push(`${String(e)} [${stamp()}${testTitle()}, page ${page.url()}, closed: ${page.isClosed()}; before it: ${trail.slice(-6).join(" | ") || "nothing"}]`);
+    });
     page.on("requestfailed", (request) => trail.push(`${stamp()} ${request.method()} ${request.url()} failed: ${request.failure()?.errorText ?? "?"}`));
     page.on("close", () => trail.push(`${stamp()} page closed ${page.url()}`));
     page.on("console", (m) => {
