@@ -116,6 +116,7 @@ async fn vault_router_does_not_serve_kit_pages() {
         "/settings",
         "/settings/general",
         "/settings/users",
+        "/settings/accounts",
         "/login",
         "/setup",
         "/login/2fa",
@@ -174,7 +175,11 @@ async fn admin_guard_is_wired_around_only_the_kit_router() {
     // The kit's protected pages need an admin session: with none, the guard
     // answers before the kit's own check does. A page that is read goes to the
     // sign-in; a request that changes something gets the one 401.
-    for path in ["/settings/general", "/settings/users", "/settings/security"] {
+    for path in [
+        "/settings/general",
+        "/settings/accounts",
+        "/settings/security",
+    ] {
         let res = app.call(Which::Admin, Req::get(path).build()).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{path}");
         assert!(res.header("location").starts_with("/login?next="), "{path}");

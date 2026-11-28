@@ -58,9 +58,11 @@ pub static EXTERNAL: ExternalCredentials = ExternalCredentials {
 /// The kit's optional parts. Spec: Fase 1 § 6.3, step 1 (the sign-in code that
 /// starts a reset) and § 11 (the kit's sign-in codes are an included feature).
 /// One-time sign-in codes are on: the administrator
-/// who has forgotten the master password gets a code (from the Users page or
-/// `ferret sign-in-code issue`) and redeems it on the vault origin. Invitations
-/// stay off until a milestone needs them.
+/// who has forgotten the master password gets a code (from
+/// `ferret sign-in-code issue`), a user gets one from an administrator on the
+/// Users page, and it is redeemed on the vault origin. The kit's invitation
+/// pages stay off: Ferret's Users page makes invitations with the kit's
+/// `db::invites` and the `invites` table is in Ferret's core migrations.
 pub static FEATURES: KitFeatures = KitFeatures {
     api_tokens: false,
     api_docs: false,
@@ -98,11 +100,12 @@ const OPERATIONS: SidebarSection = SidebarSection {
     items: &[SidebarItem::Tab(&BACKUP_TAB)],
 };
 
-/// The Access section: the Users page, where an administrator also makes a
-/// one-time sign-in code for a user.
+/// The Access section: the Users page (Ferret's own, in place of the kit's),
+/// where an administrator invites people and makes a one-time sign-in code for
+/// a user.
 const ACCESS: SidebarSection = SidebarSection {
     heading: Some("shell.access"),
-    items: &[SidebarItem::Tab(&SettingsTab::USERS)],
+    items: &[SidebarItem::Tab(&ACCOUNTS_TAB)],
 };
 
 /// The Settings section: General, with the cargo feature `quick-unlock` the
@@ -171,6 +174,17 @@ pub static DOCS: DocsSpec = DocsSpec {
     strict_access: false,
 };
 
+/// The Users tab of the settings (`admin::accounts`), for administrators. It
+/// takes the place of the kit's `SettingsTab::USERS`, whose pages are closed
+/// (`admin::guard::close_kit_users_pages`); the name and icon are the kit's.
+const ACCOUNTS_TAB: SettingsTab = SettingsTab {
+    id: "accounts",
+    href: crate::admin::accounts::PATH,
+    label: "nav.users",
+    icon: "users",
+    access: TabAccess::Admins,
+};
+
 /// The Backup tab of the settings (`admin::panel`), for administrators.
 const BACKUP_TAB: SettingsTab = SettingsTab {
     id: "backup",
@@ -191,12 +205,12 @@ const UNLOCK_TAB: SettingsTab = SettingsTab {
     access: TabAccess::Admins,
 };
 
-/// The tabs of the settings: the kit's, the Backup tab and, with the cargo
-/// feature `quick-unlock`, the Unlock tab.
+/// The tabs of the settings: the kit's General and Security, Ferret's Users
+/// and Backup tabs and, with the cargo feature `quick-unlock`, the Unlock tab.
 #[cfg(feature = "quick-unlock")]
 const SETTINGS_TABS: &[SettingsTab] = &[
     SettingsTab::GENERAL,
-    SettingsTab::USERS,
+    ACCOUNTS_TAB,
     BACKUP_TAB,
     UNLOCK_TAB,
     SettingsTab::SECURITY,
@@ -204,7 +218,7 @@ const SETTINGS_TABS: &[SettingsTab] = &[
 #[cfg(not(feature = "quick-unlock"))]
 const SETTINGS_TABS: &[SettingsTab] = &[
     SettingsTab::GENERAL,
-    SettingsTab::USERS,
+    ACCOUNTS_TAB,
     BACKUP_TAB,
     SettingsTab::SECURITY,
 ];

@@ -9,10 +9,13 @@
 //! * [`invites`]: invitations, how a new account is made from one, the check
 //!   of a link (`POST /api/auth/invite/check`) and the count of starts per
 //!   invitation.
+//! * [`list`]: the accounts as the Users page lists them (counts and bytes,
+//!   never vault content).
 //!
 //! Spec: Fase 1 § 11 ("Several accounts"), § 6.3 (every code is in the
 //! account log) and § 4.2 (registration with an invitation).
 
 pub mod actions;
 pub mod invites;
+pub mod list;
 pub mod log;

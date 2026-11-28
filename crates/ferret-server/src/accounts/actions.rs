@@ -12,7 +12,14 @@
 //!   and for `ferret sign-in-code issue`. The kit stores the code in a
 //!   transaction of its own, so the event is written right after it; if the
 //!   event cannot be written, the code is revoked again and the action fails,
-//!   so no code is left that the log does not show.
+//!   so no code is left that the log does not show. The event's transaction
+//!   asks [`target`] again, so no change of the account between the first
+//!   check and the kit's transaction lets a code through.
+//! * [`create_invite`], [`resend_invite`] and [`revoke_invite`] are the
+//!   invitations of the Users page: at most the kit's 50 pending (which the
+//!   kit's `insert` does not count), "send again" as a revoke and a new one in
+//!   one transaction. Each asks, in its write, that the actor is still an
+//!   active administrator.
 //!
 //! Spec: Fase 1 § 11 ("The acting account and the target", "Every action on
 //! another account writes its event in the same transaction as the change")
@@ -20,10 +27,12 @@
 
 use std::fmt;
 
-use rusqlite::{Connection, OptionalExtension as _, params};
-use vole_kit::auth::sign_in_codes;
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use vole_kit::auth::{invites, sign_in_codes};
+use vole_kit::db::invites::MAX_PENDING;
 use zeroize::Zeroizing;
 
+use crate::accounts::invites::INVITED_ROLE;
 use crate::accounts::log::{self, Actor, EventKind};
 use crate::admin::codes::IssuedCode;
 use crate::error::StoreError;
@@ -31,7 +40,8 @@ use crate::error::StoreError;
 /// Why an action on an account was not taken.
 #[derive(Debug)]
 pub enum ActionError {
-    /// No such account, or one without a vault.
+    /// No such account, or one without a vault; for an invitation, no such
+    /// pending invitation.
     NotFound,
     /// The actor may not act on that account (its own, or an administrator),
     /// or may not take this action at all.
@@ -203,11 +213,11 @@ pub fn issue_sign_in_code(
     let code = Zeroizing::new(sign_in_codes::generate());
     let hash = sign_in_codes::hash(&code);
     let expires_at = vole_kit::db::sign_in_codes::insert(conn, user.user_id, &hash, created_by)?;
-    if let Err(error) = log::record(conn, user.user_id, EventKind::SignInCodeIssued, by, now) {
+    if let Err(error) = log_issued(conn, target, by, now) {
         tracing::error!(
             user_id = user.user_id,
             %error,
-            "the account log could not be written: the new sign-in code is revoked"
+            "the sign-in code was not logged: it is revoked"
         );
         if let Err(revoke) = vole_kit::db::sign_in_codes::revoke_for_user(conn, user.user_id) {
             tracing::error!(
@@ -217,9 +227,126 @@ pub fn issue_sign_in_code(
             );
             return Err(revoke.into());
         }
-        return Err(error.into());
+        return Err(error);
     }
     Ok(IssuedCode::new(code.to_string(), expires_at))
+}
+
+/// The event of a sign-in code that the kit has just stored, in one short
+/// write transaction that first asks [`target`] again: the account may have
+/// been disabled, made an administrator or given a second factor between the
+/// first check and the kit's own transaction. Whatever changed, the event is
+/// written only for an account the rules still allow; otherwise the caller
+/// revokes the code. A change after this commit revokes the code itself (a
+/// disable, a new second factor and every other change of how the account
+/// signs in revoke its pending codes).
+fn log_issued(conn: &mut Connection, target: i64, by: &Actor, now: i64) -> Result<(), ActionError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    self::target(&tx, by, target)?
+        .require_active()?
+        .require_no_second_factor()?;
+    log::record(&tx, target, EventKind::SignInCodeIssued, by, now)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// The account of the administrator `by`, if it is one with a known account;
+/// else [`ActionError::NotAllowed`].
+fn admin_of(by: &Actor) -> Result<i64, ActionError> {
+    match by {
+        Actor::Admin {
+            user_id: Some(id), ..
+        } => Ok(*id),
+        _ => Err(ActionError::NotAllowed),
+    }
+}
+
+/// `Ok` when `admin` is an active administrator now (asked in the caller's
+/// transaction); else [`ActionError::NotAllowed`]. The page checked the role
+/// before; this is the same check at the moment of the write.
+fn require_active_admin(conn: &Connection, admin: i64) -> Result<(), ActionError> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM users WHERE id = ?1 AND role = 'admin' AND active = 1",
+            params![admin],
+            |r| r.get(0),
+        )
+        .optional()?;
+    found.map(|_| ()).ok_or(ActionError::NotAllowed)
+}
+
+/// Adds one invitation of [`INVITED_ROLE`] by `by` in the caller's
+/// transaction, if fewer than the kit's [`MAX_PENDING`] are pending (the kit's
+/// `insert` does not count them); returns the token.
+fn add_invite(conn: &Connection, admin: i64) -> Result<Zeroizing<String>, ActionError> {
+    if vole_kit::db::invites::count_pending(conn)? >= MAX_PENDING {
+        return Err(ActionError::Full);
+    }
+    let token = Zeroizing::new(invites::generate());
+    let hash = invites::hash(&token);
+    let id = vole_kit::db::invites::insert(conn, &hash, INVITED_ROLE, "", admin)?;
+    tracing::info!(admin = admin, invite_id = id, "an invitation was made");
+    Ok(token)
+}
+
+/// Makes an invitation by the administrator `by` (an [`Actor::Admin`] with an
+/// account, which becomes the invitation's `created_by`; any other actor is
+/// [`ActionError::NotAllowed`]): a new token, of which the database keeps only
+/// the SHA-256, for an account of [`INVITED_ROLE`], for the kit's seven days.
+/// [`ActionError::Full`] when [`MAX_PENDING`] invitations are pending. The
+/// token is returned once, to show as a link; it is wiped on drop.
+///
+/// An invitation is not an action on an account, so it writes no event to an
+/// account log (there is no account yet); the log line names the
+/// administrator and the invitation's id, never the token.
+pub fn create_invite(conn: &mut Connection, by: &Actor) -> Result<Zeroizing<String>, ActionError> {
+    let admin = admin_of(by)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_active_admin(&tx, admin)?;
+    let token = add_invite(&tx, admin)?;
+    tx.commit()?;
+    Ok(token)
+}
+
+/// "Send again": revokes the pending invitation `id` and makes a new one by
+/// `by`, in one transaction, so the old link is dead by the time the new one
+/// is shown. [`ActionError::NotFound`] when `id` is not pending (used,
+/// revoked, run out or unknown); nothing changes then. Only the invitation
+/// row changes: a registration that started with the old link fails at its
+/// finish, and nobody else's registration is touched.
+pub fn resend_invite(
+    conn: &mut Connection,
+    id: i64,
+    by: &Actor,
+) -> Result<Zeroizing<String>, ActionError> {
+    let admin = admin_of(by)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_active_admin(&tx, admin)?;
+    if !vole_kit::db::invites::revoke(&tx, id)? {
+        return Err(ActionError::NotFound);
+    }
+    let token = add_invite(&tx, admin)?;
+    tx.commit()?;
+    tracing::info!(
+        admin = admin,
+        invite_id = id,
+        "an invitation was revoked to send it again"
+    );
+    Ok(token)
+}
+
+/// Revokes the pending invitation `id` for the administrator `by`; `false`
+/// when it was not pending. A protective action: it needs no fresh
+/// confirmation. Only that invitation changes (the kit's `revoke` is one
+/// statement by id).
+pub fn revoke_invite(conn: &Connection, id: i64, by: &Actor) -> Result<bool, ActionError> {
+    let admin = admin_of(by)?;
+    require_active_admin(conn, admin)?;
+    let revoked = vole_kit::db::invites::revoke(conn, id)?;
+    if revoked {
+        tracing::info!(admin = admin, invite_id = id, "an invitation was revoked");
+    }
+    Ok(revoked)
 }
 
 /// The active administrator with the lowest id.
