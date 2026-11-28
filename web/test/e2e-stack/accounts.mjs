@@ -108,6 +108,12 @@ export async function makeInvite() {
     const link = ((await shown.textContent()) ?? "").trim();
     const match = LINK.exec(link);
     expect(match, `the link the page shows: ${link}`).not.toBeNull();
+    // The link is shown once, on the page the post led to: a reload of that page shows it no more and makes nothing.
+    const pending = await page.locator('li[id^="invite-"]').count();
+    await page.reload();
+    await expect(page.locator("main h1")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("#created-invite")).toHaveCount(0);
+    expect(await page.locator('li[id^="invite-"]').count(), "a reload makes no invitation").toBe(pending);
     return { link, token: /** @type {RegExpExecArray} */ (match)[1] };
   });
 }

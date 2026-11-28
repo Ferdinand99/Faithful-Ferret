@@ -18,6 +18,7 @@ use rusqlite::Connection;
 use vole_kit::state::Core;
 
 use crate::accounts::invites::InviteStarts;
+use crate::admin::shown_once::ShownOnce;
 use crate::auth::secrets::{Secrets, load_secrets};
 use crate::auth::state_store::SqliteLoginStateStore;
 use crate::auth::throttle::{ChallengeLimit, InviteCheckLimit, KitThrottle};
@@ -154,6 +155,9 @@ pub struct FerretState {
     pub invite_starts: Arc<InviteStarts>,
     /// The limit per address of `POST /api/auth/invite/check`.
     pub invite_checks: Arc<InviteCheckLimit>,
+    /// The invitation links that wait for the page that shows them once,
+    /// after the redirect of the post that made them.
+    pub shown_once: Arc<ShownOnce>,
 }
 
 impl FromRef<FerretState> for Core {
@@ -323,6 +327,7 @@ pub async fn build_state(
         device_auth,
         invite_starts: Arc::new(InviteStarts::new(INVITE_START_KEYS)),
         invite_checks: Arc::new(InviteCheckLimit::new()),
+        shown_once: Arc::new(ShownOnce::new()),
     })
 }
 

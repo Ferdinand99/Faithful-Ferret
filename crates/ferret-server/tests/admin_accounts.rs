@@ -198,6 +198,32 @@ fn assert_back(res: &Res) {
     assert_eq!(res.header("location"), PATH);
 }
 
+/// The answer of a post that made a link: `303` to the page with the slot of
+/// the link (32 hex digits), and nothing of the link in the answer. Answers
+/// the address of that page.
+fn assert_to_link(res: &Res) -> String {
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let location = res.header("location").to_string();
+    let slot = location
+        .strip_prefix(&format!("{PATH}?shown="))
+        .unwrap_or_else(|| panic!("the page of the link: {location}"));
+    assert!(
+        slot.len() == 32 && slot.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{slot}"
+    );
+    assert!(!res.text().contains("#invite="), "no link in the answer");
+    location
+}
+
+/// A post that makes a link, and the page that shows it (read once).
+async fn made_link(app: &TestApp, path: &str) -> (Res, Res) {
+    let res = post(app, path).await;
+    let location = assert_to_link(&res);
+    let page = get(app, &location).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+    (res, page)
+}
+
 // ---------------------------------------------------------------- the list
 
 #[tokio::test]
@@ -421,20 +447,34 @@ async fn the_kit_users_routes_are_closed() {
 #[tokio::test]
 async fn an_invitation_link_is_shown_once_with_no_store_and_points_at_the_vault_fragment() {
     let (app, admin, _vault) = confirmed_admin().await;
-    let res = post(&app, INVITES).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    assert_eq!(res.header("cache-control"), "no-store");
-    let page = res.text();
+    // The post answers with a redirect to the page that shows the link once.
+    let (res, shown) = made_link(&app, INVITES).await;
+    assert_eq!(shown.header("cache-control"), "no-store");
+    let page = shown.text();
     let tokens = invite_tokens(&page);
     assert_eq!(tokens.len(), 1, "one link on the page");
     let token = &tokens[0];
     assert_eq!(token.len(), 43);
     assert!(page.contains(&format!("{VAULT_URL}/vault/setup#invite={token}")));
-    // Never in a cookie (the message is a flash cookie) or a header.
-    for (name, value) in &res.headers {
-        let value = value.to_str().unwrap_or_default();
-        assert!(!value.contains(token.as_str()), "{name}: {value}");
+    assert!(page.contains("Invitation made"), "the flash says so");
+    // Never in a cookie (the message is a flash cookie), a header or the
+    // address of the redirect.
+    for answer in [&res, &shown] {
+        for (name, value) in &answer.headers {
+            let value = value.to_str().unwrap_or_default();
+            assert!(!value.contains(token.as_str()), "{name}: {value}");
+        }
     }
+    // A reload of that page shows the link no more and makes nothing.
+    let again = get(&app, res.header("location")).await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert!(invite_tokens(&again.text()).is_empty(), "read once");
+    assert_eq!(
+        pending_invites(&app).await,
+        1,
+        "a reload makes no invitation"
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM invites").await, 1);
     // The invitation is pending, for a viewer, made by the administrator.
     assert_eq!(
         pending_of(&app, token).await,
@@ -508,12 +548,11 @@ async fn revoking_an_invitation_needs_none() {
 #[tokio::test]
 async fn resend_revokes_the_old_link() {
     let (app, admin, _vault) = confirmed_admin().await;
-    let first = invite_tokens(&post(&app, INVITES).await.text()).remove(0);
+    let first = invite_tokens(&made_link(&app, INVITES).await.1.text()).remove(0);
     let id: i64 = count(&app, "SELECT MAX(id) FROM invites").await;
-    let res = post(&app, &format!("{INVITES}/{id}/resend")).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    assert_eq!(res.header("cache-control"), "no-store");
-    let tokens = invite_tokens(&res.text());
+    let (_res, shown) = made_link(&app, &format!("{INVITES}/{id}/resend")).await;
+    assert_eq!(shown.header("cache-control"), "no-store");
+    let tokens = invite_tokens(&shown.text());
     assert_eq!(tokens.len(), 1);
     let second = &tokens[0];
     assert_ne!(second, &first);
@@ -540,8 +579,8 @@ async fn fifty_pending_invitations_is_the_limit() {
         insert_invite(&app, admin).await;
     }
     let res = post(&app, INVITES).await;
-    assert_eq!(res.status, StatusCode::OK, "the 50th: {}", res.text());
-    assert_eq!(pending_invites(&app).await, 50);
+    assert_to_link(&res);
+    assert_eq!(pending_invites(&app).await, 50, "the 50th");
     let res = post(&app, INVITES).await;
     assert_back(&res);
     assert_eq!(pending_invites(&app).await, 50, "no 51st");
@@ -553,7 +592,7 @@ async fn fifty_pending_invitations_is_the_limit() {
     // Sending one again keeps the count.
     let id: i64 = count(&app, "SELECT MAX(id) FROM invites").await;
     let res = post(&app, &format!("{INVITES}/{id}/resend")).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_to_link(&res);
     assert_eq!(pending_invites(&app).await, 50);
     // The action refuses the 51st by itself too.
     let by = Actor::Admin {
@@ -655,8 +694,8 @@ async fn a_sign_in_code_uses_the_confirmation_up() {
     let res = post(&app, INVITES).await;
     assert_back(&res);
     confirm(&app, &vault).await;
-    assert_eq!(post(&app, INVITES).await.status, StatusCode::OK);
-    assert_eq!(post(&app, INVITES).await.status, StatusCode::OK);
+    assert_to_link(&post(&app, INVITES).await);
+    assert_to_link(&post(&app, INVITES).await);
 }
 
 #[tokio::test]
@@ -954,8 +993,7 @@ async fn the_page_and_its_forms_pass_the_kit_csrf_guard() {
     assert_eq!(pending_invites(&app).await, 1);
     assert!(pending_of(&app, &token).await.is_some());
     // From the page itself: through.
-    let res = post(&app, INVITES).await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_to_link(&post(&app, INVITES).await);
     assert_eq!(pending_invites(&app).await, 2);
 }
 

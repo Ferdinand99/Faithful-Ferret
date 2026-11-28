@@ -12,9 +12,13 @@
 //! * The list ([`crate::accounts::list`]) shows counts and bytes, never vault
 //!   content, and no PIN column.
 //! * An invitation link (`{vault}/vault/setup#invite=<token>`, the token in
-//!   the fragment) and a sign-in code are shown once, in the answer to the
-//!   post that made them, with `Cache-Control: no-store`. Neither goes into a
-//!   cookie, a redirect, a log line or the page that is read later.
+//!   the fragment) and a sign-in code are shown once, with
+//!   `Cache-Control: no-store`. Neither goes into a cookie, a redirect, a log
+//!   line or the page that is read after that. The post that makes a link
+//!   answers `303` to the page with a slot id ([`super::shown_once`]): the
+//!   first read of that page shows the link, so a reload never makes a second
+//!   invitation. A code is shown in the answer to its post (the post uses the
+//!   confirmation up, so a repeated post makes no second code).
 //! * Making or sending an invitation again, making a sign-in code, enabling
 //!   an account and deleting one need a fresh confirmation of the master
 //!   password: the kit's re-auth grant, given by a `reauth` hand-over from the
@@ -43,7 +47,7 @@
 //! (invitations).
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderValue;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -341,17 +345,48 @@ async fn render(
     Ok(response)
 }
 
-/// `GET /settings/accounts`.
+/// What the page's address may carry: the slot of a link to show once.
+#[derive(Deserialize)]
+struct PageQuery {
+    shown: Option<String>,
+}
+
+/// `GET /settings/accounts`, and `?shown=<slot>` after a new invitation: the
+/// link of the slot, once, for the administrator who made it.
 async fn page(
     State(state): State<FerretState>,
     user: CurrentUser,
     jar: SignedCookieJar,
+    Query(query): Query<PageQuery>,
 ) -> ApiResult<Response> {
     user.require_admin()?;
-    render(&state, &user, jar, None).await
+    let shown = match query.shown {
+        Some(slot) => state
+            .shown_once
+            .take(&slot, user.id, now(&state)?)
+            .map(Shown::Invite),
+        None => None,
+    };
+    render(&state, &user, jar, shown).await
 }
 
-/// `POST /settings/accounts/invites`: a new invitation, its link shown once.
+/// After a new link: the flash, and `303` to the page that shows the link
+/// once (the link waits in [`FerretState::shown_once`], never in the address).
+fn show_link(
+    state: &FerretState,
+    user: &CurrentUser,
+    jar: SignedCookieJar,
+    token: &str,
+    message: &'static str,
+) -> ApiResult<Response> {
+    let link = Zeroizing::new(link(&state.origins, token));
+    let slot = state.shown_once.put(user.id, now(state)?, link);
+    let jar = flash(jar, "success", i18n::t(message));
+    Ok((jar, Redirect::to(&format!("{PATH}?shown={slot}"))).into_response())
+}
+
+/// `POST /settings/accounts/invites`: a new invitation, its link shown once
+/// on the page the answer leads to.
 async fn create_invite(
     State(state): State<FerretState>,
     user: CurrentUser,
@@ -366,13 +401,12 @@ async fn create_invite(
         Ok(token) => token,
         Err(error) => return refused(jar, error),
     };
-    let shown = Shown::Invite(Zeroizing::new(link(&state.origins, &token)));
-    let jar = flash(jar, "success", i18n::t("accounts.invite_made"));
-    render(&state, &user, jar, Some(shown)).await
+    show_link(&state, &user, jar, &token, "accounts.invite_made")
 }
 
 /// `POST /settings/accounts/invites/{id}/resend`: the old link revoked and a
-/// new one made, in one transaction; the new link shown once.
+/// new one made, in one transaction; the new link shown once on the page the
+/// answer leads to.
 async fn resend_invite(
     State(state): State<FerretState>,
     user: CurrentUser,
@@ -390,9 +424,7 @@ async fn resend_invite(
         Err(ActionError::NotFound) => return Ok(back(jar, "error", "accounts.invite_gone")),
         Err(error) => return refused(jar, error),
     };
-    let shown = Shown::Invite(Zeroizing::new(link(&state.origins, &token)));
-    let jar = flash(jar, "success", i18n::t("accounts.invite_resent"));
-    render(&state, &user, jar, Some(shown)).await
+    show_link(&state, &user, jar, &token, "accounts.invite_resent")
 }
 
 /// `POST /settings/accounts/invites/{id}/revoke`: no confirmation needed.
@@ -426,11 +458,7 @@ async fn sign_in_code(
     let by = actor(&user);
     let at = now(&state)?;
     let issued = act(&state, move |conn| {
-        let code = actions::issue_sign_in_code(conn, target, &by, at)?;
-        let email = actions::target(conn, &by, target)
-            .map(|t| t.email)
-            .unwrap_or_default();
-        Ok((code, email))
+        actions::issue_sign_in_code_for(conn, target, &by, at)
     })
     .await?;
     let (code, email) = match issued {

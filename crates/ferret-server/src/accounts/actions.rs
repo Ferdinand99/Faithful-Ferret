@@ -219,6 +219,18 @@ pub fn issue_sign_in_code(
     by: &Actor,
     now: i64,
 ) -> Result<IssuedCode, ActionError> {
+    issue_sign_in_code_for(conn, target, by, now).map(|(code, _)| code)
+}
+
+/// [`issue_sign_in_code`], with the e-mail of the account the code is for, as
+/// the rules found it (the Users page shows it next to the code, and asks the
+/// database no second time).
+pub fn issue_sign_in_code_for(
+    conn: &mut Connection,
+    target: i64,
+    by: &Actor,
+    now: i64,
+) -> Result<(IssuedCode, String), ActionError> {
     let user = self::target(conn, by, target)?
         .require_active()?
         .require_no_second_factor()?;
@@ -247,7 +259,7 @@ pub fn issue_sign_in_code(
         }
         return Err(error);
     }
-    Ok(IssuedCode::new(code.to_string(), expires_at))
+    Ok((IssuedCode::new(code.to_string(), expires_at), user.email))
 }
 
 /// The event of a sign-in code that the kit has just stored, in one short

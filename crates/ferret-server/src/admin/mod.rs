@@ -16,6 +16,7 @@ pub mod handoff_page;
 pub mod panel;
 pub mod redirects;
 pub mod settings;
+pub mod shown_once;
 pub mod signed_out_page;
 #[cfg(feature = "quick-unlock")]
 pub mod unlock;
