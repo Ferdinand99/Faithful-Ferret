@@ -18,6 +18,7 @@ pub mod dpop;
 pub mod events;
 pub mod handoff;
 pub mod m3;
+pub mod register;
 pub mod session;
 pub mod sync;
 pub mod upgrade;

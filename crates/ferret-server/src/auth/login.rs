@@ -641,8 +641,16 @@ pub fn spawn_refresh_every(
     });
 }
 
-/// One round of the background work. A failure keeps the policy as it was.
-pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: &dyn Clock) {
+/// One renewal at a time, in the whole process: each reads the accounts and
+/// the stored buckets and may write the buckets, so two that overlapped could
+/// leave an older policy in place after a newer one. Renewals are rare and
+/// short, so one lock for every server in the process costs nothing.
+static RENEWAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Renews the policy in `policy` from the accounts in the database. A failure
+/// keeps the policy as it was.
+async fn renew_policy(db: &VaultDb, policy: &RwLock<PreloginPolicy>) {
+    let _one_at_a_time = RENEWAL.lock().await;
     match db
         .with_conn(|conn| Ok(try_load_prelogin_policy(conn)))
         .await
@@ -653,6 +661,22 @@ pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: 
         Ok(Err(error)) => tracing::warn!(%error, "the pre-login policy was not renewed"),
         Err(error) => tracing::warn!(%error, "the pre-login policy was not renewed"),
     }
+}
+
+/// Renews the pre-login policy now, as one round of [`refresh_once`] does but
+/// without its clean-up of old sessions. Called after a change to the
+/// accounts has committed (a new account, a disable, an enable, a deletion),
+/// so the made-up answers follow the accounts at once and not at the next
+/// round. A failure keeps the policy as it was and is logged.
+///
+/// Spec: Fase 1 § 4.2 ("Pre-login with several accounts").
+pub async fn refresh_policy_now(state: &FerretState) {
+    renew_policy(&state.vault_db, &state.prelogin).await;
+}
+
+/// One round of the background work. A failure keeps the policy as it was.
+pub async fn refresh_once(db: &VaultDb, policy: &RwLock<PreloginPolicy>, clock: &dyn Clock) {
+    renew_policy(db, policy).await;
     let Ok(now) = i64::try_from(clock.now_unix()) else {
         return;
     };

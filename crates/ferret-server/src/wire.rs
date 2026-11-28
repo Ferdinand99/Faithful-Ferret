@@ -933,8 +933,9 @@ pub struct RegisterStartReq {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_token: Option<String>,
     /// The token of an invitation link (every later account). Never together
-    /// with `setup_token`: the route refuses a body with both. Left out when
-    /// empty, so the body of the first administrator is the text it was.
+    /// with `setup_token`: the route refuses a body with both
+    /// (`400 bad_request`). Left out when empty, so the body of the first
+    /// administrator is the text it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite: Option<InviteToken>,
     /// The login name.

@@ -34,7 +34,8 @@ use crate::state::FerretState;
 /// The routes of the vault listener: registration, sign-in, sign-out, the
 /// session info, the start of a hand-over, the nonces of signed requests and
 /// the redeeming of a one-time code; the renewal of a device's tokens and the
-/// list of devices; and the account's own log (`accounts::log`).
+/// list of devices; the account's own log (`accounts::log`); and the check of
+/// an invitation link (`accounts::invites`).
 pub fn routes_vault<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -49,6 +50,7 @@ where
         .merge(refresh::routes())
         .merge(devices::routes())
         .merge(crate::accounts::log::routes())
+        .merge(crate::accounts::invites::routes())
 }
 
 /// The routes of the admin listener that are Ferret's: sign-out, the session

@@ -6,9 +6,13 @@
 //!   reads its own.
 //! * [`actions`]: the actions on another account, each with its event, and the
 //!   one set of rules that says which account may be acted on.
+//! * [`invites`]: invitations, how a new account is made from one, the check
+//!   of a link (`POST /api/auth/invite/check`) and the count of starts per
+//!   invitation.
 //!
-//! Spec: Fase 1 § 11 ("Several accounts") and § 6.3 (every code is in the
-//! account log).
+//! Spec: Fase 1 § 11 ("Several accounts"), § 6.3 (every code is in the
+//! account log) and § 4.2 (registration with an invitation).
 
 pub mod actions;
+pub mod invites;
 pub mod log;
