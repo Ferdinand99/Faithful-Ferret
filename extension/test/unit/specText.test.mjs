@@ -455,6 +455,7 @@ test("the_passkey_rules_are_in_the_spec", () => {
 test("the_several_accounts_rules_are_in_the_spec", () => {
   // § 0 and § 1: the change log of delivery 1 and the terms.
   assert.ok(spec.includes("**Changes for several accounts (delivery 1, 2026-11-27).**"));
+  assert.ok(spec.includes("*Brought in line with the build (2026-11-28).*"));
   const terms = section("## 1. Scope and terms");
   assert.equal(terms.includes("One vault per user in v1 (no sharing)."), false, "the old wording is gone");
   for (const rule of [
@@ -483,6 +484,11 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "**A deliberate deviation: `email_taken`.**",
     "**Pre-login with several accounts**",
     "can learn that the number of accounts changed, not which account",
+    // As built: another pending invitation's waiting row holds its e-mail, and the waiting rows share one cap.
+    "a waiting registration of the same e-mail that another invitation made, and that invitation is still pending → `409 email_taken` too",
+    "a row of an invitation that is no longer pending, also one that \"Send again\" revoked, holds nothing and is replaced",
+    "share one table of at most 64 rows, and the oldest goes first when it is full",
+    "a reload or a tab the browser brings back says that the link is lost and must be opened again, with no field and no request to the server",
   ]) assert.ok(signIn.includes(rule), rule);
 
   // § 4.5: no key pair per user yet.
@@ -499,7 +505,9 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
   assert.equal(recovery.includes("the kit does not let an administrator make a code for their own account there"), false, "the old wording is gone");
 
   // § 8.2 and § 8.8: the stream limit and the known limits.
-  assert.ok(section("### 8.2 API (behind an access token, or a session cookie for the web vault)").includes("At most 2 streams per device, 40 per vault and 1 024 on the server"));
+  const api = section("### 8.2 API (behind an access token, or a session cookie for the web vault)");
+  assert.ok(api.includes("At most 2 streams per device, 40 per vault and 1 024 on the server"));
+  assert.ok(api.includes("the server needs a limit of open files well above 1 024: the compose file of the stack for real data sets 4096"));
   const limits = section("### 8.8 Known limits of the first sync release");
   assert.equal(limits.includes("revisit it when more users can register"), false, "the old wording is gone");
   for (const rule of [
@@ -510,6 +518,12 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "**Two accounts in one browser**",
     "**A restore brings the accounts back as the set holds them.**",
     "The administrator therefore checks the Users page after every restore and disables again what should stay disabled.",
+    "**A waiting registration holds its e-mail**",
+    "**The waiting registrations share one cap**",
+    "At most 64 registrations wait at once, for every invitation together, and the oldest goes first when the table is full.",
+    "**Few accounts give coarse shares in pre-login.**",
+    "**The answer of the account log names no account**",
+    "and in their encrypted copies off the machine",
   ]) assert.ok(limits.includes(rule), rule);
 
   // § 11: the Users page, the logging rule and its two exceptions.
@@ -526,5 +540,10 @@ test("the_several_accounts_rules_are_in_the_spec", () => {
     "refuses an account that is not an administrator (`403 forbidden`)",
     "also revokes every pending invitation, so a restore never wakes a link that the administrator had revoked",
     "The administrator makes new links after a restore and checks the Users page: the accounts come back as the set holds them",
+    // As built: a deleted account's invitation names no account, and which actions use up the confirmation.
+    "After that account is deleted, the row keeps no account: the kit's table sets `used_by` to NULL",
+    "Making a sign-in code uses it up, as the kit's own page does, so one confirmation never makes codes for every account",
+    "making or sending an invitation and enabling an account keep it",
+    "the ids are SQLite row ids without `AUTOINCREMENT`, so after a restore they can go backwards",
   ]) assert.ok(server.includes(rule), rule);
 });
