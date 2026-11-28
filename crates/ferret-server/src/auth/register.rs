@@ -49,8 +49,8 @@
 //! waiting with: one invitee never removes another's waiting row (a new start
 //! of the same invitation replaces its own earlier row, as the first
 //! administrator's does, and a row of an invitation that was revoked, also by
-//! "send again", used or ran out holds nothing). The row keeps the SHA-256 of the token (`invite_hash`), never the
-//! token.
+//! "send again", used or ran out holds nothing). The row keeps the SHA-256 of
+//! the token (`invite_hash`), never the token.
 //!
 //! # `finish`
 //!

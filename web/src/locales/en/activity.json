@@ -8,7 +8,7 @@
   "activity.error.unauthorized": "Your session has ended. Sign in again.",
   "activity.error.unknown": "Something went wrong. Try again.",
   "activity.heading": "Activity",
-  "activity.intro": "What was done to your account, newest first: by an administrator, by a command on the server, by the server itself, and the sign-in codes used for it. The server keeps the newest 1 000 events.",
+  "activity.intro": "What was done to your account, newest first: by an administrator, by a command on the server, by the server itself, and the sign-in codes used for it. The server keeps the newest 1,000 events.",
   "activity.kind.account_created": "Account created",
   "activity.kind.account_disabled": "Account disabled",
   "activity.kind.account_enabled": "Account enabled again",
